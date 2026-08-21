@@ -67,11 +67,17 @@ internal sealed class PendingRequestTable : IDisposable
     private const int DeadlinePageSize = 1 << DeadlinePageShift;
     private const int DeadlinePagesPerWordShift = 6;
     private const int DeadlinePagesPerWord = 1 << DeadlinePagesPerWordShift;
+    private const int DeadlineRegistrationStripeCount = 16;
+    private const int DeadlineRegistrationStripeMask = DeadlineRegistrationStripeCount - 1;
+    private const int DeadlineRetentionStripe = DeadlineRegistrationStripeCount;
+    private const int DeadlineMarkerStripeCount = DeadlineRegistrationStripeCount + 1;
+    private const int DeadlineMarkerCacheLineLongs = 8;
     private readonly int _indexMask;
     private readonly int _capacity;
     private readonly object _slotsInitializationGate = new();
+    private readonly int _deadlinePageWordCount;
+    private readonly int _deadlineMarkerStripeStride;
     private readonly long[] _deadlinePageBits;
-    private int _deadlinePageHint = -1;
     private PendingCall?[]? _slots;
     private readonly IRpcCodecProvider _codecProvider;
     private readonly IPendingCallOwner _owner;
@@ -108,7 +114,11 @@ internal sealed class PendingRequestTable : IDisposable
 
         _capacity = capacity;
         var deadlinePageCount = (capacity + DeadlinePageSize - 1) >> DeadlinePageShift;
-        _deadlinePageBits = new long[(deadlinePageCount + DeadlinePagesPerWord - 1) >> DeadlinePagesPerWordShift];
+        _deadlinePageWordCount = (deadlinePageCount + DeadlinePagesPerWord - 1) >> DeadlinePagesPerWordShift;
+        var stripeLongs = 1 + _deadlinePageWordCount;
+        _deadlineMarkerStripeStride =
+            (stripeLongs + DeadlineMarkerCacheLineLongs - 1) & ~(DeadlineMarkerCacheLineLongs - 1);
+        _deadlinePageBits = new long[_deadlineMarkerStripeStride * DeadlineMarkerStripeCount];
         _indexMask = capacity - 1;
         _codecProvider = codecProvider;
         _owner = owner;
@@ -630,10 +640,14 @@ internal sealed class PendingRequestTable : IDisposable
     private void MarkDeadlinePage(int index)
     {
         var page = index >> DeadlinePageShift;
-        if (Volatile.Read(ref _deadlinePageHint) == page)
+        var stripe = Environment.CurrentManagedThreadId & DeadlineRegistrationStripeMask;
+        var stripeBase = stripe * _deadlineMarkerStripeStride;
+        var encodedPage = (long)page + 1;
+        if (Volatile.Read(ref _deadlinePageBits[stripeBase]) == encodedPage)
             return;
 
-        ref var bits = ref _deadlinePageBits[page >> DeadlinePagesPerWordShift];
+        ref var bits = ref _deadlinePageBits[
+            stripeBase + 1 + (page >> DeadlinePagesPerWordShift)];
         var bit = 1L << (page & (DeadlinePagesPerWord - 1));
         var current = Volatile.Read(ref bits);
         while ((current & bit) == 0)
@@ -645,7 +659,7 @@ internal sealed class PendingRequestTable : IDisposable
             current = observed;
         }
 
-        Volatile.Write(ref _deadlinePageHint, page);
+        Volatile.Write(ref _deadlinePageBits[stripeBase], encodedPage);
     }
 
     private bool TryAcquireCapacity()
@@ -922,16 +936,28 @@ internal sealed class PendingRequestTable : IDisposable
 
             var now = _timeProvider.GetTimestamp();
             var inspectedSlots = 0;
-            for (var wordIndex = 0; wordIndex < _deadlinePageBits.Length; wordIndex++)
+            for (var wordIndex = 0; wordIndex < _deadlinePageWordCount; wordIndex++)
             {
-                ref var liveBits = ref _deadlinePageBits[wordIndex];
-                var pages = (ulong)Interlocked.Exchange(ref liveBits, 0);
+                ulong pages = 0;
+                for (var stripe = 0; stripe < DeadlineMarkerStripeCount; stripe++)
+                {
+                    ref var stripeBits = ref _deadlinePageBits[
+                        stripe * _deadlineMarkerStripeStride + 1 + wordIndex];
+                    pages |= (ulong)Interlocked.Exchange(ref stripeBits, 0);
+                }
+
                 while (pages != 0)
                 {
                     var bitIndex = System.Numerics.BitOperations.TrailingZeroCount(pages);
                     pages &= pages - 1;
                     var page = (wordIndex << DeadlinePagesPerWordShift) + bitIndex;
-                    Interlocked.CompareExchange(ref _deadlinePageHint, -1, page);
+                    var encodedPage = (long)page + 1;
+                    for (var stripe = 0; stripe < DeadlineRegistrationStripeCount; stripe++)
+                    {
+                        ref var hint = ref _deadlinePageBits[stripe * _deadlineMarkerStripeStride];
+                        Interlocked.CompareExchange(ref hint, 0, encodedPage);
+                    }
+
                     var start = page << DeadlinePageShift;
                     if (start >= slots.Length)
                         continue;
@@ -957,8 +983,10 @@ internal sealed class PendingRequestTable : IDisposable
 
                     if (hasFutureDeadline)
                     {
+                        ref var retentionBits = ref _deadlinePageBits[
+                            DeadlineRetentionStripe * _deadlineMarkerStripeStride + 1 + wordIndex];
                         var pageBit = 1L << bitIndex;
-                        Interlocked.Or(ref liveBits, pageBit);
+                        Interlocked.Or(ref retentionBits, pageBit);
                     }
                 }
             }
