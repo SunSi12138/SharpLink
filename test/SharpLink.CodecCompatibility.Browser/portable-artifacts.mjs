@@ -19,7 +19,10 @@ const RAW_FIXTURE_ID_SET = new Set(RAW_FIXTURE_IDS);
 const CONSUMER_IDENTITY_FIELDS = Object.freeze([
     'platformTag',
     'targetFramework',
+    'frameworkDescription',
     'runtimeFamily',
+    'runtimeVersion',
+    'sdkVersion',
     'runtimeIdentifier',
     'executionEnvironment',
     'os',
