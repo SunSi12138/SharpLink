@@ -14,6 +14,16 @@ internal static class Program
 {
     private const string BuiltinRawCategory = "builtin-semantic-raw";
 
+    private static readonly string[] GuaranteedDesktopPlatformTags =
+    [
+        "linux-x64-hosted-desktop-coreclr-net10",
+        "linux-arm64-hosted-desktop-coreclr-net10",
+        "windows-x64-hosted-desktop-coreclr-net10",
+        "windows-arm64-hosted-desktop-coreclr-net10",
+        "macos-arm64-hosted-desktop-coreclr-net10",
+        "macos-x64-hosted-desktop-coreclr-net10"
+    ];
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -195,14 +205,18 @@ internal static class Program
         if (reportFiles.Length == 0)
             throw new InvalidOperationException($"No verification.json files were found under {inputDirectory}.");
 
+        var reports = new List<VerificationReport>();
         var results = new List<VerificationEntry>();
         foreach (var reportFile in reportFiles)
         {
             var report = ReadJson<VerificationReport>(reportFile);
             if (report.SchemaVersion != 1)
                 throw new InvalidOperationException($"Unsupported verification schemaVersion {report.SchemaVersion} in {reportFile}.");
+            reports.Add(report);
             results.AddRange(report.Results);
         }
+
+        ValidateGuaranteedDesktopIdentitySet(reports);
 
         results = results
             .OrderBy(static result => result.Producer, StringComparer.Ordinal)
@@ -274,6 +288,46 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 $"SharpLink commit mismatch for producer {producer.PlatformTag} in {source}: producer={producer.SharpLinkCommit}, consumer={consumer.SharpLinkCommit}.");
+        }
+    }
+
+    private static void ValidateGuaranteedDesktopIdentitySet(IReadOnlyList<VerificationReport> reports)
+    {
+        if (reports.Count == 0
+            || reports.Any(static report => !string.Equals(
+                report.Consumer.ExecutionEnvironment,
+                "hosted-desktop",
+                StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        AssertExactIdentitySet(
+            reports.Select(static report => report.Consumer.PlatformTag),
+            GuaranteedDesktopPlatformTags,
+            "desktop consumer identities");
+
+        foreach (var report in reports)
+        {
+            AssertExactIdentitySet(
+                report.Results.Select(static result => result.Consumer),
+                [report.Consumer.PlatformTag],
+                $"result consumer identities for {report.Consumer.PlatformTag}");
+            AssertExactIdentitySet(
+                report.Results.Select(static result => result.Producer),
+                GuaranteedDesktopPlatformTags,
+                $"producer identities for {report.Consumer.PlatformTag}");
+        }
+    }
+
+    private static void AssertExactIdentitySet(IEnumerable<string> actualValues, IEnumerable<string> expectedValues, string label)
+    {
+        var actual = actualValues.Distinct(StringComparer.Ordinal).OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        var expected = expectedValues.Distinct(StringComparer.Ordinal).OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{label} mismatch: expected=[{string.Join(", ", expected)}], actual=[{string.Join(", ", actual)}].");
         }
     }
 
