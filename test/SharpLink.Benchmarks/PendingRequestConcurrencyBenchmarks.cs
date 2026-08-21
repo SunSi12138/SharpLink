@@ -12,16 +12,16 @@ namespace SharpLink.Benchmarks;
 /// Exercises the pending-call table with 1,024 requests in flight while registrations and
 /// completions run concurrently. Each worker starts from a different 256-request window, completes an
 /// older request, then immediately rents/completes a replacement from the advancing request-ID stream.
-/// This intentionally creates a multi-window concurrent access pattern instead of the single-thread single-thread
-/// pattern covered by <see cref="RuntimeHotPathBenchmarks.PendingRegisterAndComplete"/>.
+/// This provides a multi-window concurrent workload alongside the single-thread
+/// <see cref="RuntimeHotPathBenchmarks.PendingRegisterAndComplete"/> benchmark.
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
 public class PendingRequestConcurrencyBenchmarks
 {
-    private const int SegmentSize = 256;
+    private const int WindowSize = 256;
     private const int WorkerCount = 4;
-    private const int InitialInFlight = SegmentSize * WorkerCount;
+    private const int InitialInFlight = WindowSize * WorkerCount;
 
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
@@ -43,14 +43,13 @@ public class PendingRequestConcurrencyBenchmarks
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
 
-        // Align the first benchmark window to a 256-request boundary so each worker owns exactly one
-        // old request window. The benchmark body advances by a multiple of SegmentSize, so subsequent
-        // invocations stay aligned even as request IDs wrap.
+        // Align the first benchmark window to a 256-request boundary. The benchmark body advances
+        // by a multiple of WindowSize, so later invocations remain aligned as request IDs wrap.
         while (true)
         {
             var operation = _pending.Rent<int>(out var requestId);
             Complete(operation, requestId);
-            if ((requestId & (SegmentSize - 1)) == SegmentSize - 1)
+            if ((requestId & (WindowSize - 1)) == WindowSize - 1)
                 break;
         }
     }
@@ -68,18 +67,17 @@ public class PendingRequestConcurrencyBenchmarks
         for (var index = 0; index < InitialInFlight; index++)
             _operations[index] = _pending.Rent<int>(out _requestIds[index]);
 
-        if ((_requestIds[0] & (SegmentSize - 1)) != 0)
-            throw new InvalidOperationException("Benchmark request window is not segment-aligned.");
+        if ((_requestIds[0] & (WindowSize - 1)) != 0)
+            throw new InvalidOperationException("Benchmark request window is not aligned.");
 
         Parallel.For(0, WorkerCount, worker =>
         {
-            var start = worker * SegmentSize;
-            var end = start + SegmentSize;
+            var start = worker * WindowSize;
+            var end = start + WindowSize;
             for (var index = start; index < end; index++)
             {
-                // Complete from one of four older request windows while all workers concurrently advance
-                // the registration stream into newer segments. This keeps >256 requests in flight
-                // for most of the batch and interleaves old-segment completion with new registration.
+                // Interleave completion of 1,024 older requests with replacement registrations so
+                // the table stays substantially occupied while four workers mutate it concurrently.
                 Complete(_operations[index], _requestIds[index]);
                 var replacement = _pending.Rent<int>(out var replacementId);
                 Complete(replacement, replacementId);
