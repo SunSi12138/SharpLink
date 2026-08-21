@@ -131,8 +131,16 @@ internal sealed partial class SharpLinkServer
             preDecodeMetadata);
         try
         {
-            if (!ThreadPool.UnsafeQueueUserWorkItem(workItem, preferLocal: false))
+            // QueueUserWorkItem flows the current ExecutionContext so request logging scopes,
+            // Activity.Current, and other AsyncLocal state remain visible during synchronous
+            // decode/service dispatch while the pooled state avoids a per-call closure object.
+            if (!ThreadPool.QueueUserWorkItem(
+                    static item => item.Execute(),
+                    workItem,
+                    preferLocal: false))
+            {
                 throw new InvalidOperationException("Unable to queue compressed RPC dispatch.");
+            }
         }
         catch
         {
@@ -289,7 +297,7 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private sealed class CompressedCancellableRpcWorkItem : IThreadPoolWorkItem
+    private sealed class CompressedCancellableRpcWorkItem
     {
         private const int MaxRetained = 4096;
         private static readonly ConcurrentStack<CompressedCancellableRpcWorkItem> Pool = new();
@@ -343,7 +351,7 @@ internal sealed partial class SharpLinkServer
             return workItem;
         }
 
-        void IThreadPoolWorkItem.Execute()
+        internal void Execute()
         {
             var server = _server!;
             try
