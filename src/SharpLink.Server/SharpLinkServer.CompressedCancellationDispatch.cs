@@ -9,80 +9,63 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken)
-    {
-        var cancellableCompressed =
-            (flags & (ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable)) ==
-            (ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable);
-        if (!cancellableCompressed || _admissionController is not null)
-        {
-            return DispatchRpcAsync(
-                connection,
-                requestId,
-                flags,
-                payload,
-                requestCancellationMap,
-                serverLoopToken,
-                admittedCallState: null,
-                admissionGranted: false);
-        }
-
-        var session = connection.Session;
-        var request = ReadRequestRoutingEnvelope(session, payload, flags);
-        if (IsDeadlineExceeded(request.RpcDeadline) ||
-            !Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo) ||
-            !serviceInfo.AcceptsCalls)
-        {
-            return DispatchRpcAsync(
-                connection,
-                requestId,
-                flags,
-                payload,
-                requestCancellationMap,
-                serverLoopToken,
-                admittedCallState: null,
-                admissionGranted: false);
-        }
-
-        var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
-        if (descriptor.ClientStreamCount != 0)
-        {
-            return DispatchRpcAsync(
-                connection,
-                requestId,
-                flags,
-                payload,
-                requestCancellationMap,
-                serverLoopToken,
-                admittedCallState: null,
-                admissionGranted: false);
-        }
-
-        var retainedPayload = CopyAdmissionPayload(payload);
-        ServerCallCancellationState callState;
-        try
-        {
-            callState = CreateAdmissionWaitState(
-                connection,
-                requestId,
-                request.RpcDeadline,
-                serverLoopToken,
-                serviceInfo.ModuleCancellation,
-                requestCancellationMap);
-        }
-        catch
-        {
-            _runtimeContext.Buffers.Return(retainedPayload);
-            throw;
-        }
-
-        return DispatchRetainedCancellableCompressedRpcAsync(
-            retainedPayload,
+        => DispatchRpcAsync(
             connection,
             requestId,
             flags,
+            payload,
             requestCancellationMap,
             serverLoopToken,
-            callState);
+            admittedCallState: null,
+            admissionGranted: false,
+            callCapacityGranted: false,
+            allowCompressedCancellationHandoff: true,
+            preparedServiceInfo: null,
+            reusePreDecodeMetadata: false,
+            preDecodeMetadata: null);
+
+    private ValueTask HandoffCompressedCancellableRpc(
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        ServerCallCancellationState callState,
+        ServiceRegistration serviceInfo,
+        RpcMethodDescriptor descriptor,
+        bool reusePreDecodeMetadata,
+        SharpLinkMetadata? preDecodeMetadata)
+    {
+        IRpcByteBufferWriter? retainedPayload = null;
+        try
+        {
+            ReservePreDecodeRequestStreams(
+                connection.Session,
+                requestId,
+                descriptor.ClientStreamCount,
+                callState);
+            retainedPayload = CopyAdmissionPayload(payload);
+            return DispatchRetainedCancellableCompressedRpcAsync(
+                retainedPayload,
+                connection,
+                requestId,
+                flags,
+                requestCancellationMap,
+                serverLoopToken,
+                callState,
+                serviceInfo,
+                reusePreDecodeMetadata,
+                preDecodeMetadata);
+        }
+        catch (Exception exception)
+        {
+            if (retainedPayload is not null)
+                _runtimeContext.Buffers.Return(retainedPayload);
+            CompleteFailedRequestStreams(connection.Session, requestId, exception);
+            ReleaseDispatchResources(callState, requestId, requestCancellationMap, connection);
+            throw;
+        }
     }
 
     private async ValueTask DispatchRetainedCancellableCompressedRpcAsync(
@@ -92,17 +75,14 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
-        ServerCallCancellationState callState)
+        ServerCallCancellationState callState,
+        ServiceRegistration serviceInfo,
+        bool reusePreDecodeMetadata,
+        SharpLinkMetadata? preDecodeMetadata)
     {
         await Task.Yield();
         try
         {
-            if (callState.Reason == ServerCallCancellationReason.RemoteCancel)
-            {
-                ReleaseAdmissionCallState(requestCancellationMap, requestId, callState);
-                return;
-            }
-
             var dispatch = DispatchRpcAsync(
                 connection,
                 requestId,
@@ -111,9 +91,106 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 callState,
-                admissionGranted: false);
+                admissionGranted: true,
+                callCapacityGranted: true,
+                allowCompressedCancellationHandoff: false,
+                preparedServiceInfo: serviceInfo,
+                reusePreDecodeMetadata,
+                preDecodeMetadata);
             if (!dispatch.IsCompletedSuccessfully)
                 await dispatch.ConfigureAwait(false);
+        }
+        finally
+        {
+            _runtimeContext.Buffers.Return(retainedPayload);
+        }
+    }
+
+    private void HandoffCompressedCancellableOneWayRpc(
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        ServerCallCancellationState callState,
+        ServiceRegistration serviceInfo,
+        RpcMethodDescriptor descriptor,
+        bool reusePreDecodeMetadata,
+        SharpLinkMetadata? preDecodeMetadata)
+    {
+        IRpcByteBufferWriter? retainedPayload = null;
+        try
+        {
+            ReservePreDecodeRequestStreams(
+                connection.Session,
+                requestId,
+                descriptor.ClientStreamCount,
+                callState);
+            retainedPayload = CopyAdmissionPayload(payload);
+            ObserveUserCall(
+                new ValueTask(DispatchRetainedCancellableCompressedOneWayRpcAsync(
+                    retainedPayload,
+                    connection,
+                    requestId,
+                    flags,
+                    requestCancellationMap,
+                    serverLoopToken,
+                    descriptor.ClientStreamCount,
+                    callState,
+                    serviceInfo,
+                    reusePreDecodeMetadata,
+                    preDecodeMetadata)),
+                requestId);
+        }
+        catch (Exception exception)
+        {
+            if (retainedPayload is not null)
+                _runtimeContext.Buffers.Return(retainedPayload);
+            DrainFailedOneWayStreams(
+                connection.Session,
+                requestId,
+                descriptor.ClientStreamCount);
+            ReleaseOneWayDispatchResources(
+                callState,
+                requestId,
+                requestCancellationMap,
+                connection);
+            throw;
+        }
+    }
+
+    private async Task DispatchRetainedCancellableCompressedOneWayRpcAsync(
+        IRpcByteBufferWriter retainedPayload,
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        int clientStreamCount,
+        ServerCallCancellationState callState,
+        ServiceRegistration serviceInfo,
+        bool reusePreDecodeMetadata,
+        SharpLinkMetadata? preDecodeMetadata)
+    {
+        await Task.Yield();
+        try
+        {
+            DispatchOneWayRpc(
+                connection,
+                requestId,
+                flags,
+                new ReadOnlySequence<byte>(retainedPayload.WrittenMemory),
+                requestCancellationMap,
+                serverLoopToken,
+                callState,
+                admissionGranted: true,
+                admittedClientStreamCount: clientStreamCount,
+                callCapacityGranted: true,
+                allowCompressedCancellationHandoff: false,
+                preparedServiceInfo: serviceInfo,
+                reusePreDecodeMetadata,
+                preDecodeMetadata);
         }
         finally
         {
