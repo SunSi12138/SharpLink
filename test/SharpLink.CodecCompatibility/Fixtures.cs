@@ -252,6 +252,11 @@ internal static class FixtureRegistry
             C = Offset(block256, 0x20000),
             D = Offset(block256, 0x30000)
         };
+        var block2048 = new Block2048
+        {
+            A = block1024,
+            B = Offset(block1024, 0x40000)
+        };
 
         return
         [
@@ -295,6 +300,7 @@ internal static class FixtureRegistry
             new Fixture<Block64>("Large64", "large", block64, false, nameof(Block64.A), nameof(Block64.B), nameof(Block64.C), nameof(Block64.D), nameof(Block64.E), nameof(Block64.F), nameof(Block64.G), nameof(Block64.H)),
             new Fixture<Block256>("Large256", "large", block256, false, nameof(Block256.A), nameof(Block256.B), nameof(Block256.C), nameof(Block256.D)),
             new Fixture<Block1024>("Large1024", "large", block1024, false, nameof(Block1024.A), nameof(Block1024.B), nameof(Block1024.C), nameof(Block1024.D)),
+            new Fixture<Block2048>("Large2048", "large", block2048, false, nameof(Block2048.A), nameof(Block2048.B)),
 
             new Fixture<Vector3Value>("Vector3Value", "user-like", new Vector3Value { X = 1.25, Y = -2.5, Z = 100.125 }, false, nameof(Vector3Value.X), nameof(Vector3Value.Y), nameof(Vector3Value.Z)),
             new Fixture<TimestampFlags>("TimestampFlags", "user-like", new TimestampFlags { UnixNanoseconds = 1_787_224_683_123_456_789, Flags = 0xA5A55A5A, Sequence = 42 }, false, nameof(TimestampFlags.UnixNanoseconds), nameof(TimestampFlags.Flags), nameof(TimestampFlags.Sequence)),
@@ -302,8 +308,8 @@ internal static class FixtureRegistry
             new Fixture<GeometryValue>("GeometryValue", "user-like", new GeometryValue { Position = new Vector3Value { X = 10, Y = 20, Z = 30 }, Velocity = new Vector3Value { X = -1, Y = 0.5, Z = 3 }, Timestamp = 1_787_224_683_000_000_000 }, false, nameof(GeometryValue.Position), nameof(GeometryValue.Velocity), nameof(GeometryValue.Timestamp)),
 
             new Fixture<DateOnly>("DateOnlyRaw", "builtin-semantic-raw", new DateOnly(2026, 8, 20)),
-            new Fixture<DateTime>("DateTimeRaw", "builtin-semantic-raw", new DateTime(2026, 8, 20, 12, 34, 56, DateTimeKind.Utc)),
-            new Fixture<DateTimeOffset>("DateTimeOffsetRaw", "builtin-semantic-raw", new DateTimeOffset(2026, 8, 20, 12, 34, 56, TimeSpan.FromHours(8))),
+            new Fixture<DateTime>("DateTimeRaw", "builtin-semantic-raw", new DateTime(2026, 8, 20, 12, 34, 56, DateTimeKind.Utc), static (left, right) => left.Ticks == right.Ticks && left.Kind == right.Kind),
+            new Fixture<DateTimeOffset>("DateTimeOffsetRaw", "builtin-semantic-raw", new DateTimeOffset(2026, 8, 20, 12, 34, 56, TimeSpan.FromHours(8)), static (left, right) => left.Ticks == right.Ticks && left.UtcTicks == right.UtcTicks && left.Offset == right.Offset),
             new Fixture<TimeOnly>("TimeOnlyRaw", "builtin-semantic-raw", new TimeOnly(12, 34, 56, 789)),
             new Fixture<TimeSpan>("TimeSpanRaw", "builtin-semantic-raw", TimeSpan.FromTicks(1234567890123)),
             new Fixture<Index>("IndexRaw", "builtin-semantic-raw", new Index(7, fromEnd: true)),
@@ -323,6 +329,14 @@ internal static class FixtureRegistry
         F = seed + 6,
         G = seed + 7,
         H = seed + 8
+    };
+
+    private static Block1024 Offset(Block1024 value, long offset) => new()
+    {
+        A = Offset(value.A, offset),
+        B = Offset(value.B, offset),
+        C = Offset(value.C, offset),
+        D = Offset(value.D, offset)
     };
 
     private static Block256 Offset(Block256 value, long offset) => new()
@@ -476,6 +490,9 @@ internal struct Block256 { public Block64 A; public Block64 B; public Block64 C;
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct Block1024 { public Block256 A; public Block256 B; public Block256 C; public Block256 D; }
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct Block2048 { public Block1024 A; public Block1024 B; }
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct Vector3Value { public double X; public double Y; public double Z; }
