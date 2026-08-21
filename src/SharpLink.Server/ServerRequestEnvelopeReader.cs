@@ -37,7 +37,8 @@ internal static class ServerRequestEnvelopeReader
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
         int maxMetadataBytes,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        bool validateMetadataSyntax = false)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         var reader = new SequenceReader<byte>(payload);
@@ -46,6 +47,8 @@ internal static class ServerRequestEnvelopeReader
         if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
         {
             var metadataLength = ReadMetadataLength(session, ref reader, maxMetadataBytes);
+            if (validateMetadataSyntax)
+                ValidateMetadataPayload(reader.Sequence.Slice(reader.Position, metadataLength));
             reader.Advance(metadataLength);
         }
 
@@ -55,6 +58,53 @@ internal static class ServerRequestEnvelopeReader
             reader.UnreadSequence,
             deadline,
             Metadata: null);
+    }
+
+    internal static ServerRequestEnvelope CompleteDecoded(
+        RpcSession session,
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags,
+        int maxMetadataBytes,
+        ServerRequestEnvelope routing,
+        bool reuseMetadata)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        if (reader.Remaining < ProtocolV2Constants.RequestPrefixBytes)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.MalformedFrame,
+                "Request routing prefix is truncated.");
+        }
+        reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
+
+        if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
+        {
+            if (reader.Remaining < sizeof(long))
+            {
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request deadline is truncated.");
+            }
+            reader.Advance(sizeof(long));
+        }
+
+        var metadata = reuseMetadata ? routing.Metadata : null;
+        if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
+        {
+            var metadataLength = ReadMetadataLength(session, ref reader, maxMetadataBytes);
+            if (!reuseMetadata)
+            {
+                metadata = ProtocolV2PayloadCodec.ReadMetadata(
+                    reader.Sequence.Slice(reader.Position, metadataLength));
+            }
+            reader.Advance(metadataLength);
+        }
+
+        return routing with
+        {
+            Arguments = reader.UnreadSequence,
+            Metadata = metadata
+        };
     }
 
     internal static void ValidateMetadataSyntax(
