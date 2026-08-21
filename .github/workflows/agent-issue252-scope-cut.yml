@@ -1,0 +1,110 @@
+name: Agent Issue 252 Scope Cut
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - agent/issue-252-pending-segments
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-252-pending-segments
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Apply scope cut
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('src/SharpLink.Client/PendingRequestTable.cs')
+          text = source.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one source match, got {count}: {old[:120]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '''    private const int DeadlinePageShift = 8;\n    private const int DeadlinePageSize = 1 << DeadlinePageShift;\n    private const int DeadlinePagesPerWordShift = 6;\n    private const int DeadlinePagesPerWord = 1 << DeadlinePagesPerWordShift;\n    private static long s_nextDeadlineMarkerCacheId;\n    [ThreadStatic] private static long t_deadlineMarkerCacheId;\n    [ThreadStatic] private static long t_deadlineMarkerCacheEpoch;\n    [ThreadStatic] private static int t_deadlineMarkerCachePage;\n''',
+              '')
+          replace_once(
+              '''    private readonly int _deadlinePageWordCount;\n    private readonly long[] _deadlinePageBits;\n    private readonly long _deadlineMarkerCacheId;\n''',
+              '')
+          replace_once('    private long _deadlineMarkerEpoch = 1;\n', '')
+          replace_once(
+              '''        var deadlinePageCount = (capacity + DeadlinePageSize - 1) >> DeadlinePageShift;\n        _deadlinePageWordCount = (deadlinePageCount + DeadlinePagesPerWord - 1) >> DeadlinePagesPerWordShift;\n        _deadlinePageBits = new long[_deadlinePageWordCount];\n        var cacheId = Interlocked.Increment(ref s_nextDeadlineMarkerCacheId);\n        _deadlineMarkerCacheId = cacheId != 0 ? cacheId : Interlocked.Increment(ref s_nextDeadlineMarkerCacheId);\n''',
+              '')
+
+          marker_call = '''                        if (deadline.HasValue)\n                            MarkDeadlinePage(index);\n'''
+          count = text.count(marker_call)
+          if count != 2:
+              raise SystemExit(f'expected two deadline marker calls, got {count}')
+          text = text.replace(marker_call, '')
+
+          marker_start = text.index('    [MethodImpl(MethodImplOptions.AggressiveInlining)]\n    private void MarkDeadlinePage(int index)\n')
+          marker_end = text.index('    private bool TryAcquireCapacity()\n', marker_start)
+          text = text[:marker_start] + text[marker_end:]
+
+          scan_start = text.index('    private void ScanExpiredDeadlines()\n')
+          scan_end = text.index('    private void ArmDeadlineTimer(long deadlineTimestamp)\n', scan_start)
+          full_scan = '''    private void ScanExpiredDeadlines()\n    {\n        if (Volatile.Read(ref _disposed) != 0 ||\n            Interlocked.CompareExchange(ref _deadlineScanRunning, 1, 0) != 0)\n        {\n            return;\n        }\n\n        try\n        {\n            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);\n            var slots = Volatile.Read(ref _slots);\n            if (slots is null)\n            {\n                LastDeadlineScanInspectedSlots = 0;\n                return;\n            }\n\n            var now = _timeProvider.GetTimestamp();\n            var inspectedSlots = 0;\n            for (var index = 0; index < slots.Length; index++)\n            {\n                inspectedSlots++;\n                var call = Volatile.Read(ref slots[index]);\n                if (call is null || !call.Deadline.HasValue)\n                    continue;\n                if (call.Deadline.Timestamp <= now)\n                {\n                    TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);\n                }\n                else\n                {\n                    UpdateEarliestDeadline(call.Deadline.Timestamp);\n                }\n            }\n\n            LastDeadlineScanInspectedSlots = inspectedSlots;\n        }\n        finally\n        {\n            Volatile.Write(ref _deadlineScanRunning, 0);\n            var next = Volatile.Read(ref _approximateEarliestDeadline);\n            if (next != long.MaxValue)\n                ArmDeadlineTimer(next);\n        }\n    }\n\n'''
+          text = text[:scan_start] + full_scan + text[scan_end:]
+          if not text.endswith('\n'):
+              text += '\n'
+          source.write_text(text)
+
+          tests = Path('test/SharpLink.UnitTests/Runtime/PendingRequestTableStorageTests.cs')
+          test_text = tests.read_text()
+          test_text = test_text.replace('using System.Buffers;\n', '').replace('using System.Threading;\n', '')
+          marker_test_start = test_text.index('    [Test]\n    public async Task SparseDeadlineScanShouldInspectOnePage()\n')
+          helper_start = test_text.index('    private static async Task CompleteForCleanup', marker_test_start)
+          test_text = test_text[:marker_test_start] + test_text[helper_start:]
+          if not test_text.endswith('\n'):
+              test_text += '\n'
+          tests.write_text(test_text)
+
+          quick = Path('.github/workflows/pr-quick.yml')
+          quick_text = quick.read_text()
+          evidence_step = '''      - name: Issue 252 fresh deadline maintenance evidence\n        if: github.event.pull_request.number == 260\n        run: bash .github/issue252-deadline-maintenance-evidence.sh\n\n'''
+          if quick_text.count(evidence_step) != 1:
+              raise SystemExit('expected one temporary deadline evidence step')
+          quick.write_text(quick_text.replace(evidence_step, '', 1))
+          PY
+
+          rm -f .github/issue252-deadline-maintenance-evidence.sh
+          rm -f test/SharpLink.Benchmarks/PendingRequestDeadlineBenchmarks.cs
+          rm -f .github/workflows/agent-issue252-scope-cut.yml
+
+          git diff --check
+
+      - name: Validate source tree
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Commit scope cut
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'perf(client): scope issue252 to lazy slot allocation'
+          git push origin HEAD:agent/issue-252-pending-segments
