@@ -19,7 +19,9 @@ public static partial class BrowserExports
             sharpLinkCommit,
             sdkVersion,
             "net10.0/browser-wasm",
-            compilationModeOverride: "Interpreter");
+            compilationModeOverride: "Interpreter",
+            runtimeFamilyOverride: "Mono",
+            executionEnvironmentOverride: "browser");
 
     [JSExport]
     public static string Verify(string envelopesJson, string sharpLinkCommit, string sdkVersion)
@@ -28,5 +30,7 @@ public static partial class BrowserExports
             sharpLinkCommit,
             sdkVersion,
             "net10.0/browser-wasm",
-            compilationModeOverride: "Interpreter");
+            compilationModeOverride: "Interpreter",
+            runtimeFamilyOverride: "Mono",
+            executionEnvironmentOverride: "browser");
 }
