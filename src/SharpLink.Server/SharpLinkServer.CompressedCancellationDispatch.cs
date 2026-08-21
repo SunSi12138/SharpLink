@@ -24,6 +24,32 @@ internal sealed partial class SharpLinkServer
             reusePreDecodeMetadata: false,
             preDecodeMetadata: null);
 
+    // Keeps the existing dispatch-level unit harness stable while the production request-loop
+    // entry point uses the six-argument overload above. SharpLinkServer itself is internal.
+    private ValueTask DispatchRpcAsync(
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        ServerCallCancellationState? admittedCallState,
+        bool admissionGranted)
+        => DispatchRpcAsync(
+            connection,
+            requestId,
+            flags,
+            payload,
+            requestCancellationMap,
+            serverLoopToken,
+            admittedCallState,
+            admissionGranted,
+            callCapacityGranted: false,
+            allowCompressedCancellationHandoff: false,
+            preparedServiceInfo: null,
+            reusePreDecodeMetadata: false,
+            preDecodeMetadata: null);
+
     private ValueTask HandoffCompressedCancellableRpc(
         ServerConnectionState connection,
         long requestId,
