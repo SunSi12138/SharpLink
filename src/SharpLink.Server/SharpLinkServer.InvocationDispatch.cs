@@ -38,12 +38,12 @@ internal sealed partial class SharpLinkServer
             if (callCapacityGranted)
             {
                 CompleteFailedRequestStreams(session, requestId, exception);
-                var responseSend = session.SendRpcErrorWithBackpressureAsync(
+                var capacityResponseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
                     exception,
                     connection.ConnectionToken);
                 return ReleaseDispatchResourcesAfterResponseAsync(
-                    responseSend, admittedCallState, requestId, requestCancellationMap, connection);
+                    capacityResponseSend, admittedCallState, requestId, requestCancellationMap, connection);
             }
 
             ValueTask responseSend;
@@ -75,12 +75,12 @@ internal sealed partial class SharpLinkServer
             if (callCapacityGranted)
             {
                 CompleteFailedRequestStreams(session, requestId, exception);
-                var responseSend = session.SendRpcErrorWithBackpressureAsync(
+                var capacityResponseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
                     exception,
                     connection.ConnectionToken);
                 return ReleaseDispatchResourcesAfterResponseAsync(
-                    responseSend, admittedCallState, requestId, requestCancellationMap, connection);
+                    capacityResponseSend, admittedCallState, requestId, requestCancellationMap, connection);
             }
 
             ValueTask responseSend;
@@ -106,12 +106,12 @@ internal sealed partial class SharpLinkServer
             if (callCapacityGranted)
             {
                 CompleteFailedRequestStreams(session, requestId, exception);
-                var responseSend = session.SendRpcErrorWithBackpressureAsync(
+                var capacityResponseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
                     exception,
                     connection.ConnectionToken);
                 return ReleaseDispatchResourcesAfterResponseAsync(
-                    responseSend, admittedCallState, requestId, requestCancellationMap, connection);
+                    capacityResponseSend, admittedCallState, requestId, requestCancellationMap, connection);
             }
 
             ValueTask responseSend;
