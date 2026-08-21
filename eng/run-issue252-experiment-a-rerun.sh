@@ -32,9 +32,9 @@ echo "[issue252-A] candidate_source_sha=$CAND_SOURCE_SHA"
 )
 
 echo "[issue252-A] validating candidate unit tests"
-if ! dotnet test "$CAND_ROOT/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" -c Release --nologo; then
+if ! dotnet test --project "$CAND_ROOT/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" -c Release --nologo; then
   echo "[issue252-A] first unit-test pass failed; retrying once to separate known unrelated CI flakes"
-  dotnet test "$CAND_ROOT/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" -c Release --nologo
+  dotnet test --project "$CAND_ROOT/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" -c Release --nologo
 fi
 
 echo "[issue252-A] building benchmark variants"
