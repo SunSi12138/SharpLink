@@ -1,6 +1,7 @@
 using System;
-using System.Net.Http;
+using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Foundation;
 using UIKit;
@@ -16,6 +17,9 @@ public static class Application
 [Register("AppDelegate")]
 public sealed class AppDelegate : UIApplicationDelegate
 {
+    private const string InputFileName = "sharplink-input.json";
+    private const string ResultFileName = "sharplink-result.json";
+
     public override UIWindow? Window { get; set; }
 
     public override bool FinishedLaunching(UIApplication application, NSDictionary? launchOptions)
@@ -34,13 +38,19 @@ public sealed class AppDelegate : UIApplicationDelegate
 
     private static async Task RunProbeAsync(ProbeViewController controller)
     {
+        string? resultPath = null;
         try
         {
             await Task.Yield();
 
+            var documentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (string.IsNullOrWhiteSpace(documentsDirectory))
+                throw new InvalidOperationException("iOS Documents directory is unavailable.");
+            Directory.CreateDirectory(documentsDirectory);
+            var inputPath = Path.Combine(documentsDirectory, InputFileName);
+            resultPath = Path.Combine(documentsDirectory, ResultFileName);
+
             var mode = Environment.GetEnvironmentVariable("SHARPLINK_MODE") ?? "produce";
-            var endpoint = Environment.GetEnvironmentVariable("SHARPLINK_ENDPOINT")
-                ?? throw new InvalidOperationException("Missing SHARPLINK_ENDPOINT.");
             var commit = Environment.GetEnvironmentVariable("SHARPLINK_COMMIT") ?? "unknown";
             var sdk = Environment.GetEnvironmentVariable("SHARPLINK_SDK_VERSION") ?? "unknown";
             var targetFramework = Environment.GetEnvironmentVariable("SHARPLINK_TARGET_FRAMEWORK")
@@ -50,7 +60,6 @@ public sealed class AppDelegate : UIApplicationDelegate
             controller.SetStatus($"running {mode}");
 
             string result;
-            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             if (string.Equals(mode, "produce", StringComparison.Ordinal))
             {
                 result = PortableProbe.ProduceJson(
@@ -62,7 +71,7 @@ public sealed class AppDelegate : UIApplicationDelegate
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
             {
-                var input = await client.GetStringAsync($"{endpoint}/input.json");
+                var input = File.ReadAllText(inputPath, Encoding.UTF8);
                 result = PortableProbe.VerifyJson(
                     input,
                     commit,
@@ -76,11 +85,8 @@ public sealed class AppDelegate : UIApplicationDelegate
                 throw new InvalidOperationException($"Unknown iOS probe mode: {mode}.");
             }
 
-            Console.WriteLine($"SharpLink codec probe generated {Encoding.UTF8.GetByteCount(result)} result bytes; posting to host.");
-            using var content = new StringContent(result, Encoding.UTF8, "application/json");
-            var response = await client.PostAsync($"{endpoint}/result", content);
-            response.EnsureSuccessStatusCode();
-            Console.WriteLine("SharpLink codec compatibility iOS probe completed.");
+            File.WriteAllText(resultPath, result, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            Console.WriteLine($"SharpLink codec probe completed; persisted {Encoding.UTF8.GetByteCount(result)} result bytes.");
             controller.SetStatus("completed");
         }
         catch (Exception exception)
@@ -89,24 +95,21 @@ public sealed class AppDelegate : UIApplicationDelegate
             controller.SetStatus(exception.ToString());
             try
             {
-                var endpoint = Environment.GetEnvironmentVariable("SHARPLINK_ENDPOINT");
-                if (!string.IsNullOrWhiteSpace(endpoint))
+                var documentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                if (!string.IsNullOrWhiteSpace(documentsDirectory))
                 {
-                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                    var message = exception.ToString().Replace("\\", "\\\\", StringComparison.Ordinal)
-                        .Replace("\"", "\\\"", StringComparison.Ordinal)
-                        .Replace("\r", "\\r", StringComparison.Ordinal)
-                        .Replace("\n", "\\n", StringComparison.Ordinal);
-                    using var content = new StringContent(
-                        $"{{\"portableProbeError\":\"{message}\"}}",
-                        Encoding.UTF8,
-                        "application/json");
-                    await client.PostAsync($"{endpoint}/result", content);
+                    Directory.CreateDirectory(documentsDirectory);
+                    resultPath ??= Path.Combine(documentsDirectory, ResultFileName);
+                    var json = JsonSerializer.Serialize(new
+                    {
+                        portableProbeError = exception.ToString()
+                    });
+                    File.WriteAllText(resultPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 }
             }
             catch (Exception reportingException)
             {
-                Console.Error.WriteLine($"Failed to report iOS probe error to host: {reportingException}");
+                Console.Error.WriteLine($"Failed to persist iOS probe error: {reportingException}");
             }
         }
     }
