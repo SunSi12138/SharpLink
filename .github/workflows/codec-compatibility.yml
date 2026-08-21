@@ -62,8 +62,54 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  browser-produce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Publish browser probe
+        run: >-
+          dotnet publish -c Release
+          test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
+          -o artifacts/codec-compat/browser-publish
+
+      - name: Produce browser WASM corpus
+        shell: bash
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/run-browser.mjs
+          produce
+          artifacts/codec-compat/browser-publish
+          artifacts/codec-compat/browser-corpus
+          "$SHARPLINK_COMMIT"
+          "$SHARPLINK_SDK_VERSION"
+
+      - name: Upload browser WASM corpus
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-corpus-browser-wasm
+          path: artifacts/codec-compat/browser-corpus
+          if-no-files-found: error
+          retention-days: 30
+
   verify:
-    needs: produce
+    needs: [produce, browser-produce]
     strategy:
       fail-fast: false
       matrix:
@@ -124,8 +170,64 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  browser-verify:
+    needs: [produce, browser-produce]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download all producer corpora
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-corpus-*
+          path: artifacts/codec-compat/producers
+          merge-multiple: false
+
+      - name: Publish browser probe
+        run: >-
+          dotnet publish -c Release
+          test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
+          -o artifacts/codec-compat/browser-publish
+
+      - name: Cross-verify in browser WASM
+        shell: bash
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/run-browser.mjs
+          verify
+          artifacts/codec-compat/browser-publish
+          artifacts/codec-compat/producers
+          artifacts/codec-compat/browser-verification/verification.json
+          "$SHARPLINK_COMMIT"
+          "$SHARPLINK_SDK_VERSION"
+
+      - name: Upload browser WASM verification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-verification-browser-wasm
+          path: artifacts/codec-compat/browser-verification/verification.json
+          if-no-files-found: error
+          retention-days: 30
+
   summary:
-    needs: verify
+    needs: [verify, browser-verify]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -152,12 +254,12 @@ jobs:
           path: artifacts/codec-compat/verifications
           merge-multiple: false
 
-      - name: Require every desktop consumer report
+      - name: Require every consumer report
         shell: bash
         run: |
           count="$(find artifacts/codec-compat/verifications -name verification.json -type f | wc -l | tr -d ' ')"
-          if [[ "$count" != "6" ]]; then
-            echo "::error::Expected 6 desktop consumer reports, found $count."
+          if [[ "$count" != "7" ]]; then
+            echo "::error::Expected 7 consumer reports, found $count."
             exit 1
           fi
 
