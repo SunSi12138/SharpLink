@@ -20,9 +20,17 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null)
+        string? compilationModeOverride = null,
+        string? runtimeFamilyOverride = null,
+        string? executionEnvironmentOverride = null)
         => JsonSerializer.Serialize(
-            Produce(sharpLinkCommit, sdkVersion, targetFramework, compilationModeOverride),
+            Produce(
+                sharpLinkCommit,
+                sdkVersion,
+                targetFramework,
+                compilationModeOverride,
+                runtimeFamilyOverride,
+                executionEnvironmentOverride),
             JsonOptions);
 
     internal static string VerifyJson(
@@ -30,11 +38,20 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null)
+        string? compilationModeOverride = null,
+        string? runtimeFamilyOverride = null,
+        string? executionEnvironmentOverride = null)
     {
         var envelopes = JsonSerializer.Deserialize<List<CorpusEnvelope>>(envelopesJson, JsonOptions)
             ?? throw new InvalidOperationException("Failed to deserialize portable producer envelopes.");
-        var report = Verify(envelopes, sharpLinkCommit, sdkVersion, targetFramework, compilationModeOverride);
+        var report = Verify(
+            envelopes,
+            sharpLinkCommit,
+            sdkVersion,
+            targetFramework,
+            compilationModeOverride,
+            runtimeFamilyOverride,
+            executionEnvironmentOverride);
         return JsonSerializer.Serialize(report, JsonOptions);
     }
 
@@ -42,9 +59,17 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null)
+        string? compilationModeOverride = null,
+        string? runtimeFamilyOverride = null,
+        string? executionEnvironmentOverride = null)
     {
-        var manifest = CreateRuntimeManifest(sharpLinkCommit, sdkVersion, targetFramework, compilationModeOverride);
+        var manifest = CreateRuntimeManifest(
+            sharpLinkCommit,
+            sdkVersion,
+            targetFramework,
+            compilationModeOverride,
+            runtimeFamilyOverride,
+            executionEnvironmentOverride);
         var envelope = new CorpusEnvelope { Manifest = manifest };
 
         foreach (var fixture in FixtureRegistry.All)
@@ -75,9 +100,17 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null)
+        string? compilationModeOverride = null,
+        string? runtimeFamilyOverride = null,
+        string? executionEnvironmentOverride = null)
     {
-        var consumer = CreateRuntimeManifest(sharpLinkCommit, sdkVersion, targetFramework, compilationModeOverride);
+        var consumer = CreateRuntimeManifest(
+            sharpLinkCommit,
+            sdkVersion,
+            targetFramework,
+            compilationModeOverride,
+            runtimeFamilyOverride,
+            executionEnvironmentOverride);
         var report = new VerificationReport { Consumer = consumer };
 
         foreach (var envelope in envelopes.OrderBy(static item => item.Manifest.PlatformTag, StringComparer.Ordinal))
@@ -131,7 +164,9 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride)
+        string? compilationModeOverride,
+        string? runtimeFamilyOverride,
+        string? executionEnvironmentOverride)
     {
         var os = OperatingSystem.IsBrowser()
             ? "browser"
@@ -148,7 +183,8 @@ internal static class PortableProbe
                                 : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
                                     ? "linux"
                                     : "unknown";
-        var runtimeFamily = Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono";
+        var runtimeFamily = runtimeFamilyOverride
+            ?? (Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono");
         var compilationMode = compilationModeOverride
             ?? (!RuntimeFeature.IsDynamicCodeSupported
                 ? "AOT"
@@ -156,6 +192,14 @@ internal static class PortableProbe
                     ? "JIT"
                     : "Interpreter");
         var processArchitecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        var executionEnvironment = executionEnvironmentOverride
+            ?? (OperatingSystem.IsBrowser()
+                ? "browser"
+                : OperatingSystem.IsAndroid()
+                    ? "android-runtime"
+                    : OperatingSystem.IsIOS()
+                        ? "ios-runtime"
+                        : "hosted-desktop");
 
         return new RuntimeManifest
         {
@@ -166,6 +210,7 @@ internal static class PortableProbe
             RuntimeVersion = Environment.Version.ToString(),
             SdkVersion = string.IsNullOrWhiteSpace(sdkVersion) ? "unknown" : sdkVersion,
             RuntimeIdentifier = RuntimeInformation.RuntimeIdentifier,
+            ExecutionEnvironment = executionEnvironment,
             Os = os,
             OsVersion = RuntimeInformation.OSDescription,
             ProcessArchitecture = processArchitecture,
