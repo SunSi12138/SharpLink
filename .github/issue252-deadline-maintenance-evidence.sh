@@ -18,26 +18,25 @@ trap 'git -C "$ROOT" worktree remove --force "$BASE" >/dev/null 2>&1 || true; gi
 echo "[issue252-deadline] base_sha=$(git -C "$BASE" rev-parse HEAD)"
 echo "[issue252-deadline] candidate_sha=$(git -C "$CANDIDATE" rev-parse HEAD)"
 
-# Use the exact same benchmark source on both implementations so only PendingRequestTable differs.
+# Use the same deadline benchmark source on both worktrees.
 cp "$ROOT/test/SharpLink.Benchmarks/PendingRequestDeadlineBenchmarks.cs" \
    "$BASE/test/SharpLink.Benchmarks/PendingRequestDeadlineBenchmarks.cs"
 
-# Evaluate the page-local approximate-earliest design without committing it to production first.
-# The candidate worktree is rewritten only for this evidence run. Registration performs an atomic min
-# on one long per 256-slot page; completion does not touch page metadata. Scans read page minima and
-# inspect slot ranges only when the page minimum is due. Stale minima are conservative: they can cause
-# one later page scan, but cannot delay a newly registered earlier deadline because OnRegistered still
-# updates the table-wide earliest timer after publishing the page minimum.
+# Theory-selected candidate: compact shared bitmap plus a value-only ThreadStatic locality cache.
+# A scanner advances a table epoch before consuming any bits. Registration publishes the slot first,
+# then reads that epoch. A cache hit therefore means either (a) the page bit is still live and a future
+# scanner will consume it, or (b) a concurrent scanner's epoch transition linearizes after this read,
+# in which case that scanner still consumes the old live bit and scans the already-published slot.
+# Reading the new epoch invalidates the TLS hit and forces republishing. TLS stores only numeric table id,
+# page and epoch, so it cannot retain a PendingRequestTable on a long-lived worker thread.
 python3 - "$CANDIDATE/src/SharpLink.Client/PendingRequestTable.cs" \
           "$BASE/test/SharpLink.Benchmarks/PendingRequestDeadlineBenchmarks.cs" \
-          "$CANDIDATE/test/SharpLink.Benchmarks/PendingRequestDeadlineBenchmarks.cs" \
-          "$CANDIDATE/test/SharpLink.UnitTests/Runtime/PendingRequestTableStorageTests.cs" <<'PY'
+          "$CANDIDATE/test/SharpLink.Benchmarks/PendingRequestDeadlineBenchmarks.cs" <<'PY'
 from pathlib import Path
 import sys
 
 source_path = Path(sys.argv[1])
 benchmark_paths = [Path(sys.argv[2]), Path(sys.argv[3])]
-storage_test_path = Path(sys.argv[4])
 
 
 def replace_exact(text, old, new, expected=1, label="replacement"):
@@ -47,25 +46,62 @@ def replace_exact(text, old, new, expected=1, label="replacement"):
     return text.replace(old, new)
 
 source = source_path.read_text(encoding="utf-8")
+
 source = replace_exact(
     source,
-    "    private readonly long[] _deadlinePageBits;\n",
-    "    private readonly long[] _deadlinePageBits;\n"
-    "    private readonly long[] _deadlinePageEarliest;\n",
-    label="add page-earliest field")
+    '''    private const int DeadlinePagesPerWord = 1 << DeadlinePagesPerWordShift;
+    private const int DeadlineRegistrationStripeCount = 16;
+    private const int DeadlineRegistrationStripeMask = DeadlineRegistrationStripeCount - 1;
+    private const int DeadlineRetentionStripe = DeadlineRegistrationStripeCount;
+    private const int DeadlineMarkerStripeCount = DeadlineRegistrationStripeCount + 1;
+    private const int DeadlineMarkerCacheLineLongs = 8;
+''',
+    '''    private const int DeadlinePagesPerWord = 1 << DeadlinePagesPerWordShift;
+    private static long s_nextDeadlineMarkerCacheId;
+    [ThreadStatic] private static long t_deadlineMarkerCacheId;
+    [ThreadStatic] private static long t_deadlineMarkerCacheEpoch;
+    [ThreadStatic] private static int t_deadlineMarkerCachePage;
+''',
+    label="replace stripe constants with TLS cache fields")
+
 source = replace_exact(
     source,
-    "        _deadlinePageBits = new long[_deadlineMarkerStripeStride * DeadlineMarkerStripeCount];\n",
-    "        _deadlinePageBits = new long[_deadlineMarkerStripeStride * DeadlineMarkerStripeCount];\n"
-    "        _deadlinePageEarliest = new long[deadlinePageCount];\n"
-    "        Array.Fill(_deadlinePageEarliest, long.MaxValue);\n",
-    label="initialize page-earliest field")
+    '''    private readonly int _deadlinePageWordCount;
+    private readonly int _deadlineMarkerStripeStride;
+    private readonly long[] _deadlinePageBits;
+''',
+    '''    private readonly int _deadlinePageWordCount;
+    private readonly long[] _deadlinePageBits;
+    private readonly long _deadlineMarkerCacheId;
+''',
+    label="replace stripe storage fields")
+
 source = replace_exact(
     source,
-    "                            MarkDeadlinePage(index);\n",
-    "                            MarkDeadlinePage(index, deadline.Timestamp);\n",
-    expected=2,
-    label="pass deadline timestamp to page marker")
+    '''    private long _approximateEarliestDeadline = long.MaxValue;
+    private int _deadlineScanRunning;
+''',
+    '''    private long _approximateEarliestDeadline = long.MaxValue;
+    private long _deadlineMarkerEpoch;
+    private int _deadlineScanRunning;
+''',
+    label="add scanner epoch")
+
+source = replace_exact(
+    source,
+    '''        _deadlinePageWordCount = (deadlinePageCount + DeadlinePagesPerWord - 1) >> DeadlinePagesPerWordShift;
+        var stripeLongs = 1 + _deadlinePageWordCount;
+        _deadlineMarkerStripeStride =
+            (stripeLongs + DeadlineMarkerCacheLineLongs - 1) & ~(DeadlineMarkerCacheLineLongs - 1);
+        _deadlinePageBits = new long[_deadlineMarkerStripeStride * DeadlineMarkerStripeCount];
+        _indexMask = capacity - 1;
+''',
+    '''        _deadlinePageWordCount = (deadlinePageCount + DeadlinePagesPerWord - 1) >> DeadlinePagesPerWordShift;
+        _deadlinePageBits = new long[_deadlinePageWordCount];
+        _deadlineMarkerCacheId = Interlocked.Increment(ref s_nextDeadlineMarkerCacheId);
+        _indexMask = capacity - 1;
+''',
+    label="initialize compact bitmap and cache id")
 
 old_marker = '''    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void MarkDeadlinePage(int index)
@@ -94,129 +130,142 @@ old_marker = '''    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     }
 '''
 new_marker = '''    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void MarkDeadlinePage(int index, long deadlineTimestamp)
+    private void MarkDeadlinePage(int index)
     {
-        ref var earliest = ref _deadlinePageEarliest[index >> DeadlinePageShift];
-        var current = Volatile.Read(ref earliest);
-        while (current > deadlineTimestamp)
+        var page = index >> DeadlinePageShift;
+        var epoch = Volatile.Read(ref _deadlineMarkerEpoch);
+        if (t_deadlineMarkerCacheId == _deadlineMarkerCacheId &&
+            t_deadlineMarkerCacheEpoch == epoch &&
+            t_deadlineMarkerCachePage == page)
         {
-            var observed = Interlocked.CompareExchange(ref earliest, deadlineTimestamp, current);
+            return;
+        }
+
+        ref var bits = ref _deadlinePageBits[page >> DeadlinePagesPerWordShift];
+        var bit = 1L << (page & (DeadlinePagesPerWord - 1));
+        var current = Volatile.Read(ref bits);
+        while ((current & bit) == 0)
+        {
+            var updated = current | bit;
+            var observed = Interlocked.CompareExchange(ref bits, updated, current);
             if (observed == current)
-                return;
+                break;
             current = observed;
         }
+
+        t_deadlineMarkerCacheId = _deadlineMarkerCacheId;
+        t_deadlineMarkerCacheEpoch = epoch;
+        t_deadlineMarkerCachePage = page;
     }
 '''
-source = replace_exact(source, old_marker, new_marker, label="replace deadline page marker")
+source = replace_exact(source, old_marker, new_marker, label="replace striped marker with TLS marker")
+
+source = replace_exact(
+    source,
+    '''        try
+        {
+            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
+''',
+    '''        try
+        {
+            // Invalidate all per-thread locality hits before any live page bit is consumed.
+            Interlocked.Increment(ref _deadlineMarkerEpoch);
+            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
+''',
+    label="advance epoch before scan consumption")
 
 loop_start = source.index(
     "            for (var wordIndex = 0; wordIndex < _deadlinePageWordCount; wordIndex++)\n")
 loop_end = source.index(
     "            LastDeadlineScanInspectedSlots = inspectedSlots;", loop_start)
-new_loop = '''            for (var page = 0; page < _deadlinePageEarliest.Length; page++)
+new_loop = '''            for (var wordIndex = 0; wordIndex < _deadlinePageWordCount; wordIndex++)
             {
-                var pageDeadline = Volatile.Read(ref _deadlinePageEarliest[page]);
-                if (pageDeadline == long.MaxValue)
-                    continue;
-
-                if (pageDeadline > now)
+                var pages = (ulong)Interlocked.Exchange(ref _deadlinePageBits[wordIndex], 0);
+                while (pages != 0)
                 {
-                    UpdateEarliestDeadline(pageDeadline);
-                    continue;
-                }
-
-                Interlocked.Exchange(ref _deadlinePageEarliest[page], long.MaxValue);
-                var start = page << DeadlinePageShift;
-                if (start >= slots.Length)
-                    continue;
-
-                var end = Math.Min(start + DeadlinePageSize, slots.Length);
-                var nextPageDeadline = long.MaxValue;
-                for (var index = start; index < end; index++)
-                {
-                    inspectedSlots++;
-                    var call = Volatile.Read(ref slots[index]);
-                    if (call is null || !call.Deadline.HasValue)
+                    var bitIndex = System.Numerics.BitOperations.TrailingZeroCount(pages);
+                    pages &= pages - 1;
+                    var page = (wordIndex << DeadlinePagesPerWordShift) + bitIndex;
+                    var start = page << DeadlinePageShift;
+                    if (start >= slots.Length)
                         continue;
 
-                    var deadlineTimestamp = call.Deadline.Timestamp;
-                    if (deadlineTimestamp <= now)
+                    var end = Math.Min(start + DeadlinePageSize, slots.Length);
+                    var hasFutureDeadline = false;
+                    for (var index = start; index < end; index++)
                     {
-                        TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
+                        inspectedSlots++;
+                        var call = Volatile.Read(ref slots[index]);
+                        if (call is null || !call.Deadline.HasValue)
+                            continue;
+                        if (call.Deadline.Timestamp <= now)
+                        {
+                            TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
+                        }
+                        else
+                        {
+                            hasFutureDeadline = true;
+                            UpdateEarliestDeadline(call.Deadline.Timestamp);
+                        }
                     }
-                    else
+
+                    if (hasFutureDeadline)
                     {
-                        if (deadlineTimestamp < nextPageDeadline)
-                            nextPageDeadline = deadlineTimestamp;
-                        UpdateEarliestDeadline(deadlineTimestamp);
+                        var pageBit = 1L << bitIndex;
+                        Interlocked.Or(ref _deadlinePageBits[wordIndex], pageBit);
                     }
                 }
-
-                if (nextPageDeadline != long.MaxValue)
-                    MarkDeadlinePage(start, nextPageDeadline);
             }
 
 '''
 source = source[:loop_start] + new_loop + source[loop_end:]
 source_path.write_text(source, encoding="utf-8")
 
+# Benchmark iteration reset emulates the production scanner protocol: advance epoch first, then clear bits.
+# On eager dev the reflection fields do not exist, so this remains a no-op there.
 for benchmark_path in benchmark_paths:
     benchmark = benchmark_path.read_text(encoding="utf-8")
     benchmark = replace_exact(
         benchmark,
-        "    private long[]? _deadlinePageBits;\n",
-        "    private long[]? _deadlinePageBits;\n"
-        "    private long[]? _deadlinePageEarliest;\n",
-        label=f"{benchmark_path}: add page-earliest reflection field")
+        "    private FieldInfo? _deadlinePageHintField;\n",
+        "    private FieldInfo? _deadlinePageHintField;\n"
+        "    private FieldInfo? _deadlineMarkerEpochField;\n",
+        label=f"{benchmark_path}: add epoch reflection field")
     benchmark = replace_exact(
         benchmark,
-        '''        _deadlinePageBits = (long[]?)typeof(PendingRequestTable)
-            .GetField("_deadlinePageBits", BindingFlags.Instance | BindingFlags.NonPublic)?
-            .GetValue(_pending);
+        '''        _deadlinePageHintField = typeof(PendingRequestTable)
+            .GetField("_deadlinePageHint", BindingFlags.Instance | BindingFlags.NonPublic);
 ''',
-        '''        _deadlinePageBits = (long[]?)typeof(PendingRequestTable)
-            .GetField("_deadlinePageBits", BindingFlags.Instance | BindingFlags.NonPublic)?
-            .GetValue(_pending);
-        _deadlinePageEarliest = (long[]?)typeof(PendingRequestTable)
-            .GetField("_deadlinePageEarliest", BindingFlags.Instance | BindingFlags.NonPublic)?
-            .GetValue(_pending);
+        '''        _deadlinePageHintField = typeof(PendingRequestTable)
+            .GetField("_deadlinePageHint", BindingFlags.Instance | BindingFlags.NonPublic);
+        _deadlineMarkerEpochField = typeof(PendingRequestTable)
+            .GetField("_deadlineMarkerEpoch", BindingFlags.Instance | BindingFlags.NonPublic);
 ''',
-        label=f"{benchmark_path}: capture page-earliest field")
+        label=f"{benchmark_path}: capture epoch reflection field")
     benchmark = replace_exact(
         benchmark,
         '''        if (_deadlinePageBits is not null)
             Array.Clear(_deadlinePageBits);
         _deadlinePageHintField?.SetValue(_pending, -1);
 ''',
-        '''        if (_deadlinePageBits is not null)
+        '''        if (_deadlineMarkerEpochField is not null)
+        {
+            var epoch = (long)_deadlineMarkerEpochField.GetValue(_pending)!;
+            _deadlineMarkerEpochField.SetValue(_pending, epoch + 1);
+        }
+        if (_deadlinePageBits is not null)
             Array.Clear(_deadlinePageBits);
-        if (_deadlinePageEarliest is not null)
-            Array.Fill(_deadlinePageEarliest, long.MaxValue);
         _deadlinePageHintField?.SetValue(_pending, -1);
 ''',
-        label=f"{benchmark_path}: reset page-earliest field")
+        label=f"{benchmark_path}: invalidate TLS epoch before bitmap reset")
     benchmark_path.write_text(benchmark, encoding="utf-8")
-
-# The page-minimum design intentionally skips a retired page whose stale minimum is still in the future;
-# the old bitmap design consumed that retired mark immediately and therefore inspected 512 slots once.
-storage_test = storage_test_path.read_text(encoding="utf-8")
-storage_test = replace_exact(
-    storage_test,
-    '''        Ensure(table.LastDeadlineScanInspectedSlots == 512,
-            "the next scan should consume the retired page mark once while inspecting the active page");
-''',
-    '''        Ensure(table.LastDeadlineScanInspectedSlots == 256,
-            "a retired page with a future stale minimum should not widen an earlier active-page scan");
-''',
-    label="adjust page-minimum sparse-scan expectation")
-storage_test_path.write_text(storage_test, encoding="utf-8")
 PY
 
-echo "[issue252-deadline] experimental_candidate=page-local-approximate-earliest"
+echo "[issue252-deadline] experimental_candidate=thread-static-cache-plus-scanner-epoch"
 
 dotnet build "$BASE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
 dotnet build "$CANDIDATE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
-# Run the full unit suite against the experimental source before accepting any performance result.
+# Correctness before performance.
 dotnet test --project "$CANDIDATE/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" -c Release
 
 run_bench() {
@@ -235,13 +284,13 @@ run_bench() {
   )
 }
 
-# Alternate ordering to reduce hosted-run drift bias.
+# Alternate ordering to limit hosted-run drift bias.
 run_bench "$BASE" eager-dev 1
-run_bench "$CANDIDATE" page-earliest 1
-run_bench "$CANDIDATE" page-earliest 2
+run_bench "$CANDIDATE" tls-epoch 1
+run_bench "$CANDIDATE" tls-epoch 2
 run_bench "$BASE" eager-dev 2
 run_bench "$BASE" eager-dev 3
-run_bench "$CANDIDATE" page-earliest 3
+run_bench "$CANDIDATE" tls-epoch 3
 
 python3 - "$OUT" <<'PY'
 import csv
@@ -264,27 +313,14 @@ def split_number(value):
 
 def to_ns(value):
     number, unit = split_number(value)
-    scale = {
-        "ns": 1.0,
-        "us": 1_000.0,
-        "µs": 1_000.0,
-        "μs": 1_000.0,
-        "ms": 1_000_000.0,
-        "s": 1_000_000_000.0,
-    }
+    scale = {"ns":1.0,"us":1_000.0,"µs":1_000.0,"μs":1_000.0,"ms":1_000_000.0,"s":1_000_000_000.0}
     if unit not in scale:
         raise SystemExit(f"unknown time unit {unit!r} in {value!r}")
     return number * scale[unit]
 
 def to_bytes(value):
     number, unit = split_number(value)
-    scale = {
-        "": 1.0,
-        "B": 1.0,
-        "KB": 1024.0,
-        "MB": 1024.0 * 1024.0,
-        "GB": 1024.0 * 1024.0 * 1024.0,
-    }
+    scale = {"":1.0,"B":1.0,"KB":1024.0,"MB":1024.0*1024.0,"GB":1024.0*1024.0*1024.0}
     if unit not in scale:
         raise SystemExit(f"unknown allocation unit {unit!r} in {value!r}")
     return number * scale[unit]
@@ -296,75 +332,45 @@ def rows_for(round_number, variant):
     with open(files[0], newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.DictReader(handle))
     by_method = {row["Method"]: row for row in rows}
-    missing = [method for method in (SINGLE, CONTENTION) if method not in by_method]
-    if missing:
-        raise SystemExit(f"missing benchmark rows {missing} in {files[0]}: {list(by_method)}")
+    for method in (SINGLE, CONTENTION):
+        if method not in by_method:
+            raise SystemExit(f"missing benchmark row {method} in {files[0]}")
     return by_method
 
 def sample(row):
-    return {
-        "ns": to_ns(row["Mean"]),
-        "allocated_b": to_bytes(row.get("Allocated", "0")),
-    }
+    return {"ns":to_ns(row["Mean"]), "allocated_b":to_bytes(row.get("Allocated", "0"))}
 
 rounds = []
-for round_number in (1, 2, 3):
-    base = rows_for(round_number, "eager-dev")
-    candidate = rows_for(round_number, "page-earliest")
-    base_single = sample(base[SINGLE])
-    candidate_single = sample(candidate[SINGLE])
-    base_contention = sample(base[CONTENTION])
-    candidate_contention = sample(candidate[CONTENTION])
+for n in (1,2,3):
+    base = rows_for(n, "eager-dev")
+    cand = rows_for(n, "tls-epoch")
+    bs, cs = sample(base[SINGLE]), sample(cand[SINGLE])
+    bc, cc = sample(base[CONTENTION]), sample(cand[CONTENTION])
     rounds.append({
-        "round": round_number,
-        "single": {
-            "base_ns": base_single["ns"],
-            "candidate_ns": candidate_single["ns"],
-            "delta_percent": (candidate_single["ns"] / base_single["ns"] - 1.0) * 100.0,
-            "base_allocated_b": base_single["allocated_b"],
-            "candidate_allocated_b": candidate_single["allocated_b"],
-        },
-        "same_page_contention": {
-            "base_ns": base_contention["ns"],
-            "candidate_ns": candidate_contention["ns"],
-            "delta_percent": (candidate_contention["ns"] / base_contention["ns"] - 1.0) * 100.0,
-            "base_allocated_b": base_contention["allocated_b"],
-            "candidate_allocated_b": candidate_contention["allocated_b"],
-        },
+        "round":n,
+        "single":{"base_ns":bs["ns"],"candidate_ns":cs["ns"],"delta_percent":(cs["ns"]/bs["ns"]-1.0)*100.0,"base_allocated_b":bs["allocated_b"],"candidate_allocated_b":cs["allocated_b"]},
+        "same_page_contention":{"base_ns":bc["ns"],"candidate_ns":cc["ns"],"delta_percent":(cc["ns"]/bc["ns"]-1.0)*100.0,"base_allocated_b":bc["allocated_b"],"candidate_allocated_b":cc["allocated_b"]},
     })
 
-single_deltas = [row["single"]["delta_percent"] for row in rounds]
-contention_deltas = [row["same_page_contention"]["delta_percent"] for row in rounds]
-single_median = statistics.median(single_deltas)
-contention_median = statistics.median(contention_deltas)
-single_within = sum(delta <= 3.0 for delta in single_deltas)
-contention_within = sum(delta <= 3.0 for delta in contention_deltas)
-zero_allocation = all(
-    row[scope][key] == 0.0
-    for row in rounds
-    for scope in ("single", "same_page_contention")
-    for key in ("base_allocated_b", "candidate_allocated_b")
-)
-passed = (
-    single_median <= 3.0
-    and single_within >= 2
-    and contention_median <= 3.0
-    and contention_within >= 2
-    and zero_allocation
-)
-
+single = [r["single"]["delta_percent"] for r in rounds]
+contention = [r["same_page_contention"]["delta_percent"] for r in rounds]
+zero_alloc = all(r[s][k] == 0.0 for r in rounds for s in ("single","same_page_contention") for k in ("base_allocated_b","candidate_allocated_b"))
 result = {
-    "experiment": "deadline-bearing-registration-completion-page-earliest",
-    "gate_percent": 3.0,
-    "rounds": rounds,
-    "median_single_delta_percent": single_median,
-    "single_rounds_within_gate": single_within,
-    "median_same_page_contention_delta_percent": contention_median,
-    "same_page_contention_rounds_within_gate": contention_within,
-    "zero_allocation": zero_allocation,
-    "passed": passed,
+    "experiment":"deadline-bearing-registration-completion-tls-epoch",
+    "gate_percent":3.0,
+    "rounds":rounds,
+    "median_single_delta_percent":statistics.median(single),
+    "single_rounds_within_gate":sum(x <= 3.0 for x in single),
+    "median_same_page_contention_delta_percent":statistics.median(contention),
+    "same_page_contention_rounds_within_gate":sum(x <= 3.0 for x in contention),
+    "zero_allocation":zero_alloc,
 }
-print("DEADLINE_MAINTENANCE_RESULT=" + json.dumps(result, separators=(",", ":")))
-if not passed:
-    raise SystemExit("page-earliest deadline-bearing PendingRequestTable maintenance missed the predeclared gate")
+result["passed"] = (
+    result["median_single_delta_percent"] <= 3.0 and result["single_rounds_within_gate"] >= 2 and
+    result["median_same_page_contention_delta_percent"] <= 3.0 and result["same_page_contention_rounds_within_gate"] >= 2 and
+    zero_alloc
+)
+print("DEADLINE_MAINTENANCE_RESULT=" + json.dumps(result, separators=(",",":")))
+if not result["passed"]:
+    raise SystemExit("TLS+epoch deadline-bearing PendingRequestTable maintenance missed the predeclared gate")
 PY
