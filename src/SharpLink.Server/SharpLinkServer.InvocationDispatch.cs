@@ -15,7 +15,8 @@ internal sealed partial class SharpLinkServer
         bool allowCompressedCancellationHandoff = false,
         ServiceRegistration? preparedServiceInfo = null,
         bool reusePreDecodeMetadata = false,
-        SharpLinkMetadata? preDecodeMetadata = null)
+        SharpLinkMetadata? preDecodeMetadata = null,
+        ServerRequestEnvelope? preparedRequest = null)
     {
         var session = connection.Session;
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
@@ -25,12 +26,16 @@ internal sealed partial class SharpLinkServer
             reusePreDecodeMetadata ||
             (isCompressed && _admissionController is not null && !admissionGranted);
         var validatePreDecodeMetadata =
-            isCompressed && !callCapacityGranted && !preservePreDecodeMetadata;
+            preparedRequest is null &&
+            isCompressed &&
+            !callCapacityGranted &&
+            !preservePreDecodeMetadata;
 
-        var request = isCompressed && (!preservePreDecodeMetadata || reusePreDecodeMetadata)
-            ? ReadRequestRoutingEnvelope(session, payload, flags, validatePreDecodeMetadata)
-            : ReadRequestEnvelope(session, payload, flags);
-        if (reusePreDecodeMetadata)
+        var request = preparedRequest ??
+            (isCompressed && (!preservePreDecodeMetadata || reusePreDecodeMetadata)
+                ? ReadRequestRoutingEnvelope(session, payload, flags, validatePreDecodeMetadata)
+                : ReadRequestEnvelope(session, payload, flags));
+        if (preparedRequest is null && reusePreDecodeMetadata)
             request = request with { Metadata = preDecodeMetadata };
         if (IsDeadlineExceeded(request.RpcDeadline))
         {
@@ -275,7 +280,7 @@ internal sealed partial class SharpLinkServer
                 serviceInfo,
                 descriptor,
                 preservePreDecodeMetadata,
-                request.Metadata);
+                request with { Arguments = default });
         }
 
         if (admittedCallState is { IsAbandoned: true } ||
