@@ -81,7 +81,7 @@ internal sealed partial class SharpLinkServer
                 descriptor.ClientStreamCount,
                 callState);
             retainedPayload = CopyAdmissionPayload(payload);
-            return DispatchRetainedCancellableCompressedRpcAsync(
+            QueueRetainedCancellableCompressedRpc(
                 retainedPayload,
                 connection,
                 requestId,
@@ -92,6 +92,8 @@ internal sealed partial class SharpLinkServer
                 serviceInfo,
                 reusePreDecodeMetadata,
                 preDecodeMetadata);
+            retainedPayload = null;
+            return ValueTask.CompletedTask;
         }
         catch (Exception exception)
         {
@@ -103,7 +105,7 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private async ValueTask DispatchRetainedCancellableCompressedRpcAsync(
+    private void QueueRetainedCancellableCompressedRpc(
         IRpcByteBufferWriter retainedPayload,
         ServerConnectionState connection,
         long requestId,
@@ -115,7 +117,42 @@ internal sealed partial class SharpLinkServer
         bool reusePreDecodeMetadata,
         SharpLinkMetadata? preDecodeMetadata)
     {
-        await Task.Yield();
+        var workItem = CompressedCancellableRpcWorkItem.Rent(
+            this,
+            retainedPayload,
+            connection,
+            requestId,
+            flags,
+            requestCancellationMap,
+            serverLoopToken,
+            callState,
+            serviceInfo,
+            reusePreDecodeMetadata,
+            preDecodeMetadata);
+        try
+        {
+            if (!ThreadPool.UnsafeQueueUserWorkItem(workItem, preferLocal: false))
+                throw new InvalidOperationException("Unable to queue compressed RPC dispatch.");
+        }
+        catch
+        {
+            workItem.ReturnWithoutExecute();
+            throw;
+        }
+    }
+
+    private void DispatchRetainedCancellableCompressedRpc(
+        IRpcByteBufferWriter retainedPayload,
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        ServerCallCancellationState callState,
+        ServiceRegistration serviceInfo,
+        bool reusePreDecodeMetadata,
+        SharpLinkMetadata? preDecodeMetadata)
+    {
         ValueTask dispatch;
         try
         {
@@ -134,6 +171,11 @@ internal sealed partial class SharpLinkServer
                 reusePreDecodeMetadata: reusePreDecodeMetadata,
                 preDecodeMetadata: preDecodeMetadata);
         }
+        catch (Exception exception)
+        {
+            ObserveUserCall(ValueTask.FromException(exception), requestId);
+            return;
+        }
         finally
         {
             // DispatchRpcAsync performs compressed request decode synchronously before returning.
@@ -143,7 +185,7 @@ internal sealed partial class SharpLinkServer
         }
 
         if (!dispatch.IsCompletedSuccessfully)
-            await dispatch.ConfigureAwait(false);
+            ObserveUserCall(dispatch, requestId);
     }
 
     private void HandoffCompressedCancellableOneWayRpc(
@@ -244,6 +286,107 @@ internal sealed partial class SharpLinkServer
         finally
         {
             _runtimeContext.Buffers.Return(retainedPayload);
+        }
+    }
+
+    private sealed class CompressedCancellableRpcWorkItem : IThreadPoolWorkItem
+    {
+        private const int MaxRetained = 4096;
+        private static readonly ConcurrentStack<CompressedCancellableRpcWorkItem> Pool = new();
+        private static int s_retainedCount;
+
+        private SharpLinkServer? _server;
+        private IRpcByteBufferWriter? _retainedPayload;
+        private ServerConnectionState? _connection;
+        private long _requestId;
+        private ProtocolV2FrameFlags _flags;
+        private StripedLongMap<ServerCallCancellationState>? _requestCancellationMap;
+        private CancellationToken _serverLoopToken;
+        private ServerCallCancellationState? _callState;
+        private ServiceRegistration? _serviceInfo;
+        private bool _reusePreDecodeMetadata;
+        private SharpLinkMetadata? _preDecodeMetadata;
+
+        private CompressedCancellableRpcWorkItem()
+        {
+        }
+
+        internal static CompressedCancellableRpcWorkItem Rent(
+            SharpLinkServer server,
+            IRpcByteBufferWriter retainedPayload,
+            ServerConnectionState connection,
+            long requestId,
+            ProtocolV2FrameFlags flags,
+            StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+            CancellationToken serverLoopToken,
+            ServerCallCancellationState callState,
+            ServiceRegistration serviceInfo,
+            bool reusePreDecodeMetadata,
+            SharpLinkMetadata? preDecodeMetadata)
+        {
+            if (!Pool.TryPop(out var workItem))
+                workItem = new CompressedCancellableRpcWorkItem();
+            else
+                Interlocked.Decrement(ref s_retainedCount);
+
+            workItem._server = server;
+            workItem._retainedPayload = retainedPayload;
+            workItem._connection = connection;
+            workItem._requestId = requestId;
+            workItem._flags = flags;
+            workItem._requestCancellationMap = requestCancellationMap;
+            workItem._serverLoopToken = serverLoopToken;
+            workItem._callState = callState;
+            workItem._serviceInfo = serviceInfo;
+            workItem._reusePreDecodeMetadata = reusePreDecodeMetadata;
+            workItem._preDecodeMetadata = preDecodeMetadata;
+            return workItem;
+        }
+
+        void IThreadPoolWorkItem.Execute()
+        {
+            var server = _server!;
+            try
+            {
+                server.DispatchRetainedCancellableCompressedRpc(
+                    _retainedPayload!,
+                    _connection!,
+                    _requestId,
+                    _flags,
+                    _requestCancellationMap!,
+                    _serverLoopToken,
+                    _callState!,
+                    _serviceInfo!,
+                    _reusePreDecodeMetadata,
+                    _preDecodeMetadata);
+            }
+            finally
+            {
+                Return();
+            }
+        }
+
+        internal void ReturnWithoutExecute() => Return();
+
+        private void Return()
+        {
+            _server = null;
+            _retainedPayload = null;
+            _connection = null;
+            _requestId = 0;
+            _flags = default;
+            _requestCancellationMap = null;
+            _serverLoopToken = default;
+            _callState = null;
+            _serviceInfo = null;
+            _reusePreDecodeMetadata = false;
+            _preDecodeMetadata = null;
+
+            var retained = Interlocked.Increment(ref s_retainedCount);
+            if (retained <= MaxRetained)
+                Pool.Push(this);
+            else
+                Interlocked.Decrement(ref s_retainedCount);
         }
     }
 }
