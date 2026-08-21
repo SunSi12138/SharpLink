@@ -12,6 +12,7 @@
     <TrimMode>copy</TrimMode>
     <UseMonoRuntime>true</UseMonoRuntime>
     <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);IL2026;IL2090;CA1422</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
