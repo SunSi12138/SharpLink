@@ -12,7 +12,7 @@ public class RuntimeInterceptorUnwindIntegrationTests
         var newLog = new ConcurrentQueue<string>();
         var a = new UnwindClientInterceptor("A", oldLog);
         var b = new UnwindClientInterceptor("B", oldLog);
-        var c = new GatedFaultUnwindClientInterceptor("C", oldLog);
+        var c = new GatedUnwindClientInterceptor("C", oldLog);
         harness.Client.ReplaceInterceptors([a, b, c]);
 
         var call = harness.Service.FailAsync().AsTask();
@@ -31,33 +31,66 @@ public class RuntimeInterceptorUnwindIntegrationTests
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
             "client fault must retain the mapped terminal failure");
         await Task.WhenAll(a.Completed, b.Completed, c.Completed).WaitAsync(TimeSpan.FromSeconds(3));
-        EnsureSequence(
-            oldLog,
-            "A:before", "B:before", "C:before", "C:catch", "C:after",
-            "B:catch", "B:after", "A:catch", "A:after");
+        EnsureOldGenerationUnwind(oldLog);
         Ensure(newLog.IsEmpty,
             "replacement generation must not enter while the old client fault unwinds");
     }
 
     [Test]
-    public async Task ServerCancellationUnwindShouldRetainCapturedGenerationAcrossReplacement()
+    public async Task ClientCancellationUnwindShouldRetainCapturedGenerationAcrossReplacement()
+    {
+        await using var harness = await UnwindHarness.CreateAsync();
+        var oldLog = new ConcurrentQueue<string>();
+        var newLog = new ConcurrentQueue<string>();
+        var a = new UnwindClientInterceptor("A", oldLog);
+        var b = new UnwindClientInterceptor("B", oldLog);
+        var c = new GatedUnwindClientInterceptor("C", oldLog);
+        harness.Client.ReplaceInterceptors([a, b, c]);
+
+        using var cancellation = new CancellationTokenSource();
+        var requestEnumerationStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var call = harness.Service.SumStreamAsync(
+            CancellationDrivenInput(requestEnumerationStarted, cancellation.Token),
+            cancellation.Token).AsTask();
+        await requestEnumerationStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await cancellation.CancelAsync();
+        await c.UnwindObserved.WaitAsync(TimeSpan.FromSeconds(3));
+        Ensure(!call.IsCompleted,
+            "client cancellation must remain gated inside the captured interceptor unwind");
+        EnsureSequence(oldLog, "A:before", "B:before", "C:before", "C:catch");
+
+        harness.Client.ReplaceInterceptors([
+            new UnwindClientInterceptor("X", newLog),
+            new UnwindClientInterceptor("Y", newLog),
+            new UnwindClientInterceptor("Z", newLog)]);
+        c.Release();
+
+        var failure = await CaptureExceptionAsync(call).WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(failure is OperationCanceledException
+               || failure is SharpLinkException { Code: SharpLinkErrorCode.Cancelled },
+            "client cancellation must retain a cancellation failure");
+        await Task.WhenAll(a.Completed, b.Completed, c.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureOldGenerationUnwind(oldLog);
+        Ensure(newLog.IsEmpty,
+            "replacement generation must not enter while the old client cancellation unwinds");
+    }
+
+    [Test]
+    public async Task ServerFaultUnwindShouldRetainCapturedGenerationAcrossReplacement()
     {
         await using var harness = await UnwindHarness.CreateAsync();
         var oldLog = new ConcurrentQueue<string>();
         var newLog = new ConcurrentQueue<string>();
         var a = new UnwindServerInterceptor("A", oldLog);
         var b = new UnwindServerInterceptor("B", oldLog);
-        var c = new GatedCancellationUnwindServerInterceptor("C", oldLog);
+        var c = new GatedUnwindServerInterceptor("C", oldLog);
         harness.Server.ReplaceInterceptors([a, b, c]);
 
-        using var cancellation = new CancellationTokenSource();
-        await using var stream = harness.Service.WaitStreamAsync(cancellation.Token).GetAsyncEnumerator();
-        Ensure(await stream.MoveNextAsync() && stream.Current == 1,
-            "cancellable server stream first item");
-
-        var pendingMove = stream.MoveNextAsync().AsTask();
-        await cancellation.CancelAsync();
+        var call = harness.Service.FailAsync().AsTask();
         await c.UnwindObserved.WaitAsync(TimeSpan.FromSeconds(3));
+        Ensure(!call.IsCompleted,
+            "server fault must remain gated inside the captured interceptor unwind");
         EnsureSequence(oldLog, "A:before", "B:before", "C:before", "C:catch");
 
         harness.Server.ReplaceInterceptors([
@@ -66,16 +99,22 @@ public class RuntimeInterceptorUnwindIntegrationTests
             new UnwindServerInterceptor("Z", newLog)]);
         c.Release();
 
-        var failure = await CaptureExceptionAsync(pendingMove).WaitAsync(TimeSpan.FromSeconds(5));
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.Cancelled },
-            "server cancellation must retain the cancelled wire status");
+        var failure = await CaptureExceptionAsync(call).WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
+            "server fault must retain the mapped terminal failure");
         await Task.WhenAll(a.Completed, b.Completed, c.Completed).WaitAsync(TimeSpan.FromSeconds(3));
-        EnsureSequence(
-            oldLog,
-            "A:before", "B:before", "C:before", "C:catch", "C:after",
-            "B:catch", "B:after", "A:catch", "A:after");
+        EnsureOldGenerationUnwind(oldLog);
         Ensure(newLog.IsEmpty,
-            "replacement generation must not enter while the old server cancellation unwinds");
+            "replacement generation must not enter while the old server fault unwinds");
+    }
+
+    private static async IAsyncEnumerable<int> CancellationDrivenInput(
+        TaskCompletionSource enumerationStarted,
+        CancellationToken cancellationToken)
+    {
+        enumerationStarted.TrySetResult();
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+        yield break;
     }
 
     private static async Task<Exception?> CaptureExceptionAsync(Task task)
@@ -90,6 +129,12 @@ public class RuntimeInterceptorUnwindIntegrationTests
             return exception;
         }
     }
+
+    private static void EnsureOldGenerationUnwind(ConcurrentQueue<string> log)
+        => EnsureSequence(
+            log,
+            "A:before", "B:before", "C:before", "C:catch", "C:after",
+            "B:catch", "B:after", "A:catch", "A:after");
 
     private static void EnsureSequence(ConcurrentQueue<string> log, params string[] expected)
     {
@@ -134,7 +179,7 @@ public class RuntimeInterceptorUnwindIntegrationTests
         }
     }
 
-    private sealed class GatedFaultUnwindClientInterceptor(string id, ConcurrentQueue<string> log)
+    private sealed class GatedUnwindClientInterceptor(string id, ConcurrentQueue<string> log)
         : ISharpLinkClientInterceptor
     {
         private readonly TaskCompletionSource _unwindObserved =
@@ -202,7 +247,7 @@ public class RuntimeInterceptorUnwindIntegrationTests
         }
     }
 
-    private sealed class GatedCancellationUnwindServerInterceptor(string id, ConcurrentQueue<string> log)
+    private sealed class GatedUnwindServerInterceptor(string id, ConcurrentQueue<string> log)
         : ISharpLinkServerInterceptor
     {
         private readonly TaskCompletionSource _unwindObserved =
