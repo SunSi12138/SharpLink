@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -46,8 +47,16 @@ public sealed class MainActivity : Activity
             var commit = Intent?.GetStringExtra("commit") ?? "unknown";
             var sdk = Intent?.GetStringExtra("sdk") ?? "unknown";
             var expectedRuntimeFamily = Intent?.GetStringExtra("runtimeFamily") ?? "unknown";
+            var runtimeIdentifier = RuntimeInformation.RuntimeIdentifier;
+            if (!runtimeIdentifier.StartsWith("android-", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Expected an Android runtime identifier, observed {runtimeIdentifier}.");
 
-            Log.Info(LogTag, $"probe starting mode={mode} expectedRuntime={expectedRuntimeFamily}");
+            var targetFramework = $"net10.0-android/{runtimeIdentifier}";
+            var executionEnvironment = DetectExecutionEnvironment();
+
+            Log.Info(
+                LogTag,
+                $"probe starting mode={mode} expectedRuntime={expectedRuntimeFamily} rid={runtimeIdentifier} environment={executionEnvironment}");
             status.Text = $"running {mode}";
 
             string result;
@@ -56,9 +65,9 @@ public sealed class MainActivity : Activity
                 result = PortableProbe.ProduceJson(
                     commit,
                     sdk,
-                    "net10.0-android/android-x64",
+                    targetFramework,
                     expectedRuntimeFamily: expectedRuntimeFamily,
-                    executionEnvironmentOverride: "emulator");
+                    executionEnvironmentOverride: executionEnvironment);
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
             {
@@ -67,9 +76,9 @@ public sealed class MainActivity : Activity
                     input,
                     commit,
                     sdk,
-                    "net10.0-android/android-x64",
+                    targetFramework,
                     expectedRuntimeFamily: expectedRuntimeFamily,
-                    executionEnvironmentOverride: "emulator");
+                    executionEnvironmentOverride: executionEnvironment);
             }
             else
             {
@@ -102,5 +111,38 @@ public sealed class MainActivity : Activity
                 Log.Error(LogTag, $"failed to persist probe error: {reportingException}");
             }
         }
+    }
+
+    private static string DetectExecutionEnvironment()
+    {
+        var fingerprint = Build.Fingerprint ?? string.Empty;
+        var model = Build.Model ?? string.Empty;
+        var manufacturer = Build.Manufacturer ?? string.Empty;
+        var brand = Build.Brand ?? string.Empty;
+        var device = Build.Device ?? string.Empty;
+        var product = Build.Product ?? string.Empty;
+        var hardware = Build.Hardware ?? string.Empty;
+
+        var isEmulator =
+            fingerprint.StartsWith("generic", StringComparison.OrdinalIgnoreCase)
+            || fingerprint.Contains("vbox", StringComparison.OrdinalIgnoreCase)
+            || model.Contains("google_sdk", StringComparison.OrdinalIgnoreCase)
+            || model.Contains("Emulator", StringComparison.OrdinalIgnoreCase)
+            || model.Contains("Android SDK built for", StringComparison.OrdinalIgnoreCase)
+            || manufacturer.Contains("Genymotion", StringComparison.OrdinalIgnoreCase)
+            || (brand.StartsWith("generic", StringComparison.OrdinalIgnoreCase)
+                && device.StartsWith("generic", StringComparison.OrdinalIgnoreCase))
+            || product.Contains("sdk_google", StringComparison.OrdinalIgnoreCase)
+            || product.Contains("google_sdk", StringComparison.OrdinalIgnoreCase)
+            || product.Equals("sdk", StringComparison.OrdinalIgnoreCase)
+            || product.Contains("sdk_x86", StringComparison.OrdinalIgnoreCase)
+            || product.Contains("vbox86p", StringComparison.OrdinalIgnoreCase)
+            || product.Contains("emulator", StringComparison.OrdinalIgnoreCase)
+            || product.Contains("simulator", StringComparison.OrdinalIgnoreCase)
+            || hardware.Contains("goldfish", StringComparison.OrdinalIgnoreCase)
+            || hardware.Contains("ranchu", StringComparison.OrdinalIgnoreCase)
+            || hardware.Contains("vbox86", StringComparison.OrdinalIgnoreCase);
+
+        return isEmulator ? "emulator" : "physical-device";
     }
 }
