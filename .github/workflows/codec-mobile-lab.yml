@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: codec-mobile-lab-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-produce:
     runs-on: ubuntu-24.04
@@ -58,7 +62,6 @@ jobs:
       - name: Build and run Android Mono producer
         shell: bash
         run: |
-          rm -rf artifacts/codec-compat/android-mono-package
           dotnet build -c Debug -f net10.0-android -r android-x64 \
             test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
             -t:SignAndroidPackage \
@@ -115,5 +118,70 @@ jobs:
         with:
           name: codec-android-emulator-diagnostics
           path: artifacts-android-emulator.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios-produce:
+    runs-on: macos-15-intel
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install iOS workload
+        run: dotnet workload install ios
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Boot an x64 iOS simulator
+        shell: bash
+        run: |
+          xcrun simctl shutdown all || true
+          udid="$(python3 - <<'PY'
+          import json, subprocess
+          data = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))
+          for runtime, devices in data['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for device in devices:
+                  if device.get('isAvailable') and device.get('name', '').startswith('iPhone'):
+                      print(device['udid'])
+                      raise SystemExit
+          raise SystemExit('No available iPhone simulator found')
+          PY
+          )"
+          echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl list devices | grep "$udid"
+
+      - name: Build and run iOS x64 simulator producer
+        shell: bash
+        run: |
+          dotnet build -c Debug -f net10.0-ios -r iossimulator-x64 \
+            test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj
+          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Debug -name '*.app' -type d | head -n 1)"
+          test -n "$app"
+          xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
+          node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
+            produce artifacts/codec-compat/ios-simulator-x64-corpus \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
+
+      - name: Upload iOS simulator corpus
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-corpus-iossimulator-x64-mono-lab
+          path: artifacts/codec-compat/ios-simulator-x64-corpus
           if-no-files-found: warn
           retention-days: 7
