@@ -66,17 +66,30 @@ internal sealed class ProbeViewController : UIViewController
                 ?? throw new InvalidOperationException("Missing SHARPLINK_ENDPOINT.");
             var commit = Environment.GetEnvironmentVariable("SHARPLINK_COMMIT") ?? "unknown";
             var sdk = Environment.GetEnvironmentVariable("SHARPLINK_SDK_VERSION") ?? "unknown";
+            var targetFramework = Environment.GetEnvironmentVariable("SHARPLINK_TARGET_FRAMEWORK")
+                ?? "net10.0-ios/iossimulator";
 
             string result;
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             if (string.Equals(mode, "produce", StringComparison.Ordinal))
             {
-                result = PortableProbe.ProduceJson(commit, sdk, "net10.0-ios/iossimulator-x64");
+                result = PortableProbe.ProduceJson(
+                    commit,
+                    sdk,
+                    targetFramework,
+                    runtimeFamilyOverride: "Mono",
+                    executionEnvironmentOverride: "simulator");
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
             {
                 var input = await client.GetStringAsync($"{endpoint}/input.json");
-                result = PortableProbe.VerifyJson(input, commit, sdk, "net10.0-ios/iossimulator-x64");
+                result = PortableProbe.VerifyJson(
+                    input,
+                    commit,
+                    sdk,
+                    targetFramework,
+                    runtimeFamilyOverride: "Mono",
+                    executionEnvironmentOverride: "simulator");
             }
             else
             {
