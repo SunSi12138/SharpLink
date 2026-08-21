@@ -10,7 +10,9 @@ on:
       - 'test/SharpLink.Benchmarks/BenchmarkContracts.cs'
       - 'test/SharpLink.Benchmarks/BenchmarkService.cs'
       - 'test/SharpLink.Benchmarks/BenchmarkEnvironment.cs'
+      - 'test/SharpLink.Benchmarks/CompressionAcceptedPathEvidenceRunner.cs'
       - 'test/SharpLink.Benchmarks/CompressionIssue244FollowUpEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/CompressionIssue244FollowUpGlobalUsings.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
   workflow_dispatch:
 
@@ -68,12 +70,15 @@ jobs:
           git worktree add --detach "$base_root" "$base_sha"
 
           # Overlay only measurement code so base/candidate use an identical harness while
-          # product code remains pinned to the selected commits.
+          # product code remains pinned to the selected commits. Program references both
+          # compression evidence runners, so both files are overlaid onto the base worktree.
           for path in \
             test/SharpLink.Benchmarks/BenchmarkContracts.cs \
             test/SharpLink.Benchmarks/BenchmarkService.cs \
             test/SharpLink.Benchmarks/BenchmarkEnvironment.cs \
+            test/SharpLink.Benchmarks/CompressionAcceptedPathEvidenceRunner.cs \
             test/SharpLink.Benchmarks/CompressionIssue244FollowUpEvidenceRunner.cs \
+            test/SharpLink.Benchmarks/CompressionIssue244FollowUpGlobalUsings.cs \
             test/SharpLink.Benchmarks/Program.cs; do
             install -D "$GITHUB_WORKSPACE/$path" "$base_root/$path"
           done
