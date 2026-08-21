@@ -42,10 +42,6 @@ jobs:
       - name: Verify Generated Assemblies Do Not Reference Runtime
         run: ./eng/verify-generated-assembly-dependencies.sh
 
-      - name: Issue 252 deadline maintenance evidence
-        if: github.event.pull_request.number == 260
-        run: bash .github/issue252-deadline-maintenance-evidence.sh
-
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
