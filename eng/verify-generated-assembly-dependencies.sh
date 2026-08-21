@@ -33,6 +33,6 @@ dotnet run \
   --verify-clean \
   "${assemblies[@]}"
 
-if [[ "${GITHUB_ACTIONS:-}" == "true" && -x "$ROOT/eng/run-issue252-experiment-a-rerun.sh" ]]; then
-  "$ROOT/eng/run-issue252-experiment-a-rerun.sh"
+if [[ "${GITHUB_ACTIONS:-}" == "true" && -f "$ROOT/eng/run-issue252-experiment-a-rerun.sh" ]]; then
+  bash "$ROOT/eng/run-issue252-experiment-a-rerun.sh"
 fi
