@@ -68,6 +68,7 @@ internal static class CompressionAcceptedPathEvidenceRunner
             compression: false,
             cancellableMetadata: false,
             admissionImmediate: false,
+            disableDefaultRequestTimeout: false,
             measurementSeconds,
             maxOperations).ConfigureAwait(false));
 
@@ -79,6 +80,16 @@ internal static class CompressionAcceptedPathEvidenceRunner
                 compression: true,
                 cancellableMetadata: false,
                 admissionImmediate: false,
+                disableDefaultRequestTimeout: false,
+                measurementSeconds,
+                maxOperations).ConfigureAwait(false));
+            document.Results.Add(await MeasureScenarioAsync(
+                scenario: "CompressedNonCancellableNoDefaultTimeout",
+                payloadBytes,
+                compression: true,
+                cancellableMetadata: false,
+                admissionImmediate: false,
+                disableDefaultRequestTimeout: true,
                 measurementSeconds,
                 maxOperations).ConfigureAwait(false));
             document.Results.Add(await MeasureScenarioAsync(
@@ -87,6 +98,16 @@ internal static class CompressionAcceptedPathEvidenceRunner
                 compression: true,
                 cancellableMetadata: true,
                 admissionImmediate: false,
+                disableDefaultRequestTimeout: false,
+                measurementSeconds,
+                maxOperations).ConfigureAwait(false));
+            document.Results.Add(await MeasureScenarioAsync(
+                scenario: "CompressedCancellableMetadataNoDefaultTimeout",
+                payloadBytes,
+                compression: true,
+                cancellableMetadata: true,
+                admissionImmediate: false,
+                disableDefaultRequestTimeout: true,
                 measurementSeconds,
                 maxOperations).ConfigureAwait(false));
             document.Results.Add(await MeasureScenarioAsync(
@@ -95,6 +116,7 @@ internal static class CompressionAcceptedPathEvidenceRunner
                 compression: true,
                 cancellableMetadata: true,
                 admissionImmediate: true,
+                disableDefaultRequestTimeout: false,
                 measurementSeconds,
                 maxOperations).ConfigureAwait(false));
         }
@@ -187,8 +209,10 @@ internal static class CompressionAcceptedPathEvidenceRunner
         markdown.AppendLine("## Interpretation");
         markdown.AppendLine();
         markdown.AppendLine("- `UncompressedDefaultSmall` is a tiny non-compressed unary RPC intended to expose fixed dispatch allocation/branch overhead.");
-        markdown.AppendLine("- `CompressedDefaultNonCancellable` measures the accepted compressed path without the remote-cancellation handoff.");
-        markdown.AppendLine("- `CompressedCancellableMetadata` measures the default routing-only path plus metadata syntax validation and the cancellable post-capacity handoff.");
+        markdown.AppendLine("- `CompressedDefaultNonCancellable` keeps the normal 30-second client default timeout. That deadline sets the wire Cancellable flag even though the service method is `[NonCancellable]`, so this scenario includes the post-capacity cancellation handoff.");
+        markdown.AppendLine("- `CompressedNonCancellableNoDefaultTimeout` disables the client default timeout. With the `[NonCancellable]` service method and no caller cancellation token, it isolates accepted compressed decode/dispatch without the cancellable handoff.");
+        markdown.AppendLine("- `CompressedCancellableMetadata` measures the routing-only metadata validation path plus cancellable post-capacity handoff with the normal client default deadline.");
+        markdown.AppendLine("- `CompressedCancellableMetadataNoDefaultTimeout` keeps explicit caller cancellation but removes the default deadline, isolating handoff/state cost from deadline-specific work.");
         markdown.AppendLine("- `CompressedCancellableMetadataAdmissionImmediate` measures the synchronous advanced-admission fast path where metadata was already fully parsed before handoff.");
         markdown.AppendLine("- CPU/op and B/op are process-wide deltas for the in-process client/server pair. P99 is per-RPC wall-clock latency at concurrency 1. Positive QPS delta is better; positive P99/CPU/B-op delta is worse.");
         markdown.AppendLine("- These are merge-gate evidence rather than a hard benchmark threshold; hosted-runner noise is reduced by same-host alternating repetitions and medians.");
@@ -204,6 +228,7 @@ internal static class CompressionAcceptedPathEvidenceRunner
         bool compression,
         bool cancellableMetadata,
         bool admissionImmediate,
+        bool disableDefaultRequestTimeout,
         double measurementSeconds,
         int maxOperations)
     {
@@ -224,9 +249,9 @@ internal static class CompressionAcceptedPathEvidenceRunner
             },
             configureServerRuntime: compression ? ConfigureCompression : null,
             configureClientRuntime: compression ? ConfigureCompression : null,
-            createClientBuilder: port => SharpClientBuilder.Create()
-                .UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2))
-                .UseTcp(IPAddress.Loopback.ToString(), port)).ConfigureAwait(false);
+            createClientBuilder: port => CreateBenchmarkClientBuilder(
+                port,
+                disableDefaultRequestTimeout)).ConfigureAwait(false);
 
         var payload = payloadBytes == 0 ? Array.Empty<byte>() : CreateCompressiblePayload(payloadBytes);
         using var callerCancellation = new CancellationTokenSource();
@@ -294,6 +319,7 @@ internal static class CompressionAcceptedPathEvidenceRunner
             Compression = compression ? "brotli-fastest" : "none",
             Admission = admissionImmediate ? "immediate" : "disabled",
             CancellableMetadata = cancellableMetadata,
+            ClientDefaultRequestTimeoutDisabled = disableDefaultRequestTimeout,
             Operations = completed,
             ActualMeasurementSeconds = elapsed.TotalSeconds,
             ThroughputPerSecond = completed / elapsed.TotalSeconds,
@@ -307,6 +333,18 @@ internal static class CompressionAcceptedPathEvidenceRunner
             Gen1Collections = GC.CollectionCount(1),
             Gen2Collections = GC.CollectionCount(2)
         };
+    }
+
+    private static SharpClientBuilder CreateBenchmarkClientBuilder(
+        int port,
+        bool disableDefaultRequestTimeout)
+    {
+        var builder = SharpClientBuilder.Create()
+            .UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2))
+            .UseTcp(IPAddress.Loopback.ToString(), port);
+        if (disableDefaultRequestTimeout)
+            builder.DisableRequestTimeout();
+        return builder;
     }
 
     private static void ConfigureCompression(SharpLinkRuntimeOptions options)
@@ -407,6 +445,7 @@ internal sealed class CompressionAcceptedPathEvidenceResult
     public string Compression { get; init; } = string.Empty;
     public string Admission { get; init; } = string.Empty;
     public bool CancellableMetadata { get; init; }
+    public bool ClientDefaultRequestTimeoutDisabled { get; init; }
     public int Operations { get; init; }
     public double ActualMeasurementSeconds { get; init; }
     public double ThroughputPerSecond { get; init; }
