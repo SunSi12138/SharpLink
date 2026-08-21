@@ -218,7 +218,7 @@ internal static class PortableProbe
             PointerSize = IntPtr.Size,
             IsLittleEndian = BitConverter.IsLittleEndian,
             CompilationMode = compilationMode,
-            PlatformTag = $"{os}-{processArchitecture}-{runtimeFamily.ToLowerInvariant()}-net10"
+            PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
     }
 
