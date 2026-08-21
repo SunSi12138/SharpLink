@@ -47,10 +47,7 @@ public sealed class MainActivity : Activity
             var commit = Intent?.GetStringExtra("commit") ?? "unknown";
             var sdk = Intent?.GetStringExtra("sdk") ?? "unknown";
             var expectedRuntimeFamily = Intent?.GetStringExtra("runtimeFamily") ?? "unknown";
-            var runtimeIdentifier = RuntimeInformation.RuntimeIdentifier;
-            if (!runtimeIdentifier.StartsWith("android-", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"Expected an Android runtime identifier, observed {runtimeIdentifier}.");
-
+            var runtimeIdentifier = DetectRuntimeIdentifier();
             var targetFramework = $"net10.0-android/{runtimeIdentifier}";
             var executionEnvironment = DetectExecutionEnvironment();
 
@@ -111,6 +108,30 @@ public sealed class MainActivity : Activity
                 Log.Error(LogTag, $"failed to persist probe error: {reportingException}");
             }
         }
+    }
+
+    private static string DetectRuntimeIdentifier()
+    {
+        if (!OperatingSystem.IsAndroid())
+            throw new InvalidOperationException("Android probe is not executing on Android.");
+
+        var reported = RuntimeInformation.RuntimeIdentifier;
+        if (reported.StartsWith("android-", StringComparison.OrdinalIgnoreCase))
+            return reported;
+
+        var architecture = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            Architecture.X86 => "x86",
+            Architecture.Arm => "arm",
+            var observed => throw new InvalidOperationException($"Unsupported Android process architecture: {observed}.")
+        };
+
+        // Experimental Android CoreCLR currently reports RuntimeIdentifier as
+        // "unknown". In that case the effective RID is reconstructed only from
+        // two in-process observations: Android OS + the actual process architecture.
+        return $"android-{architecture}";
     }
 
     private static string DetectExecutionEnvironment()
