@@ -7,6 +7,7 @@
     <RootNamespace>SharpLink.CodecCompatibility</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WasmMainJSPath>main.js</WasmMainJSPath>
+    <PublishTrimmed>false</PublishTrimmed>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
