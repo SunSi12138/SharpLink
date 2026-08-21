@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace SharpLink.CodecCompatibility;
 
 internal sealed class RuntimeManifest
 {
-    public int SchemaVersion { get; set; } = 1;
+    [JsonRequired]
+    public int SchemaVersion { get; set; }
     public string SharpLinkCommit { get; set; } = string.Empty;
     public string TargetFramework { get; set; } = string.Empty;
     public string FrameworkDescription { get; set; } = string.Empty;
@@ -57,7 +59,8 @@ internal sealed class PaddingPoisonResult
 
 internal sealed class VerificationReport
 {
-    public int SchemaVersion { get; set; } = 1;
+    [JsonRequired]
+    public int SchemaVersion { get; set; }
     public RuntimeManifest Consumer { get; set; } = new();
     public List<VerificationEntry> Results { get; set; } = [];
 }
@@ -93,7 +96,8 @@ internal sealed class VerificationEntry
 
 internal sealed class CompatibilitySummary
 {
-    public int SchemaVersion { get; set; } = 1;
+    [JsonRequired]
+    public int SchemaVersion { get; set; }
     public DateTimeOffset GeneratedAtUtc { get; set; }
     public int BlockingFailures { get; set; }
     public List<VerificationEntry> Results { get; set; } = [];
