@@ -166,8 +166,7 @@ jobs:
           echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
           xcrun simctl boot "$udid" || true
           for attempt in $(seq 1 90); do
-            state="$(xcrun simctl list devices -j | python3 -c 'import json,sys,os; d=json.load(sys.stdin); u=os.environ["IOS_TARGET"]; print(next((x.get("state","") for xs in d["devices"].values() for x in xs if x.get("udid")==u), ""))' IOS_TARGET="$udid" 2>/dev/null || true)"
-            if [[ "$state" == "Booted" ]]; then
+            if xcrun simctl list devices | grep "$udid" | grep -q '(Booted)'; then
               break
             fi
             sleep 2
