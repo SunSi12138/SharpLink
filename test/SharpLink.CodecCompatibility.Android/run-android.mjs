@@ -66,9 +66,7 @@ async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion, ru
     adbTry(['logcat', '-c']);
 
     if (input !== null) {
-        adb(
-            ['shell', 'run-as', packageName, 'sh', '-c', `cat > ${inputFile}`],
-            { input });
+        adb(['shell', 'run-as', packageName, 'tee', inputFile], { input });
     }
 
     const launchOutput = adb([
