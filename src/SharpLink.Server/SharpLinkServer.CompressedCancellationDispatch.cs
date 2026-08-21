@@ -66,12 +66,15 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? retainedPayload = null;
         try
         {
-            ServerRequestEnvelopeReader.ValidateMetadataSyntax(
-                connection.Session,
-                payload,
-                flags,
-                _protocolOptions.MaxMetadataBytes,
-                _runtimeContext.TimeProvider);
+            if (!reusePreDecodeMetadata)
+            {
+                ServerRequestEnvelopeReader.ValidateMetadataSyntax(
+                    connection.Session,
+                    payload,
+                    flags,
+                    _protocolOptions.MaxMetadataBytes,
+                    _runtimeContext.TimeProvider);
+            }
             ReservePreDecodeRequestStreams(
                 connection.Session,
                 requestId,
@@ -159,12 +162,15 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? retainedPayload = null;
         try
         {
-            ServerRequestEnvelopeReader.ValidateMetadataSyntax(
-                connection.Session,
-                payload,
-                flags,
-                _protocolOptions.MaxMetadataBytes,
-                _runtimeContext.TimeProvider);
+            if (!reusePreDecodeMetadata)
+            {
+                ServerRequestEnvelopeReader.ValidateMetadataSyntax(
+                    connection.Session,
+                    payload,
+                    flags,
+                    _protocolOptions.MaxMetadataBytes,
+                    _runtimeContext.TimeProvider);
+            }
             ReservePreDecodeRequestStreams(
                 connection.Session,
                 requestId,
