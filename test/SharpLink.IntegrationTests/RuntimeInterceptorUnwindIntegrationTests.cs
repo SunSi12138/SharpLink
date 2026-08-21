@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 
 namespace SharpLink.IntegrationTests;
 
@@ -110,7 +111,7 @@ public class RuntimeInterceptorUnwindIntegrationTests
 
     private static async IAsyncEnumerable<int> CancellationDrivenInput(
         TaskCompletionSource enumerationStarted,
-        CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         enumerationStarted.TrySetResult();
         await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
