@@ -34,6 +34,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -45,9 +46,18 @@ jobs:
         shell: bash
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          candidate_sha="$(git rev-parse HEAD)"
+          candidate_sha="$PR_HEAD_SHA"
+          if [[ -z "$candidate_sha" ]]; then
+            candidate_sha="$(git rev-parse HEAD)"
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$candidate_sha" ]]; then
+            echo "Candidate checkout mismatch: expected $candidate_sha, got $(git rev-parse HEAD)" >&2
+            exit 1
+          fi
+
           base_sha="$PR_BASE_SHA"
           if [[ -z "$base_sha" ]]; then
             git fetch origin dev --no-tags
@@ -138,7 +148,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-244-accepted-path-performance-${{ github.sha }}
+          name: issue-244-accepted-path-performance-${{ steps.refs.outputs.candidate_sha || github.sha }}
           path: artifacts/performance/issue-244
           if-no-files-found: error
           retention-days: 30
