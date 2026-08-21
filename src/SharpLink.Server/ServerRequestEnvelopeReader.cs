@@ -123,7 +123,7 @@ internal static class ServerRequestEnvelopeReader
         ref SequenceReader<byte> reader,
         string field,
         Decoder decoder,
-        Span<char> characters,
+        scoped Span<char> characters,
         bool requireNonWhitespace)
     {
         if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var lengthBits) ||
