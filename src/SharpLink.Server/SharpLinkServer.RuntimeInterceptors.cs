@@ -2,11 +2,15 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+    // Test-only handshake used to order lifecycle races without relying on lock waiter fairness.
+    private Action? _replacementStateGateEnteredForTesting = null;
+
     public void ReplaceInterceptors(IEnumerable<ISharpLinkServerInterceptor> interceptors)
     {
         var candidate = CreateInterceptorSnapshot(interceptors);
         lock (_stateGate)
         {
+            Volatile.Read(ref _replacementStateGateEnteredForTesting)?.Invoke();
             if (_stopTask is not null)
             {
                 throw new InvalidOperationException(
