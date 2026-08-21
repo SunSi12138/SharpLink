@@ -370,6 +370,7 @@ jobs:
           -- summarize
           --input artifacts/codec-compat/verifications
           --output artifacts/codec-compat/summary
+          --profile desktop
 
       - name: Upload compatibility summary
         if: always()
