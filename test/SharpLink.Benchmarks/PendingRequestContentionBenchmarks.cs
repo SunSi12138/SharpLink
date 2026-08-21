@@ -17,7 +17,7 @@ public class PendingRequestContentionBenchmarks
     // Keep the total operation count constant across producer counts so BenchmarkDotNet reports
     // comparable per-register/complete costs for the dev-vs-head contention gate.
     private const int OperationsPerInvocation = 16_384;
-    private static int s_lifecycleState;
+    private static int s_lifecycleState = 0;
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
     private IPendingCallOwner _owner = null!;

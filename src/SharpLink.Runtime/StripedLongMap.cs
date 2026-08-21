@@ -5,6 +5,8 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     private readonly Lock[] _locks;
     private readonly Dictionary<long, TValue>[] _maps;
     private readonly int _stripeMask;
+    private int _count;
+    private bool _countTrackingEnabled;
 
     public StripedLongMap() : this(new RuntimeConcurrencyOptions())
     {
@@ -31,11 +33,44 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         }
     }
 
+    /// <summary>
+    /// Enables a cheap occupancy hint for owners that need it. This must be called before the map
+    /// is published for concurrent mutation; maps that never opt in pay no shared atomic writes.
+    /// Existing entries are included in the initial hint.
+    /// </summary>
+    internal void EnableCountTracking()
+    {
+        if (_countTrackingEnabled)
+            return;
+
+        var count = 0;
+        for (var index = 0; index < _maps.Length; index++)
+        {
+            lock (_locks[index])
+                count += _maps[index].Count;
+        }
+
+        Volatile.Write(ref _count, count);
+        _countTrackingEnabled = true;
+    }
+
+    internal int Count => Volatile.Read(ref _count);
+
     public void Set(long key, TValue value)
     {
         var stripe = GetStripe(key);
         lock (_locks[stripe])
-            _maps[stripe][key] = value;
+        {
+            var map = _maps[stripe];
+            if (!map.TryAdd(key, value))
+            {
+                map[key] = value;
+                return;
+            }
+
+            if (_countTrackingEnabled)
+                Interlocked.Increment(ref _count);
+        }
     }
 
     public TValue GetOrAdd(long key, Func<long, TValue> valueFactory)
@@ -50,6 +85,8 @@ internal sealed class StripedLongMap<TValue> where TValue : class
 
             var created = valueFactory(key);
             _maps[stripe][key] = created;
+            if (_countTrackingEnabled)
+                Interlocked.Increment(ref _count);
             return created;
         }
     }
@@ -89,7 +126,13 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     {
         var stripe = GetStripe(key);
         lock (_locks[stripe])
-            return _maps[stripe].TryGetValue(key, out value!) && _maps[stripe].Remove(key);
+        {
+            if (!_maps[stripe].TryGetValue(key, out value!) || !_maps[stripe].Remove(key))
+                return false;
+            if (_countTrackingEnabled)
+                Interlocked.Decrement(ref _count);
+            return true;
+        }
     }
 
     public bool TryRemove(long key, TValue expected)
@@ -98,9 +141,16 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         var stripe = GetStripe(key);
         lock (_locks[stripe])
         {
-            return _maps[stripe].TryGetValue(key, out var existing) &&
-                   ReferenceEquals(existing, expected) &&
-                   _maps[stripe].Remove(key);
+            if (!_maps[stripe].TryGetValue(key, out var existing) ||
+                !ReferenceEquals(existing, expected) ||
+                !_maps[stripe].Remove(key))
+            {
+                return false;
+            }
+
+            if (_countTrackingEnabled)
+                Interlocked.Decrement(ref _count);
+            return true;
         }
     }
 
@@ -114,8 +164,11 @@ internal sealed class StripedLongMap<TValue> where TValue : class
                 if (_maps[i].Count == 0)
                     continue;
 
+                var removed = _maps[i].Count;
                 values.AddRange(_maps[i].Values);
                 _maps[i].Clear();
+                if (_countTrackingEnabled)
+                    Interlocked.Add(ref _count, -removed);
             }
         }
 
@@ -141,24 +194,38 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         Span<TSnapshot> destination,
         Func<long, TValue, TSnapshot> capture)
     {
+        if (TryCopyEntries(destination, capture, out var count))
+            return count;
+
+        throw new ArgumentException(
+            "The destination is smaller than the current map value count.",
+            nameof(destination));
+    }
+
+    /// <summary>
+    /// Attempts to copy immutable projections without using an exception for a sizing race.
+    /// <paramref name="count"/> reports how many destination elements were written even when the
+    /// destination becomes too small at a later stripe.
+    /// </summary>
+    internal bool TryCopyEntries<TSnapshot>(
+        Span<TSnapshot> destination,
+        Func<long, TValue, TSnapshot> capture,
+        out int count)
+    {
         ArgumentNullException.ThrowIfNull(capture);
-        var count = 0;
+        count = 0;
         for (var index = 0; index < _maps.Length; index++)
         {
             lock (_locks[index])
             {
                 var map = _maps[index];
                 if (map.Count > destination.Length - count)
-                {
-                    throw new ArgumentException(
-                        "The destination is smaller than the current map value count.",
-                        nameof(destination));
-                }
+                    return false;
                 foreach (var entry in map)
                     destination[count++] = capture(entry.Key, entry.Value);
             }
         }
-        return count;
+        return true;
     }
 
     private int GetStripe(long key)
