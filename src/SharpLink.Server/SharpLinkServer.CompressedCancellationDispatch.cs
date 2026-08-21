@@ -124,10 +124,13 @@ internal sealed partial class SharpLinkServer
             preDecodeRequest);
         try
         {
-            // Queue the pooled item directly so the ThreadPool does not allocate a callback wrapper.
-            // The item captures and runs the current ExecutionContext itself, preserving the request
-            // and session log scopes, Activity.Current, and other AsyncLocal state across handoff.
-            if (!ThreadPool.UnsafeQueueUserWorkItem(workItem, preferLocal: false))
+            // QueueUserWorkItem flows the current ExecutionContext so request logging scopes,
+            // Activity.Current, and other AsyncLocal state remain visible during synchronous
+            // decode/service dispatch while the pooled state avoids a per-call closure object.
+            if (!ThreadPool.QueueUserWorkItem(
+                    static item => item.Execute(),
+                    workItem,
+                    preferLocal: false))
             {
                 throw new InvalidOperationException("Unable to queue compressed RPC dispatch.");
             }
@@ -279,12 +282,10 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private sealed class CompressedCancellableRpcWorkItem : IThreadPoolWorkItem
+    private sealed class CompressedCancellableRpcWorkItem
     {
         private const int MaxRetained = 4096;
         private static readonly ConcurrentStack<CompressedCancellableRpcWorkItem> Pool = new();
-        private static readonly ContextCallback SExecuteWithContext = static state =>
-            ((CompressedCancellableRpcWorkItem)state!).ExecuteCore();
         private static int s_retainedCount;
 
         private SharpLinkServer? _server;
@@ -298,7 +299,6 @@ internal sealed partial class SharpLinkServer
         private ServiceRegistration? _serviceInfo;
         private bool _reusePreDecodeMetadata;
         private ServerRequestEnvelope _preDecodeRequest;
-        private ExecutionContext? _executionContext;
 
         private CompressedCancellableRpcWorkItem()
         {
@@ -333,39 +333,30 @@ internal sealed partial class SharpLinkServer
             workItem._serviceInfo = serviceInfo;
             workItem._reusePreDecodeMetadata = reusePreDecodeMetadata;
             workItem._preDecodeRequest = preDecodeRequest;
-            workItem._executionContext = ExecutionContext.Capture();
             return workItem;
         }
 
-        void IThreadPoolWorkItem.Execute()
+        internal void Execute()
         {
+            var server = _server!;
             try
             {
-                var executionContext = _executionContext;
-                if (executionContext is null)
-                    ExecuteCore();
-                else
-                    ExecutionContext.Run(executionContext, SExecuteWithContext, this);
+                server.DispatchRetainedCancellableCompressedRpc(
+                    _retainedPayload!,
+                    _connection!,
+                    _requestId,
+                    _flags,
+                    _requestCancellationMap!,
+                    _serverLoopToken,
+                    _callState!,
+                    _serviceInfo!,
+                    _reusePreDecodeMetadata,
+                    _preDecodeRequest);
             }
             finally
             {
                 Return();
             }
-        }
-
-        private void ExecuteCore()
-        {
-            _server!.DispatchRetainedCancellableCompressedRpc(
-                _retainedPayload!,
-                _connection!,
-                _requestId,
-                _flags,
-                _requestCancellationMap!,
-                _serverLoopToken,
-                _callState!,
-                _serviceInfo!,
-                _reusePreDecodeMetadata,
-                _preDecodeRequest);
         }
 
         internal void ReturnWithoutExecute() => Return();
@@ -383,7 +374,6 @@ internal sealed partial class SharpLinkServer
             _serviceInfo = null;
             _reusePreDecodeMetadata = false;
             _preDecodeRequest = default;
-            _executionContext = null;
 
             var retained = Interlocked.Increment(ref s_retainedCount);
             if (retained <= MaxRetained)
