@@ -12,14 +12,14 @@ using SharpLink.Runtime;
 namespace SharpLink.Benchmarks;
 
 /// <summary>
-/// Reproducible evidence runner for issue #252. Run separate processes for memory occupancies so
-/// pooled pending-operation state from one sample cannot contaminate the next retained-memory sample.
-/// Segment-size comparisons should use identical source/runtime inputs and change only the segment-size constant.
+/// Reproducible storage/deadline evidence runner for issue #252. The historical class/CLI name is
+/// retained so recorded evidence commands remain runnable, but outputs describe the final flat-table
+/// implementations rather than the rejected segmented prototype.
 /// </summary>
 internal static class PendingRequestSegmentationEvidenceRunner
 {
     private const int Capacity = 65_536;
-    private static readonly Exception CleanupException = new IOException("pending-segmentation evidence cleanup");
+    private static readonly Exception CleanupException = new IOException("pending-request evidence cleanup");
     private static readonly ReadOnlySequence<byte> CompletionPayload = new(new byte[sizeof(int)]);
 
     public static async Task RunAsync(string[] args)
@@ -39,25 +39,25 @@ internal static class PendingRequestSegmentationEvidenceRunner
                 RunConstruction(args[1..]);
                 return;
             case "scan":
-                RunScan(args[1..]);
+                RunScanCore(args[1..], churn: false);
                 return;
             case "lateness":
-                await RunLatenessAsync(args[1..]).ConfigureAwait(false);
+                await RunLatenessCoreAsync(args[1..], churn: false).ConfigureAwait(false);
                 return;
             case "churn-memory":
                 RunChurnMemory(args[1..]);
                 return;
             case "churn-scan":
-                RunChurnScan(args[1..]);
+                RunScanCore(args[1..], churn: true);
                 return;
             case "churn-lateness":
-                await RunChurnLatenessAsync(args[1..]).ConfigureAwait(false);
+                await RunLatenessCoreAsync(args[1..], churn: true).ConfigureAwait(false);
                 return;
             case "heap-hold":
                 RunHeapHold(args[1..]);
                 return;
             default:
-                throw new ArgumentOutOfRangeException(nameof(args), args[0], "Unknown pending-segmentation evidence mode.");
+                throw new ArgumentOutOfRangeException(nameof(args), args[0], "Unknown pending-request evidence mode.");
         }
     }
 
@@ -66,6 +66,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
         var active = GetInt32(args, "--active", required: true);
         var connections = GetInt32(args, "--connections", 1000);
         ValidateMemoryActive(active);
+        ValidateConnections(connections);
 
         WarmUp();
         var tables = new PendingRequestTable[connections];
@@ -87,6 +88,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
         var connections = GetInt32(args, "--connections", 100);
         if (active is not (0 or 1))
             throw new ArgumentOutOfRangeException(nameof(args), "Post-churn memory evidence active count must be 0 or 1.");
+        ValidateConnections(connections);
 
         WarmUp();
         var tables = new PendingRequestTable[connections];
@@ -105,6 +107,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
     private static void RunConstruction(string[] args)
     {
         var connections = GetInt32(args, "--connections", 1000);
+        ValidateConnections(connections);
         WarmUp();
         var tables = new PendingRequestTable[connections];
         ForceFullGc();
@@ -120,7 +123,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
         {
             mode = "construction",
             implementation = GetImplementation(tables[0]),
-            segmentSize = GetOptionalInt32(tables[0], "SegmentSize"),
+            slotsMaterialized = GetOptionalBoolean(tables[0], "SlotsMaterialized"),
             capacity = Capacity,
             connections,
             nanosecondsPerConnection = elapsedTicks * 1_000_000_000d / Stopwatch.Frequency / connections,
@@ -131,19 +134,13 @@ internal static class PendingRequestSegmentationEvidenceRunner
         Cleanup(tables, []);
     }
 
-    private static void RunScan(string[] args)
-        => RunScanCore(args, churn: false);
-
-    private static void RunChurnScan(string[] args)
-        => RunScanCore(args, churn: true);
-
     private static void RunScanCore(string[] args, bool churn)
     {
         var active = GetInt32(args, "--active", churn ? 1 : 0, required: !churn);
         var deadlines = GetInt32(args, "--deadlines", churn ? 1 : 0, required: !churn);
         var iterations = GetInt32(args, "--iterations", 10_000);
-        if (active <= 0 || deadlines <= 0 || deadlines > active)
-            throw new ArgumentOutOfRangeException(nameof(args), "Scan evidence requires 0 < deadlines <= active.");
+        if (active <= 0 || deadlines <= 0 || deadlines > active || iterations <= 0)
+            throw new ArgumentOutOfRangeException(nameof(args), "Scan evidence requires positive iterations and 0 < deadlines <= active.");
 
         var timeProvider = new ManualEvidenceTimeProvider();
         using var table = CreateTable(timeProvider);
@@ -177,14 +174,13 @@ internal static class PendingRequestSegmentationEvidenceRunner
         {
             mode = churn ? "churn-scan" : "scan",
             implementation = GetImplementation(table),
-            segmentSize = GetOptionalInt32(table, "SegmentSize"),
+            slotsMaterialized = GetOptionalBoolean(table, "SlotsMaterialized"),
             capacity = Capacity,
             churn,
             active,
             deadlines,
             iterations,
             inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity,
-            materializedSegments = GetOptionalInt32(table, "MaterializedSegmentCount"),
             nanosecondsPerScan = elapsedTicks * 1_000_000_000d / Stopwatch.Frequency / iterations
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
@@ -192,12 +188,6 @@ internal static class PendingRequestSegmentationEvidenceRunner
         table.FailAllPendingRequests(CleanupException);
         ObserveFailures(operations);
     }
-
-    private static async Task RunLatenessAsync(string[] args)
-        => await RunLatenessCoreAsync(args, churn: false).ConfigureAwait(false);
-
-    private static async Task RunChurnLatenessAsync(string[] args)
-        => await RunLatenessCoreAsync(args, churn: true).ConfigureAwait(false);
 
     private static async Task RunLatenessCoreAsync(string[] args, bool churn)
     {
@@ -234,7 +224,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
         {
             mode = churn ? "churn-lateness" : "lateness",
             implementation = GetImplementation(table),
-            segmentSize = GetOptionalInt32(table, "SegmentSize"),
+            slotsMaterialized = GetOptionalBoolean(table, "SlotsMaterialized"),
             capacity = Capacity,
             churn,
             iterations,
@@ -242,8 +232,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
             p50LatenessMilliseconds = Percentile(lateness, 0.50),
             p95LatenessMilliseconds = Percentile(lateness, 0.95),
             maxLatenessMilliseconds = lateness[^1],
-            inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity,
-            materializedSegments = GetOptionalInt32(table, "MaterializedSegmentCount")
+            inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
     }
@@ -255,6 +244,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
         var churn = GetInt32(args, "--churn", 0) != 0;
         var holdSeconds = GetInt32(args, "--hold-seconds", 90);
         ValidateMemoryActive(active);
+        ValidateConnections(connections);
         if (holdSeconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(args), "Heap-hold duration must be positive.");
 
@@ -268,13 +258,12 @@ internal static class PendingRequestSegmentationEvidenceRunner
         {
             mode = "heap-hold",
             implementation = GetImplementation(tables[0]),
-            segmentSize = GetOptionalInt32(tables[0], "SegmentSize"),
+            slotsMaterialized = GetOptionalBoolean(tables[0], "SlotsMaterialized"),
             capacity = Capacity,
             active,
             connections,
             churn,
-            processId = Environment.ProcessId,
-            materializedSegmentsPerConnection = GetOptionalInt32(tables[0], "MaterializedSegmentCount")
+            processId = Environment.ProcessId
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
         Console.Out.Flush();
@@ -313,14 +302,13 @@ internal static class PendingRequestSegmentationEvidenceRunner
         {
             mode,
             implementation = GetImplementation(tables[0]),
-            segmentSize = GetOptionalInt32(tables[0], "SegmentSize"),
+            slotsMaterialized = GetOptionalBoolean(tables[0], "SlotsMaterialized"),
             capacity = Capacity,
             churn,
             active,
             connections,
             retainedBytes,
-            retainedBytesPerConnection = retainedBytes / (double)connections,
-            materializedSegmentsPerConnection = GetOptionalInt32(tables[0], "MaterializedSegmentCount")
+            retainedBytesPerConnection = retainedBytes / (double)connections
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
     }
@@ -420,8 +408,24 @@ internal static class PendingRequestSegmentationEvidenceRunner
             throw new ArgumentOutOfRangeException(nameof(active), "Memory evidence active count must be 0, 1, or 8.");
     }
 
+    private static void ValidateConnections(int connections)
+    {
+        if (connections <= 0)
+            throw new ArgumentOutOfRangeException(nameof(connections));
+    }
+
     private static string GetImplementation(PendingRequestTable table)
-        => GetOptionalInt32(table, "SegmentSize") is null ? "eager" : "segmented";
+        => GetOptionalBoolean(table, "SlotsMaterialized").HasValue
+            ? "lazy-flat"
+            : "eager-flat";
+
+    private static bool? GetOptionalBoolean(object instance, string propertyName)
+    {
+        var property = instance.GetType().GetProperty(
+            propertyName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return property?.GetValue(instance) is bool value ? value : null;
+    }
 
     private static int? GetOptionalInt32(object instance, string propertyName)
     {
@@ -513,8 +517,8 @@ internal static class PendingRequestSegmentationEvidenceRunner
 
     private sealed class ManualEvidenceTimeProvider : TimeProvider
     {
-        private long _timestamp = 0;
-        private DateTimeOffset _utcNow = DateTimeOffset.UnixEpoch;
+        private readonly long _timestamp = 0;
+        private readonly DateTimeOffset _utcNow = DateTimeOffset.UnixEpoch;
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
