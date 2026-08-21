@@ -10,6 +10,8 @@ on:
       - 'test/SharpLink.Benchmarks/BenchmarkContracts.cs'
       - 'test/SharpLink.Benchmarks/BenchmarkService.cs'
       - 'test/SharpLink.Benchmarks/CompressionAcceptedPathEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/CompressionIssue244FollowUpEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/CompressionIssue244FollowUpGlobalUsings.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
   workflow_dispatch:
 
@@ -66,12 +68,14 @@ jobs:
           base_root="$RUNNER_TEMP/sharplink-issue-244-base"
           git worktree add --detach "$base_root" "$base_sha"
 
-          # Keep measurement code identical across base and candidate. The base worktree
-          # receives only this PR's benchmark harness, while all product source stays at base.
+          # Keep measurement code identical across base and candidate. Program references the
+          # accepted and issue-244 follow-up runners, so both are overlaid onto the base worktree.
           for path in \
             test/SharpLink.Benchmarks/BenchmarkContracts.cs \
             test/SharpLink.Benchmarks/BenchmarkService.cs \
             test/SharpLink.Benchmarks/CompressionAcceptedPathEvidenceRunner.cs \
+            test/SharpLink.Benchmarks/CompressionIssue244FollowUpEvidenceRunner.cs \
+            test/SharpLink.Benchmarks/CompressionIssue244FollowUpGlobalUsings.cs \
             test/SharpLink.Benchmarks/Program.cs; do
             install -D "$GITHUB_WORKSPACE/$path" "$base_root/$path"
           done
