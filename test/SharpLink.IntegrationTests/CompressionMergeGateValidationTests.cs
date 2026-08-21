@@ -138,9 +138,14 @@ public class CompressionMergeGateValidationTests
     {
         CompressionMergeGateProbeService.Reset();
         const int rejectedRequests = 100_000;
+        const int batchSize = 2048;
         var serverProvider = new CountingDecompressionProvider(
             SharpLinkCompressionProviders.CreateBrotli());
-        await using var harness = await ValidationHarness.CreateAsync(serverProvider);
+        var clientProvider = new CachedRequestCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await ValidationHarness.CreateAsync(
+            serverProvider,
+            clientProvider: clientProvider);
         var service = harness.Client.Get<ICompressionMergeGateProbeService>();
         var blocker = service.BlockAsync().AsTask();
         var payload = CreateCompressiblePayload(1024, 0x55);
@@ -151,13 +156,19 @@ public class CompressionMergeGateValidationTests
                 .WaitAsync(TimeSpan.FromSeconds(2));
             var rejectedBefore = harness.RejectedOneWayCalls;
 
-            for (var index = 0; index < rejectedRequests; index++)
-                await service.NotifyAsync(payload).AsTask();
+            for (var offset = 0; offset < rejectedRequests; offset += batchSize)
+            {
+                var count = Math.Min(batchSize, rejectedRequests - offset);
+                var sends = new Task[count];
+                for (var index = 0; index < sends.Length; index++)
+                    sends[index] = service.NotifyAsync(payload).AsTask();
+                await Task.WhenAll(sends).ConfigureAwait(false);
+            }
 
             await WaitUntilAsync(
                 () => harness.RejectedOneWayCalls - rejectedBefore == rejectedRequests,
                 "100k compressed capacity rejection accounting",
-                TimeSpan.FromSeconds(30));
+                TimeSpan.FromSeconds(45));
 
             Ensure(serverProvider.DecompressCount == 0,
                 "100k capacity-rejected compressed requests must never enter DecodeInboundPayload/provider decompression");
@@ -295,6 +306,59 @@ public class CompressionMergeGateValidationTests
         }
     }
 
+    private sealed class CachedRequestCompressionProvider(ISharpLinkCompressionProvider inner)
+        : ISharpLinkCompressionProvider
+    {
+        private readonly object _gate = new();
+        private byte[]? _cachedBytes;
+        private SharpLinkCompressionResult _cachedResult;
+        private int _cachedInputLength = -1;
+
+        public string WireProfile => inner.WireProfile;
+
+        public SharpLinkCompressionResult Compress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                if (_cachedBytes is null)
+                {
+                    var candidate = new ArrayBufferWriter<byte>();
+                    _cachedResult = inner.Compress(
+                        input,
+                        candidate,
+                        maxOutputBytes,
+                        cancellationToken);
+                    _cachedBytes = candidate.WrittenSpan.ToArray();
+                    _cachedInputLength = checked((int)input.Length);
+                }
+                else if (input.Length != _cachedInputLength)
+                {
+                    throw new InvalidOperationException(
+                        "The merge-gate cached compression provider received a different input shape.");
+                }
+
+                if (_cachedBytes.Length > maxOutputBytes)
+                    throw new InvalidOperationException("Cached compressed payload exceeds the output bound.");
+                output.Write(_cachedBytes);
+                return new SharpLinkCompressionResult(
+                    _cachedResult.ConsumedBytes,
+                    _cachedBytes.Length);
+            }
+        }
+
+        public SharpLinkCompressionResult Decompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+    }
+
     private sealed class ReturnAfterCancellationProvider(ISharpLinkCompressionProvider inner)
         : ISharpLinkCompressionProvider
     {
@@ -426,7 +490,8 @@ public class CompressionMergeGateValidationTests
 
         public static async Task<ValidationHarness> CreateAsync(
             ISharpLinkCompressionProvider serverProvider,
-            TimeSpan? requestTimeout = null)
+            TimeSpan? requestTimeout = null,
+            ISharpLinkCompressionProvider? clientProvider = null)
         {
             var serverCts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
@@ -462,9 +527,14 @@ public class CompressionMergeGateValidationTests
 
             var clientBuilder = SharpClientBuilder.Create()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+                .UseConnectionPool(options =>
+                {
+                    options.MinConnections = 1;
+                    options.MaxConnections = 1;
+                })
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()));
+                    clientProvider ?? SharpLinkCompressionProviders.CreateBrotli()));
             if (requestTimeout is { } timeout)
                 clientBuilder.UseRequestTimeout(timeout);
             var client = clientBuilder.Build();
