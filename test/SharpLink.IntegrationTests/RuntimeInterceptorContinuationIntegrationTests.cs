@@ -5,61 +5,65 @@ namespace SharpLink.IntegrationTests;
 public class RuntimeInterceptorContinuationIntegrationTests
 {
     [Test]
-    public async Task ClientReplacementAfterDownstreamNextStartsShouldRetainCapturedGeneration()
+    public async Task ClientReplacementBeforeDownstreamNextAdvancesShouldRetainCapturedGeneration()
     {
         await using var harness = await RuntimeInterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new AwaitingClientInterceptor("A", log);
-        var b = new AwaitingClientInterceptor("B", log);
+        var b = new GatedNextClientInterceptor("B", log);
+        var c = new AwaitingClientInterceptor("C", log);
         var x = new AwaitingClientInterceptor("X", log);
         var y = new AwaitingClientInterceptor("Y", log);
-        harness.Client.ReplaceInterceptors([a, b]);
+        var z = new AwaitingClientInterceptor("Z", log);
+        harness.Client.ReplaceInterceptors([a, b, c]);
 
-        var requestRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var first = InvokeClientStreamingAsync(harness.Service, requestRelease.Task);
-        await b.NextStarted.WaitAsync(TimeSpan.FromSeconds(3));
+        var first = InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
+        await b.Entered.WaitAsync(TimeSpan.FromSeconds(3));
         Ensure(!first.IsCompleted,
-            "client-streaming invocation must remain pending after the downstream interceptor invoked next");
+            "client-streaming invocation must remain pending before the delayed interceptor advances to next");
+        EnsureSequence(log, "A:before", "B:before");
 
-        harness.Client.ReplaceInterceptors([x, y]);
-        requestRelease.TrySetResult();
+        harness.Client.ReplaceInterceptors([x, y, z]);
+        b.Release();
         await first.WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(a.Completed, b.Completed).WaitAsync(TimeSpan.FromSeconds(3));
-        EnsureSequence(log, "A:before", "B:before", "B:after", "A:after");
+        await Task.WhenAll(a.Completed, b.Completed, c.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureSequence(log, "A:before", "B:before", "C:before", "C:after", "B:after", "A:after");
 
         Clear(log);
         await InvokeClientStreamingAsync(harness.Service, Task.CompletedTask).WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(x.Completed, y.Completed).WaitAsync(TimeSpan.FromSeconds(3));
-        EnsureSequence(log, "X:before", "Y:before", "Y:after", "X:after");
+        await Task.WhenAll(x.Completed, y.Completed, z.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureSequence(log, "X:before", "Y:before", "Z:before", "Z:after", "Y:after", "X:after");
     }
 
     [Test]
-    public async Task ServerReplacementAfterDownstreamNextStartsShouldRetainCapturedGeneration()
+    public async Task ServerReplacementBeforeDownstreamNextAdvancesShouldRetainCapturedGeneration()
     {
         await using var harness = await RuntimeInterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new AwaitingServerInterceptor("A", log);
-        var b = new AwaitingServerInterceptor("B", log);
+        var b = new GatedNextServerInterceptor("B", log);
+        var c = new AwaitingServerInterceptor("C", log);
         var x = new AwaitingServerInterceptor("X", log);
         var y = new AwaitingServerInterceptor("Y", log);
-        harness.Server.ReplaceInterceptors([a, b]);
+        var z = new AwaitingServerInterceptor("Z", log);
+        harness.Server.ReplaceInterceptors([a, b, c]);
 
-        var requestRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var first = InvokeClientStreamingAsync(harness.Service, requestRelease.Task);
-        await b.NextStarted.WaitAsync(TimeSpan.FromSeconds(3));
+        var first = InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
+        await b.Entered.WaitAsync(TimeSpan.FromSeconds(3));
         Ensure(!first.IsCompleted,
-            "server client-streaming invocation must remain pending after the downstream interceptor invoked next");
+            "server client-streaming invocation must remain pending before the delayed interceptor advances to next");
+        EnsureSequence(log, "A:before", "B:before");
 
-        harness.Server.ReplaceInterceptors([x, y]);
-        requestRelease.TrySetResult();
+        harness.Server.ReplaceInterceptors([x, y, z]);
+        b.Release();
         await first.WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(a.Completed, b.Completed).WaitAsync(TimeSpan.FromSeconds(3));
-        EnsureSequence(log, "A:before", "B:before", "B:after", "A:after");
+        await Task.WhenAll(a.Completed, b.Completed, c.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureSequence(log, "A:before", "B:before", "C:before", "C:after", "B:after", "A:after");
 
         Clear(log);
         await InvokeClientStreamingAsync(harness.Service, Task.CompletedTask).WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(x.Completed, y.Completed).WaitAsync(TimeSpan.FromSeconds(3));
-        EnsureSequence(log, "X:before", "Y:before", "Y:after", "X:after");
+        await Task.WhenAll(x.Completed, y.Completed, z.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureSequence(log, "X:before", "Y:before", "Z:before", "Z:after", "Y:after", "X:after");
     }
 
     [Test]
@@ -123,12 +127,9 @@ public class RuntimeInterceptorContinuationIntegrationTests
     private sealed class AwaitingClientInterceptor(string id, ConcurrentQueue<string> log)
         : ISharpLinkClientInterceptor
     {
-        private readonly TaskCompletionSource _nextStarted =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _completed =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task NextStarted => _nextStarted.Task;
         public Task Completed => _completed.Task;
 
         public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
@@ -138,9 +139,40 @@ public class RuntimeInterceptorContinuationIntegrationTests
             log.Enqueue($"{id}:before");
             try
             {
-                var invocation = next(context);
-                _nextStarted.TrySetResult();
-                return await invocation.ConfigureAwait(false);
+                return await next(context).ConfigureAwait(false);
+            }
+            finally
+            {
+                log.Enqueue($"{id}:after");
+                _completed.TrySetResult();
+            }
+        }
+    }
+
+    private sealed class GatedNextClientInterceptor(string id, ConcurrentQueue<string> log)
+        : ISharpLinkClientInterceptor
+    {
+        private readonly TaskCompletionSource _entered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _completed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+        public Task Completed => _completed.Task;
+        public void Release() => _release.TrySetResult();
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            log.Enqueue($"{id}:before");
+            _entered.TrySetResult();
+            await _release.Task.ConfigureAwait(false);
+            try
+            {
+                return await next(context).ConfigureAwait(false);
             }
             finally
             {
@@ -153,12 +185,9 @@ public class RuntimeInterceptorContinuationIntegrationTests
     private sealed class AwaitingServerInterceptor(string id, ConcurrentQueue<string> log)
         : ISharpLinkServerInterceptor
     {
-        private readonly TaskCompletionSource _nextStarted =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _completed =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task NextStarted => _nextStarted.Task;
         public Task Completed => _completed.Task;
 
         public async ValueTask InvokeAsync(
@@ -168,9 +197,40 @@ public class RuntimeInterceptorContinuationIntegrationTests
             log.Enqueue($"{id}:before");
             try
             {
-                var invocation = next(context);
-                _nextStarted.TrySetResult();
-                await invocation.ConfigureAwait(false);
+                await next(context).ConfigureAwait(false);
+            }
+            finally
+            {
+                log.Enqueue($"{id}:after");
+                _completed.TrySetResult();
+            }
+        }
+    }
+
+    private sealed class GatedNextServerInterceptor(string id, ConcurrentQueue<string> log)
+        : ISharpLinkServerInterceptor
+    {
+        private readonly TaskCompletionSource _entered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _completed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+        public Task Completed => _completed.Task;
+        public void Release() => _release.TrySetResult();
+
+        public async ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+        {
+            log.Enqueue($"{id}:before");
+            _entered.TrySetResult();
+            await _release.Task.ConfigureAwait(false);
+            try
+            {
+                await next(context).ConfigureAwait(false);
             }
             finally
             {
