@@ -63,6 +63,18 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--compression-issue244-followup-evidence", StringComparison.Ordinal))
+        {
+            await CompressionIssue244FollowUpEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--summarize-compression-issue244-followup-evidence", StringComparison.Ordinal))
+        {
+            await CompressionIssue244FollowUpEvidenceRunner.SummarizeAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--buffer-writer-growth-evidence", StringComparison.Ordinal))
         {
             BufferWriterGrowthEvidenceRunner.Run();
