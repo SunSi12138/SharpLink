@@ -31,7 +31,7 @@ public class PendingRequestDeadlineBenchmarks
     private byte[] _responsePayload = null!;
     private RpcDeadline _deadline;
     private long[]? _deadlinePageBits;
-    private FieldInfo? _deadlinePageHintField;
+    private FieldInfo? _deadlineMarkerEpochField;
     private Barrier _workerBarrier = null!;
     private Thread[] _workers = null!;
     private Exception?[] _workerFailures = null!;
@@ -49,8 +49,8 @@ public class PendingRequestDeadlineBenchmarks
         _deadlinePageBits = (long[]?)typeof(PendingRequestTable)
             .GetField("_deadlinePageBits", BindingFlags.Instance | BindingFlags.NonPublic)?
             .GetValue(_pending);
-        _deadlinePageHintField = typeof(PendingRequestTable)
-            .GetField("_deadlinePageHint", BindingFlags.Instance | BindingFlags.NonPublic);
+        _deadlineMarkerEpochField = typeof(PendingRequestTable)
+            .GetField("_deadlineMarkerEpoch", BindingFlags.Instance | BindingFlags.NonPublic);
         _codec = _context.Codecs.GetCodec<int>();
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
@@ -91,12 +91,19 @@ public class PendingRequestDeadlineBenchmarks
     public void ResetDeadlinePageMarks()
     {
         // This is deliberately benchmark-only state control. All deadline calls from the previous
-        // invocation are already terminal, so resetting candidate marker state is equivalent to starting
-        // the next batch after retired marks have been consumed by a scan. It keeps reset work outside
-        // the timed region and lets the copied benchmark compile/run unchanged on eager dev.
+        // invocation are already terminal, so invalidating the cache epoch before clearing candidate
+        // page bits is equivalent to starting the next batch after retired marks have been consumed
+        // by a scan. It keeps reset work outside the timed region and is a no-op on eager dev.
+        if (_deadlineMarkerEpochField is not null)
+        {
+            var epoch = (long)_deadlineMarkerEpochField.GetValue(_pending)!;
+            _deadlineMarkerEpochField.SetValue(
+                _pending,
+                epoch == long.MaxValue ? long.MinValue : epoch + 1);
+        }
+
         if (_deadlinePageBits is not null)
             Array.Clear(_deadlinePageBits);
-        _deadlinePageHintField?.SetValue(_pending, -1);
     }
 
     [GlobalCleanup]
