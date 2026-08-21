@@ -13,6 +13,7 @@ internal sealed class RuntimeManifest
     public string RuntimeVersion { get; set; } = string.Empty;
     public string SdkVersion { get; set; } = string.Empty;
     public string RuntimeIdentifier { get; set; } = string.Empty;
+    public string ExecutionEnvironment { get; set; } = string.Empty;
     public string Os { get; set; } = string.Empty;
     public string OsVersion { get; set; } = string.Empty;
     public string ProcessArchitecture { get; set; } = string.Empty;
