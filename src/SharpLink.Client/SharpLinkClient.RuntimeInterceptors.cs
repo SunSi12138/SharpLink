@@ -3,7 +3,7 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkClient
 {
     // Test-only handshake used to order lifecycle races without relying on lock waiter fairness.
-    private Action? _replacementStateGateEnteredForTesting;
+    private Action? _replacementStateGateEnteredForTesting = null;
 
     public void ReplaceInterceptors(IEnumerable<ISharpLinkClientInterceptor> interceptors)
     {
