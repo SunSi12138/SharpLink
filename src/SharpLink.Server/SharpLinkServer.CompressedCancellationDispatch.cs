@@ -125,9 +125,11 @@ internal sealed partial class SharpLinkServer
         try
         {
             // Queue the pooled item directly so the ThreadPool does not allocate a callback wrapper.
-            // The item captures the current ExecutionContext and restores it on the worker before
-            // synchronous decode/service dispatch. The ThreadPool resets the worker context afterward.
-            if (!ThreadPool.UnsafeQueueUserWorkItem(workItem, preferLocal: false))
+            // Prefer the current worker's local queue: the reader loop can consume already-buffered
+            // Cancel frames before yielding, while work stealing still lets another worker start
+            // decode when the reader remains active. The captured ExecutionContext is restored by
+            // the work item and the ThreadPool resets the worker context afterward.
+            if (!ThreadPool.UnsafeQueueUserWorkItem(workItem, preferLocal: true))
             {
                 throw new InvalidOperationException("Unable to queue compressed RPC dispatch.");
             }
