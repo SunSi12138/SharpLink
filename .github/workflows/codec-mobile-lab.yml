@@ -55,6 +55,7 @@ jobs:
       SHARPLINK_COMMIT: ${{ github.sha }}
       ANDROID_API: '35'
       ANDROID_AVD: sharplink-codec
+      ANDROID_AVD_HOME: ${{ runner.temp }}/android-avd
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,16 +89,26 @@ jobs:
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
-          echo no | "$AVDMANAGER" create avd --force --name "$ANDROID_AVD" --package "system-images;android-$ANDROID_API;google_apis;x86_64" --device pixel_6
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$AVDMANAGER" create avd --force --name "$ANDROID_AVD" --path "$ANDROID_AVD_HOME/$ANDROID_AVD.avd" --package "system-images;android-$ANDROID_API;google_apis;x86_64" --device pixel_6
+          echo "Visible AVDs:"
+          emulator -list-avds
+          emulator -list-avds | grep -Fx "$ANDROID_AVD"
           nohup emulator -avd "$ANDROID_AVD" -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on > artifacts-android-emulator.log 2>&1 &
-          adb wait-for-device
+          if ! timeout 180 adb wait-for-device; then
+            cat artifacts-android-emulator.log
+            exit 1
+          fi
           for attempt in $(seq 1 120); do
             if [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
               break
             fi
             sleep 2
           done
-          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          if [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" != "1" ]]; then
+            cat artifacts-android-emulator.log
+            exit 1
+          fi
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
