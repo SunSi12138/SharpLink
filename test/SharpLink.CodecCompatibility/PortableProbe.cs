@@ -12,6 +12,8 @@ namespace SharpLink.CodecCompatibility;
 
 internal static class PortableProbe
 {
+    private const string BuiltinRawCategory = "builtin-semantic-raw";
+
     internal static string ProduceJson(
         string sharpLinkCommit,
         string sdkVersion,
@@ -70,7 +72,7 @@ internal static class PortableProbe
             compilationModeOverride,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
-        var envelope = new CorpusEnvelope { Manifest = manifest };
+        var envelope = new CorpusEnvelope { SchemaVersion = 1, Manifest = manifest };
 
         foreach (var fixture in FixtureRegistry.All)
         {
@@ -111,12 +113,14 @@ internal static class PortableProbe
             compilationModeOverride,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
-        var report = new VerificationReport { Consumer = consumer };
+        var report = new VerificationReport { SchemaVersion = 1, Consumer = consumer };
 
         foreach (var envelope in envelopes.OrderBy(static item => item.Manifest.PlatformTag, StringComparer.Ordinal))
         {
             if (envelope.SchemaVersion != 1 || envelope.Manifest.SchemaVersion != 1)
                 throw new InvalidOperationException($"Unsupported portable corpus schema for {envelope.Manifest.PlatformTag}.");
+
+            ValidateProducerCases(envelope);
 
             var producer = envelope.Manifest;
             foreach (var producerCase in producer.Cases.OrderBy(static item => item.Id, StringComparer.Ordinal))
@@ -209,6 +213,7 @@ internal static class PortableProbe
 
         return new RuntimeManifest
         {
+            SchemaVersion = 1,
             SharpLinkCommit = string.IsNullOrWhiteSpace(sharpLinkCommit) ? "unknown" : sharpLinkCommit,
             TargetFramework = targetFramework,
             FrameworkDescription = RuntimeInformation.FrameworkDescription,
@@ -226,6 +231,30 @@ internal static class PortableProbe
             CompilationMode = compilationMode,
             PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
+    }
+
+    private static void ValidateProducerCases(CorpusEnvelope envelope)
+    {
+        var producer = envelope.Manifest;
+        var duplicates = producer.Cases
+            .GroupBy(static item => item.Id, StringComparer.Ordinal)
+            .Where(static group => group.Count() > 1)
+            .Select(static group => group.Key)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+        if (duplicates.Length != 0)
+            throw new InvalidOperationException($"Portable producer {producer.PlatformTag} contains duplicate fixture IDs: {string.Join(", ", duplicates)}.");
+
+        var includesBuiltinRaw = producer.Cases.Any(item => string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal));
+        var expectedIds = FixtureRegistry.All
+            .Where(item => includesBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
+            .Select(static item => item.Id)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+        var actualIds = producer.Cases.Select(static item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var missing = expectedIds.Where(id => !actualIds.Contains(id)).ToArray();
+        if (missing.Length != 0)
+            throw new InvalidOperationException($"Portable producer {producer.PlatformTag} is missing expected fixture IDs: {string.Join(", ", missing)}.");
     }
 
     private static string DetectRuntimeFamily()
