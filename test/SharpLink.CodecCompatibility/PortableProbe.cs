@@ -5,17 +5,12 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SharpLink.CodecCompatibility;
 
 internal static class PortableProbe
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        WriteIndented = true,
-        IncludeFields = true
-    };
-
     internal static string ProduceJson(
         string sharpLinkCommit,
         string sdkVersion,
@@ -23,15 +18,16 @@ internal static class PortableProbe
         string? compilationModeOverride = null,
         string? runtimeFamilyOverride = null,
         string? executionEnvironmentOverride = null)
-        => JsonSerializer.Serialize(
-            Produce(
-                sharpLinkCommit,
-                sdkVersion,
-                targetFramework,
-                compilationModeOverride,
-                runtimeFamilyOverride,
-                executionEnvironmentOverride),
-            JsonOptions);
+    {
+        var envelope = Produce(
+            sharpLinkCommit,
+            sdkVersion,
+            targetFramework,
+            compilationModeOverride,
+            runtimeFamilyOverride,
+            executionEnvironmentOverride);
+        return JsonSerializer.Serialize(envelope, typeof(CorpusEnvelope), PortableJsonContext.Default);
+    }
 
     internal static string VerifyJson(
         string envelopesJson,
@@ -42,7 +38,10 @@ internal static class PortableProbe
         string? runtimeFamilyOverride = null,
         string? executionEnvironmentOverride = null)
     {
-        var envelopes = JsonSerializer.Deserialize<List<CorpusEnvelope>>(envelopesJson, JsonOptions)
+        var envelopes = JsonSerializer.Deserialize(
+                envelopesJson,
+                typeof(List<CorpusEnvelope>),
+                PortableJsonContext.Default) as List<CorpusEnvelope>
             ?? throw new InvalidOperationException("Failed to deserialize portable producer envelopes.");
         var report = Verify(
             envelopes,
@@ -52,7 +51,7 @@ internal static class PortableProbe
             compilationModeOverride,
             runtimeFamilyOverride,
             executionEnvironmentOverride);
-        return JsonSerializer.Serialize(report, JsonOptions);
+        return JsonSerializer.Serialize(report, typeof(VerificationReport), PortableJsonContext.Default);
     }
 
     internal static CorpusEnvelope Produce(
@@ -224,4 +223,15 @@ internal static class PortableProbe
 
     private static string Hash(ReadOnlySpan<byte> bytes)
         => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+}
+
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    WriteIndented = true,
+    GenerationMode = JsonSourceGenerationMode.Metadata)]
+[JsonSerializable(typeof(CorpusEnvelope))]
+[JsonSerializable(typeof(List<CorpusEnvelope>))]
+[JsonSerializable(typeof(VerificationReport))]
+internal partial class PortableJsonContext : JsonSerializerContext
+{
 }
