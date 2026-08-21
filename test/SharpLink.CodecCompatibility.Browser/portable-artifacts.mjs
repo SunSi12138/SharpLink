@@ -4,6 +4,17 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const BUILTIN_RAW_CATEGORY = 'builtin-semantic-raw';
+const RAW_FIXTURE_IDS = Object.freeze([
+    'DateOnlyRaw',
+    'DateTimeRaw',
+    'DateTimeOffsetRaw',
+    'TimeOnlyRaw',
+    'TimeSpanRaw',
+    'IndexRaw',
+    'RangeRaw',
+    'RuneRaw',
+    'DecimalRaw'
+]);
 
 async function findNamedFiles(root, fileName) {
     const found = [];
@@ -22,6 +33,50 @@ async function findNamedFiles(root, fileName) {
     return found;
 }
 
+function validateSchemaVersion(value, source) {
+    if (value?.schemaVersion !== 1) {
+        throw new Error(`Unsupported or missing schemaVersion in ${source}.`);
+    }
+}
+
+function validateVerificationReportSchema(report, source) {
+    validateSchemaVersion(report, source);
+    validateSchemaVersion(report?.consumer, `${source} consumer manifest`);
+    if (!Array.isArray(report?.results)) {
+        throw new Error(`Verification report ${source} is missing results.`);
+    }
+}
+
+function assertExactSet(actualValues, expectedValues, label) {
+    const actual = [...new Set(actualValues)].sort((left, right) => left.localeCompare(right));
+    const expected = [...new Set(expectedValues)].sort((left, right) => left.localeCompare(right));
+    if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+        throw new Error(`${label} mismatch: expected=[${expected.join(', ')}], actual=[${actual.join(', ')}].`);
+    }
+}
+
+function validateRawFixtureSet(envelope, source) {
+    const rawCases = (envelope.manifest.cases ?? []).filter(item => item.category === BUILTIN_RAW_CATEGORY);
+    const duplicateIds = rawCases
+        .map(item => item.id)
+        .filter((id, index, ids) => ids.indexOf(id) !== index);
+    if (duplicateIds.length !== 0) {
+        throw new Error(`${source} contains duplicate raw fixture IDs: ${[...new Set(duplicateIds)].sort().join(', ')}.`);
+    }
+
+    assertExactSet(rawCases.map(item => item.id), RAW_FIXTURE_IDS, `${source} raw fixture IDs`);
+    return new Map(rawCases.map(item => [item.id, item]));
+}
+
+function validateSameCommit(producerManifest, consumerManifest, source) {
+    const producerCommit = String(producerManifest?.sharpLinkCommit ?? '');
+    const consumerCommit = String(consumerManifest?.sharpLinkCommit ?? '');
+    if (producerCommit !== consumerCommit) {
+        throw new Error(
+            `SharpLink commit mismatch for ${source}: producer=${producerCommit || '<missing>'}, consumer=${consumerCommit || '<missing>'}.`);
+    }
+}
+
 export async function loadEnvelopes(root, options = {}) {
     const manifestFiles = await findNamedFiles(root, 'manifest.json');
     if (manifestFiles.length === 0) {
@@ -33,9 +88,7 @@ export async function loadEnvelopes(root, options = {}) {
     const envelopes = [];
     for (const manifestFile of manifestFiles) {
         const originalManifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
-        if (originalManifest?.schemaVersion !== 1) {
-            throw new Error(`Unsupported or missing schemaVersion in ${manifestFile}.`);
-        }
+        validateSchemaVersion(originalManifest, manifestFile);
         const cases = (originalManifest.cases ?? []).filter(
             item => !excludeBuiltinRaw || item.category !== BUILTIN_RAW_CATEGORY);
         const manifest = { ...originalManifest, cases };
@@ -54,6 +107,8 @@ export async function writeCorpus(envelope, outputDirectory) {
     if (!envelope?.manifest || !envelope?.caseBytesBase64) {
         throw new Error('Portable producer output is not a corpus envelope.');
     }
+    validateSchemaVersion(envelope, 'portable producer envelope');
+    validateSchemaVersion(envelope.manifest, 'portable producer manifest');
 
     await fs.rm(outputDirectory, { recursive: true, force: true });
     await fs.mkdir(path.join(outputDirectory, 'cases'), { recursive: true });
@@ -103,6 +158,7 @@ function firstDifference(left, right) {
 
 export async function appendRawLayoutEvidence(reportFile, producerRoot, localCorpusRoot, blocking = false) {
     const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
+    validateVerificationReportSchema(report, reportFile);
     const producers = await loadEnvelopes(producerRoot, { excludeBuiltinRaw: false });
     const localEnvelopes = await loadEnvelopes(localCorpusRoot, { excludeBuiltinRaw: false });
     if (localEnvelopes.length !== 1) {
@@ -110,17 +166,18 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
     }
 
     const local = localEnvelopes[0];
-    const localCases = new Map((local.manifest.cases ?? []).map(item => [item.id, item]));
+    validateSameCommit(local.manifest, report.consumer, `${local.manifest.platformTag} local raw corpus`);
+    const localCases = validateRawFixtureSet(local, `${local.manifest.platformTag} local corpus`);
     for (const producer of producers) {
-        for (const producerCase of (producer.manifest.cases ?? []).filter(item => item.category === BUILTIN_RAW_CATEGORY)) {
-            const localCase = localCases.get(producerCase.id);
-            if (!localCase) {
-                throw new Error(`Local corpus is missing raw framework fixture ${producerCase.id}.`);
-            }
-            const producerEncoded = producer.caseBytesBase64[producerCase.id];
-            const localEncoded = local.caseBytesBase64[producerCase.id];
+        validateSameCommit(producer.manifest, report.consumer, `${producer.manifest.platformTag} raw producer`);
+        const producerCases = validateRawFixtureSet(producer, `${producer.manifest.platformTag} producer`);
+        for (const fixtureId of RAW_FIXTURE_IDS) {
+            const producerCase = producerCases.get(fixtureId);
+            const localCase = localCases.get(fixtureId);
+            const producerEncoded = producer.caseBytesBase64[fixtureId];
+            const localEncoded = local.caseBytesBase64[fixtureId];
             if (typeof producerEncoded !== 'string' || typeof localEncoded !== 'string') {
-                throw new Error(`Raw framework fixture ${producerCase.id} is missing encoded wire bytes.`);
+                throw new Error(`Raw framework fixture ${fixtureId} is missing encoded wire bytes.`);
             }
             const producerBytes = Buffer.from(producerEncoded, 'base64');
             const localBytes = Buffer.from(localEncoded, 'base64');
@@ -169,14 +226,46 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
 
 export async function checkVerificationReport(reportFile) {
     const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
+    validateVerificationReportSchema(report, reportFile);
     if (report?.browserProbeError || report?.portableProbeError) {
         throw new Error(report.browserProbeError ?? report.portableProbeError);
     }
-    const blocking = (report.results ?? []).filter(item => item.blocking).length;
+    const blocking = report.results.filter(item => item.blocking).length;
     if (blocking !== 0) {
         throw new Error(`Portable verification contains ${blocking} blocking failure(s).`);
     }
-    return (report.results ?? []).length;
+    return report.results.length;
+}
+
+export async function checkDesktopIdentities(reportRoot, expectedCsv) {
+    const expected = expectedCsv.split(',').map(value => value.trim()).filter(Boolean);
+    if (expected.length === 0 || new Set(expected).size !== expected.length) {
+        throw new Error('Expected desktop identity list must be non-empty and unique.');
+    }
+
+    const reportFiles = await findNamedFiles(reportRoot, 'verification.json');
+    if (reportFiles.length !== expected.length) {
+        throw new Error(`Expected ${expected.length} desktop verification reports, found ${reportFiles.length}.`);
+    }
+
+    const consumers = [];
+    for (const reportFile of reportFiles) {
+        const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
+        validateVerificationReportSchema(report, reportFile);
+        const consumer = String(report.consumer.platformTag ?? '');
+        if (consumer.length === 0) {
+            throw new Error(`Verification report ${reportFile} has no consumer platformTag.`);
+        }
+        consumers.push(consumer);
+
+        const resultConsumers = report.results.map(item => String(item.consumer ?? ''));
+        assertExactSet(resultConsumers, [consumer], `${reportFile} result consumer identities`);
+        const producers = report.results.map(item => String(item.producer ?? ''));
+        assertExactSet(producers, expected, `${reportFile} producer identities`);
+    }
+
+    assertExactSet(consumers, expected, 'desktop consumer identities');
+    return reportFiles.length;
 }
 
 async function main() {
@@ -202,7 +291,12 @@ async function main() {
         console.log(`Verified portable report with ${count} result(s) and no blockers.`);
         return;
     }
-    throw new Error('Usage: portable-artifacts.mjs <unpack|pack|append-raw|check-report> ...');
+    if (command === 'check-desktop-identities' && args.length === 3) {
+        const count = await checkDesktopIdentities(args[1], args[2]);
+        console.log(`Verified ${count} desktop reports with the expected producer/consumer identity set.`);
+        return;
+    }
+    throw new Error('Usage: portable-artifacts.mjs <unpack|pack|append-raw|check-report|check-desktop-identities> ...');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
