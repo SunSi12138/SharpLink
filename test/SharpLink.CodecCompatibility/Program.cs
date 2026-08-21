@@ -421,6 +421,10 @@ internal static class Program
                 GuaranteedDesktopPlatformTags,
                 expectedFixtureIds,
                 $"desktop result keys for {report.Consumer.PlatformTag}");
+            ValidateStrictResultSemantics(
+                report,
+                allowPortableRawRepresentation: false,
+                $"desktop result semantics for {report.Consumer.PlatformTag}");
         }
 
         AssertAggregateResultCount(
@@ -475,6 +479,10 @@ internal static class Program
                 expectedProducers,
                 expectedFixtureIds,
                 $"mobile result keys for {report.Consumer.PlatformTag}");
+            ValidateStrictResultSemantics(
+                report,
+                allowPortableRawRepresentation: true,
+                $"mobile result semantics for {report.Consumer.PlatformTag}");
 
             expectedTotal += expectedProducers.Length * expectedFixtureIds.Length;
         }
@@ -546,12 +554,63 @@ internal static class Program
                 expectedProducers,
                 expectedFixtureIds,
                 $"Android ARM64 device result keys for {report.Consumer.PlatformTag}");
+            ValidateStrictResultSemantics(
+                report,
+                allowPortableRawRepresentation: true,
+                $"Android ARM64 device result semantics for {report.Consumer.PlatformTag}");
         }
 
         AssertAggregateResultCount(
             reports,
             AndroidArm64DevicePlatformTags.Length * expectedProducers.Length * expectedFixtureIds.Length,
             "Android ARM64 device");
+    }
+
+    private static void ValidateStrictResultSemantics(
+        VerificationReport report,
+        bool allowPortableRawRepresentation,
+        string label)
+    {
+        foreach (var result in report.Results)
+        {
+            var portableRawRepresentation = allowPortableRawRepresentation
+                && TrustedBuiltinRawFixtureIds.Contains(result.Fixture)
+                && string.Equals(result.Category, BuiltinRawCategory, StringComparison.Ordinal)
+                && result.CrossDeserializeResult is null
+                && result.LogicalEquality is null
+                && result.SegmentedCrossDeserializeResult is null
+                && result.SegmentedLogicalEquality is null;
+            if (portableRawRepresentation)
+            {
+                if (!string.Equals(result.Classification, "IDENTICAL_RAW_REPRESENTATION", StringComparison.Ordinal)
+                    && !string.Equals(result.Classification, "RAW_BUILTIN_REPRESENTATION_MISMATCH", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{label} contains raw representation-only row with unexpected classification {result.Classification}: " +
+                        $"producer={result.Producer}, fixture={result.Fixture}.");
+                }
+
+                continue;
+            }
+
+            if (string.Equals(result.Classification, "EXPECTED_ARCH_DEPENDENT", StringComparison.Ordinal)
+                || result.CrossDeserializeResult != true
+                || result.LogicalEquality != true)
+            {
+                throw new InvalidOperationException(
+                    $"{label} requires semantic cross-deserialization success: producer={result.Producer}, fixture={result.Fixture}, " +
+                    $"classification={result.Classification}, cross={FormatResult(result.CrossDeserializeResult)}, logical={FormatResult(result.LogicalEquality)}.");
+            }
+
+            if (result.ProducerSize > 1
+                && (result.SegmentedCrossDeserializeResult != true || result.SegmentedLogicalEquality != true))
+            {
+                throw new InvalidOperationException(
+                    $"{label} requires segmented semantic success for multi-byte fixture: producer={result.Producer}, fixture={result.Fixture}, " +
+                    $"size={result.ProducerSize}, segmentedCross={FormatResult(result.SegmentedCrossDeserializeResult)}, " +
+                    $"segmentedLogical={FormatResult(result.SegmentedLogicalEquality)}.");
+            }
+        }
     }
 
     private static void ValidateConsumerPlatformTagConsistency(RuntimeManifest consumer, string label)

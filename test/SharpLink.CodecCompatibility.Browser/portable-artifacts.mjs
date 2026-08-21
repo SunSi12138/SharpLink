@@ -4,6 +4,66 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const BUILTIN_RAW_CATEGORY = 'builtin-semantic-raw';
+const BROWSER_PLATFORM_TAG = 'browser-wasm-browser-mono-net10';
+const DESKTOP_PLATFORM_TAGS = Object.freeze([
+    'linux-x64-hosted-desktop-coreclr-net10',
+    'linux-arm64-hosted-desktop-coreclr-net10',
+    'windows-x64-hosted-desktop-coreclr-net10',
+    'windows-arm64-hosted-desktop-coreclr-net10',
+    'macos-arm64-hosted-desktop-coreclr-net10',
+    'macos-x64-hosted-desktop-coreclr-net10'
+]);
+const FIXTURE_IDS = Object.freeze([
+    'Byte',
+    'Int16',
+    'Int32',
+    'Int64',
+    'Single',
+    'Double',
+    'Half',
+    'Int128',
+    'UInt128',
+    'Guid',
+    'Int32Pair',
+    'ByteInt32',
+    'ByteInt64',
+    'Int64Byte',
+    'ByteShortIntLong',
+    'ByteDouble',
+    'ShortLongByte',
+    'NestedPadded',
+    'SequentialDefault',
+    'Pack1',
+    'Pack2',
+    'Pack4',
+    'Pack8',
+    'ExplicitLayout',
+    'NativeInt',
+    'NativeUInt',
+    'NativePair',
+    'ByteEnum',
+    'ShortEnum',
+    'IntEnum',
+    'LongEnum',
+    'EnumContainer',
+    'Large64',
+    'Large256',
+    'Large1024',
+    'Large2048',
+    'Vector3Value',
+    'TimestampFlags',
+    'IdentityCounter',
+    'GeometryValue',
+    'DateOnlyRaw',
+    'DateTimeRaw',
+    'DateTimeOffsetRaw',
+    'TimeOnlyRaw',
+    'TimeSpanRaw',
+    'IndexRaw',
+    'RangeRaw',
+    'RuneRaw',
+    'DecimalRaw'
+]);
 const RAW_FIXTURE_IDS = Object.freeze([
     'DateOnlyRaw',
     'DateTimeRaw',
@@ -72,6 +132,28 @@ function assertExactSet(actualValues, expectedValues, label) {
     }
 }
 
+function resultKey(producer, fixture) {
+    return `${producer}\u001f${fixture}`;
+}
+
+function assertExactResultKeySet(report, expectedProducers, expectedFixtures, label) {
+    const expectedKeys = new Set(
+        expectedProducers.flatMap(producer => expectedFixtures.map(fixture => resultKey(producer, fixture))));
+    const actualKeys = report.results.map(item => resultKey(String(item.producer ?? ''), String(item.fixture ?? '')));
+    const duplicates = [...new Set(actualKeys.filter((key, index) => actualKeys.indexOf(key) !== index))].sort();
+    if (duplicates.length !== 0) {
+        throw new Error(`${label} contains duplicate producer/fixture keys: ${duplicates.join(', ')}.`);
+    }
+
+    const actualSet = new Set(actualKeys);
+    const missing = [...expectedKeys].filter(key => !actualSet.has(key)).sort();
+    const unexpected = [...actualSet].filter(key => !expectedKeys.has(key)).sort();
+    if (missing.length !== 0 || unexpected.length !== 0) {
+        throw new Error(
+            `${label} mismatch: missing=[${missing.join(', ')}], unexpected=[${unexpected.join(', ')}].`);
+    }
+}
+
 function validateBuiltinRawCategoryBoundary(manifest, source) {
     for (const item of manifest?.cases ?? []) {
         const trustedRaw = RAW_FIXTURE_ID_SET.has(item.id);
@@ -128,6 +210,45 @@ function validateResultConsumers(report, source) {
         const observed = [...new Set(mismatched.map(item => String(item.consumer ?? '<missing>')))].sort();
         throw new Error(
             `Verification report ${source} contains result rows for consumers other than ${consumer}: ${observed.join(', ')}.`);
+    }
+}
+
+function validateStrictResultSemantics(report, source, allowPortableRawRepresentation = true) {
+    for (const item of report.results) {
+        const fixture = String(item.fixture ?? '');
+        const portableRawRepresentation = allowPortableRawRepresentation
+            && RAW_FIXTURE_ID_SET.has(fixture)
+            && item.category === BUILTIN_RAW_CATEGORY
+            && item.crossDeserializeResult == null
+            && item.logicalEquality == null
+            && item.segmentedCrossDeserializeResult == null
+            && item.segmentedLogicalEquality == null;
+        if (portableRawRepresentation) {
+            if (item.classification !== 'IDENTICAL_RAW_REPRESENTATION'
+                && item.classification !== 'RAW_BUILTIN_REPRESENTATION_MISMATCH') {
+                throw new Error(
+                    `${source} has raw representation-only row with unexpected classification ${String(item.classification)}: ` +
+                    `producer=${String(item.producer)}, fixture=${fixture}.`);
+            }
+            continue;
+        }
+
+        if (item.classification === 'EXPECTED_ARCH_DEPENDENT'
+            || item.crossDeserializeResult !== true
+            || item.logicalEquality !== true) {
+            throw new Error(
+                `${source} requires semantic cross-deserialization success: producer=${String(item.producer)}, fixture=${fixture}, ` +
+                `classification=${String(item.classification)}, cross=${String(item.crossDeserializeResult)}, logical=${String(item.logicalEquality)}.`);
+        }
+
+        const producerSize = Number(item.producerSize);
+        if (producerSize > 1
+            && (item.segmentedCrossDeserializeResult !== true || item.segmentedLogicalEquality !== true)) {
+            throw new Error(
+                `${source} requires segmented semantic success for multi-byte fixture: producer=${String(item.producer)}, fixture=${fixture}, ` +
+                `size=${String(item.producerSize)}, segmentedCross=${String(item.segmentedCrossDeserializeResult)}, ` +
+                `segmentedLogical=${String(item.segmentedLogicalEquality)}.`);
+        }
     }
 }
 
@@ -204,6 +325,14 @@ function validateWireHash(platformTag, item, bytes) {
     }
 }
 
+function validateWireSize(platformTag, item, bytes) {
+    const expected = Number(item.size);
+    if (!Number.isInteger(expected) || expected < 0 || bytes.length !== expected) {
+        throw new Error(
+            `Wire size mismatch for ${platformTag}/${item.id}: manifest=${String(item.size)}, observed=${bytes.length}.`);
+    }
+}
+
 function firstDifference(left, right) {
     const common = Math.min(left.length, right.length);
     for (let index = 0; index < common; index++) {
@@ -241,6 +370,8 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
             const localBytes = Buffer.from(localEncoded, 'base64');
             validateWireHash(producer.manifest.platformTag, producerCase, producerBytes);
             validateWireHash(local.manifest.platformTag, localCase, localBytes);
+            validateWireSize(producer.manifest.platformTag, producerCase, producerBytes);
+            validateWireSize(local.manifest.platformTag, localCase, localBytes);
 
             const byteEqual = producerBytes.equals(localBytes);
             const representationCompatible = producerCase.size === localCase.size && byteEqual;
@@ -294,6 +425,7 @@ export async function checkVerificationReport(reportFile) {
     if (blocking !== 0) {
         throw new Error(`Portable verification contains ${blocking} blocking failure(s).`);
     }
+    validateStrictResultSemantics(report, reportFile, true);
     return report.results.length;
 }
 
@@ -327,6 +459,70 @@ export async function checkDesktopIdentities(reportRoot, expectedCsv) {
     return reportFiles.length;
 }
 
+export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot) {
+    const forward = JSON.parse(await fs.readFile(forwardReportFile, 'utf8'));
+    validateVerificationReportSchema(forward, forwardReportFile);
+    validateResultConsumers(forward, forwardReportFile);
+    if (String(forward.consumer.platformTag ?? '') !== BROWSER_PLATFORM_TAG) {
+        throw new Error(
+            `Browser forward consumer identity mismatch: expected=${BROWSER_PLATFORM_TAG}, actual=${String(forward.consumer.platformTag ?? '<missing>')}.`);
+    }
+    const expectedForwardProducers = [...DESKTOP_PLATFORM_TAGS, BROWSER_PLATFORM_TAG];
+    assertExactSet(
+        forward.results.map(item => String(item.producer ?? '')),
+        expectedForwardProducers,
+        'Browser forward producer identities');
+    assertExactResultKeySet(
+        forward,
+        expectedForwardProducers,
+        FIXTURE_IDS,
+        'Browser forward result keys');
+    validateStrictResultSemantics(forward, forwardReportFile, true);
+
+    const expectedCommit = String(forward.consumer.sharpLinkCommit ?? '');
+    if (expectedCommit.length === 0 || expectedCommit.toLowerCase() === 'unknown') {
+        throw new Error('Browser forward report must contain a known SharpLink commit.');
+    }
+
+    const reverseReportFiles = await findNamedFiles(reverseReportRoot, 'verification.json');
+    if (reverseReportFiles.length !== DESKTOP_PLATFORM_TAGS.length) {
+        throw new Error(
+            `Expected ${DESKTOP_PLATFORM_TAGS.length} Browser-to-desktop verification reports, found ${reverseReportFiles.length}.`);
+    }
+
+    const reverseConsumers = [];
+    let reverseRows = 0;
+    for (const reportFile of reverseReportFiles) {
+        const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
+        validateVerificationReportSchema(report, reportFile);
+        validateResultConsumers(report, reportFile);
+        const consumer = String(report.consumer.platformTag ?? '');
+        reverseConsumers.push(consumer);
+        if (String(report.consumer.sharpLinkCommit ?? '') !== expectedCommit) {
+            throw new Error(
+                `Browser evidence commit mismatch in ${reportFile}: expected=${expectedCommit}, actual=${String(report.consumer.sharpLinkCommit ?? '<missing>')}.`);
+        }
+        assertExactSet(
+            report.results.map(item => String(item.producer ?? '')),
+            [BROWSER_PLATFORM_TAG],
+            `${reportFile} Browser producer identity`);
+        assertExactResultKeySet(
+            report,
+            [BROWSER_PLATFORM_TAG],
+            FIXTURE_IDS,
+            `${reportFile} Browser-to-desktop result keys`);
+        validateStrictResultSemantics(report, reportFile, true);
+        reverseRows += report.results.length;
+    }
+
+    assertExactSet(reverseConsumers, DESKTOP_PLATFORM_TAGS, 'Browser reverse desktop consumer identities');
+    return {
+        forwardRows: forward.results.length,
+        reverseReports: reverseReportFiles.length,
+        reverseRows
+    };
+}
+
 async function main() {
     const args = process.argv.slice(2);
     const command = args[0];
@@ -347,7 +543,7 @@ async function main() {
     }
     if (command === 'check-report' && args.length === 2) {
         const count = await checkVerificationReport(args[1]);
-        console.log(`Verified portable report with ${count} result(s) and no blockers.`);
+        console.log(`Verified portable report with ${count} result(s), strict semantic success, and no blockers.`);
         return;
     }
     if (command === 'check-desktop-identities' && args.length === 3) {
@@ -355,7 +551,15 @@ async function main() {
         console.log(`Verified ${count} desktop reports with the expected producer/consumer identity set.`);
         return;
     }
-    throw new Error('Usage: portable-artifacts.mjs <unpack|pack|append-raw|check-report|check-desktop-identities> ...');
+    if (command === 'check-browser-evidence' && args.length === 3) {
+        const result = await checkBrowserEvidence(args[1], args[2]);
+        console.log(
+            `Verified bidirectional Browser evidence: ${result.forwardRows} Browser-consumer rows and ` +
+            `${result.reverseRows} Browser-to-desktop rows across ${result.reverseReports} desktop consumers.`);
+        return;
+    }
+    throw new Error(
+        'Usage: portable-artifacts.mjs <unpack|pack|append-raw|check-report|check-desktop-identities|check-browser-evidence> ...');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

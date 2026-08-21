@@ -326,6 +326,36 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  browser-evidence:
+    continue-on-error: true
+    needs: [browser-verify, browser-desktop-verify]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download Browser consumer evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-evidence-verification-browser-wasm
+          path: artifacts/codec-compat/browser-forward
+
+      - name: Download Browser-to-desktop evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-evidence-verification-browser-to-*
+          path: artifacts/codec-compat/browser-reverse
+          merge-multiple: false
+
+      - name: Gate bidirectional Browser evidence
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs
+          check-browser-evidence
+          artifacts/codec-compat/browser-forward/verification.json
+          artifacts/codec-compat/browser-reverse
+
   summary:
     needs: verify
     if: always()
