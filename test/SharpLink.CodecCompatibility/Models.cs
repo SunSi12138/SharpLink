@@ -98,6 +98,10 @@ internal sealed class CompatibilitySummary
 {
     [JsonRequired]
     public int SchemaVersion { get; set; }
+    [JsonRequired]
+    public string SummaryProfile { get; set; } = string.Empty;
+    [JsonRequired]
+    public string SharpLinkCommit { get; set; } = string.Empty;
     public DateTimeOffset GeneratedAtUtc { get; set; }
     public int BlockingFailures { get; set; }
     public List<VerificationEntry> Results { get; set; } = [];
