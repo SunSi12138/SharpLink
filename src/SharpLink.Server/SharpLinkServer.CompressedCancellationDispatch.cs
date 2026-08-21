@@ -2,7 +2,7 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private ValueTask DispatchRpcAsync(
+    public ValueTask DispatchRpcAsync(
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
