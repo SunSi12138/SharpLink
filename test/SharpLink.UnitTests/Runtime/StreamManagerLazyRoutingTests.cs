@@ -91,13 +91,15 @@ public class StreamManagerLazyRoutingTests
         var manager = new StreamManager();
         var dispatchers = new ConcurrentDictionary<int, RecordingDispatcher>();
         var initializationAttempts = 0;
+        var failures = new ConcurrentQueue<Exception>();
+        using var ready = new CountdownEvent(streamCount);
         using var start = new ManualResetEventSlim();
-        var registrations = new Task[streamCount];
+        var registrationThreads = new Thread[streamCount];
 
-        for (var index = 0; index < registrations.Length; index++)
+        for (var index = 0; index < registrationThreads.Length; index++)
         {
             var requestId = index + 1;
-            registrations[index] = Task.Run(() =>
+            registrationThreads[index] = new Thread(() =>
             {
                 var dispatcher = new RecordingDispatcher();
                 dispatchers[requestId] = dispatcher;
@@ -105,18 +107,37 @@ public class StreamManagerLazyRoutingTests
                     () => Interlocked.Increment(ref initializationAttempts);
                 try
                 {
+                    ready.Signal();
                     start.Wait();
                     manager.Register(requestId, dispatcher);
+                }
+                catch (Exception failure)
+                {
+                    failures.Enqueue(failure);
                 }
                 finally
                 {
                     StreamManagerTestHooks.BeforeRoutingMapInitialize = null;
                 }
-            });
+            })
+            {
+                IsBackground = true
+            };
+            registrationThreads[index].Start();
         }
 
+        var allWorkersReady = ready.Wait(TimeSpan.FromSeconds(10));
         start.Set();
-        await Task.WhenAll(registrations);
+        foreach (var registrationThread in registrationThreads)
+        {
+            Ensure(registrationThread.Join(TimeSpan.FromSeconds(10)),
+                "every registration worker should finish after the shared start gate opens");
+        }
+
+        Ensure(allWorkersReady,
+            "all 32 registration workers must reach the start gate before first use is released");
+        if (!failures.IsEmpty)
+            throw new AggregateException("concurrent first registration failed", failures);
 
         Ensure(Volatile.Read(ref initializationAttempts) == 1,
             "32 concurrent first registrations must construct routing state exactly once");
