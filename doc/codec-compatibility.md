@@ -25,7 +25,7 @@ Runner labels are infrastructure selectors, not compatibility identities. Each p
 
 A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
 
-The six-platform desktop expansion is exercised as a 6 producer × 6 consumer × 48 fixture matrix: 1,728 verification entries with zero blocking failures on the retained validation run.
+The six-platform desktop expansion is exercised as a 6 producer × 6 consumer × 49 fixture matrix: 1,764 verification entries. A run is only considered green if every expected producer fixture is present exactly once and all 1,764 blocking matrix entries complete without blockers.
 
 ### Verified / evidence-backed
 
@@ -73,6 +73,8 @@ Platforms, runtime combinations, or producer/consumer edges that have not been e
 - future .NET major versions and unreviewed servicing/runtime combinations;
 - other pointer-width, runtime-family, or architecture combinations not represented by retained evidence.
 
+`Codec Android ARM64 Device Evidence` provides a manual path for a prepared self-hosted ARM64 runner with one attached physical `arm64-v8a` Android device. The workflow rejects emulator devices before execution, while the Android host independently records its in-process RID and classifies the execution environment rather than hard-coding the x64-emulator identity. The uploaded artifact retains the desktop reference corpus, device-local corpora, verification reports, and aggregate summary. Until such a physical-device run is retained and reviewed, Android ARM64 remains Investigational.
+
 "Investigational" means "not yet verified". It should not be rewritten as "unsupported" unless SharpLink explicitly makes that product decision.
 
 ## Probe and artifacts
@@ -97,7 +99,7 @@ Portable hosts reuse the same fixture and verification implementation:
 
 These workload-specific host projects are deliberately not added to the normal solution build. Their dedicated workflows install the required WebAssembly/Android/iOS workloads and execute them in their actual host environments.
 
-A producer writes a versioned `manifest.json` plus one raw binary file per logical fixture. The manifest records layout metadata, raw-wire hashes, runtime identity, execution environment, and padding-poison evidence. The logical fixture definitions in source are the source of truth; observed bytes are evidence, not a permanent wire specification.
+A producer writes a versioned `manifest.json` plus one raw binary file per logical fixture. The manifest records layout metadata, raw-wire hashes, runtime identity, execution environment, and padding-poison evidence. The logical fixture definitions in source are the source of truth; observed bytes are evidence, not a permanent wire specification. Schema-bearing artifacts require an explicit `schemaVersion`; schema-less input is rejected instead of being treated as version 1 by default.
 
 Portable Browser/mobile hosts exchange the same corpus and verification schema through a JSON envelope. The portable artifact contract uses `System.Text.Json` source-generated metadata so trimming/linking on mobile hosts cannot silently remove manifest fields.
 
@@ -113,21 +115,21 @@ Consumers report, per producer/fixture pair:
 - exception information when decode fails;
 - a classification such as `IDENTICAL_BYTES_AND_COMPATIBLE`, `DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE`, `SIZE_OR_LAYOUT_MISMATCH`, `DESERIALIZE_REJECTED`, `DESERIALIZED_VALUE_MISMATCH`, `SEGMENTED_DESERIALIZE_REJECTED`, `SEGMENTED_DESERIALIZED_VALUE_MISMATCH`, `EXPECTED_ARCH_DEPENDENT`, or `PROBE_UNAVAILABLE`.
 
-Semantic result fields are tri-state. `true` and `false` mean the semantic operation actually ran and produced that result; `null` / `not-run` means the operation was intentionally not executed. Raw representation-only evidence must never set logical equality to `true` merely because bytes match.
+Semantic result fields are tri-state. `true` and `false` mean the semantic operation actually ran and produced that result; `null` / `not-run` means the operation was intentionally not executed. Raw representation-only evidence must never set logical equality to `true` merely because bytes match. Raw representation evidence also recomputes and validates the producer and local SHA-256 hashes before classifying byte identity.
 
 The desktop aggregator emits both `compatibility-summary.json` and `compatibility-summary.md`. The mobile evidence aggregator emits the same report format over its explicitly documented edges; that aggregation is not an assertion that every listed mobile environment consumed every other producer.
 
 ## Corpus scope
 
-The 2.0 baseline corpus includes fixed-width controls, internal and tail padding, multiple alignment classes, nested structs, sequential/explicit layout controls, Pack 1/2/4/8 controls, native-width canaries, enums, 64/256/1024-byte structs, user-like DTO/value structs, and direct raw-layout probes for selected built-in semantic structs.
+The 2.0 baseline corpus includes fixed-width controls, internal and tail padding, multiple alignment classes, nested structs, sequential/explicit layout controls, Pack 1/2/4/8 controls, native-width canaries, enums, 64/256/1024/2048-byte structs, user-like DTO/value structs, and direct raw-layout probes for selected built-in semantic structs.
 
-For every same-size fixture larger than one byte, blocking verification performs both a normal single-segment deserialize and a genuinely multi-segment `ReadOnlySequence<byte>` deserialize. The first segment is deliberately shorter than `Unsafe.SizeOf<T>()`, forcing `CodecHelpers.ReadUnmanaged<T>` through its cross-segment copy path. This makes the 64/256/1024-byte slow path observable in the compatibility reports rather than merely constructing large values in one contiguous segment.
+For every same-size fixture larger than one byte, blocking verification performs both a normal single-segment deserialize and a genuinely multi-segment `ReadOnlySequence<byte>` deserialize. The first segment is deliberately shorter than `Unsafe.SizeOf<T>()`, forcing `CodecHelpers.ReadUnmanaged<T>` through its cross-segment copy path. The 64/256/1024-byte fixtures exercise the stack-backed segmented copy path, while the 2 KiB fixture crosses the `>1024` threshold and exercises the `ArrayPool<byte>` segmented copy path.
 
 Built-in raw-layout fixtures are explicitly labeled `builtin-semantic-raw`. Their results are evidence about direct `UnsafeBlitCodec<T>` behavior and must not be confused with the stability of SharpLink's specialized production codecs selected by `RpcCodecProvider`.
 
 Portable consumers do not blindly materialize framework-owned raw semantic structs produced by another runtime. Safe fixtures perform real cross-deserialize in the target Browser/mobile runtime. `builtin-semantic-raw` fixtures are compared separately as raw representation evidence and reported as `IDENTICAL_RAW_REPRESENTATION` or `RAW_BUILTIN_REPRESENTATION_MISMATCH`. Their semantic decode/equality fields remain `not-run`.
 
-This distinction is already useful evidence: Android Mono/CoreCLR and iOS Mono runs observed a `DateTimeOffsetRaw` representation difference relative to another runtime while the logical fixture definition was the same. That representation-only observation is retained as non-blocking evidence rather than converted into an unsafe semantic materialization.
+This distinction is already useful evidence: Android Mono/CoreCLR and iOS Mono runs observed a `DateTimeOffsetRaw` representation difference relative to another runtime while the logical fixture definition was the same. That representation-only observation is retained as non-blocking evidence rather than converted into an unsafe semantic materialization. When framework semantic fixtures are decoded in the desktop matrix, temporal comparers include observable `DateTime.Kind` and `DateTimeOffset.Offset` state rather than relying on the framework's looser default equality semantics.
 
 Native-width fixtures remain in the corpus even when pointer-width pairs differ. A mismatch is classified as `EXPECTED_ARCH_DEPENDENT` only when the producer and consumer pointer widths actually differ; the workflow does not use a blanket allow-failure switch.
 
