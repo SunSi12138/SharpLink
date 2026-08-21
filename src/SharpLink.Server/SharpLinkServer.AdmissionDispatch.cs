@@ -534,7 +534,8 @@ internal sealed partial class SharpLinkServer
             _forceStopCts.Token,
             moduleDrainingToken,
             supportsCooperativeCancellation: true,
-            acceptsRemoteCancellation);
+            acceptsRemoteCancellation,
+            serverStoppingFlowsThroughConnection: true);
         requestCancellationMap.Set(requestId, callState);
         connection.DeadlineScheduler.Register(callState);
         return callState;
