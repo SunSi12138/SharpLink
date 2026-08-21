@@ -71,6 +71,7 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly int _capacity;
     private readonly object _slotsInitializationGate = new();
     private readonly long[] _deadlinePageBits;
+    private int _deadlinePageHint = -1;
     private PendingCall?[]? _slots;
     private readonly IRpcCodecProvider _codecProvider;
     private readonly IPendingCallOwner _owner;
@@ -629,6 +630,9 @@ internal sealed class PendingRequestTable : IDisposable
     private void MarkDeadlinePage(int index)
     {
         var page = index >> DeadlinePageShift;
+        if (Volatile.Read(ref _deadlinePageHint) == page)
+            return;
+
         ref var bits = ref _deadlinePageBits[page >> DeadlinePagesPerWordShift];
         var bit = 1L << (page & (DeadlinePagesPerWord - 1));
         var current = Volatile.Read(ref bits);
@@ -637,9 +641,11 @@ internal sealed class PendingRequestTable : IDisposable
             var updated = current | bit;
             var observed = Interlocked.CompareExchange(ref bits, updated, current);
             if (observed == current)
-                return;
+                break;
             current = observed;
         }
+
+        Volatile.Write(ref _deadlinePageHint, page);
     }
 
     private bool TryAcquireCapacity()
@@ -925,6 +931,7 @@ internal sealed class PendingRequestTable : IDisposable
                     var bitIndex = System.Numerics.BitOperations.TrailingZeroCount(pages);
                     pages &= pages - 1;
                     var page = (wordIndex << DeadlinePagesPerWordShift) + bitIndex;
+                    Interlocked.CompareExchange(ref _deadlinePageHint, -1, page);
                     var start = page << DeadlinePageShift;
                     if (start >= slots.Length)
                         continue;
