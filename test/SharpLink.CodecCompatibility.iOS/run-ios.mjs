@@ -12,7 +12,7 @@ function simctl(args, env = process.env) {
     return result.stdout;
 }
 
-async function runIos(mode, producerRoot, outputPath, commit, sdkVersion) {
+async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, targetFramework) {
     const input = mode === 'verify' ? JSON.stringify(await loadEnvelopes(producerRoot)) : null;
     let resolveResult;
     let rejectResult;
@@ -63,7 +63,8 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion) {
         SIMCTL_CHILD_SHARPLINK_MODE: mode,
         SIMCTL_CHILD_SHARPLINK_ENDPOINT: 'http://127.0.0.1:8124',
         SIMCTL_CHILD_SHARPLINK_COMMIT: commit,
-        SIMCTL_CHILD_SHARPLINK_SDK_VERSION: sdkVersion
+        SIMCTL_CHILD_SHARPLINK_SDK_VERSION: sdkVersion,
+        SIMCTL_CHILD_SHARPLINK_TARGET_FRAMEWORK: targetFramework
     };
     simctl(['launch', 'booted', 'com.sharplink.codeccompat.ios'], launchEnv);
 
@@ -96,18 +97,18 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion) {
 
 const args = process.argv.slice(2);
 const mode = args[0];
-if (mode === 'produce' && args.length === 4) {
-    runIos('produce', null, args[1], args[2], args[3]).catch(error => {
+if (mode === 'produce' && args.length === 5) {
+    runIos('produce', null, args[1], args[2], args[3], args[4]).catch(error => {
         console.error(error.stack ?? error);
         process.exitCode = 1;
     });
-} else if (mode === 'verify' && args.length === 5) {
-    runIos('verify', args[1], args[2], args[3], args[4]).catch(error => {
+} else if (mode === 'verify' && args.length === 6) {
+    runIos('verify', args[1], args[2], args[3], args[4], args[5]).catch(error => {
         console.error(error.stack ?? error);
         process.exitCode = 1;
     });
 } else {
-    console.error('Usage: run-ios.mjs produce <corpus-output> <commit> <sdk>');
-    console.error('   or: run-ios.mjs verify <producer-root> <report-output> <commit> <sdk>');
+    console.error('Usage: run-ios.mjs produce <corpus-output> <commit> <sdk> <target-framework>');
+    console.error('   or: run-ios.mjs verify <producer-root> <report-output> <commit> <sdk> <target-framework>');
     process.exit(2);
 }
