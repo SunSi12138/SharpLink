@@ -120,9 +120,10 @@ internal static class PortableProbe
             if (envelope.SchemaVersion != 1 || envelope.Manifest.SchemaVersion != 1)
                 throw new InvalidOperationException($"Unsupported portable corpus schema for {envelope.Manifest.PlatformTag}.");
 
+            var producer = envelope.Manifest;
+            ValidateSameCommit(producer, consumer);
             ValidateProducerCases(envelope);
 
-            var producer = envelope.Manifest;
             foreach (var producerCase in producer.Cases.OrderBy(static item => item.Id, StringComparer.Ordinal))
             {
                 if (!FixtureRegistry.ById.TryGetValue(producerCase.Id, out var fixture))
@@ -202,6 +203,7 @@ internal static class PortableProbe
                     ? "JIT"
                     : "Interpreter");
         var processArchitecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        var runtimeIdentifier = DetectRuntimeIdentifier(os, processArchitecture);
         var executionEnvironment = executionEnvironmentOverride
             ?? (OperatingSystem.IsBrowser()
                 ? "browser"
@@ -220,7 +222,7 @@ internal static class PortableProbe
             RuntimeFamily = runtimeFamily,
             RuntimeVersion = Environment.Version.ToString(),
             SdkVersion = string.IsNullOrWhiteSpace(sdkVersion) ? "unknown" : sdkVersion,
-            RuntimeIdentifier = RuntimeInformation.RuntimeIdentifier,
+            RuntimeIdentifier = runtimeIdentifier,
             ExecutionEnvironment = executionEnvironment,
             Os = os,
             OsVersion = RuntimeInformation.OSDescription,
@@ -231,6 +233,15 @@ internal static class PortableProbe
             CompilationMode = compilationMode,
             PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
+    }
+
+    private static void ValidateSameCommit(RuntimeManifest producer, RuntimeManifest consumer)
+    {
+        if (!string.Equals(producer.SharpLinkCommit, consumer.SharpLinkCommit, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"SharpLink commit mismatch for portable producer {producer.PlatformTag}: producer={producer.SharpLinkCommit}, consumer={consumer.SharpLinkCommit}.");
+        }
     }
 
     private static void ValidateProducerCases(CorpusEnvelope envelope)
@@ -255,6 +266,26 @@ internal static class PortableProbe
         var missing = expectedIds.Where(id => !actualIds.Contains(id)).ToArray();
         if (missing.Length != 0)
             throw new InvalidOperationException($"Portable producer {producer.PlatformTag} is missing expected fixture IDs: {string.Join(", ", missing)}.");
+    }
+
+    private static string DetectRuntimeIdentifier(string os, string processArchitecture)
+    {
+        var reported = RuntimeInformation.RuntimeIdentifier;
+        if (!string.Equals(os, "android", StringComparison.OrdinalIgnoreCase)
+            || reported.StartsWith("android-", StringComparison.OrdinalIgnoreCase))
+        {
+            return reported;
+        }
+
+        return processArchitecture switch
+        {
+            "x64" => "android-x64",
+            "arm64" => "android-arm64",
+            "x86" => "android-x86",
+            "arm" => "android-arm",
+            _ => throw new InvalidOperationException(
+                $"Unsupported Android process architecture for effective RID detection: {processArchitecture}.")
+        };
     }
 
     private static string DetectRuntimeFamily()
