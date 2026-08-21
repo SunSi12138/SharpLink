@@ -174,6 +174,7 @@ public class CompressionNonCancellableRawCancelTests
 
             var client = SharpClientBuilder.Create()
                 .UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30))
+                .DisableRequestTimeout()
                 .UseConnectionPool(options =>
                 {
                     options.MinConnections = 1;
