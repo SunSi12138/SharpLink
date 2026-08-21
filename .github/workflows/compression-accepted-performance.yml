@@ -110,11 +110,11 @@ jobs:
             SHARPLINK_BENCHMARK_SHA="$sha" \
               dotnet run -c Release --no-build \
                 --project "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -- \
-                --compression-accepted-path-evidence 1.5 250000 \
+                --compression-accepted-path-evidence 3 500000 \
                 "$output/$label-r$repetition.json"
           }
 
-          for repetition in 1 2 3; do
+          for repetition in 1 2 3 4 5; do
             if (( repetition % 2 == 1 )); then
               run_evidence base "$base_root" "$base_sha" "$repetition"
               run_evidence candidate "$GITHUB_WORKSPACE" "$candidate_sha" "$repetition"
