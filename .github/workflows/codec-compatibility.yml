@@ -6,6 +6,7 @@ permissions:
 on:
   workflow_call:
   workflow_dispatch:
+  pull_request:
   push:
     branches:
       - agent/issue-253-codec-compat-lab
