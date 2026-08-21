@@ -31,15 +31,19 @@ echo "[issue252-A] candidate_source_sha=$CAND_SOURCE_SHA"
   git diff --stat
 )
 
-echo "[issue252-A] validating candidate unit tests"
-if ! (cd "$CAND_ROOT" && dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --nologo); then
-  echo "[issue252-A] first unit-test pass failed; retrying once to separate known unrelated CI flakes"
-  (cd "$CAND_ROOT" && dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --nologo)
-fi
+echo "[issue252-A] validating candidate like fixed PR CI"
+(
+  cd "$CAND_ROOT"
+  dotnet restore Sharplink.slnx
+  dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+  if ! dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build; then
+    echo "[issue252-A] first unit-test pass failed; retrying once to separate known unrelated CI flakes"
+    dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+  fi
+)
 
-echo "[issue252-A] building benchmark variants"
+echo "[issue252-A] building benchmark baseline"
 dotnet build "$BASE_ROOT/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
-dotnet build "$CAND_ROOT/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
 
 run_variant() {
   local round="$1"
