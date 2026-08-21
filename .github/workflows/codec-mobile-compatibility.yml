@@ -385,6 +385,7 @@ jobs:
           -- summarize
           --input artifacts/codec-compat/verifications
           --output artifacts/codec-compat/summary
+          --profile mobile
 
       - name: Upload mobile evidence summary
         if: always()
