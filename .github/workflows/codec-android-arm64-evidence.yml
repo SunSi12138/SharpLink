@@ -167,6 +167,7 @@ jobs:
           -- summarize
           --input artifacts/codec-compat
           --output artifacts/codec-compat/summary
+          --profile android-arm64-device
 
       - name: Upload Android ARM64 device evidence
         if: always()
