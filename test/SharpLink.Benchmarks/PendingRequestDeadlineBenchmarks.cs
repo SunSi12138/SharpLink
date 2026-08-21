@@ -13,8 +13,8 @@ namespace SharpLink.Benchmarks;
 /// <summary>
 /// Measures the per-call cost of deadline bookkeeping separately from deadline scanning.
 /// Each measured invocation consumes exactly one 256-slot page. The benchmark-only iteration setup
-/// clears the candidate's packed page marks before timing so every batch includes a fresh/re-armed
-/// mark; eager dev has no such field, so the same setup is a no-op there. The contention case uses
+/// resets the candidate's deadline-page marker state before timing so every batch includes a fresh/re-armed
+/// mark; eager dev has no such fields, so the same setup is a no-op there. The contention case uses
 /// four persistent workers to register and complete the page concurrently.
 /// </summary>
 [MemoryDiagnoser]
@@ -31,6 +31,7 @@ public class PendingRequestDeadlineBenchmarks
     private byte[] _responsePayload = null!;
     private RpcDeadline _deadline;
     private long[]? _deadlinePageBits;
+    private FieldInfo? _deadlinePageHintField;
     private Barrier _workerBarrier = null!;
     private Thread[] _workers = null!;
     private Exception?[] _workerFailures = null!;
@@ -48,6 +49,8 @@ public class PendingRequestDeadlineBenchmarks
         _deadlinePageBits = (long[]?)typeof(PendingRequestTable)
             .GetField("_deadlinePageBits", BindingFlags.Instance | BindingFlags.NonPublic)?
             .GetValue(_pending);
+        _deadlinePageHintField = typeof(PendingRequestTable)
+            .GetField("_deadlinePageHint", BindingFlags.Instance | BindingFlags.NonPublic);
         _codec = _context.Codecs.GetCodec<int>();
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
@@ -88,11 +91,12 @@ public class PendingRequestDeadlineBenchmarks
     public void ResetDeadlinePageMarks()
     {
         // This is deliberately benchmark-only state control. All deadline calls from the previous
-        // invocation are already terminal, so clearing the candidate bitmap is equivalent to starting
-        // the next batch after its retired marks have been consumed by a scan. It keeps mark reset
-        // outside the timed region and lets the copied benchmark compile/run unchanged on eager dev.
+        // invocation are already terminal, so resetting candidate marker state is equivalent to starting
+        // the next batch after retired marks have been consumed by a scan. It keeps reset work outside
+        // the timed region and lets the copied benchmark compile/run unchanged on eager dev.
         if (_deadlinePageBits is not null)
             Array.Clear(_deadlinePageBits);
+        _deadlinePageHintField?.SetValue(_pending, -1);
     }
 
     [GlobalCleanup]
