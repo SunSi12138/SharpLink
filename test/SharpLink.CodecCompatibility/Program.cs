@@ -104,7 +104,7 @@ internal static class Program
             throw new InvalidOperationException($"No producer manifest.json files were found under {inputDirectory}.");
 
         var consumer = CreateRuntimeManifest();
-        var report = new VerificationReport { Consumer = consumer };
+        var report = new VerificationReport { SchemaVersion = 1, Consumer = consumer };
         var skipBuiltinRaw = string.Equals(
             Environment.GetEnvironmentVariable("SHARPLINK_SKIP_BUILTIN_RAW"),
             "1",
@@ -115,6 +115,8 @@ internal static class Program
             var producer = ReadJson<RuntimeManifest>(manifestFile);
             if (producer.SchemaVersion != 1)
                 throw new InvalidOperationException($"Unsupported producer schemaVersion {producer.SchemaVersion} in {manifestFile}.");
+
+            ValidateProducerCases(producer, manifestFile, skipBuiltinRaw);
 
             var producerRoot = Path.GetDirectoryName(manifestFile) ?? throw new InvalidOperationException($"Cannot resolve producer root for {manifestFile}.");
             foreach (var producerCase in producer.Cases
@@ -209,6 +211,7 @@ internal static class Program
 
         var summary = new CompatibilitySummary
         {
+            SchemaVersion = 1,
             GeneratedAtUtc = DateTimeOffset.UtcNow,
             BlockingFailures = results.Count(static result => result.Blocking),
             Results = results
@@ -242,6 +245,7 @@ internal static class Program
 
         return new RuntimeManifest
         {
+            SchemaVersion = 1,
             SharpLinkCommit = Environment.GetEnvironmentVariable("SHARPLINK_COMMIT")
                 ?? Environment.GetEnvironmentVariable("GITHUB_SHA")
                 ?? "unknown",
@@ -261,6 +265,32 @@ internal static class Program
             CompilationMode = compilationMode,
             PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
+    }
+
+    private static void ValidateProducerCases(RuntimeManifest producer, string source, bool skipBuiltinRaw)
+    {
+        var expectedIds = FixtureRegistry.All
+            .Where(item => !skipBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
+            .Select(static item => item.Id)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+        var relevantCases = producer.Cases
+            .Where(item => !skipBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
+            .ToArray();
+
+        var duplicates = relevantCases
+            .GroupBy(static item => item.Id, StringComparer.Ordinal)
+            .Where(static group => group.Count() > 1)
+            .Select(static group => group.Key)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+        if (duplicates.Length != 0)
+            throw new InvalidOperationException($"Producer {producer.PlatformTag} in {source} contains duplicate fixture IDs: {string.Join(", ", duplicates)}.");
+
+        var actualIds = relevantCases.Select(static item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var missing = expectedIds.Where(id => !actualIds.Contains(id)).ToArray();
+        if (missing.Length != 0)
+            throw new InvalidOperationException($"Producer {producer.PlatformTag} in {source} is missing expected fixture IDs: {string.Join(", ", missing)}.");
     }
 
     private static string CreateMarkdownSummary(CompatibilitySummary summary)
