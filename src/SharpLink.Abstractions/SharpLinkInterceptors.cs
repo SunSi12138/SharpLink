@@ -88,15 +88,19 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         SharpLinkAuthenticationContext? authentication,
         DateTimeOffset? deadline,
         SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISharpLinkServerInterceptor[]? interceptors = null)
         : base(connectionId, authentication, deadline, metadata)
     {
+        Interceptors = interceptors;
         Method = method;
         RequestId = requestId;
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
         CancellationToken = cancellationToken;
     }
+
+    internal ISharpLinkServerInterceptor[]? Interceptors { get; }
 
     /// <summary>Gets generated method metadata.</summary>
     public RpcMethodDescriptor Method { get; }

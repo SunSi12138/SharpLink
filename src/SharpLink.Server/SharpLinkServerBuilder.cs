@@ -124,7 +124,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    /// <summary>Adds a server interceptor in registration order.</summary>
+    /// <summary>Adds an interceptor to the initial server pipeline in registration order. After Build, use <see cref="ISharpLinkServer.ReplaceInterceptors"/> for runtime replacement.</summary>
     public SharpLinkServerBuilder AddInterceptor(ISharpLinkServerInterceptor interceptor)
     {
         Configure(() =>

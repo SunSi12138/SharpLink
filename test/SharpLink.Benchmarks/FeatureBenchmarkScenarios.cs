@@ -24,6 +24,9 @@ public enum ServerFeatureScenario
     ServerInterceptor2,
     ServerInterceptor4,
     ServerInterceptor8,
+    ServerInterceptorDynamicDisabled,
+    ServerInterceptorDynamicEnabled,
+    ServerInterceptorAfterManyReplacements,
     MetricsClientAndServer,
     ServerTraceOnePercent,
     ServerTraceAll,
@@ -45,6 +48,10 @@ public enum ClientFeatureScenario
     ClientInterceptor2,
     ClientInterceptor4,
     ClientInterceptor8,
+    ClientInterceptorDynamicDisabled,
+    ClientInterceptorDynamicEnabled,
+    ClientAndServerInterceptorDynamicEnabled,
+    ClientInterceptorAfterManyReplacements,
     ClientShortCircuit,
     ClientInterceptorAsyncBeforeNext,
     ClientInterceptorAsyncAfterNext,
@@ -92,7 +99,7 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
             var environment = await BenchmarkEnvironment.CreateAsync(
                 configureServer: builder => ConfigureServer(builder, scenario),
                 createClientBuilder: static port => CreateFixedClient(port),
-                configureBuiltServer: dynamicRegistration ? RegisterDynamicServices : null)
+                configureBuiltServer: server => ConfigureBuiltServer(server, scenario, dynamicRegistration))
                 .ConfigureAwait(false);
 
             if (scenario == ServerFeatureScenario.DynamicServiceActual)
@@ -125,10 +132,10 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
         {
             var expectedConnections = GetExpectedConnections(scenario);
             var environment = await BenchmarkEnvironment.CreateAsync(
-                configureServer: static builder => builder.UseHeartbeat(
-                    SHeartbeatInterval,
-                    SHeartbeatTimeout),
+                configureServer: builder => ConfigureServerForClientScenario(builder, scenario),
                 createClientBuilder: port => CreateClient(port, scenario),
+                configureBuiltServer: server => ConfigureBuiltServerForClientScenario(server, scenario),
+                configureBuiltClient: client => ConfigureBuiltClient(client, scenario),
                 expectedReadyConnections: expectedConnections)
                 .ConfigureAwait(false);
             return new FeatureBenchmarkCase(
@@ -148,6 +155,59 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
     {
         await _environment.DisposeAsync().ConfigureAwait(false);
         _telemetry.Dispose();
+    }
+
+    private static void ConfigureBuiltServer(
+        ISharpLinkServer server,
+        ServerFeatureScenario scenario,
+        bool dynamicRegistration)
+    {
+        if (dynamicRegistration)
+            RegisterDynamicServices(server);
+        if (scenario == ServerFeatureScenario.ServerInterceptorDynamicDisabled)
+            server.ReplaceInterceptors([]);
+        if (scenario == ServerFeatureScenario.ServerInterceptorDynamicEnabled)
+            server.ReplaceInterceptors([PassThroughServerInterceptor.Instance]);
+        if (scenario == ServerFeatureScenario.ServerInterceptorAfterManyReplacements)
+        {
+            for (var index = 0; index < 10_000; index++)
+                server.ReplaceInterceptors((index & 1) == 0 ? [] : [PassThroughServerInterceptor.Instance]);
+            server.ReplaceInterceptors([PassThroughServerInterceptor.Instance]);
+        }
+    }
+
+    private static void ConfigureServerForClientScenario(
+        SharpLinkServerBuilder builder,
+        ClientFeatureScenario scenario)
+    {
+        builder.UseHeartbeat(SHeartbeatInterval, SHeartbeatTimeout);
+    }
+
+    private static void ConfigureBuiltServerForClientScenario(
+        ISharpLinkServer server,
+        ClientFeatureScenario scenario)
+    {
+        if (scenario == ClientFeatureScenario.ClientAndServerInterceptorDynamicEnabled)
+            server.ReplaceInterceptors([PassThroughServerInterceptor.Instance]);
+    }
+
+    private static void ConfigureBuiltClient(
+        ISharpLinkClient client,
+        ClientFeatureScenario scenario)
+    {
+        if (scenario == ClientFeatureScenario.ClientInterceptorDynamicDisabled)
+            client.ReplaceInterceptors([]);
+        if (scenario is ClientFeatureScenario.ClientInterceptorDynamicEnabled or
+            ClientFeatureScenario.ClientAndServerInterceptorDynamicEnabled)
+        {
+            client.ReplaceInterceptors([PassThroughClientInterceptor.Instance]);
+        }
+        if (scenario == ClientFeatureScenario.ClientInterceptorAfterManyReplacements)
+        {
+            for (var index = 0; index < 10_000; index++)
+                client.ReplaceInterceptors((index & 1) == 0 ? [] : [PassThroughClientInterceptor.Instance]);
+            client.ReplaceInterceptors([PassThroughClientInterceptor.Instance]);
+        }
     }
 
     private static void ConfigureServer(

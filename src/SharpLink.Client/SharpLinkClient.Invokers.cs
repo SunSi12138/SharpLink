@@ -13,6 +13,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -20,12 +21,12 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeUnaryWithTelemetryAsync(
-                    method, request, requestCodec, responseCodec, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, options, cancellationToken);
             }
-            else if (_clientInterceptors.Length != 0)
+            else if (interceptors.Length != 0)
             {
                 invocation = InvokeUnaryInterceptedAsync(
-                    method, request, requestCodec, responseCodec, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, options, cancellationToken);
             }
             else
             {
@@ -57,6 +58,7 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -64,12 +66,12 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeOneWayWithTelemetryAsync(
-                    method, request, requestCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, streams, interceptors, options, cancellationToken);
             }
-            else if (_clientInterceptors.Length != 0)
+            else if (interceptors.Length != 0)
             {
                 invocation = InvokeOneWayInterceptedAsync(
-                    method, request, requestCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, streams, interceptors, options, cancellationToken);
             }
             else
             {
@@ -108,6 +110,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -115,12 +118,12 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeClientStreamingWithTelemetryAsync(
-                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken);
             }
-            else if (_clientInterceptors.Length != 0)
+            else if (interceptors.Length != 0)
             {
                 invocation = InvokeClientStreamingInterceptedAsync(
-                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken);
             }
             else
             {
@@ -157,6 +160,7 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -164,12 +168,12 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeServerStreamingWithTelemetry(
-                    method, request, requestCodec, responseCodec, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, options, cancellationToken);
             }
-            else if (_clientInterceptors.Length != 0)
+            else if (interceptors.Length != 0)
             {
                 invocation = InvokeServerStreamingIntercepted(
-                    method, request, requestCodec, responseCodec, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, options, cancellationToken);
             }
             else
             {
@@ -226,6 +230,7 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -233,12 +238,12 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeDuplexStreamingWithTelemetry(
-                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken);
             }
-            else if (_clientInterceptors.Length != 0)
+            else if (interceptors.Length != 0)
             {
                 invocation = InvokeDuplexStreamingIntercepted(
-                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken);
             }
             else
             {
