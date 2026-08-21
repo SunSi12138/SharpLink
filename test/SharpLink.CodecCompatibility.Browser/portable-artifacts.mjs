@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+const BUILTIN_RAW_CATEGORY = 'builtin-semantic-raw';
+
 async function findNamedFiles(root, fileName) {
     const found = [];
     async function visit(directory) {
@@ -19,18 +21,23 @@ async function findNamedFiles(root, fileName) {
     return found;
 }
 
-export async function loadEnvelopes(root) {
+export async function loadEnvelopes(root, options = {}) {
     const manifestFiles = await findNamedFiles(root, 'manifest.json');
     if (manifestFiles.length === 0) {
         throw new Error(`No manifest.json files found under ${root}`);
     }
 
+    const excludeBuiltinRaw = options.excludeBuiltinRaw
+        ?? process.env.SHARPLINK_SKIP_BUILTIN_RAW === '1';
     const envelopes = [];
     for (const manifestFile of manifestFiles) {
-        const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+        const originalManifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+        const cases = (originalManifest.cases ?? []).filter(
+            item => !excludeBuiltinRaw || item.category !== BUILTIN_RAW_CATEGORY);
+        const manifest = { ...originalManifest, cases };
         const corpusRoot = path.dirname(manifestFile);
         const caseBytesBase64 = {};
-        for (const item of manifest.cases ?? []) {
+        for (const item of cases) {
             const wirePath = path.join(corpusRoot, ...item.wireFile.split('/'));
             caseBytesBase64[item.id] = (await fs.readFile(wirePath)).toString('base64');
         }
@@ -69,6 +76,70 @@ export async function writePackedInput(producerRoot, outputFile) {
     return envelopes.length;
 }
 
+function firstDifference(left, right) {
+    const common = Math.min(left.length, right.length);
+    for (let index = 0; index < common; index++) {
+        if (left[index] !== right[index]) return index;
+    }
+    return left.length === right.length ? null : common;
+}
+
+export async function appendRawLayoutEvidence(reportFile, producerRoot, localCorpusRoot, blocking = false) {
+    const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
+    const producers = await loadEnvelopes(producerRoot, { excludeBuiltinRaw: false });
+    const localEnvelopes = await loadEnvelopes(localCorpusRoot, { excludeBuiltinRaw: false });
+    if (localEnvelopes.length !== 1) {
+        throw new Error(`Expected exactly one local corpus under ${localCorpusRoot}, found ${localEnvelopes.length}.`);
+    }
+
+    const local = localEnvelopes[0];
+    const localCases = new Map((local.manifest.cases ?? []).map(item => [item.id, item]));
+    for (const producer of producers) {
+        for (const producerCase of (producer.manifest.cases ?? []).filter(item => item.category === BUILTIN_RAW_CATEGORY)) {
+            const localCase = localCases.get(producerCase.id);
+            if (!localCase) {
+                throw new Error(`Local corpus is missing raw framework fixture ${producerCase.id}.`);
+            }
+            const producerBytes = Buffer.from(producer.caseBytesBase64[producerCase.id], 'base64');
+            const localBytes = Buffer.from(local.caseBytesBase64[producerCase.id], 'base64');
+            const byteEqual = producerBytes.equals(localBytes);
+            const representationCompatible = producerCase.size === localCase.size && byteEqual;
+            report.results.push({
+                producer: producer.manifest.platformTag,
+                consumer: local.manifest.platformTag,
+                fixture: producerCase.id,
+                category: producerCase.category,
+                codecPath: producerCase.codecPath,
+                producerSize: producerCase.size,
+                consumerSize: localCase.size,
+                producerPointerSize: producer.manifest.pointerSize,
+                consumerPointerSize: local.manifest.pointerSize,
+                producerFieldOffsets: producerCase.fieldOffsets ?? {},
+                consumerFieldOffsets: localCase.fieldOffsets ?? {},
+                producerWireHash: producerCase.wireSha256,
+                consumerLocalWireHash: localCase.wireSha256,
+                crossDeserializeResult: false,
+                logicalEquality: representationCompatible,
+                byteForByteEquality: byteEqual,
+                firstDifferingByteOffset: firstDifference(producerBytes, localBytes),
+                classification: representationCompatible
+                    ? 'IDENTICAL_RAW_REPRESENTATION'
+                    : 'RAW_BUILTIN_REPRESENTATION_MISMATCH',
+                blocking: blocking && !representationCompatible,
+                expectedLogicalValue: producerCase.expectedLogicalValue ?? '',
+                actualLogicalValue: localCase.expectedLogicalValue ?? '',
+                exceptionType: null,
+                exceptionMessage: representationCompatible
+                    ? 'Semantic cross-deserialize skipped for framework-owned raw type; producer and consumer representations are byte-identical.'
+                    : 'Semantic cross-deserialize skipped for framework-owned raw type because representations differ; directly materializing incompatible raw bytes can create invalid runtime state.'
+            });
+        }
+    }
+
+    await fs.writeFile(reportFile, JSON.stringify(report, null, 2) + '\n', 'utf8');
+    return report.results.length;
+}
+
 export async function checkVerificationReport(reportFile) {
     const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
     if (report?.browserProbeError || report?.portableProbeError) {
@@ -82,23 +153,29 @@ export async function checkVerificationReport(reportFile) {
 }
 
 async function main() {
-    const [command, input, output] = process.argv.slice(2);
-    if (command === 'unpack') {
-        const envelope = JSON.parse(await fs.readFile(input, 'utf8'));
-        await writeCorpus(envelope, output);
+    const args = process.argv.slice(2);
+    const command = args[0];
+    if (command === 'unpack' && args.length === 3) {
+        const envelope = JSON.parse(await fs.readFile(args[1], 'utf8'));
+        await writeCorpus(envelope, args[2]);
         return;
     }
-    if (command === 'pack') {
-        const count = await writePackedInput(input, output);
+    if (command === 'pack' && args.length === 3) {
+        const count = await writePackedInput(args[1], args[2]);
         console.log(`Packed ${count} producer corpus envelope(s).`);
         return;
     }
-    if (command === 'check-report') {
-        const count = await checkVerificationReport(input);
+    if (command === 'append-raw' && (args.length === 4 || args.length === 5)) {
+        const count = await appendRawLayoutEvidence(args[1], args[2], args[3], args[4] === 'blocking');
+        console.log(`Portable report now contains ${count} result(s), including raw framework layout evidence.`);
+        return;
+    }
+    if (command === 'check-report' && args.length === 2) {
+        const count = await checkVerificationReport(args[1]);
         console.log(`Verified portable report with ${count} result(s) and no blockers.`);
         return;
     }
-    throw new Error('Usage: portable-artifacts.mjs <unpack|pack|check-report> <input> [output]');
+    throw new Error('Usage: portable-artifacts.mjs <unpack|pack|append-raw|check-report> ...');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
