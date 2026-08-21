@@ -1,5 +1,3 @@
-using System.Buffers;
-using System.Threading;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -53,61 +51,6 @@ public class PendingRequestTableStorageTests
         for (var i = 0; i < count; i++)
             await CompleteForCleanup(table, ids[i], operations[i]);
         Ensure(table.ActiveCount == 0, "concurrent cleanup must release every reservation");
-    }
-
-    [Test]
-    public async Task SparseDeadlineScanShouldInspectOnePage()
-    {
-        var timeProvider = new ManualTimeProvider();
-        using var table = PendingRequestTableTestFixture.Create(65_536, timeProvider: timeProvider);
-        var deadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
-        var operation = table.Rent(new Int32Codec(), PendingCallKind.Unary, deadline,
-            CancellationToken.None, out _);
-        timeProvider.Advance(TimeSpan.FromSeconds(1));
-        var failure = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "deadline expiration must preserve the terminal result");
-        Ensure(table.LastDeadlineScanInspectedSlots == 256,
-            "one sparse deadline page should inspect 256 slots, not full capacity");
-        Ensure(table.ActiveCount == 0, "deadline completion must release capacity");
-    }
-
-    [Test]
-    public async Task CompletedDeadlinePageShouldClearWhenNextScanConsumesMark()
-    {
-        var timeProvider = new ManualTimeProvider();
-        using var table = PendingRequestTableTestFixture.Create(65_536, timeProvider: timeProvider);
-        var farDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddMinutes(5), timeProvider);
-        var first = table.Rent(new Int32Codec(), PendingCallKind.Unary, farDeadline,
-            CancellationToken.None, out var firstId);
-        await CompleteForCleanup(table, firstId, first);
-
-        for (var i = 0; i < 254; i++)
-        {
-            var operation = table.Rent<int>(out var id);
-            await CompleteForCleanup(table, id, operation);
-        }
-
-        var expiring = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
-        var second = table.Rent(new Int32Codec(), PendingCallKind.Unary, expiring,
-            CancellationToken.None, out var secondId);
-        Ensure((secondId >> 8) != (firstId >> 8), "test must move the deadline call to the next page");
-        timeProvider.Advance(TimeSpan.FromSeconds(1));
-        var failure = await CaptureExceptionAsync(second.AsValueTask().AsTask());
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "second-page deadline must expire normally");
-        Ensure(table.LastDeadlineScanInspectedSlots == 512,
-            "the next scan should consume the retired page mark once while inspecting the active page");
-
-        var nextDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
-        var third = table.Rent(new Int32Codec(), PendingCallKind.Unary, nextDeadline,
-            CancellationToken.None, out _);
-        timeProvider.Advance(TimeSpan.FromSeconds(1));
-        failure = await CaptureExceptionAsync(third.AsValueTask().AsTask());
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "a later deadline on the active page must still expire normally");
-        Ensure(table.LastDeadlineScanInspectedSlots == 256,
-            "once consumed, the retired page mark must not widen later deadline scans");
     }
 
     private static async Task CompleteForCleanup(PendingRequestTable table, long id, RpcRequestOperation<int> operation)

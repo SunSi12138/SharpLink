@@ -63,20 +63,9 @@ internal interface IPendingCallCompletionObserver
 /// </remarks>
 internal sealed class PendingRequestTable : IDisposable
 {
-    private const int DeadlinePageShift = 8;
-    private const int DeadlinePageSize = 1 << DeadlinePageShift;
-    private const int DeadlinePagesPerWordShift = 6;
-    private const int DeadlinePagesPerWord = 1 << DeadlinePagesPerWordShift;
-    private static long s_nextDeadlineMarkerCacheId;
-    [ThreadStatic] private static long t_deadlineMarkerCacheId;
-    [ThreadStatic] private static long t_deadlineMarkerCacheEpoch;
-    [ThreadStatic] private static int t_deadlineMarkerCachePage;
     private readonly int _indexMask;
     private readonly int _capacity;
     private readonly object _slotsInitializationGate = new();
-    private readonly int _deadlinePageWordCount;
-    private readonly long[] _deadlinePageBits;
-    private readonly long _deadlineMarkerCacheId;
     private PendingCall?[]? _slots;
     private readonly IRpcCodecProvider _codecProvider;
     private readonly IPendingCallOwner _owner;
@@ -85,7 +74,6 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly ITimer _deadlineTimer;
     private long _nextId;
     private long _approximateEarliestDeadline = long.MaxValue;
-    private long _deadlineMarkerEpoch = 1;
     private int _deadlineScanRunning;
     private int _activeSlots;
     private int _waiterCount;
@@ -113,11 +101,6 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _capacity = capacity;
-        var deadlinePageCount = (capacity + DeadlinePageSize - 1) >> DeadlinePageShift;
-        _deadlinePageWordCount = (deadlinePageCount + DeadlinePagesPerWord - 1) >> DeadlinePagesPerWordShift;
-        _deadlinePageBits = new long[_deadlinePageWordCount];
-        var cacheId = Interlocked.Increment(ref s_nextDeadlineMarkerCacheId);
-        _deadlineMarkerCacheId = cacheId != 0 ? cacheId : Interlocked.Increment(ref s_nextDeadlineMarkerCacheId);
         _indexMask = capacity - 1;
         _codecProvider = codecProvider;
         _owner = owner;
@@ -526,8 +509,6 @@ internal sealed class PendingRequestTable : IDisposable
                         completionObserver);
                     if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
                     {
-                        if (deadline.HasValue)
-                            MarkDeadlinePage(index);
                         published = true;
                         OnRegistered(call);
                         CompleteRegistrationIfDisposed(call);
@@ -590,8 +571,6 @@ internal sealed class PendingRequestTable : IDisposable
                         completionObserver);
                     if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
                     {
-                        if (deadline.HasValue)
-                            MarkDeadlinePage(index);
                         published = true;
                         OnRegistered(call);
                         CompleteRegistrationIfDisposed(call);
@@ -633,35 +612,6 @@ internal sealed class PendingRequestTable : IDisposable
 
             return slots;
         }
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void MarkDeadlinePage(int index)
-    {
-        var page = index >> DeadlinePageShift;
-        var epoch = Volatile.Read(ref _deadlineMarkerEpoch);
-        if (t_deadlineMarkerCacheId == _deadlineMarkerCacheId &&
-            t_deadlineMarkerCacheEpoch == epoch &&
-            t_deadlineMarkerCachePage == page)
-        {
-            return;
-        }
-
-        ref var bits = ref _deadlinePageBits[page >> DeadlinePagesPerWordShift];
-        var bit = 1L << (page & (DeadlinePagesPerWord - 1));
-        var current = Volatile.Read(ref bits);
-        while ((current & bit) == 0)
-        {
-            var updated = current | bit;
-            var observed = Interlocked.CompareExchange(ref bits, updated, current);
-            if (observed == current)
-                break;
-            current = observed;
-        }
-
-        t_deadlineMarkerCacheId = _deadlineMarkerCacheId;
-        t_deadlineMarkerCacheEpoch = epoch;
-        t_deadlineMarkerCachePage = page;
     }
 
     private bool TryAcquireCapacity()
@@ -928,8 +878,6 @@ internal sealed class PendingRequestTable : IDisposable
 
         try
         {
-            // Invalidate all per-thread locality hits before any live page bit is consumed.
-            Interlocked.Increment(ref _deadlineMarkerEpoch);
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
             var slots = Volatile.Read(ref _slots);
             if (slots is null)
@@ -940,42 +888,19 @@ internal sealed class PendingRequestTable : IDisposable
 
             var now = _timeProvider.GetTimestamp();
             var inspectedSlots = 0;
-            for (var wordIndex = 0; wordIndex < _deadlinePageWordCount; wordIndex++)
+            for (var index = 0; index < slots.Length; index++)
             {
-                var pages = (ulong)Interlocked.Exchange(ref _deadlinePageBits[wordIndex], 0);
-                while (pages != 0)
+                inspectedSlots++;
+                var call = Volatile.Read(ref slots[index]);
+                if (call is null || !call.Deadline.HasValue)
+                    continue;
+                if (call.Deadline.Timestamp <= now)
                 {
-                    var bitIndex = System.Numerics.BitOperations.TrailingZeroCount(pages);
-                    pages &= pages - 1;
-                    var page = (wordIndex << DeadlinePagesPerWordShift) + bitIndex;
-                    var start = page << DeadlinePageShift;
-                    if (start >= slots.Length)
-                        continue;
-
-                    var end = Math.Min(start + DeadlinePageSize, slots.Length);
-                    var hasFutureDeadline = false;
-                    for (var index = start; index < end; index++)
-                    {
-                        inspectedSlots++;
-                        var call = Volatile.Read(ref slots[index]);
-                        if (call is null || !call.Deadline.HasValue)
-                            continue;
-                        if (call.Deadline.Timestamp <= now)
-                        {
-                            TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
-                        }
-                        else
-                        {
-                            hasFutureDeadline = true;
-                            UpdateEarliestDeadline(call.Deadline.Timestamp);
-                        }
-                    }
-
-                    if (hasFutureDeadline)
-                    {
-                        var pageBit = 1L << bitIndex;
-                        Interlocked.Or(ref _deadlinePageBits[wordIndex], pageBit);
-                    }
+                    TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
+                }
+                else
+                {
+                    UpdateEarliestDeadline(call.Deadline.Timestamp);
                 }
             }
 
