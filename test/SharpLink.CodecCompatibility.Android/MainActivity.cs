@@ -32,17 +32,29 @@ public sealed class MainActivity : Activity
                 ?? throw new InvalidOperationException("Missing endpoint intent extra.");
             var commit = Intent?.GetStringExtra("commit") ?? "unknown";
             var sdk = Intent?.GetStringExtra("sdk") ?? "unknown";
+            var runtimeFamily = Intent?.GetStringExtra("runtimeFamily") ?? "unknown";
 
             string result;
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             if (string.Equals(mode, "produce", StringComparison.Ordinal))
             {
-                result = PortableProbe.ProduceJson(commit, sdk, "net10.0-android");
+                result = PortableProbe.ProduceJson(
+                    commit,
+                    sdk,
+                    "net10.0-android/android-x64",
+                    runtimeFamilyOverride: runtimeFamily,
+                    executionEnvironmentOverride: "emulator");
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
             {
                 var input = await client.GetStringAsync($"{endpoint}/input.json");
-                result = PortableProbe.VerifyJson(input, commit, sdk, "net10.0-android");
+                result = PortableProbe.VerifyJson(
+                    input,
+                    commit,
+                    sdk,
+                    "net10.0-android/android-x64",
+                    runtimeFamilyOverride: runtimeFamily,
+                    executionEnvironmentOverride: "emulator");
             }
             else
             {
