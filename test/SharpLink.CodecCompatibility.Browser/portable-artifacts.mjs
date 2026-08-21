@@ -118,8 +118,10 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
                 consumerFieldOffsets: localCase.fieldOffsets ?? {},
                 producerWireHash: producerCase.wireSha256,
                 consumerLocalWireHash: localCase.wireSha256,
-                crossDeserializeResult: false,
-                logicalEquality: representationCompatible,
+                crossDeserializeResult: null,
+                logicalEquality: null,
+                segmentedCrossDeserializeResult: null,
+                segmentedLogicalEquality: null,
                 byteForByteEquality: byteEqual,
                 firstDifferingByteOffset: firstDifference(producerBytes, localBytes),
                 classification: representationCompatible
@@ -127,11 +129,11 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
                     : 'RAW_BUILTIN_REPRESENTATION_MISMATCH',
                 blocking: blocking && !representationCompatible,
                 expectedLogicalValue: producerCase.expectedLogicalValue ?? '',
-                actualLogicalValue: localCase.expectedLogicalValue ?? '',
+                actualLogicalValue: '',
                 exceptionType: null,
                 exceptionMessage: representationCompatible
-                    ? 'Semantic cross-deserialize skipped for framework-owned raw type; producer and consumer representations are byte-identical.'
-                    : 'Semantic cross-deserialize skipped for framework-owned raw type because representations differ; directly materializing incompatible raw bytes can create invalid runtime state.'
+                    ? 'Semantic cross-deserialize was not run for this framework-owned raw type; producer and consumer representations are byte-identical.'
+                    : 'Semantic cross-deserialize was not run for this framework-owned raw type because representations differ; directly materializing incompatible raw bytes can create invalid runtime state.'
             });
         }
     }

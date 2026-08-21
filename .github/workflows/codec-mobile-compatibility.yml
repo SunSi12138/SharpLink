@@ -1,4 +1,7 @@
-name: Codec Mobile Compatibility
+name: Codec Mobile Evidence
+
+# This workflow retains explicitly documented producer -> consumer edges.
+# It is not an all-to-all mobile compatibility matrix.
 
 permissions:
   contents: read
@@ -6,9 +9,18 @@ permissions:
 on:
   workflow_call:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/codec-mobile-compatibility.yml'
+      - 'src/SharpLink.Runtime/Codec/**'
+      - 'src/SharpLink.Runtime/SharpLink.Runtime.csproj'
+      - 'test/SharpLink.CodecCompatibility/**'
+      - 'test/SharpLink.CodecCompatibility.Android/**'
+      - 'test/SharpLink.CodecCompatibility.iOS/**'
+      - 'test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs'
 
 concurrency:
-  group: codec-mobile-compatibility-${{ github.ref }}
+  group: codec-mobile-evidence-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -161,7 +173,7 @@ jobs:
           cp -R artifacts/codec-compat/android-mono-corpus/. artifacts/codec-compat/producers/codec-mobile-corpus-android-x64-mono/
           cp -R artifacts/codec-compat/android-coreclr-corpus/. artifacts/codec-compat/producers/codec-mobile-corpus-android-x64-coreclr/
 
-      - name: Verify fan-in on Android Mono
+      - name: Verify documented edges on Android Mono
         shell: bash
         env:
           SHARPLINK_SKIP_BUILTIN_RAW: '1'
@@ -181,7 +193,7 @@ jobs:
           node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
             check-report artifacts/codec-compat/android-mono-verification/verification.json
 
-      - name: Verify fan-in on Android CoreCLR
+      - name: Verify documented edges on Android CoreCLR
         shell: bash
         env:
           SHARPLINK_SKIP_BUILTIN_RAW: '1'
@@ -303,7 +315,7 @@ jobs:
           mkdir -p artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}
           cp -R artifacts/codec-compat/ios-corpus/. artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}/
 
-      - name: Verify fan-in on iOS simulator
+      - name: Verify documented edges on iOS simulator
         shell: bash
         env:
           SHARPLINK_SKIP_BUILTIN_RAW: '1'
@@ -357,7 +369,7 @@ jobs:
           path: artifacts/codec-compat/verifications
           merge-multiple: false
 
-      - name: Require every mobile consumer report
+      - name: Require every documented mobile consumer report
         shell: bash
         run: |
           count="$(find artifacts/codec-compat/verifications -name verification.json -type f | wc -l | tr -d ' ')"
@@ -366,7 +378,7 @@ jobs:
             exit 1
           fi
 
-      - name: Aggregate mobile compatibility evidence
+      - name: Aggregate documented mobile edge evidence
         run: >-
           dotnet run -c Release
           --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
@@ -374,11 +386,11 @@ jobs:
           --input artifacts/codec-compat/verifications
           --output artifacts/codec-compat/summary
 
-      - name: Upload mobile compatibility summary
+      - name: Upload mobile evidence summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: codec-mobile-compatibility-summary
+          name: codec-mobile-evidence-summary
           path: artifacts/codec-compat/summary
           if-no-files-found: warn
           retention-days: 30

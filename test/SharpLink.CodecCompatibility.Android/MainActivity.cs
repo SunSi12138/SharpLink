@@ -45,9 +45,9 @@ public sealed class MainActivity : Activity
             var mode = Intent?.GetStringExtra("mode") ?? "produce";
             var commit = Intent?.GetStringExtra("commit") ?? "unknown";
             var sdk = Intent?.GetStringExtra("sdk") ?? "unknown";
-            var runtimeFamily = Intent?.GetStringExtra("runtimeFamily") ?? "unknown";
+            var expectedRuntimeFamily = Intent?.GetStringExtra("runtimeFamily") ?? "unknown";
 
-            Log.Info(LogTag, $"probe starting mode={mode} runtime={runtimeFamily}");
+            Log.Info(LogTag, $"probe starting mode={mode} expectedRuntime={expectedRuntimeFamily}");
             status.Text = $"running {mode}";
 
             string result;
@@ -57,7 +57,7 @@ public sealed class MainActivity : Activity
                     commit,
                     sdk,
                     "net10.0-android/android-x64",
-                    runtimeFamilyOverride: runtimeFamily,
+                    expectedRuntimeFamily: expectedRuntimeFamily,
                     executionEnvironmentOverride: "emulator");
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
@@ -68,7 +68,7 @@ public sealed class MainActivity : Activity
                     commit,
                     sdk,
                     "net10.0-android/android-x64",
-                    runtimeFamilyOverride: runtimeFamily,
+                    expectedRuntimeFamily: expectedRuntimeFamily,
                     executionEnvironmentOverride: "emulator");
             }
             else

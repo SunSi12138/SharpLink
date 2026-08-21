@@ -16,7 +16,7 @@ internal static class PortableProbe
         string sdkVersion,
         string targetFramework,
         string? compilationModeOverride = null,
-        string? runtimeFamilyOverride = null,
+        string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
         var envelope = Produce(
@@ -24,7 +24,7 @@ internal static class PortableProbe
             sdkVersion,
             targetFramework,
             compilationModeOverride,
-            runtimeFamilyOverride,
+            expectedRuntimeFamily,
             executionEnvironmentOverride);
         return JsonSerializer.Serialize(envelope, typeof(CorpusEnvelope), PortableJsonContext.Default);
     }
@@ -35,7 +35,7 @@ internal static class PortableProbe
         string sdkVersion,
         string targetFramework,
         string? compilationModeOverride = null,
-        string? runtimeFamilyOverride = null,
+        string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
         var envelopes = JsonSerializer.Deserialize(
@@ -49,7 +49,7 @@ internal static class PortableProbe
             sdkVersion,
             targetFramework,
             compilationModeOverride,
-            runtimeFamilyOverride,
+            expectedRuntimeFamily,
             executionEnvironmentOverride);
         return JsonSerializer.Serialize(report, typeof(VerificationReport), PortableJsonContext.Default);
     }
@@ -59,7 +59,7 @@ internal static class PortableProbe
         string sdkVersion,
         string targetFramework,
         string? compilationModeOverride = null,
-        string? runtimeFamilyOverride = null,
+        string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
         var manifest = CreateRuntimeManifest(
@@ -67,7 +67,7 @@ internal static class PortableProbe
             sdkVersion,
             targetFramework,
             compilationModeOverride,
-            runtimeFamilyOverride,
+            expectedRuntimeFamily,
             executionEnvironmentOverride);
         var envelope = new CorpusEnvelope { Manifest = manifest };
 
@@ -100,7 +100,7 @@ internal static class PortableProbe
         string sdkVersion,
         string targetFramework,
         string? compilationModeOverride = null,
-        string? runtimeFamilyOverride = null,
+        string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
         var consumer = CreateRuntimeManifest(
@@ -108,7 +108,7 @@ internal static class PortableProbe
             sdkVersion,
             targetFramework,
             compilationModeOverride,
-            runtimeFamilyOverride,
+            expectedRuntimeFamily,
             executionEnvironmentOverride);
         var report = new VerificationReport { Consumer = consumer };
 
@@ -164,7 +164,7 @@ internal static class PortableProbe
         string sdkVersion,
         string targetFramework,
         string? compilationModeOverride,
-        string? runtimeFamilyOverride,
+        string? expectedRuntimeFamily,
         string? executionEnvironmentOverride)
     {
         var os = OperatingSystem.IsBrowser()
@@ -182,8 +182,14 @@ internal static class PortableProbe
                                 : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
                                     ? "linux"
                                     : "unknown";
-        var runtimeFamily = runtimeFamilyOverride
-            ?? (Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono");
+        var runtimeFamily = Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono";
+        if (!string.IsNullOrWhiteSpace(expectedRuntimeFamily)
+            && !string.Equals(runtimeFamily, expectedRuntimeFamily, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Runtime family mismatch: expected lane {expectedRuntimeFamily}, observed {runtimeFamily} in-process.");
+        }
+
         var compilationMode = compilationModeOverride
             ?? (!RuntimeFeature.IsDynamicCodeSupported
                 ? "AOT"

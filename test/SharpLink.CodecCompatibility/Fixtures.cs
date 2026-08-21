@@ -91,6 +91,7 @@ internal sealed class Fixture<T> : IFixture where T : struct
             ProducerWireHash = producerCase.WireSha256,
             ConsumerLocalWireHash = Hash(localBytes),
             ExpectedLogicalValue = ExpectedLogicalValue,
+            ByteForByteEquality = producerBytes.AsSpan().SequenceEqual(localBytes),
             FirstDifferingByteOffset = FindFirstDifference(producerBytes, localBytes)
         };
 
@@ -110,32 +111,64 @@ internal sealed class Fixture<T> : IFixture where T : struct
             entry.CrossDeserializeResult = true;
             entry.LogicalEquality = _logicalEquals(_value, actual);
             entry.ActualLogicalValue = Describe(actual);
-            entry.ByteForByteEquality = producerBytes.AsSpan().SequenceEqual(localBytes);
-
-            if (!entry.LogicalEquality)
-            {
-                entry.Classification = NativeWidth && producer.PointerSize != consumer.PointerSize
-                    ? "EXPECTED_ARCH_DEPENDENT"
-                    : "DESERIALIZED_VALUE_MISMATCH";
-            }
-            else
-            {
-                entry.Classification = entry.ByteForByteEquality
-                    ? "IDENTICAL_BYTES_AND_COMPATIBLE"
-                    : "DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE";
-            }
         }
         catch (Exception exception)
         {
+            entry.CrossDeserializeResult = false;
             entry.ExceptionType = exception.GetType().FullName;
             entry.ExceptionMessage = exception.Message;
-            entry.Classification = NativeWidth && producer.PointerSize != consumer.PointerSize
-                ? "EXPECTED_ARCH_DEPENDENT"
-                : "DESERIALIZE_REJECTED";
+            entry.Classification = "DESERIALIZE_REJECTED";
+            entry.Blocking = true;
+            return entry;
         }
 
-        entry.Blocking = entry.Classification is "SIZE_OR_LAYOUT_MISMATCH" or "DESERIALIZE_REJECTED" or "DESERIALIZED_VALUE_MISMATCH" or "PROBE_UNAVAILABLE";
+        if (entry.LogicalEquality != true)
+        {
+            entry.Classification = "DESERIALIZED_VALUE_MISMATCH";
+            entry.Blocking = true;
+            return entry;
+        }
+
+        if (producerBytes.Length > 1)
+        {
+            try
+            {
+                var segmentedSequence = CreateSegmentedSequence(producerBytes);
+                var segmentedActual = UnsafeBlitCodec<T>.Instance.Deserialize(in segmentedSequence);
+                entry.SegmentedCrossDeserializeResult = true;
+                entry.SegmentedLogicalEquality = _logicalEquals(_value, segmentedActual);
+            }
+            catch (Exception exception)
+            {
+                entry.SegmentedCrossDeserializeResult = false;
+                entry.ExceptionType = exception.GetType().FullName;
+                entry.ExceptionMessage = exception.Message;
+                entry.Classification = "SEGMENTED_DESERIALIZE_REJECTED";
+                entry.Blocking = true;
+                return entry;
+            }
+
+            if (entry.SegmentedLogicalEquality != true)
+            {
+                entry.Classification = "SEGMENTED_DESERIALIZED_VALUE_MISMATCH";
+                entry.Blocking = true;
+                return entry;
+            }
+        }
+
+        entry.Classification = entry.ByteForByteEquality
+            ? "IDENTICAL_BYTES_AND_COMPATIBLE"
+            : "DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE";
+        entry.Blocking = false;
         return entry;
+    }
+
+    private static ReadOnlySequence<byte> CreateSegmentedSequence(byte[] bytes)
+    {
+        var split = Math.Clamp(bytes.Length / 2, 1, bytes.Length - 1);
+        var first = new SequenceSegment(bytes.AsMemory(0, split));
+        var last = first.Append(bytes.AsMemory(split));
+        return new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
     }
 
     private static string Describe(T value)
@@ -162,6 +195,24 @@ internal sealed class Fixture<T> : IFixture where T : struct
         }
 
         return left.Length == right.Length ? null : common;
+    }
+
+    private sealed class SequenceSegment : ReadOnlySequenceSegment<byte>
+    {
+        internal SequenceSegment(ReadOnlyMemory<byte> memory)
+        {
+            Memory = memory;
+        }
+
+        internal SequenceSegment Append(ReadOnlyMemory<byte> memory)
+        {
+            var next = new SequenceSegment(memory)
+            {
+                RunningIndex = RunningIndex + Memory.Length
+            };
+            Next = next;
+            return next;
+        }
     }
 }
 

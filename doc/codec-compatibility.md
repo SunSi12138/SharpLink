@@ -21,17 +21,17 @@ The release-gated desktop matrix in `.github/workflows/codec-compatibility.yml` 
 
 The workflow is invoked by both PR Quick and Release Gate. Every desktop target is both a producer and a consumer: each consumer downloads all six producer corpora and invokes its own `UnsafeBlitCodec<T>` to deserialize producer bytes. A central Linux summary job only aggregates the per-runtime reports; it does not stand in for Windows or macOS decode execution.
 
-Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the actual OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, RID, endianness, compilation mode, execution environment, and SharpLink commit. The manifest is the source of truth.
+Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the actual OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, RID, endianness, compilation mode, execution environment, and SharpLink commit. Runtime family is observed in-process; portable lanes may assert an expected family, but the harness does not overwrite the observed manifest value. The manifest is the source of truth.
 
-A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
+A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
 
-The six-platform desktop expansion was exercised as a 6 producer × 6 consumer × 48 fixture matrix: 1,728 verification entries with zero blocking failures.
+The six-platform desktop expansion is exercised as a 6 producer × 6 consumer × 48 fixture matrix: 1,728 verification entries with zero blocking failures on the retained validation run.
 
 ### Verified / evidence-backed
 
-A combination is Verified when retained compatibility evidence exists for an exact commit/runtime/platform but the environment is not part of every release hard gate.
+A combination or explicitly named producer/consumer edge is Verified when retained compatibility evidence exists for an exact commit/runtime/platform but the environment is not part of every release hard gate.
 
-The current evidence-backed lanes include:
+The current evidence-backed environments include:
 
 - Browser WebAssembly: `browser-wasm`, wasm32, Mono, Interpreter, executed in a real headless Chrome instance;
 - Android x64 emulator: Mono;
@@ -39,20 +39,36 @@ The current evidence-backed lanes include:
 - iOS Simulator x64: Mono, Interpreter;
 - iOS Simulator arm64: Mono, Interpreter.
 
-Browser evidence is produced and consumed by the optional Browser jobs in `.github/workflows/codec-compatibility.yml`. Mobile evidence is defined by `.github/workflows/codec-mobile-compatibility.yml` and is intentionally a separate reusable/manual workflow rather than a release hard gate.
+Browser evidence in `.github/workflows/codec-compatibility.yml` is bidirectional with the six desktop identities. The Browser consumer downloads all six desktop corpora plus its own corpus. Separately, six non-gating desktop evidence consumers download the Browser-produced corpus and execute the safe fixtures on Linux x64/arm64, Windows x64/arm64, and macOS x64/arm64. Framework-owned raw fixtures are compared as representation evidence rather than unsafe semantic materialization.
+
+Mobile evidence is defined by `.github/workflows/codec-mobile-compatibility.yml`. It is intentionally an evidence graph rather than an all-to-all five-platform matrix. The currently documented edges are:
+
+- Linux x64 desktop reference -> Android Mono consumer;
+- Linux x64 desktop reference -> Android CoreCLR consumer;
+- Android Mono -> Android Mono and Android CoreCLR;
+- Android CoreCLR -> Android Mono and Android CoreCLR;
+- Linux x64 desktop reference -> iOS Simulator x64 consumer;
+- iOS Simulator x64 -> itself;
+- Linux x64 desktop reference -> iOS Simulator arm64 consumer;
+- iOS Simulator arm64 -> itself.
+
+There is currently no retained Android <-> iOS, iOS x64 <-> iOS arm64, or mobile -> desktop evidence in that workflow. Those absent edges must not be described as verified matrix compatibility. The mobile summary aggregates only the explicitly exercised reports.
 
 The mobile workflow executes the same shared fixture corpus in the target runtime. Android runs both Mono and the .NET 10 experimental CoreCLR runtime inside an x64 emulator. iOS runs Mono inside x64 and arm64 iOS Simulators. These are runtime-executed results, not build-only claims.
 
 Evidence is tied to the environment recorded in the artifact manifest. In particular, simulator/emulator evidence must not be presented as physical-device evidence, and successful execution of an experimental runtime does not turn that runtime into a SharpLink product guarantee.
 
-Validation run `32448182736` exercised the trim-safe portable artifact path and completed successfully for Android Mono, Android CoreCLR, iOS Simulator x64, and iOS Simulator arm64. Each iOS simulator produced all 48 fixtures and returned 96 producer/fixture verification entries with zero blockers. Android produced both 48-fixture corpora and both consumers completed with zero blockers.
+Validation run `32448182736` exercised the previous portable artifact path and completed successfully for Android Mono, Android CoreCLR, iOS Simulator x64, and iOS Simulator arm64. New probe changes must produce a new mobile evidence run before those changes are claimed as validated on mobile.
 
 ### Investigational / not guaranteed yet
 
-Platforms or runtime combinations that have not been executed by the release gate or reviewed evidence lane remain Investigational. Current examples include:
+Platforms, runtime combinations, or producer/consumer edges that have not been executed by the release gate or reviewed evidence lane remain Investigational. Current examples include:
 
 - physical Android and iOS devices;
 - Android arm64 device/emulator execution;
+- Android <-> iOS cross-runtime edges;
+- iOS Simulator x64 <-> arm64 cross-architecture edges;
+- mobile producer -> desktop consumer edges;
 - NativeAOT compatibility beyond existing dedicated smoke coverage;
 - future .NET major versions and unreviewed servicing/runtime combinations;
 - other pointer-width, runtime-family, or architecture combinations not represented by retained evidence.
@@ -91,22 +107,27 @@ Consumers report, per producer/fixture pair:
 - producer and consumer `Unsafe.SizeOf<T>()`;
 - producer and consumer field offsets where applicable;
 - producer and local raw-wire hashes;
-- cross-deserialize success and logical equality;
+- contiguous cross-deserialize status and logical equality;
+- segmented cross-deserialize status and logical equality when the value is large enough to split;
 - byte-for-byte equality and first differing byte offset;
 - exception information when decode fails;
-- a classification such as `IDENTICAL_BYTES_AND_COMPATIBLE`, `DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE`, `SIZE_OR_LAYOUT_MISMATCH`, `DESERIALIZE_REJECTED`, `DESERIALIZED_VALUE_MISMATCH`, `EXPECTED_ARCH_DEPENDENT`, or `PROBE_UNAVAILABLE`.
+- a classification such as `IDENTICAL_BYTES_AND_COMPATIBLE`, `DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE`, `SIZE_OR_LAYOUT_MISMATCH`, `DESERIALIZE_REJECTED`, `DESERIALIZED_VALUE_MISMATCH`, `SEGMENTED_DESERIALIZE_REJECTED`, `SEGMENTED_DESERIALIZED_VALUE_MISMATCH`, `EXPECTED_ARCH_DEPENDENT`, or `PROBE_UNAVAILABLE`.
 
-The desktop and mobile aggregators emit both `compatibility-summary.json` and `compatibility-summary.md` as retained GitHub Actions artifacts.
+Semantic result fields are tri-state. `true` and `false` mean the semantic operation actually ran and produced that result; `null` / `not-run` means the operation was intentionally not executed. Raw representation-only evidence must never set logical equality to `true` merely because bytes match.
+
+The desktop aggregator emits both `compatibility-summary.json` and `compatibility-summary.md`. The mobile evidence aggregator emits the same report format over its explicitly documented edges; that aggregation is not an assertion that every listed mobile environment consumed every other producer.
 
 ## Corpus scope
 
 The 2.0 baseline corpus includes fixed-width controls, internal and tail padding, multiple alignment classes, nested structs, sequential/explicit layout controls, Pack 1/2/4/8 controls, native-width canaries, enums, 64/256/1024-byte structs, user-like DTO/value structs, and direct raw-layout probes for selected built-in semantic structs.
 
+For every same-size fixture larger than one byte, blocking verification performs both a normal single-segment deserialize and a genuinely multi-segment `ReadOnlySequence<byte>` deserialize. The first segment is deliberately shorter than `Unsafe.SizeOf<T>()`, forcing `CodecHelpers.ReadUnmanaged<T>` through its cross-segment copy path. This makes the 64/256/1024-byte slow path observable in the compatibility reports rather than merely constructing large values in one contiguous segment.
+
 Built-in raw-layout fixtures are explicitly labeled `builtin-semantic-raw`. Their results are evidence about direct `UnsafeBlitCodec<T>` behavior and must not be confused with the stability of SharpLink's specialized production codecs selected by `RpcCodecProvider`.
 
-Portable consumers do not blindly materialize framework-owned raw semantic structs produced by another runtime. Safe fixtures perform real cross-deserialize in the target Browser/mobile runtime. `builtin-semantic-raw` fixtures are compared separately as raw representation evidence and reported as `IDENTICAL_RAW_REPRESENTATION` or `RAW_BUILTIN_REPRESENTATION_MISMATCH`.
+Portable consumers do not blindly materialize framework-owned raw semantic structs produced by another runtime. Safe fixtures perform real cross-deserialize in the target Browser/mobile runtime. `builtin-semantic-raw` fixtures are compared separately as raw representation evidence and reported as `IDENTICAL_RAW_REPRESENTATION` or `RAW_BUILTIN_REPRESENTATION_MISMATCH`. Their semantic decode/equality fields remain `not-run`.
 
-This distinction is already useful evidence: Android Mono/CoreCLR and iOS Mono runs observed a `DateTimeOffsetRaw` representation difference relative to another runtime while the logical fixture value remained the same. That representation-only observation is retained as non-blocking evidence rather than converted into an unsafe semantic materialization.
+This distinction is already useful evidence: Android Mono/CoreCLR and iOS Mono runs observed a `DateTimeOffsetRaw` representation difference relative to another runtime while the logical fixture definition was the same. That representation-only observation is retained as non-blocking evidence rather than converted into an unsafe semantic materialization.
 
 Native-width fixtures remain in the corpus even when pointer-width pairs differ. A mismatch is classified as `EXPECTED_ARCH_DEPENDENT` only when the producer and consumer pointer widths actually differ; the workflow does not use a blanket allow-failure switch.
 
@@ -124,7 +145,7 @@ The preferred progression is:
 
 1. execute the actual target runtime as a producer and consumer;
 2. retain a self-describing artifact and verification report;
-3. classify it as Verified / evidence-backed;
-4. promote it to Guaranteed / release-gated only when SharpLink intentionally accepts the infrastructure cost and product commitment.
+3. classify only the actually exercised producer/consumer edges as Verified / evidence-backed;
+4. promote an environment to Guaranteed / release-gated only when SharpLink intentionally accepts the infrastructure cost and product commitment.
 
 Build-only, emulator, simulator, and physical-device results must always be labeled as the environment that actually executed the probe.

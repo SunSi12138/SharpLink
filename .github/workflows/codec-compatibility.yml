@@ -247,6 +247,85 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  browser-desktop-verify:
+    continue-on-error: true
+    needs: [produce, browser-produce]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            os: ubuntu-24.04
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: windows-x64
+            os: windows-latest
+          - id: windows-arm64
+            os: windows-11-arm
+          - id: macos-arm64
+            os: macos-14
+          - id: macos-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download browser producer corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-evidence-corpus-browser-wasm
+          path: artifacts/codec-compat/browser-producer
+
+      - name: Download matching desktop corpus for raw-layout reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-corpus-${{ matrix.id }}
+          path: artifacts/codec-compat/local-desktop-corpus
+
+      - name: Cross-verify safe Browser producer fixtures on desktop
+        env:
+          SHARPLINK_SKIP_BUILTIN_RAW: '1'
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- verify
+          --input artifacts/codec-compat/browser-producer
+          --output artifacts/codec-compat/browser-to-desktop/verification.json
+
+      - name: Append Browser framework raw-layout evidence on desktop
+        shell: bash
+        run: |
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            append-raw artifacts/codec-compat/browser-to-desktop/verification.json \
+            artifacts/codec-compat/browser-producer artifacts/codec-compat/local-desktop-corpus
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            check-report artifacts/codec-compat/browser-to-desktop/verification.json
+
+      - name: Upload Browser-to-desktop verification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-evidence-verification-browser-to-${{ matrix.id }}
+          path: |
+            artifacts/codec-compat/browser-to-desktop/verification.json
+            artifacts/codec-compat/browser-to-desktop/verification-progress.log
+          if-no-files-found: warn
+          retention-days: 30
+
   summary:
     needs: verify
     if: always()

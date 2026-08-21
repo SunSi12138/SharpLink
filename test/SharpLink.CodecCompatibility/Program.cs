@@ -12,6 +12,8 @@ namespace SharpLink.CodecCompatibility;
 
 internal static class Program
 {
+    private const string BuiltinRawCategory = "builtin-semantic-raw";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -103,6 +105,10 @@ internal static class Program
 
         var consumer = CreateRuntimeManifest();
         var report = new VerificationReport { Consumer = consumer };
+        var skipBuiltinRaw = string.Equals(
+            Environment.GetEnvironmentVariable("SHARPLINK_SKIP_BUILTIN_RAW"),
+            "1",
+            StringComparison.Ordinal);
 
         foreach (var manifestFile in manifestFiles)
         {
@@ -111,7 +117,9 @@ internal static class Program
                 throw new InvalidOperationException($"Unsupported producer schemaVersion {producer.SchemaVersion} in {manifestFile}.");
 
             var producerRoot = Path.GetDirectoryName(manifestFile) ?? throw new InvalidOperationException($"Cannot resolve producer root for {manifestFile}.");
-            foreach (var producerCase in producer.Cases.OrderBy(static item => item.Id, StringComparer.Ordinal))
+            foreach (var producerCase in producer.Cases
+                         .Where(item => !skipBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
+                         .OrderBy(static item => item.Id, StringComparer.Ordinal))
             {
                 if (!FixtureRegistry.ById.TryGetValue(producerCase.Id, out var fixture))
                 {
@@ -263,8 +271,8 @@ internal static class Program
         builder.AppendLine($"Generated: `{summary.GeneratedAtUtc:O}`  ");
         builder.AppendLine($"Blocking failures: `{summary.BlockingFailures}`");
         builder.AppendLine();
-        builder.AppendLine("| Producer | Consumer | Fixture | Producer size | Consumer size | Cross decode | Logical equal | Byte equal | First diff | Classification |");
-        builder.AppendLine("|---|---|---|---:|---:|---|---|---|---:|---|");
+        builder.AppendLine("| Producer | Consumer | Fixture | Producer size | Consumer size | Cross decode | Logical equal | Segmented decode | Segmented logical equal | Byte equal | First diff | Classification |");
+        builder.AppendLine("|---|---|---|---:|---:|---|---|---|---|---|---:|---|");
         foreach (var result in summary.Results)
         {
             builder.Append('|').Append(Escape(result.Producer))
@@ -272,8 +280,10 @@ internal static class Program
                 .Append('|').Append(Escape(result.Fixture))
                 .Append('|').Append(result.ProducerSize)
                 .Append('|').Append(result.ConsumerSize)
-                .Append('|').Append(result.CrossDeserializeResult)
-                .Append('|').Append(result.LogicalEquality)
+                .Append('|').Append(FormatResult(result.CrossDeserializeResult))
+                .Append('|').Append(FormatResult(result.LogicalEquality))
+                .Append('|').Append(FormatResult(result.SegmentedCrossDeserializeResult))
+                .Append('|').Append(FormatResult(result.SegmentedLogicalEquality))
                 .Append('|').Append(result.ByteForByteEquality)
                 .Append('|').Append(result.FirstDifferingByteOffset?.ToString() ?? string.Empty)
                 .Append('|').Append(Escape(result.Classification))
@@ -282,6 +292,13 @@ internal static class Program
 
         return builder.ToString();
     }
+
+    private static string FormatResult(bool? value) => value switch
+    {
+        true => "true",
+        false => "false",
+        null => "not-run"
+    };
 
     private static void PrintVerificationFailures(IEnumerable<VerificationEntry> results)
     {
@@ -294,6 +311,8 @@ internal static class Program
                 $"producerOffsets={JsonSerializer.Serialize(result.ProducerFieldOffsets, JsonOptions)} " +
                 $"consumerOffsets={JsonSerializer.Serialize(result.ConsumerFieldOffsets, JsonOptions)} " +
                 $"producerHash={result.ProducerWireHash} localHash={result.ConsumerLocalWireHash} " +
+                $"cross={FormatResult(result.CrossDeserializeResult)} logical={FormatResult(result.LogicalEquality)} " +
+                $"segmentedCross={FormatResult(result.SegmentedCrossDeserializeResult)} segmentedLogical={FormatResult(result.SegmentedLogicalEquality)} " +
                 $"firstDiff={result.FirstDifferingByteOffset?.ToString() ?? "none"} " +
                 $"classification={result.Classification} exception={result.ExceptionType}: {result.ExceptionMessage} " +
                 $"expected={result.ExpectedLogicalValue} actual={result.ActualLogicalValue}");

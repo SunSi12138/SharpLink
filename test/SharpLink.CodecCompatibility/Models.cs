@@ -77,8 +77,10 @@ internal sealed class VerificationEntry
     public Dictionary<string, int> ConsumerFieldOffsets { get; set; } = [];
     public string ProducerWireHash { get; set; } = string.Empty;
     public string ConsumerLocalWireHash { get; set; } = string.Empty;
-    public bool CrossDeserializeResult { get; set; }
-    public bool LogicalEquality { get; set; }
+    public bool? CrossDeserializeResult { get; set; }
+    public bool? LogicalEquality { get; set; }
+    public bool? SegmentedCrossDeserializeResult { get; set; }
+    public bool? SegmentedLogicalEquality { get; set; }
     public bool ByteForByteEquality { get; set; }
     public int? FirstDifferingByteOffset { get; set; }
     public string Classification { get; set; } = string.Empty;

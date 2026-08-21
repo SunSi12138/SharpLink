@@ -20,7 +20,7 @@ public static partial class BrowserExports
             sdkVersion,
             "net10.0/browser-wasm",
             compilationModeOverride: "Interpreter",
-            runtimeFamilyOverride: "Mono",
+            expectedRuntimeFamily: "Mono",
             executionEnvironmentOverride: "browser");
 
     [JSExport]
@@ -31,6 +31,6 @@ public static partial class BrowserExports
             sdkVersion,
             "net10.0/browser-wasm",
             compilationModeOverride: "Interpreter",
-            runtimeFamilyOverride: "Mono",
+            expectedRuntimeFamily: "Mono",
             executionEnvironmentOverride: "browser");
 }

@@ -44,7 +44,7 @@ public static class Application
                     sdk,
                     targetFramework,
                     compilationModeOverride: "Interpreter",
-                    runtimeFamilyOverride: "Mono",
+                    expectedRuntimeFamily: "Mono",
                     executionEnvironmentOverride: "simulator");
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
@@ -56,7 +56,7 @@ public static class Application
                     sdk,
                     targetFramework,
                     compilationModeOverride: "Interpreter",
-                    runtimeFamilyOverride: "Mono",
+                    expectedRuntimeFamily: "Mono",
                     executionEnvironmentOverride: "simulator");
             }
             else
