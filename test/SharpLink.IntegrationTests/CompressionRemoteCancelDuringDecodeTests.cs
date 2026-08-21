@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Reflection;
 
 namespace SharpLink.IntegrationTests;
@@ -18,20 +19,14 @@ public class CompressionRemoteCancelDuringDecodeTests
             .CancellableEchoAsync(payload, callCts.Token)
             .AsTask();
 
-        await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
-        await WaitUntilAsync(
-            () => harness.ActiveCalls == 1,
-            "compressed cancellable request should own call capacity while decode is running");
-
-        callCts.Cancel();
-
-        await serverProvider.WaitForCancellationAsync().WaitAsync(TimeSpan.FromSeconds(2));
-        await ObserveTerminalCallAsync(call);
-        await WaitUntilAsync(
-            () => harness.ActiveCalls == 0,
-            "remote-cancelled compressed decode should release call capacity");
+        await AssertRemoteCancellationDuringDecodeAsync(
+            harness,
+            serverProvider,
+            callCts,
+            call,
+            "unary");
         Ensure(CompressionMergeGateProbeService.CancellableEchoInvocations == 0,
-            "remote-cancelled compressed decode must not invoke the service");
+            "remote-cancelled compressed decode must not invoke the unary service");
 
         var response = await harness.Client.Get<ICompressionMergeGateProbeService>()
             .EchoAsync(payload)
@@ -42,6 +37,117 @@ public class CompressionRemoteCancelDuringDecodeTests
         await WaitUntilAsync(
             () => harness.ActiveCalls == 0,
             "reusable control call should release call capacity");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RemoteCancelShouldReachClientStreamingCompressedHeaderDecode()
+    {
+        CompressionRemoteCancelStreamingService.Reset();
+        var serverProvider = new WaitForRemoteCancellationProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await RemoteCancelHarness.CreateAsync(serverProvider);
+        var payload = Enumerable.Repeat((byte)0x62, 32 * 1024).ToArray();
+        using var callCts = new CancellationTokenSource();
+        var call = harness.Client.Get<ICompressionRemoteCancelStreamingService>()
+            .UploadAsync(payload, ToStream([1, 2, 3, 4]), callCts.Token)
+            .AsTask();
+
+        await AssertRemoteCancellationDuringDecodeAsync(
+            harness,
+            serverProvider,
+            callCts,
+            call,
+            "client-streaming");
+        await WaitUntilAsync(
+            () => harness.ActiveStreams == 0,
+            "remote-cancelled client-streaming handoff should release stream state");
+        Ensure(CompressionRemoteCancelStreamingService.UploadInvocations == 0,
+            "remote-cancelled compressed header must not invoke the client-streaming service");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RemoteCancelShouldReachDuplexCompressedHeaderDecode()
+    {
+        CompressionRemoteCancelStreamingService.Reset();
+        var serverProvider = new WaitForRemoteCancellationProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await RemoteCancelHarness.CreateAsync(serverProvider);
+        var payload = Enumerable.Repeat((byte)0x63, 32 * 1024).ToArray();
+        using var callCts = new CancellationTokenSource();
+        await using var enumerator = harness.Client.Get<ICompressionRemoteCancelStreamingService>()
+            .DuplexAsync(payload, ToStream([5, 6, 7]), callCts.Token)
+            .GetAsyncEnumerator();
+        var move = enumerator.MoveNextAsync().AsTask();
+
+        await AssertRemoteCancellationDuringDecodeAsync(
+            harness,
+            serverProvider,
+            callCts,
+            move,
+            "duplex");
+        await WaitUntilAsync(
+            () => harness.ActiveStreams == 0,
+            "remote-cancelled duplex handoff should release stream state");
+        Ensure(CompressionRemoteCancelStreamingService.DuplexInvocations == 0,
+            "remote-cancelled compressed header must not invoke the duplex service");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RemoteCancelShouldReachSynchronousAdvancedAdmissionCompressedDecode()
+    {
+        CompressionMergeGateProbeService.Reset();
+        var serverProvider = new WaitForRemoteCancellationProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await RemoteCancelHarness.CreateAsync(
+            serverProvider,
+            useAdmissionControl: true);
+        var payload = Enumerable.Repeat((byte)0x64, 32 * 1024).ToArray();
+        using var callCts = new CancellationTokenSource();
+        var call = harness.Client.Get<ICompressionMergeGateProbeService>()
+            .CancellableEchoAsync(payload, callCts.Token)
+            .AsTask();
+
+        await AssertRemoteCancellationDuringDecodeAsync(
+            harness,
+            serverProvider,
+            callCts,
+            call,
+            "advanced-admission fast path");
+        Ensure(CompressionMergeGateProbeService.CancellableEchoInvocations == 0,
+            "advanced-admission remote cancel must prevent service invocation");
+    }
+
+    private static async Task AssertRemoteCancellationDuringDecodeAsync(
+        RemoteCancelHarness harness,
+        WaitForRemoteCancellationProvider serverProvider,
+        CancellationTokenSource callCts,
+        Task call,
+        string scenario)
+    {
+        await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(
+            () => harness.ActiveCalls == 1,
+            $"{scenario} compressed request should own call capacity while decode is running");
+
+        callCts.Cancel();
+
+        await serverProvider.WaitForCancellationAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await ObserveTerminalCallAsync(call);
+        await WaitUntilAsync(
+            () => harness.ActiveCalls == 0,
+            $"{scenario} remote-cancelled compressed decode should release call capacity");
+    }
+
+    private static async IAsyncEnumerable<int> ToStream(IEnumerable<int> values)
+    {
+        foreach (var value in values)
+        {
+            yield return value;
+            await Task.CompletedTask;
+        }
     }
 
     private static async Task ObserveTerminalCallAsync(Task task)
@@ -138,6 +244,20 @@ public class CompressionRemoteCancelDuringDecodeTests
             => (int)(GetRequiredField(_server, "_globalActiveCalls").GetValue(_server)
                 ?? throw new Exception("server active call count is null"));
 
+        public int ActiveStreams
+        {
+            get
+            {
+                var connection = GetSingleConnection();
+                var session = GetRequiredProperty(connection, "Session").GetValue(connection)
+                    ?? throw new Exception("server connection session is null");
+                var streamManager = GetRequiredProperty(session, "StreamManager").GetValue(session)
+                    ?? throw new Exception("server stream manager is null");
+                return (int)(GetRequiredProperty(streamManager, "ActiveStreamCount").GetValue(streamManager)
+                    ?? throw new Exception("server active stream count is null"));
+            }
+        }
+
         private RemoteCancelHarness(
             CancellationTokenSource serverCts,
             Task serverTask,
@@ -151,7 +271,8 @@ public class CompressionRemoteCancelDuringDecodeTests
         }
 
         public static async Task<RemoteCancelHarness> CreateAsync(
-            ISharpLinkCompressionProvider serverProvider)
+            ISharpLinkCompressionProvider serverProvider,
+            bool useAdmissionControl = false)
         {
             var serverCts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
@@ -163,6 +284,16 @@ public class CompressionRemoteCancelDuringDecodeTests
                     options.Compression.Providers.Add(serverProvider);
                 })
                 .UseTcp(0, IPAddress.Loopback.ToString());
+            if (useAdmissionControl)
+            {
+                serverBuilder.UseAdmissionControl(options =>
+                {
+                    options.Global.UseConcurrency(8);
+                    options.MaxQueuedCalls = 0;
+                    options.MaxQueuedBytes = 0;
+                    options.MaxQueueDelay = TimeSpan.Zero;
+                });
+            }
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>
@@ -201,9 +332,36 @@ public class CompressionRemoteCancelDuringDecodeTests
             return new RemoteCancelHarness(serverCts, serverTask, server, client);
         }
 
+        private object GetSingleConnection()
+        {
+            var connections = GetRequiredField(_server, "_connections").GetValue(_server)
+                ?? throw new Exception("server connection table is null");
+            var values = (IEnumerable)(GetRequiredProperty(connections, "Values").GetValue(connections)
+                ?? throw new Exception("server connection values are null"));
+            var enumerator = values.GetEnumerator();
+            try
+            {
+                if (!enumerator.MoveNext())
+                    throw new Exception("no server connection is available");
+                var connection = enumerator.Current
+                    ?? throw new Exception("server connection entry is null");
+                if (enumerator.MoveNext())
+                    throw new Exception("expected exactly one server connection");
+                return connection;
+            }
+            finally
+            {
+                (enumerator as IDisposable)?.Dispose();
+            }
+        }
+
         private static FieldInfo GetRequiredField(object instance, string name)
             => instance.GetType().GetField(name, InstanceFlags)
                ?? throw new Exception($"cannot find field {name}");
+
+        private static PropertyInfo GetRequiredProperty(object instance, string name)
+            => instance.GetType().GetProperty(name, InstanceFlags)
+               ?? throw new Exception($"cannot find property {name}");
 
         public async ValueTask DisposeAsync()
         {
@@ -213,5 +371,57 @@ public class CompressionRemoteCancelDuringDecodeTests
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             _serverCts.Dispose();
         }
+    }
+}
+
+[RpcContract]
+public interface ICompressionRemoteCancelStreamingService : IService
+{
+    ValueTask<int> UploadAsync(
+        byte[] headerPayload,
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken);
+
+    IAsyncEnumerable<int> DuplexAsync(
+        byte[] headerPayload,
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken);
+}
+
+[RpcService]
+public sealed class CompressionRemoteCancelStreamingService : ICompressionRemoteCancelStreamingService
+{
+    private static int s_uploadInvocations;
+    private static int s_duplexInvocations;
+
+    internal static int UploadInvocations => Volatile.Read(ref s_uploadInvocations);
+    internal static int DuplexInvocations => Volatile.Read(ref s_duplexInvocations);
+
+    internal static void Reset()
+    {
+        Volatile.Write(ref s_uploadInvocations, 0);
+        Volatile.Write(ref s_duplexInvocations, 0);
+    }
+
+    public async ValueTask<int> UploadAsync(
+        byte[] headerPayload,
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref s_uploadInvocations);
+        var result = headerPayload.Length;
+        await foreach (var value in values.WithCancellation(cancellationToken))
+            result += value;
+        return result;
+    }
+
+    public async IAsyncEnumerable<int> DuplexAsync(
+        byte[] headerPayload,
+        IAsyncEnumerable<int> values,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref s_duplexInvocations);
+        await foreach (var value in values.WithCancellation(cancellationToken))
+            yield return headerPayload.Length + value;
     }
 }
