@@ -315,7 +315,7 @@ internal static class FixtureRegistry
             new Fixture<Index>("IndexRaw", "builtin-semantic-raw", new Index(7, fromEnd: true)),
             new Fixture<Range>("RangeRaw", "builtin-semantic-raw", new Range(new Index(2), new Index(3, fromEnd: true))),
             new Fixture<Rune>("RuneRaw", "builtin-semantic-raw", new Rune('λ')),
-            new Fixture<decimal>("DecimalRaw", "builtin-semantic-raw", 1234567890.123456789m)
+            new Fixture<decimal>("DecimalRaw", "builtin-semantic-raw", 1234567890.123456789m, static (left, right) => decimal.GetBits(left).AsSpan().SequenceEqual(decimal.GetBits(right)))
         ];
     }
 
