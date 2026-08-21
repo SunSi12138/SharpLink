@@ -1,0 +1,119 @@
+name: Codec Mobile Lab
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  android-produce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+      ANDROID_API: '36'
+      ANDROID_AVD: sharplink-codec
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Android workload
+        run: dotnet workload install android
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Prepare Android x64 emulator
+        shell: bash
+        run: |
+          sudo chmod 666 /dev/kvm || true
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "emulator" "platforms;android-$ANDROID_API" "system-images;android-$ANDROID_API;google_apis;x86_64"
+          echo no | "$AVDMANAGER" create avd --force --name "$ANDROID_AVD" --package "system-images;android-$ANDROID_API;google_apis;x86_64" --device pixel_6
+          nohup "$ANDROID_HOME/emulator/emulator" -avd "$ANDROID_AVD" -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > artifacts-android-emulator.log 2>&1 &
+          adb wait-for-device
+          for attempt in $(seq 1 120); do
+            if [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb shell getprop ro.product.cpu.abi
+
+      - name: Build and run Android Mono producer
+        shell: bash
+        run: |
+          rm -rf artifacts/codec-compat/android-mono-package
+          dotnet build -c Debug -f net10.0-android -r android-x64 \
+            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
+            -t:SignAndroidPackage \
+            -p:CodecRuntime=mono \
+            -p:AndroidPackageFormats=apk \
+            -p:AndroidBuildApplicationPackage=true
+          apk="$(find test/SharpLink.CodecCompatibility.Android/bin/Debug -name '*-Signed.apk' -type f | head -n 1)"
+          test -n "$apk"
+          adb install -r "$apk"
+          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
+            produce artifacts/codec-compat/android-mono-corpus \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Build and run Android CoreCLR producer
+        shell: bash
+        run: |
+          dotnet clean -c Debug -f net10.0-android -r android-x64 \
+            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj
+          dotnet build -c Debug -f net10.0-android -r android-x64 \
+            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
+            -t:SignAndroidPackage \
+            -p:CodecRuntime=coreclr \
+            -p:AndroidPackageFormats=apk \
+            -p:AndroidBuildApplicationPackage=true
+          apk="$(find test/SharpLink.CodecCompatibility.Android/bin/Debug -name '*-Signed.apk' -type f | head -n 1)"
+          test -n "$apk"
+          adb install -r "$apk"
+          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
+            produce artifacts/codec-compat/android-coreclr-corpus \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
+
+      - name: Upload Android Mono corpus
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-corpus-android-x64-mono-lab
+          path: artifacts/codec-compat/android-mono-corpus
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Android CoreCLR corpus
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-corpus-android-x64-coreclr-lab
+          path: artifacts/codec-compat/android-coreclr-corpus
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload emulator diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-android-emulator-diagnostics
+          path: artifacts-android-emulator.log
+          if-no-files-found: warn
+          retention-days: 7
