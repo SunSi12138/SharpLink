@@ -125,11 +125,12 @@ public class CompressionRemoteCancelDuringDecodeTests
     public async Task CapacityRejectedCancellableCompressedRequestShouldNotRetainOrDecode()
     {
         CompressionMergeGateProbeService.Reset();
+        CompressionOwnershipProbeService.Reset();
         var serverProvider = new CountingDecompressionProvider(
             SharpLinkCompressionProviders.CreateBrotli());
         await using var harness = await RemoteCancelHarness.CreateAsync(serverProvider);
-        var service = harness.Client.Get<ICompressionMergeGateProbeService>();
-        var blocker = service.BlockAsync().AsTask();
+        var blocker = harness.Client.Get<ICompressionMergeGateProbeService>().BlockAsync().AsTask();
+        var service = harness.Client.Get<ICompressionOwnershipProbeService>();
         var payload = Enumerable.Repeat((byte)0x65, 32 * 1024).ToArray();
 
         try
@@ -139,27 +140,22 @@ public class CompressionRemoteCancelDuringDecodeTests
             await WaitUntilAsync(
                 () => harness.ActiveCalls == 1,
                 "capacity blocker should own the only call slot");
-            var copiesBefore = harness.RetainedPayloadCopies;
+            var rejectedBefore = harness.RejectedOneWayCalls;
             using var callCts = new CancellationTokenSource();
 
-            try
+            using (harness.DisableServerBufferRents())
             {
-                _ = await service.CancellableEchoAsync(payload, callCts.Token)
+                await service.CancellableNotifyAsync(payload, callCts.Token)
                     .AsTask()
                     .WaitAsync(TimeSpan.FromSeconds(2));
-                throw new Exception("assert failed: capacity-full cancellable request should be rejected");
-            }
-            catch (SharpLinkException exception)
-            {
-                Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted,
-                    "capacity-full cancellable request should return ResourceExhausted");
+                await WaitUntilAsync(
+                    () => harness.RejectedOneWayCalls == rejectedBefore + 1,
+                    "capacity-full cancellable one-way should be rejected without renting a retained copy");
             }
 
             Ensure(serverProvider.DecompressCount == 0,
                 "capacity-rejected cancellable compressed request must not decompress");
-            Ensure(harness.RetainedPayloadCopies == copiesBefore,
-                "capacity-rejected cancellable compressed request must not retain/copy the compressed frame");
-            Ensure(CompressionMergeGateProbeService.CancellableEchoInvocations == 0,
+            Ensure(CompressionOwnershipProbeService.NotifyInvocations == 0,
                 "capacity-rejected cancellable request must not invoke the service");
         }
         finally
@@ -172,6 +168,47 @@ public class CompressionRemoteCancelDuringDecodeTests
         await WaitUntilAsync(
             () => harness.ActiveCalls == 0,
             "capacity blocker should release the call slot");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RetainedCompressedFrameShouldReleaseAfterDecodeBeforeAsyncHandlerCompletes()
+    {
+        CompressionOwnershipProbeService.Reset();
+        var serverProvider = new CountingDecompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await RemoteCancelHarness.CreateAsync(serverProvider);
+        var service = harness.Client.Get<ICompressionOwnershipProbeService>();
+        var payload = Enumerable.Repeat((byte)0x66, 32 * 1024).ToArray();
+        var pooledBefore = harness.ServerPooledWriterCount;
+        using var callCts = new CancellationTokenSource();
+        var call = service.BlockAfterDecodeAsync(payload, callCts.Token).AsTask();
+
+        try
+        {
+            await CompressionOwnershipProbeService.WaitForBlockStartedAsync()
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(
+                () => harness.ActiveCalls == 1,
+                "blocked ownership probe should keep its call slot");
+
+            var expectedPooledWhileBlocked = Math.Max(pooledBefore - 3, 0) + 1;
+            await WaitUntilAsync(
+                () => harness.ServerPooledWriterCount == expectedPooledWhileBlocked,
+                "retained compressed request copy should return after decode while handler remains blocked");
+            Ensure(serverProvider.DecompressCount == 1,
+                "blocked ownership probe should decode its compressed request exactly once");
+        }
+        finally
+        {
+            CompressionOwnershipProbeService.ReleaseBlock();
+        }
+
+        Ensure(await call.WaitAsync(TimeSpan.FromSeconds(2)) == payload.Length,
+            "blocked ownership probe result");
+        await WaitUntilAsync(
+            () => harness.ActiveCalls == 0,
+            "blocked ownership probe should release its call slot");
     }
 
     private static async Task AssertRemoteCancellationDuringDecodeAsync(
@@ -323,9 +360,18 @@ public class CompressionRemoteCancelDuringDecodeTests
         public int ActiveCalls
             => (int)(GetRequiredField(_server, "_globalActiveCalls").GetValue(_server)
                 ?? throw new Exception("server active call count is null"));
-        public long RetainedPayloadCopies
-            => (long)(GetRequiredField(_server, "_retainedRequestPayloadCopies").GetValue(_server)
-                ?? throw new Exception("server retained payload copy count is null"));
+        public long RejectedOneWayCalls
+            => (long)(GetRequiredField(_server, "_rejectedOneWayCalls").GetValue(_server)
+                ?? throw new Exception("server rejected one-way count is null"));
+        public int ServerPooledWriterCount
+        {
+            get
+            {
+                var buffers = GetServerBufferPool();
+                return (int)(GetRequiredField(buffers, "_pooledCount").GetValue(buffers)
+                    ?? throw new Exception("server pooled writer count is null"));
+            }
+        }
 
         public int ActiveStreams
         {
@@ -359,7 +405,7 @@ public class CompressionRemoteCancelDuringDecodeTests
         {
             var serverCts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+                .UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30))
                 .UseRuntime(options =>
                 {
                     options.FlowControl.MaxConcurrentCallsPerConnection = 1;
@@ -400,7 +446,7 @@ public class CompressionRemoteCancelDuringDecodeTests
             }, CancellationToken.None);
 
             var client = SharpClientBuilder.Create()
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+                .UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30))
                 .UseConnectionPool(options =>
                 {
                     options.MinConnections = 1;
@@ -413,6 +459,24 @@ public class CompressionRemoteCancelDuringDecodeTests
             await client.ConnectAsync();
 
             return new RemoteCancelHarness(serverCts, serverTask, server, client);
+        }
+
+        public IDisposable DisableServerBufferRents()
+        {
+            var buffers = GetServerBufferPool();
+            var poolField = GetRequiredField(buffers, "_pool");
+            var pool = poolField.GetValue(buffers)
+                ?? throw new Exception("server buffer pool is already disabled");
+            poolField.SetValue(buffers, null);
+            return new RestoreAction(() => poolField.SetValue(buffers, pool));
+        }
+
+        private object GetServerBufferPool()
+        {
+            var runtimeContext = GetRequiredField(_server, "_runtimeContext").GetValue(_server)
+                ?? throw new Exception("server runtime context is null");
+            return GetRequiredProperty(runtimeContext, "Buffers").GetValue(runtimeContext)
+                ?? throw new Exception("server buffer pool is null");
         }
 
         private object GetSingleConnection()
@@ -449,11 +513,19 @@ public class CompressionRemoteCancelDuringDecodeTests
         public async ValueTask DisposeAsync()
         {
             CompressionMergeGateProbeService.ReleaseBlock();
+            CompressionOwnershipProbeService.ReleaseBlock();
             await Client.StopAsync();
             await _serverCts.CancelAsync();
             await _server.StopAsync(TimeSpan.Zero);
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             _serverCts.Dispose();
+        }
+
+        private sealed class RestoreAction(Action restore) : IDisposable
+        {
+            private Action? _restore = restore;
+
+            public void Dispose() => Interlocked.Exchange(ref _restore, null)?.Invoke();
         }
     }
 }
@@ -508,4 +580,54 @@ public sealed class CompressionRemoteCancelStreamingService : ICompressionRemote
         await foreach (var value in values.WithCancellation(cancellationToken))
             yield return headerPayload.Length + value;
     }
+}
+
+[RpcContract]
+public interface ICompressionOwnershipProbeService : IService
+{
+    [Oneway]
+    ValueTask CancellableNotifyAsync(byte[] payload, CancellationToken cancellationToken);
+
+    ValueTask<int> BlockAfterDecodeAsync(byte[] payload, CancellationToken cancellationToken);
+}
+
+[RpcService]
+public sealed class CompressionOwnershipProbeService : ICompressionOwnershipProbeService
+{
+    private static TaskCompletionSource s_blockStarted = CreateSignal();
+    private static TaskCompletionSource s_blockRelease = CreateSignal();
+    private static int s_notifyInvocations;
+
+    internal static int NotifyInvocations => Volatile.Read(ref s_notifyInvocations);
+
+    internal static void Reset()
+    {
+        s_blockStarted = CreateSignal();
+        s_blockRelease = CreateSignal();
+        Volatile.Write(ref s_notifyInvocations, 0);
+    }
+
+    internal static Task WaitForBlockStartedAsync() => s_blockStarted.Task;
+    internal static void ReleaseBlock() => s_blockRelease.TrySetResult();
+
+    public ValueTask CancellableNotifyAsync(byte[] payload, CancellationToken cancellationToken)
+    {
+        _ = payload;
+        _ = cancellationToken;
+        Interlocked.Increment(ref s_notifyInvocations);
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask<int> BlockAfterDecodeAsync(
+        byte[] payload,
+        CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        s_blockStarted.TrySetResult();
+        await s_blockRelease.Task.ConfigureAwait(false);
+        return payload.Length;
+    }
+
+    private static TaskCompletionSource CreateSignal()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
