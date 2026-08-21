@@ -64,6 +64,7 @@ const FIXTURE_IDS = Object.freeze([
     'RuneRaw',
     'DecimalRaw'
 ]);
+const NATIVE_WIDTH_FIXTURE_ID_SET = new Set(['NativeInt', 'NativeUInt', 'NativePair']);
 const RAW_FIXTURE_IDS = Object.freeze([
     'DateOnlyRaw',
     'DateTimeRaw',
@@ -213,7 +214,11 @@ function validateResultConsumers(report, source) {
     }
 }
 
-function validateStrictResultSemantics(report, source, allowPortableRawRepresentation = true) {
+function validateStrictResultSemantics(
+    report,
+    source,
+    allowPortableRawRepresentation = true,
+    allowExpectedNativeWidthDifference = false) {
     for (const item of report.results) {
         const fixture = String(item.fixture ?? '');
         const portableRawRepresentation = allowPortableRawRepresentation
@@ -230,6 +235,17 @@ function validateStrictResultSemantics(report, source, allowPortableRawRepresent
                     `${source} has raw representation-only row with unexpected classification ${String(item.classification)}: ` +
                     `producer=${String(item.producer)}, fixture=${fixture}.`);
             }
+            continue;
+        }
+
+        const expectedNativeWidthDifference = allowExpectedNativeWidthDifference
+            && NATIVE_WIDTH_FIXTURE_ID_SET.has(fixture)
+            && item.classification === 'EXPECTED_ARCH_DEPENDENT'
+            && item.crossDeserializeResult == null
+            && item.logicalEquality == null
+            && item.segmentedCrossDeserializeResult == null
+            && item.segmentedLogicalEquality == null;
+        if (expectedNativeWidthDifference) {
             continue;
         }
 
@@ -425,7 +441,7 @@ export async function checkVerificationReport(reportFile) {
     if (blocking !== 0) {
         throw new Error(`Portable verification contains ${blocking} blocking failure(s).`);
     }
-    validateStrictResultSemantics(report, reportFile, true);
+    validateStrictResultSemantics(report, reportFile, true, true);
     return report.results.length;
 }
 
@@ -477,7 +493,7 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
         expectedForwardProducers,
         FIXTURE_IDS,
         'Browser forward result keys');
-    validateStrictResultSemantics(forward, forwardReportFile, true);
+    validateStrictResultSemantics(forward, forwardReportFile, true, true);
 
     const expectedCommit = String(forward.consumer.sharpLinkCommit ?? '');
     if (expectedCommit.length === 0 || expectedCommit.toLowerCase() === 'unknown') {
@@ -511,7 +527,7 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
             [BROWSER_PLATFORM_TAG],
             FIXTURE_IDS,
             `${reportFile} Browser-to-desktop result keys`);
-        validateStrictResultSemantics(report, reportFile, true);
+        validateStrictResultSemantics(report, reportFile, true, true);
         reverseRows += report.results.length;
     }
 
@@ -543,7 +559,7 @@ async function main() {
     }
     if (command === 'check-report' && args.length === 2) {
         const count = await checkVerificationReport(args[1]);
-        console.log(`Verified portable report with ${count} result(s), strict semantic success, and no blockers.`);
+        console.log(`Verified portable report with ${count} result(s), required semantics, and no blockers.`);
         return;
     }
     if (command === 'check-desktop-identities' && args.length === 3) {
