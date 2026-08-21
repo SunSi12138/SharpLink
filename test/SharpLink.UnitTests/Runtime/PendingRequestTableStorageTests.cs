@@ -73,7 +73,7 @@ public class PendingRequestTableStorageTests
     }
 
     [Test]
-    public async Task CompletedDeadlinePageShouldNotRemainMarked()
+    public async Task CompletedDeadlinePageShouldClearWhenNextScanConsumesMark()
     {
         var timeProvider = new ManualTimeProvider();
         using var table = PendingRequestTableTestFixture.Create(65_536, timeProvider: timeProvider);
@@ -96,8 +96,18 @@ public class PendingRequestTableStorageTests
         var failure = await CaptureExceptionAsync(second.AsValueTask().AsTask());
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
             "second-page deadline must expire normally");
+        Ensure(table.LastDeadlineScanInspectedSlots == 512,
+            "the next scan should consume the retired page mark once while inspecting the active page");
+
+        var nextDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
+        var third = table.Rent(new Int32Codec(), PendingCallKind.Unary, nextDeadline,
+            CancellationToken.None, out _);
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        failure = await CaptureExceptionAsync(third.AsValueTask().AsTask());
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "a later deadline on the active page must still expire normally");
         Ensure(table.LastDeadlineScanInspectedSlots == 256,
-            "a completed deadline page must clear so only the currently active page is scanned");
+            "once consumed, the retired page mark must not widen later deadline scans");
     }
 
     private static async Task CompleteForCleanup(PendingRequestTable table, long id, RpcRequestOperation<int> operation)

@@ -68,7 +68,7 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly int _indexMask;
     private readonly int _capacity;
     private readonly object _slotsInitializationGate = new();
-    private readonly int[] _deadlinePageCounts;
+    private readonly int[] _deadlinePageMarks;
     private PendingCall?[]? _slots;
     private readonly IRpcCodecProvider _codecProvider;
     private readonly IPendingCallOwner _owner;
@@ -104,7 +104,7 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _capacity = capacity;
-        _deadlinePageCounts = new int[(capacity + DeadlinePageSize - 1) >> DeadlinePageShift];
+        _deadlinePageMarks = new int[(capacity + DeadlinePageSize - 1) >> DeadlinePageShift];
         _indexMask = capacity - 1;
         _codecProvider = codecProvider;
         _owner = owner;
@@ -511,18 +511,16 @@ internal sealed class PendingRequestTable : IDisposable
                         deadline,
                         cancellationToken,
                         completionObserver);
-                    if (deadline.HasValue)
-                        Interlocked.Increment(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                     if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
                     {
+                        if (deadline.HasValue)
+                            MarkDeadlinePage(index);
                         published = true;
                         OnRegistered(call);
                         CompleteRegistrationIfDisposed(call);
                         return true;
                     }
 
-                    if (deadline.HasValue)
-                        Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                     call.ReturnUnused();
                 }
 
@@ -577,18 +575,16 @@ internal sealed class PendingRequestTable : IDisposable
                         deadline,
                         cancellationToken,
                         completionObserver);
-                    if (deadline.HasValue)
-                        Interlocked.Increment(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                     if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
                     {
+                        if (deadline.HasValue)
+                            MarkDeadlinePage(index);
                         published = true;
                         OnRegistered(call);
                         CompleteRegistrationIfDisposed(call);
                         return true;
                     }
 
-                    if (deadline.HasValue)
-                        Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                     call.ReturnUnused();
                 }
 
@@ -624,6 +620,14 @@ internal sealed class PendingRequestTable : IDisposable
 
             return slots;
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void MarkDeadlinePage(int index)
+    {
+        ref var mark = ref _deadlinePageMarks[index >> DeadlinePageShift];
+        if (Volatile.Read(ref mark) == 0)
+            Volatile.Write(ref mark, 1);
     }
 
     private bool TryAcquireCapacity()
@@ -695,8 +699,6 @@ internal sealed class PendingRequestTable : IDisposable
                 if (!ReferenceEquals(exchanged, current))
                     continue;
 
-                if (current.Deadline.HasValue)
-                    Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                 current.WaitUntilRegistered();
                 call = current;
                 return true;
@@ -724,8 +726,6 @@ internal sealed class PendingRequestTable : IDisposable
                 if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
                     continue;
 
-                if (current.Deadline.HasValue)
-                    Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                 current.WaitUntilRegistered();
                 call = current;
                 return true;
@@ -904,13 +904,14 @@ internal sealed class PendingRequestTable : IDisposable
 
             var now = _timeProvider.GetTimestamp();
             var inspectedSlots = 0;
-            for (var page = 0; page < _deadlinePageCounts.Length; page++)
+            for (var page = 0; page < _deadlinePageMarks.Length; page++)
             {
-                if (Volatile.Read(ref _deadlinePageCounts[page]) == 0)
+                if (Interlocked.Exchange(ref _deadlinePageMarks[page], 0) == 0)
                     continue;
 
                 var start = page << DeadlinePageShift;
                 var end = Math.Min(start + DeadlinePageSize, slots.Length);
+                var hasFutureDeadline = false;
                 for (var index = start; index < end; index++)
                 {
                     inspectedSlots++;
@@ -918,10 +919,18 @@ internal sealed class PendingRequestTable : IDisposable
                     if (call is null || !call.Deadline.HasValue)
                         continue;
                     if (call.Deadline.Timestamp <= now)
+                    {
                         TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
+                    }
                     else
+                    {
+                        hasFutureDeadline = true;
                         UpdateEarliestDeadline(call.Deadline.Timestamp);
+                    }
                 }
+
+                if (hasFutureDeadline)
+                    Volatile.Write(ref _deadlinePageMarks[page], 1);
             }
 
             LastDeadlineScanInspectedSlots = inspectedSlots;
