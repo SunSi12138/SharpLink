@@ -16,7 +16,7 @@ namespace SharpLink.Benchmarks;
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
-public sealed class PendingRequestDeadlineBenchmarks
+public class PendingRequestDeadlineBenchmarks
 {
     private const int DeadlinePageSize = 256;
     private const int WorkerCount = 4;
