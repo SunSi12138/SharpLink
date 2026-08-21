@@ -32,3 +32,7 @@ dotnet run \
   -- \
   --verify-clean \
   "${assemblies[@]}"
+
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  "$ROOT/eng/run-issue252-experiment-b.sh"
+fi
