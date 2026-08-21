@@ -1,0 +1,271 @@
+name: Issue 244 follow-up patch
+
+on:
+  push:
+    branches:
+      - agent/issue-244-defer-request-decompression
+    paths:
+      - .github/workflows/issue-244-followup-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          def replace_one(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)
+
+          # Remote Cancel must only affect requests that carried Cancellable.
+          path = "src/SharpLink.Server/ServerCallCancellationState.cs"
+          text = read(path)
+          text = replace_one(
+              text,
+              "    private int _moduleDrainResponseClaimed;\n    private bool _disposeRequested;",
+              "    private int _moduleDrainResponseClaimed;\n    private bool _acceptsRemoteCancellation;\n    private bool _disposeRequested;",
+              "call-state remote-cancel field")
+          text = replace_one(
+              text,
+              "    public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);\n\n    public static ServerCallCancellationState Rent(",
+              "    public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);\n\n    internal bool AcceptsRemoteCancellation => _acceptsRemoteCancellation;\n\n    public static ServerCallCancellationState Rent(",
+              "call-state remote-cancel property")
+          text = replace_one(
+              text,
+              "        CancellationToken serverStoppingToken,\n        bool supportsCooperativeCancellation)\n        => Rent(\n            requestId,\n            deadline,\n            timeProvider,\n            connectionClosedToken,\n            serverStoppingToken,\n            CancellationToken.None,\n            supportsCooperativeCancellation);",
+              "        CancellationToken serverStoppingToken,\n        bool supportsCooperativeCancellation,\n        bool acceptsRemoteCancellation = true)\n        => Rent(\n            requestId,\n            deadline,\n            timeProvider,\n            connectionClosedToken,\n            serverStoppingToken,\n            CancellationToken.None,\n            supportsCooperativeCancellation,\n            acceptsRemoteCancellation);",
+              "call-state short Rent overload")
+          text = replace_one(
+              text,
+              "        CancellationToken serverStoppingToken,\n        CancellationToken moduleDrainingToken,\n        bool supportsCooperativeCancellation)\n    {",
+              "        CancellationToken serverStoppingToken,\n        CancellationToken moduleDrainingToken,\n        bool supportsCooperativeCancellation,\n        bool acceptsRemoteCancellation = true)\n    {",
+              "call-state full Rent overload")
+          text = replace_one(
+              text,
+              "        state._moduleDrainResponseClaimed = 0;\n        state._admissionLease = null;",
+              "        state._moduleDrainResponseClaimed = 0;\n        state._acceptsRemoteCancellation = acceptsRemoteCancellation;\n        state._admissionLease = null;",
+              "call-state initialize remote-cancel flag")
+          text = replace_one(
+              text,
+              "        _moduleDrainResponseClaimed = 0;\n\n        while (true)",
+              "        _moduleDrainResponseClaimed = 0;\n        _acceptsRemoteCancellation = false;\n\n        while (true)",
+              "call-state reset remote-cancel flag")
+          write(path, text)
+
+          path = "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs"
+          text = read(path)
+          text = replace_one(
+              text,
+              "                                        try\n                                        {\n                                            callLease.State.TryCancel(\n                                                ServerCallTerminationMapper.MapRemoteCancellationReason(cancelReason));\n                                        }",
+              "                                        try\n                                        {\n                                            if (callLease.State.AcceptsRemoteCancellation)\n                                            {\n                                                callLease.State.TryCancel(\n                                                    ServerCallTerminationMapper.MapRemoteCancellationReason(cancelReason));\n                                            }\n                                        }",
+              "request-loop remote-cancel gate")
+          write(path, text)
+
+          # Carry the wire Cancellable bit into every tracked-state creation.
+          path = "src/SharpLink.Server/SharpLinkServer.CallTracking.cs"
+          text = read(path)
+          text = replace_one(
+              text,
+              "        CancellationToken moduleDrainingToken,\n        bool supportsCooperativeCancellation,\n        StripedLongMap<ServerCallCancellationState> requestCancellationMap,",
+              "        CancellationToken moduleDrainingToken,\n        bool supportsCooperativeCancellation,\n        bool acceptsRemoteCancellation,\n        StripedLongMap<ServerCallCancellationState> requestCancellationMap,",
+              "tracked-state create signature")
+          text = replace_one(
+              text,
+              "            moduleDrainingToken,\n            supportsCooperativeCancellation);",
+              "            moduleDrainingToken,\n            supportsCooperativeCancellation,\n            acceptsRemoteCancellation);",
+              "tracked-state create Rent")
+          text = replace_one(
+              text,
+              "        CancellationToken serverLoopToken,\n        CancellationToken moduleDrainingToken,\n        StripedLongMap<ServerCallCancellationState> requestCancellationMap)\n    {",
+              "        CancellationToken serverLoopToken,\n        CancellationToken moduleDrainingToken,\n        bool acceptsRemoteCancellation,\n        StripedLongMap<ServerCallCancellationState> requestCancellationMap)\n    {",
+              "tracked-state ensure signature")
+          text = replace_one(
+              text,
+              "            moduleDrainingToken,\n            supportsCooperativeCancellation: false);",
+              "            moduleDrainingToken,\n            supportsCooperativeCancellation: false,\n            acceptsRemoteCancellation);",
+              "tracked-state ensure Rent")
+          write(path, text)
+
+          # Unary dispatch: validate compressed metadata before capacity, avoid descriptor work on
+          # uncompressed/default calls, and skip full pre-decode state for the cheap non-cancellable case.
+          path = "src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs"
+          text = read(path)
+          text = replace_one(
+              text,
+              "        if (reusePreDecodeMetadata)\n            request = request with { Metadata = preDecodeMetadata };\n        if (IsDeadlineExceeded(request.RpcDeadline))",
+              "        if (reusePreDecodeMetadata)\n            request = request with { Metadata = preDecodeMetadata };\n        if (isCompressed && !callCapacityGranted && !preservePreDecodeMetadata)\n        {\n            ServerRequestEnvelopeReader.ValidateMetadataSyntax(\n                session,\n                payload,\n                flags,\n                _protocolOptions.MaxMetadataBytes,\n                _runtimeContext.TimeProvider);\n        }\n        if (IsDeadlineExceeded(request.RpcDeadline))",
+              "unary pre-capacity metadata validation")
+          text = replace_one(
+              text,
+              "        var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);\n        if (_admissionController is not null && !admissionGranted)\n        {",
+              "        RpcMethodDescriptor descriptor = default;\n        var descriptorResolved = false;\n        if (_admissionController is not null && !admissionGranted)\n        {\n            descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);\n            descriptorResolved = true;",
+              "unary lazy descriptor")
+          text = text.replace(
+              "                serviceInfo.ModuleCancellation,\n                requestCancellationMap);",
+              "                serviceInfo.ModuleCancellation,\n                isCancellable,\n                requestCancellationMap);",
+              1)
+          text = replace_one(
+              text,
+              "        if (isCompressed && admittedCallState is null)\n        {\n            admittedCallState = CreateAdmissionWaitState(\n                connection,\n                requestId,\n                request.RpcDeadline,\n                serverLoopToken,\n                serviceInfo.ModuleCancellation,\n                requestCancellationMap);\n        }",
+              "        if (isCompressed &&\n            admittedCallState is null &&\n            (isCancellable || request.RpcDeadline.HasValue || serviceInfo.ModuleCancellation.CanBeCanceled))\n        {\n            admittedCallState = CreateAdmissionWaitState(\n                connection,\n                requestId,\n                request.RpcDeadline,\n                serverLoopToken,\n                serviceInfo.ModuleCancellation,\n                isCancellable,\n                requestCancellationMap);\n        }",
+              "unary conditional pre-decode state")
+          text = replace_one(
+              text,
+              "        if (allowCompressedCancellationHandoff && isCompressed && isCancellable)\n        {\n            return HandoffCompressedCancellableRpc(",
+              "        if (allowCompressedCancellationHandoff && isCompressed && isCancellable)\n        {\n            if (!descriptorResolved)\n                descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);\n            return HandoffCompressedCancellableRpc(",
+              "unary handoff descriptor")
+          text = text.replace(
+              "        if (admittedCallState is { IsAbandoned: true })\n        {\n            var exception = MapServerCancellationException(admittedCallState, request.RpcDeadline);",
+              "        if (admittedCallState is { IsAbandoned: true } ||\n            (admittedCallState is null && serverLoopToken.IsCancellationRequested))\n        {\n            var exception = admittedCallState is null\n                ? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, \"Connection closed.\")\n                : MapServerCancellationException(admittedCallState, request.RpcDeadline);",
+              1)
+          text = replace_one(
+              text,
+              "                    admittedCallState!.InvocationToken,\n                    out decodedRequestOwner);",
+              "                    admittedCallState?.InvocationToken ?? serverLoopToken,\n                    out decodedRequestOwner);",
+              "unary decode token fallback")
+          text = replace_one(
+              text,
+              "            var responseSend = session.SendRpcErrorWithBackpressureAsync(\n                requestId,\n                MapServerCancellationException(admittedCallState, request.RpcDeadline),\n                connection.ConnectionToken);",
+              "            var cancellation = admittedCallState is null && serverLoopToken.IsCancellationRequested\n                ? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, \"Connection closed.\")\n                : MapServerCancellationException(admittedCallState, request.RpcDeadline);\n            var responseSend = session.SendRpcErrorWithBackpressureAsync(\n                requestId,\n                cancellation,\n                connection.ConnectionToken);",
+              "unary decode cancellation mapping")
+          text = text.replace(
+              "        if (admittedCallState is { IsAbandoned: true })\n        {\n            session.ReturnDecodedPayload(decodedRequestOwner);\n            decodedRequestOwner = null;\n            var exception = MapServerCancellationException(admittedCallState, request.RpcDeadline);",
+              "        if (admittedCallState is { IsAbandoned: true } ||\n            (admittedCallState is null && serverLoopToken.IsCancellationRequested))\n        {\n            session.ReturnDecodedPayload(decodedRequestOwner);\n            decodedRequestOwner = null;\n            var exception = admittedCallState is null\n                ? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, \"Connection closed.\")\n                : MapServerCancellationException(admittedCallState, request.RpcDeadline);",
+              1)
+          text = replace_one(
+              text,
+              "            serviceInfo.ModuleCancellation,\n            supportsCooperativeCancellation,\n            requestCancellationMap);",
+              "            serviceInfo.ModuleCancellation,\n            supportsCooperativeCancellation,\n            isCancellable,\n            requestCancellationMap);",
+              "unary tracked-state create call")
+          # All EnsureTrackedCallState calls in this method share the same tail.
+          count = text.count("serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);")
+          if count == 0:
+              raise SystemExit("unary tracked-state ensure calls: no matches")
+          text = text.replace(
+              "serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);",
+              "serverLoopToken, serviceInfo.ModuleCancellation, isCancellable, requestCancellationMap);")
+          write(path, text)
+
+          # One-way dispatch mirrors the same metadata and cancellation semantics.
+          path = "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs"
+          text = read(path)
+          text = replace_one(
+              text,
+              "        if (reusePreDecodeMetadata)\n            request = request with { Metadata = preDecodeMetadata };\n        if (IsDeadlineExceeded(request.RpcDeadline))",
+              "        if (reusePreDecodeMetadata)\n            request = request with { Metadata = preDecodeMetadata };\n        if (isCompressed && !callCapacityGranted && !preservePreDecodeMetadata)\n        {\n            ServerRequestEnvelopeReader.ValidateMetadataSyntax(\n                session,\n                payload,\n                flags,\n                _protocolOptions.MaxMetadataBytes,\n                _runtimeContext.TimeProvider);\n        }\n        if (IsDeadlineExceeded(request.RpcDeadline))",
+              "one-way pre-capacity metadata validation")
+          # First CreateAdmissionWaitState call is advanced admission.
+          text = text.replace(
+              "                serviceInfo.ModuleCancellation,\n                requestCancellationMap);",
+              "                serviceInfo.ModuleCancellation,\n                isCancellable,\n                requestCancellationMap);",
+              1)
+          text = replace_one(
+              text,
+              "        if (isCompressed && admittedCallState is null)\n        {\n            admittedCallState = CreateAdmissionWaitState(\n                connection,\n                requestId,\n                request.RpcDeadline,\n                serverLoopToken,\n                serviceInfo.ModuleCancellation,\n                requestCancellationMap);\n        }",
+              "        if (isCompressed &&\n            admittedCallState is null &&\n            (isCancellable || request.RpcDeadline.HasValue || serviceInfo.ModuleCancellation.CanBeCanceled))\n        {\n            admittedCallState = CreateAdmissionWaitState(\n                connection,\n                requestId,\n                request.RpcDeadline,\n                serverLoopToken,\n                serviceInfo.ModuleCancellation,\n                isCancellable,\n                requestCancellationMap);\n        }",
+              "one-way conditional pre-decode state")
+          text = text.replace(
+              "        if (admittedCallState is { IsAbandoned: true })\n        {\n            DrainFailedOneWayStreams",
+              "        if (admittedCallState is { IsAbandoned: true } ||\n            (admittedCallState is null && serverLoopToken.IsCancellationRequested))\n        {\n            DrainFailedOneWayStreams",
+              1)
+          text = replace_one(
+              text,
+              "                    admittedCallState!.InvocationToken,\n                    out decodedRequestOwner);",
+              "                    admittedCallState?.InvocationToken ?? serverLoopToken,\n                    out decodedRequestOwner);",
+              "one-way decode token fallback")
+          text = text.replace(
+              "        if (admittedCallState is { IsAbandoned: true })\n        {\n            session.ReturnDecodedPayload(decodedRequestOwner);",
+              "        if (admittedCallState is { IsAbandoned: true } ||\n            (admittedCallState is null && serverLoopToken.IsCancellationRequested))\n        {\n            session.ReturnDecodedPayload(decodedRequestOwner);",
+              1)
+          text = replace_one(
+              text,
+              "            serviceInfo.ModuleCancellation,\n            supportsCooperativeCancellation,\n            requestCancellationMap);",
+              "            serviceInfo.ModuleCancellation,\n            supportsCooperativeCancellation,\n            isCancellable,\n            requestCancellationMap);",
+              "one-way tracked-state create call")
+          count = text.count("serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);")
+          if count == 0:
+              raise SystemExit("one-way tracked-state ensure calls: no matches")
+          text = text.replace(
+              "serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);",
+              "serverLoopToken, serviceInfo.ModuleCancellation, isCancellable, requestCancellationMap);")
+          text = replace_one(
+              text,
+              "        CancellationToken moduleDrainingToken,\n        StripedLongMap<ServerCallCancellationState> requestCancellationMap)\n    {\n        var callState = ServerCallCancellationState.Rent(",
+              "        CancellationToken moduleDrainingToken,\n        bool acceptsRemoteCancellation,\n        StripedLongMap<ServerCallCancellationState> requestCancellationMap)\n    {\n        var callState = ServerCallCancellationState.Rent(",
+              "admission-state signature")
+          text = replace_one(
+              text,
+              "            moduleDrainingToken,\n            supportsCooperativeCancellation: true);",
+              "            moduleDrainingToken,\n            supportsCooperativeCancellation: true,\n            acceptsRemoteCancellation);",
+              "admission-state Rent")
+          write(path, text)
+
+          # Metadata is now validated before the capacity decision; do not re-scan it in the handoff.
+          path = "src/SharpLink.Server/SharpLinkServer.CompressedCancellationDispatch.cs"
+          text = read(path)
+          block = """            if (!reusePreDecodeMetadata)\n            {\n                ServerRequestEnvelopeReader.ValidateMetadataSyntax(\n                    connection.Session,\n                    payload,\n                    flags,\n                    _protocolOptions.MaxMetadataBytes,\n                    _runtimeContext.TimeProvider);\n            }\n"""
+          count = text.count(block)
+          if count != 2:
+              raise SystemExit(f"handoff metadata validation blocks: expected 2, found {count}")
+          text = text.replace(block, "")
+          write(path, text)
+
+          # Pre-decode client-stream retention is a local connection budget even when the peer did
+          # not negotiate wire FlowControl.
+          path = "src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs"
+          text = read(path)
+          text = replace_one(
+              text,
+              "internal sealed partial class SharpLinkServer\n{\n    private IRpcByteBufferWriter CopyAdmissionPayload",
+              "internal sealed partial class SharpLinkServer\n{\n    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<RpcSession, PreDecodeStreamBufferBudget>\n        _preDecodeStreamBufferBudgets = new();\n\n    private IRpcByteBufferWriter CopyAdmissionPayload",
+              "connection pre-decode budget table")
+          text = replace_one(
+              text,
+              "        var budget = new PreDecodeStreamBufferBudget(\n            _runtimeContext.FlowControl.ConnectionReceiveWindowBytes);",
+              "        if (!_preDecodeStreamBufferBudgets.TryGetValue(session, out var budget))\n        {\n            budget = new PreDecodeStreamBufferBudget(\n                _runtimeContext.FlowControl.ConnectionReceiveWindowBytes);\n            _preDecodeStreamBufferBudgets.Add(session, budget);\n        }",
+              "shared pre-decode budget")
+          write(path, text)
+
+          # Remove this one-shot workflow from the resulting source commit.
+          Path(".github/workflows/issue-244-followup-patch.yml").unlink()
+          PY
+
+      - name: Check patch whitespace
+        run: git diff --check
+
+      - name: Commit review fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            src/SharpLink.Server/ServerCallCancellationState.cs \
+            src/SharpLink.Server/SharpLinkServer.RequestLoop.cs \
+            src/SharpLink.Server/SharpLinkServer.CallTracking.cs \
+            src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs \
+            src/SharpLink.Server/SharpLinkServer.CompressedCancellationDispatch.cs \
+            src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs \
+            .github/workflows/issue-244-followup-patch.yml
+          git commit -m "fix(server): preserve deferred decode semantics and bounds"
+          git push origin HEAD:agent/issue-244-defer-request-decompression
