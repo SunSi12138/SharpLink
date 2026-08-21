@@ -66,6 +66,12 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? retainedPayload = null;
         try
         {
+            ServerRequestEnvelopeReader.ValidateMetadataSyntax(
+                connection.Session,
+                payload,
+                flags,
+                _protocolOptions.MaxMetadataBytes,
+                _runtimeContext.TimeProvider);
             ReservePreDecodeRequestStreams(
                 connection.Session,
                 requestId,
@@ -107,9 +113,10 @@ internal sealed partial class SharpLinkServer
         SharpLinkMetadata? preDecodeMetadata)
     {
         await Task.Yield();
+        ValueTask dispatch;
         try
         {
-            var dispatch = DispatchRpcAsync(
+            dispatch = DispatchRpcAsync(
                 connection,
                 requestId,
                 flags,
@@ -123,13 +130,17 @@ internal sealed partial class SharpLinkServer
                 preparedServiceInfo: serviceInfo,
                 reusePreDecodeMetadata: reusePreDecodeMetadata,
                 preDecodeMetadata: preDecodeMetadata);
-            if (!dispatch.IsCompletedSuccessfully)
-                await dispatch.ConfigureAwait(false);
         }
         finally
         {
+            // DispatchRpcAsync performs compressed request decode synchronously before returning.
+            // Once it returns, any async continuation owns only decoded payload/call state and the
+            // raw compressed copy can be recycled immediately instead of for the full RPC lifetime.
             _runtimeContext.Buffers.Return(retainedPayload);
         }
+
+        if (!dispatch.IsCompletedSuccessfully)
+            await dispatch.ConfigureAwait(false);
     }
 
     private void HandoffCompressedCancellableOneWayRpc(
@@ -148,6 +159,12 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? retainedPayload = null;
         try
         {
+            ServerRequestEnvelopeReader.ValidateMetadataSyntax(
+                connection.Session,
+                payload,
+                flags,
+                _protocolOptions.MaxMetadataBytes,
+                _runtimeContext.TimeProvider);
             ReservePreDecodeRequestStreams(
                 connection.Session,
                 requestId,
