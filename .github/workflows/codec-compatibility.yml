@@ -6,6 +6,9 @@ permissions:
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/issue-253-codec-compat-lab
 
 jobs:
   produce:
@@ -13,12 +16,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: linux
-            os: ubuntu-latest
-          - id: windows
+          - id: linux-x64
+            os: ubuntu-24.04
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: windows-x64
             os: windows-latest
-          - id: macos
+          - id: windows-arm64
+            os: windows-11-arm
+          - id: macos-arm64
             os: macos-14
+          - id: macos-x64
+            os: macos-15-intel
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
@@ -58,12 +67,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: linux
-            os: ubuntu-latest
-          - id: windows
+          - id: linux-x64
+            os: ubuntu-24.04
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: windows-x64
             os: windows-latest
-          - id: macos
+          - id: windows-arm64
+            os: windows-11-arm
+          - id: macos-arm64
             os: macos-14
+          - id: macos-x64
+            os: macos-15-intel
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
@@ -111,7 +126,7 @@ jobs:
   summary:
     needs: verify
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -140,8 +155,8 @@ jobs:
         shell: bash
         run: |
           count="$(find artifacts/codec-compat/verifications -name verification.json -type f | wc -l | tr -d ' ')"
-          if [[ "$count" != "3" ]]; then
-            echo "::error::Expected 3 desktop consumer reports, found $count."
+          if [[ "$count" != "6" ]]; then
+            echo "::error::Expected 6 desktop consumer reports, found $count."
             exit 1
           fi
 
