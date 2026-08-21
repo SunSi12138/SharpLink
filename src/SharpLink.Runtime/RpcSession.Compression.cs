@@ -119,15 +119,15 @@ internal sealed partial class RpcSession
             return payload;
 
         var protocolState = Volatile.Read(ref _protocolState);
-        ValidateInboundPayloadEnvelope(protocolState, type, flags, payload);
+        // Envelope validation already has to locate the business prefix. Reuse that result for
+        // decompression instead of walking Request metadata/deadline fields a second time.
+        var prefixLength = ValidateInboundPayloadEnvelope(protocolState, type, flags, payload);
 
         var compressionBinding = protocolState.Options?.CompressionBinding;
         var provider = compressionBinding?.Provider;
         if (provider is null)
             throw ProtocolV2FrameParser.Violation("A compressed frame has no negotiated provider.");
         var compressionProfile = compressionBinding?.WireProfile;
-
-        var prefixLength = GetBusinessPrefixLength(type, flags, payload);
 
         var compressedEnvelope = payload.Slice(prefixLength);
         var lengthReader = new SequenceReader<byte>(compressedEnvelope);
@@ -201,10 +201,10 @@ internal sealed partial class RpcSession
     {
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0)
             return;
-        ValidateInboundPayloadEnvelope(Volatile.Read(ref _protocolState), type, flags, payload);
+        _ = ValidateInboundPayloadEnvelope(Volatile.Read(ref _protocolState), type, flags, payload);
     }
 
-    private static void ValidateInboundPayloadEnvelope(
+    private static int ValidateInboundPayloadEnvelope(
         RpcSessionProtocolState protocolState,
         ProtocolV2FrameType type,
         ProtocolV2FrameFlags flags,
@@ -234,6 +234,7 @@ internal sealed partial class RpcSession
             throw ProtocolV2FrameParser.Violation(
                 "Compressed payload original length exceeds the negotiated frame limit.");
         }
+        return prefixLength;
     }
 
     internal void ReturnDecodedPayload(IRpcByteBufferWriter? owner)
