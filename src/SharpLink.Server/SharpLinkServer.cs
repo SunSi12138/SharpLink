@@ -53,7 +53,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private readonly int _maxConcurrentCallsPerConnection;
     private readonly int _maxConcurrentCallsPerServer;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
-    private readonly ISharpLinkServerInterceptor[] _serverInterceptors;
+    private ISharpLinkServerInterceptor[] _serverInterceptors;
     private readonly IRpcExceptionMapper _exceptionMapper;
     private readonly ServerServiceCleanup _serviceCleanup;
     private readonly SharpLinkAdmissionController? _admissionController;
@@ -634,7 +634,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         CancellationToken cancellationToken)
     {
         var session = connection.Session;
-        if (_serverInterceptors.Length == 0)
+        var interceptors = Volatile.Read(ref _serverInterceptors);
+        if (interceptors.Length == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
         return CreateServerInvocationContext(
@@ -645,7 +646,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             connection.AuthenticationContext,
             deadline,
             metadata,
-            cancellationToken);
+            cancellationToken,
+            interceptors);
     }
 
     private static SharpLinkServerInvocationContext CreateServerInvocationContext(
@@ -656,7 +658,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         SharpLinkAuthenticationContext? authenticationContext,
         DateTimeOffset? deadline,
         SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISharpLinkServerInterceptor[]? interceptors = null)
     {
         var method = GetMethodDescriptor(stub, methodId);
         return new SharpLinkServerInvocationContext(
@@ -668,7 +671,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             authenticationContext,
             deadline,
             metadata,
-            cancellationToken);
+            cancellationToken,
+            interceptors);
     }
 
     private static RpcMethodDescriptor GetMethodDescriptor(IRpcStub stub, long methodId)

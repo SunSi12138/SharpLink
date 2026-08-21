@@ -51,6 +51,22 @@ public interface ISharpLinkClient : IAsyncDisposable
                 "This ISharpLinkClient implementation does not support endpoint readiness waits."));
     }
 
+    /// <summary>
+    /// Atomically replaces the client interceptor pipeline for logical RPCs that start after this call returns.
+    /// Calls already in progress retain the interceptor generation captured at their invocation boundary.
+    /// </summary>
+    /// <param name="interceptors">The complete interceptor pipeline in execution order. The sequence is copied before publication.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="interceptors"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="interceptors"/> contains a null element.</exception>
+    /// <exception cref="InvalidOperationException">The client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime interceptor replacement.</exception>
+    void ReplaceInterceptors(IEnumerable<ISharpLinkClientInterceptor> interceptors)
+    {
+        ArgumentNullException.ThrowIfNull(interceptors);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime interceptor replacement.");
+    }
+
     /// <summary>Atomically registers the source-generated artifacts owned by an already loaded assembly.</summary>
     /// <param name="assembly">The assembly containing a generated SharpLink manifest.</param>
     /// <returns>A non-throwing registration result with structured diagnostics after rejection.</returns>

@@ -7,21 +7,23 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
         => new UnaryInterceptorState<TRequest, TResponse>(
-            this, method, request, requestCodec, responseCodec, options, cancellationToken).InvokeTypedAsync();
+            this, method, request, requestCodec, responseCodec, interceptors, options, cancellationToken).InvokeTypedAsync();
 
     private ValueTask InvokeOneWayInterceptedAsync<TRequest, TStreams>(
         RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
         => new OneWayInterceptorState<TRequest, TStreams>(
-            this, method, request, requestCodec, streams, options, cancellationToken).InvokeVoidAsync();
+            this, method, request, requestCodec, streams, interceptors, options, cancellationToken).InvokeVoidAsync();
 
     private ValueTask<TResponse> InvokeClientStreamingInterceptedAsync<TRequest, TResponse, TStreams>(
         RpcMethodDescriptor method,
@@ -29,22 +31,24 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
         => new ClientStreamingInterceptorState<TRequest, TResponse, TStreams>(
-            this, method, request, requestCodec, responseCodec, streams, options, cancellationToken).InvokeTypedAsync();
+            this, method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken).InvokeTypedAsync();
 
     private IAsyncEnumerable<TResponse> InvokeServerStreamingIntercepted<TRequest, TResponse>(
         RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
     {
         var invocation = new ServerStreamingInterceptorState<TRequest, TResponse>(
-            this, method, request, requestCodec, responseCodec, options, cancellationToken).InvokeAsync();
+            this, method, request, requestCodec, responseCodec, interceptors, options, cancellationToken).InvokeAsync();
         return new InterceptedAsyncEnumerable<TResponse>(invocation, method.ResponseNullable);
     }
 
@@ -54,18 +58,20 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
         var invocation = new DuplexStreamingInterceptorState<TRequest, TResponse, TStreams>(
-            this, method, request, requestCodec, responseCodec, streams, options, cancellationToken).InvokeAsync();
+            this, method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken).InvokeAsync();
         return new InterceptedAsyncEnumerable<TResponse>(invocation, method.ResponseNullable);
     }
 
     private abstract class ClientInterceptorState
     {
         private readonly SharpLinkClient _client;
+        private readonly ISharpLinkClientInterceptor[] _interceptors;
         private readonly SharpLinkClientInvocationContext _context;
         private long _started;
 
@@ -73,10 +79,12 @@ internal sealed partial class SharpLinkClient
             SharpLinkClient client,
             RpcMethodDescriptor method,
             object? request,
+            ISharpLinkClientInterceptor[] interceptors,
             SharpLinkCallOptions options,
             CancellationToken cancellationToken)
         {
             _client = client;
+            _interceptors = interceptors;
             _context = new SharpLinkClientInvocationContext(method, request, options, cancellationToken);
         }
 
@@ -158,7 +166,7 @@ internal sealed partial class SharpLinkClient
             int index,
             SharpLinkClientInvocationContext context)
         {
-            if (index >= _client._clientInterceptors.Length)
+            if (index >= _interceptors.Length)
                 return InvokeTerminalTrackedAsync(context);
 
             var continuation = new ClientInterceptorContinuation(
@@ -166,7 +174,7 @@ internal sealed partial class SharpLinkClient
             ValueTask<SharpLinkClientInvocationResult> invocation;
             try
             {
-                invocation = _client._clientInterceptors[index].InvokeAsync(context, continuation.InvokeAsync);
+                invocation = _interceptors[index].InvokeAsync(context, continuation.InvokeAsync);
             }
             catch (Exception exception)
             {
@@ -415,9 +423,10 @@ internal sealed partial class SharpLinkClient
             TRequest request,
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
+            ISharpLinkClientInterceptor[] interceptors,
             SharpLinkCallOptions options,
             CancellationToken cancellationToken)
-            : base(client, method, request, options, cancellationToken)
+            : base(client, method, request, interceptors, options, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -473,9 +482,10 @@ internal sealed partial class SharpLinkClient
             TRequest request,
             IRpcCodec<TRequest> requestCodec,
             TStreams streams,
+            ISharpLinkClientInterceptor[] interceptors,
             SharpLinkCallOptions options,
             CancellationToken cancellationToken)
-            : base(client, method, request, options, cancellationToken)
+            : base(client, method, request, interceptors, options, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -533,9 +543,10 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
+            ISharpLinkClientInterceptor[] interceptors,
             SharpLinkCallOptions options,
             CancellationToken cancellationToken)
-            : base(client, method, request, options, cancellationToken)
+            : base(client, method, request, interceptors, options, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -593,9 +604,10 @@ internal sealed partial class SharpLinkClient
             TRequest request,
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
+            ISharpLinkClientInterceptor[] interceptors,
             SharpLinkCallOptions options,
             CancellationToken cancellationToken)
-            : base(client, method, request, options, cancellationToken)
+            : base(client, method, request, interceptors, options, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -647,9 +659,10 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
+            ISharpLinkClientInterceptor[] interceptors,
             SharpLinkCallOptions options,
             CancellationToken cancellationToken)
-            : base(client, method, request, options, cancellationToken)
+            : base(client, method, request, interceptors, options, cancellationToken)
         {
             _method = method;
             _request = request;

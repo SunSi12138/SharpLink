@@ -47,3 +47,4 @@
 - 所有 Demo 必须在 Release 下构建并运行成功。
 - 文档链接、命令、默认值和限制必须可由当前代码或自动化测试验证。
 - 性能数字只在固定环境、精确提交和明确负载下发布，不把历史开发机结果当作当前版本承诺。
+- [Runtime interceptor replacement](runtime-interceptors.md)

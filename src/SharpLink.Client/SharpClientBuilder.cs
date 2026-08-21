@@ -71,7 +71,7 @@ public class SharpClientBuilder
         return this;
     }
 
-    /// <summary>Adds a client interceptor in registration order.</summary>
+    /// <summary>Adds an interceptor to the initial client pipeline in registration order. After Build, use <see cref="ISharpLinkClient.ReplaceInterceptors"/> for runtime replacement.</summary>
     public SharpClientBuilder AddInterceptor(ISharpLinkClientInterceptor interceptor)
     {
         Configure(() =>

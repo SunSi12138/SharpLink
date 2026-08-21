@@ -106,10 +106,10 @@ internal sealed partial class SharpLinkServer
         }
         catch
         {
-            TransitionTo(ServerState.Faulted);
             Task cleanupTask;
             lock (_stateGate)
             {
+                TransitionTo(ServerState.Faulted);
                 _stopTask ??= CleanupAfterRunFailureAsync();
                 cleanupTask = _stopTask;
             }
