@@ -1,0 +1,158 @@
+name: Compression Accepted Performance
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/compression-accepted-performance.yml'
+      - 'src/SharpLink.Server/**'
+      - 'src/SharpLink.Runtime/RpcSession.Compression.cs'
+      - 'src/SharpLink.Runtime/Compression/**'
+      - 'test/SharpLink.Benchmarks/BenchmarkContracts.cs'
+      - 'test/SharpLink.Benchmarks/BenchmarkService.cs'
+      - 'test/SharpLink.Benchmarks/CompressionAcceptedPathEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/CompressionIssue244FollowUpEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/CompressionIssue244FollowUpGlobalUsings.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compression-accepted-performance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  accepted-path-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_TieredPGO: '1'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Prepare same-host base and candidate worktrees
+        id: refs
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          candidate_sha="$PR_HEAD_SHA"
+          if [[ -z "$candidate_sha" ]]; then
+            candidate_sha="$(git rev-parse HEAD)"
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$candidate_sha" ]]; then
+            echo "Candidate checkout mismatch: expected $candidate_sha, got $(git rev-parse HEAD)" >&2
+            exit 1
+          fi
+
+          base_sha="$PR_BASE_SHA"
+          if [[ -z "$base_sha" ]]; then
+            git fetch origin dev --no-tags
+            base_sha="$(git rev-parse origin/dev)"
+          fi
+          base_root="$RUNNER_TEMP/sharplink-issue-244-base"
+          git worktree add --detach "$base_root" "$base_sha"
+
+          # Keep measurement code identical across base and candidate. Program references the
+          # accepted and issue-244 follow-up runners, so both are overlaid onto the base worktree.
+          for path in \
+            test/SharpLink.Benchmarks/BenchmarkContracts.cs \
+            test/SharpLink.Benchmarks/BenchmarkService.cs \
+            test/SharpLink.Benchmarks/CompressionAcceptedPathEvidenceRunner.cs \
+            test/SharpLink.Benchmarks/CompressionIssue244FollowUpEvidenceRunner.cs \
+            test/SharpLink.Benchmarks/CompressionIssue244FollowUpGlobalUsings.cs \
+            test/SharpLink.Benchmarks/Program.cs; do
+            install -D "$GITHUB_WORKSPACE/$path" "$base_root/$path"
+          done
+
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "base_root=$base_root" >> "$GITHUB_OUTPUT"
+
+      - name: Record environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/artifacts/performance/issue-244"
+          mkdir -p "$output"
+          dotnet --info > "$output/dotnet-info.txt"
+          uname -a > "$output/uname.txt"
+          lscpu > "$output/cpu.txt"
+          printf 'base=%s\ncandidate=%s\n' \
+            '${{ steps.refs.outputs.base_sha }}' \
+            '${{ steps.refs.outputs.candidate_sha }}' \
+            > "$output/commits.txt"
+
+      - name: Build identical evidence harness on base and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build '${{ steps.refs.outputs.base_root }}/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj' -c Release -v minimal
+          dotnet build "$GITHUB_WORKSPACE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
+
+      - name: Run alternating base/candidate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/artifacts/performance/issue-244"
+          base_root='${{ steps.refs.outputs.base_root }}'
+          base_sha='${{ steps.refs.outputs.base_sha }}'
+          candidate_sha='${{ steps.refs.outputs.candidate_sha }}'
+
+          run_evidence() {
+            local label="$1"
+            local root="$2"
+            local sha="$3"
+            local repetition="$4"
+            echo "=== $label repetition $repetition ($sha) ==="
+            SHARPLINK_PERF_LABEL="$label" \
+            SHARPLINK_BENCHMARK_SHA="$sha" \
+              dotnet run -c Release --no-build \
+                --project "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -- \
+                --compression-accepted-path-evidence 3 500000 \
+                "$output/$label-r$repetition.json"
+          }
+
+          for repetition in 1 2 3 4 5; do
+            if (( repetition % 2 == 1 )); then
+              run_evidence base "$base_root" "$base_sha" "$repetition"
+              run_evidence candidate "$GITHUB_WORKSPACE" "$candidate_sha" "$repetition"
+            else
+              run_evidence candidate "$GITHUB_WORKSPACE" "$candidate_sha" "$repetition"
+              run_evidence base "$base_root" "$base_sha" "$repetition"
+            fi
+          done
+
+      - name: Summarize evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/artifacts/performance/issue-244"
+          dotnet run -c Release --no-build \
+            --project "$GITHUB_WORKSPACE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -- \
+            --summarize-compression-accepted-path-evidence "$output" "$output/summary.md"
+          cat "$output/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload accepted-path evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-244-accepted-path-performance-${{ steps.refs.outputs.candidate_sha || github.sha }}
+          path: artifacts/performance/issue-244
+          if-no-files-found: error
+          retention-days: 30

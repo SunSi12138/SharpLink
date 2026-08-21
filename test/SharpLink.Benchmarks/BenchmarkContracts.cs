@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using SharpPack;
 using SharpLink.Sdk;
@@ -14,6 +15,12 @@ public interface IBenchmarkRpc : IService
     ValueTask<int> AddAsync(int left, int right);
     [NonCancellable]
     ValueTask<string> EchoAsync(string value);
+    [NonCancellable]
+    ValueTask<int> ConsumeBytesNonCancellableAsync(byte[] payload);
+    ValueTask<int> ConsumeBytesCancellableAsync(
+        byte[] payload,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken);
     [NonCancellable]
     ValueTask<BenchmarkPayload> EchoPayloadAsync(BenchmarkPayload payload);
     [NonCancellable]

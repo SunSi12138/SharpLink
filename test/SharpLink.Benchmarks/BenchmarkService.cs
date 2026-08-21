@@ -18,6 +18,19 @@ public class BenchmarkRpcService : IBenchmarkRpc
 
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
 
+    public ValueTask<int> ConsumeBytesNonCancellableAsync(byte[] payload)
+        => ValueTask.FromResult(payload.Length);
+
+    public ValueTask<int> ConsumeBytesCancellableAsync(
+        byte[] payload,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken)
+    {
+        _ = options;
+        _ = cancellationToken;
+        return ValueTask.FromResult(payload.Length);
+    }
+
     public ValueTask<BenchmarkPayload> EchoPayloadAsync(BenchmarkPayload payload) => ValueTask.FromResult(payload);
 
     public ValueTask<int> SumArrayAsync(int[] values) => ValueTask.FromResult(values.Sum());
