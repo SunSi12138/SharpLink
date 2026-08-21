@@ -1,9 +1,11 @@
 using System;
-using System.Net.Http;
+using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Android.App;
 using Android.OS;
+using Android.Util;
 using Android.Widget;
 
 namespace SharpLink.CodecCompatibility;
@@ -15,6 +17,10 @@ namespace SharpLink.CodecCompatibility;
     Exported = true)]
 public sealed class MainActivity : Activity
 {
+    private const string LogTag = "SharpLinkCodecCompat";
+    private const string InputFileName = "sharplink-input.json";
+    private const string ResultFileName = "sharplink-result.json";
+
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
@@ -25,17 +31,26 @@ public sealed class MainActivity : Activity
 
     private async Task RunAsync(TextView status)
     {
+        string? resultPath = null;
         try
         {
+            await Task.Yield();
+
+            var filesDirectory = FilesDir?.AbsolutePath
+                ?? throw new InvalidOperationException("Android app files directory is unavailable.");
+            Directory.CreateDirectory(filesDirectory);
+            var inputPath = Path.Combine(filesDirectory, InputFileName);
+            resultPath = Path.Combine(filesDirectory, ResultFileName);
+
             var mode = Intent?.GetStringExtra("mode") ?? "produce";
-            var endpoint = Intent?.GetStringExtra("endpoint")
-                ?? throw new InvalidOperationException("Missing endpoint intent extra.");
             var commit = Intent?.GetStringExtra("commit") ?? "unknown";
             var sdk = Intent?.GetStringExtra("sdk") ?? "unknown";
             var runtimeFamily = Intent?.GetStringExtra("runtimeFamily") ?? "unknown";
 
+            Log.Info(LogTag, $"probe starting mode={mode} runtime={runtimeFamily}");
+            status.Text = $"running {mode}";
+
             string result;
-            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             if (string.Equals(mode, "produce", StringComparison.Ordinal))
             {
                 result = PortableProbe.ProduceJson(
@@ -47,7 +62,7 @@ public sealed class MainActivity : Activity
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
             {
-                var input = await client.GetStringAsync($"{endpoint}/input.json");
+                var input = File.ReadAllText(inputPath, Encoding.UTF8);
                 result = PortableProbe.VerifyJson(
                     input,
                     commit,
@@ -61,30 +76,30 @@ public sealed class MainActivity : Activity
                 throw new InvalidOperationException($"Unknown Android probe mode: {mode}.");
             }
 
-            using var content = new StringContent(result, Encoding.UTF8, "application/json");
-            var response = await client.PostAsync($"{endpoint}/result", content);
-            response.EnsureSuccessStatusCode();
+            File.WriteAllText(resultPath, result, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            Log.Info(LogTag, $"probe completed bytes={Encoding.UTF8.GetByteCount(result)}");
             status.Text = "completed";
         }
         catch (Exception exception)
         {
+            Log.Error(LogTag, exception.ToString());
             status.Text = exception.ToString();
             try
             {
-                var endpoint = Intent?.GetStringExtra("endpoint");
-                if (!string.IsNullOrWhiteSpace(endpoint))
+                var filesDirectory = FilesDir?.AbsolutePath;
+                if (!string.IsNullOrWhiteSpace(filesDirectory))
                 {
-                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                    var json = System.Text.Json.JsonSerializer.Serialize(new
+                    resultPath ??= Path.Combine(filesDirectory, ResultFileName);
+                    var json = JsonSerializer.Serialize(new
                     {
                         portableProbeError = exception.ToString()
                     });
-                    using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                    await client.PostAsync($"{endpoint}/result", content);
+                    File.WriteAllText(resultPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 }
             }
-            catch
+            catch (Exception reportingException)
             {
+                Log.Error(LogTag, $"failed to persist probe error: {reportingException}");
             }
         }
     }
