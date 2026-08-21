@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -32,6 +33,9 @@ export async function loadEnvelopes(root, options = {}) {
     const envelopes = [];
     for (const manifestFile of manifestFiles) {
         const originalManifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+        if (originalManifest?.schemaVersion !== 1) {
+            throw new Error(`Unsupported or missing schemaVersion in ${manifestFile}.`);
+        }
         const cases = (originalManifest.cases ?? []).filter(
             item => !excludeBuiltinRaw || item.category !== BUILTIN_RAW_CATEGORY);
         const manifest = { ...originalManifest, cases };
@@ -76,6 +80,19 @@ export async function writePackedInput(producerRoot, outputFile) {
     return envelopes.length;
 }
 
+function sha256(bytes) {
+    return createHash('sha256').update(bytes).digest('hex');
+}
+
+function validateWireHash(platformTag, item, bytes) {
+    const expected = String(item.wireSha256 ?? '').toLowerCase();
+    const observed = sha256(bytes);
+    if (expected.length === 0 || observed !== expected) {
+        throw new Error(
+            `Wire hash mismatch for ${platformTag}/${item.id}: manifest=${expected || '<missing>'}, observed=${observed}.`);
+    }
+}
+
 function firstDifference(left, right) {
     const common = Math.min(left.length, right.length);
     for (let index = 0; index < common; index++) {
@@ -100,8 +117,16 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
             if (!localCase) {
                 throw new Error(`Local corpus is missing raw framework fixture ${producerCase.id}.`);
             }
-            const producerBytes = Buffer.from(producer.caseBytesBase64[producerCase.id], 'base64');
-            const localBytes = Buffer.from(local.caseBytesBase64[producerCase.id], 'base64');
+            const producerEncoded = producer.caseBytesBase64[producerCase.id];
+            const localEncoded = local.caseBytesBase64[producerCase.id];
+            if (typeof producerEncoded !== 'string' || typeof localEncoded !== 'string') {
+                throw new Error(`Raw framework fixture ${producerCase.id} is missing encoded wire bytes.`);
+            }
+            const producerBytes = Buffer.from(producerEncoded, 'base64');
+            const localBytes = Buffer.from(localEncoded, 'base64');
+            validateWireHash(producer.manifest.platformTag, producerCase, producerBytes);
+            validateWireHash(local.manifest.platformTag, localCase, localBytes);
+
             const byteEqual = producerBytes.equals(localBytes);
             const representationCompatible = producerCase.size === localCase.size && byteEqual;
             report.results.push({
