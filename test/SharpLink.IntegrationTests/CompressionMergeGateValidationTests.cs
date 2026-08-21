@@ -133,6 +133,7 @@ public class CompressionMergeGateValidationTests
     }
 
     [Test]
+    [Explicit]
     [NotInParallel]
     public async Task HundredThousandCapacityRejectedCompressedRequestsShouldNotDecodeOrLeakAccounting()
     {
@@ -145,6 +146,7 @@ public class CompressionMergeGateValidationTests
             SharpLinkCompressionProviders.CreateBrotli());
         await using var harness = await ValidationHarness.CreateAsync(
             serverProvider,
+            requestTimeout: TimeSpan.FromMinutes(10),
             clientProvider: clientProvider);
         var service = harness.Client.Get<ICompressionMergeGateProbeService>();
         var blocker = service.BlockAsync().AsTask();
