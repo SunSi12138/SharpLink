@@ -39,9 +39,9 @@ jobs:
       - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
-      - name: Issue 252 final C2 performance evidence
+      - name: Issue 252 final C2 heap evidence
         if: github.event.pull_request.number == 260
-        run: bash .github/issue252-c2-final-perf.sh
+        run: bash .github/issue252-c2-heap-evidence.sh
 
       - name: Verify Generated Assemblies Do Not Reference Runtime
         run: ./eng/verify-generated-assembly-dependencies.sh
