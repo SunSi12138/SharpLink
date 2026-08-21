@@ -95,8 +95,8 @@ internal sealed partial class SharpLinkServer
                 callCapacityGranted: true,
                 allowCompressedCancellationHandoff: false,
                 preparedServiceInfo: serviceInfo,
-                reusePreDecodeMetadata,
-                preDecodeMetadata);
+                reusePreDecodeMetadata: reusePreDecodeMetadata,
+                preDecodeMetadata: preDecodeMetadata);
             if (!dispatch.IsCompletedSuccessfully)
                 await dispatch.ConfigureAwait(false);
         }
@@ -143,7 +143,7 @@ internal sealed partial class SharpLinkServer
                     preDecodeMetadata)),
                 requestId);
         }
-        catch (Exception exception)
+        catch
         {
             if (retainedPayload is not null)
                 _runtimeContext.Buffers.Return(retainedPayload);
@@ -189,8 +189,8 @@ internal sealed partial class SharpLinkServer
                 callCapacityGranted: true,
                 allowCompressedCancellationHandoff: false,
                 preparedServiceInfo: serviceInfo,
-                reusePreDecodeMetadata,
-                preDecodeMetadata);
+                reusePreDecodeMetadata: reusePreDecodeMetadata,
+                preDecodeMetadata: preDecodeMetadata);
         }
         finally
         {
