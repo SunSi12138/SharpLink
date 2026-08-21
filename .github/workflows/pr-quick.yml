@@ -45,6 +45,10 @@ jobs:
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
+      - name: Issue 252 deadline maintenance evidence
+        if: github.event.pull_request.number == 260
+        run: bash .github/issue252-deadline-maintenance-evidence.sh
+
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
 
