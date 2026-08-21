@@ -11,6 +11,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TrimMode>copy</TrimMode>
     <UseMonoRuntime>true</UseMonoRuntime>
+    <UseInterpreter>true</UseInterpreter>
     <IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);IL2026;IL2090;CA1422</NoWarn>
   </PropertyGroup>

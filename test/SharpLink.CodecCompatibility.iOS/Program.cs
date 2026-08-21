@@ -66,6 +66,7 @@ public sealed class AppDelegate : UIApplicationDelegate
                     commit,
                     sdk,
                     targetFramework,
+                    compilationModeOverride: "Interpreter",
                     runtimeFamilyOverride: "Mono",
                     executionEnvironmentOverride: "simulator");
             }
@@ -77,6 +78,7 @@ public sealed class AppDelegate : UIApplicationDelegate
                     commit,
                     sdk,
                     targetFramework,
+                    compilationModeOverride: "Interpreter",
                     runtimeFamilyOverride: "Mono",
                     executionEnvironmentOverride: "simulator");
             }
