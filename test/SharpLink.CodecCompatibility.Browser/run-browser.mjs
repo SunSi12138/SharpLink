@@ -2,9 +2,11 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { loadEnvelopes, writeCorpus } from './portable-artifacts.mjs';
 
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const contentTypes = new Map([
     ['.html', 'text/html; charset=utf-8'],
     ['.js', 'text/javascript; charset=utf-8'],
@@ -29,6 +31,38 @@ function findChrome() {
     throw new Error('No Chrome/Chromium executable was found on the runner.');
 }
 
+async function findWebRoot(root) {
+    const candidates = [];
+    async function visit(directory) {
+        for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+            const fullPath = path.join(directory, entry.name);
+            if (entry.isDirectory()) {
+                await visit(fullPath);
+            } else if (entry.isFile() && entry.name === 'dotnet.js' && path.basename(directory) === '_framework') {
+                candidates.push(path.dirname(directory));
+            }
+        }
+    }
+    await visit(root);
+    if (candidates.length === 0) {
+        throw new Error(`Could not find a published _framework/dotnet.js under ${root}.`);
+    }
+    candidates.sort((left, right) => left.length - right.length || left.localeCompare(right));
+    return candidates[0];
+}
+
+async function prepareWebRoot(publishDirectory, mode, producerRoot) {
+    const webRoot = await findWebRoot(publishDirectory);
+    await fs.copyFile(path.join(scriptDirectory, 'index.html'), path.join(webRoot, 'index.html'));
+    await fs.copyFile(path.join(scriptDirectory, 'main.js'), path.join(webRoot, 'main.js'));
+    if (mode === 'verify') {
+        const envelopes = await loadEnvelopes(producerRoot);
+        await fs.writeFile(path.join(webRoot, 'input.json'), JSON.stringify(envelopes), 'utf8');
+    }
+    console.log(`Serving browser WASM app bundle from ${webRoot}.`);
+    return webRoot;
+}
+
 async function serveFile(root, requestPath, response) {
     const normalized = requestPath === '/' ? '/index.html' : requestPath;
     const decoded = decodeURIComponent(normalized.split('?')[0]);
@@ -42,7 +76,9 @@ async function serveFile(root, requestPath, response) {
         const data = await fs.readFile(fullPath);
         response.writeHead(200, {
             'content-type': contentTypes.get(path.extname(fullPath)) ?? 'application/octet-stream',
-            'cache-control': 'no-store'
+            'cache-control': 'no-store',
+            'cross-origin-opener-policy': 'same-origin',
+            'cross-origin-embedder-policy': 'require-corp'
         });
         response.end(data);
     } catch (error) {
@@ -56,10 +92,7 @@ async function serveFile(root, requestPath, response) {
 }
 
 async function runBrowser(mode, publishDirectory, producerRoot, outputPath, commit, sdkVersion) {
-    if (mode === 'verify') {
-        const envelopes = await loadEnvelopes(producerRoot);
-        await fs.writeFile(path.join(publishDirectory, 'input.json'), JSON.stringify(envelopes), 'utf8');
-    }
+    const webRoot = await prepareWebRoot(publishDirectory, mode, producerRoot);
 
     let resolveResult;
     let rejectResult;
@@ -75,12 +108,15 @@ async function runBrowser(mode, publishDirectory, producerRoot, outputPath, comm
                 const chunks = [];
                 for await (const chunk of request) chunks.push(chunk);
                 const body = Buffer.concat(chunks).toString('utf8');
-                response.writeHead(204);
+                response.writeHead(204, {
+                    'cross-origin-opener-policy': 'same-origin',
+                    'cross-origin-embedder-policy': 'require-corp'
+                });
                 response.end();
                 resolveResult(body);
                 return;
             }
-            await serveFile(publishDirectory, url.pathname, response);
+            await serveFile(webRoot, url.pathname, response);
         } catch (error) {
             response.writeHead(500);
             response.end('server error');
@@ -102,6 +138,7 @@ async function runBrowser(mode, publishDirectory, producerRoot, outputPath, comm
         '--disable-dev-shm-usage',
         '--disable-background-networking',
         '--disable-component-update',
+        '--enable-logging=stderr',
         url.toString()
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
