@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { loadEnvelopes, writeCorpus } from '../SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs';
 
 function adb(args, options = {}) {
@@ -12,7 +12,7 @@ function adb(args, options = {}) {
     return result.stdout;
 }
 
-async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion) {
+async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion, runtimeFamily) {
     const input = mode === 'verify' ? JSON.stringify(await loadEnvelopes(producerRoot)) : null;
     let resolveResult;
     let rejectResult;
@@ -65,7 +65,8 @@ async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion) {
         '--es', 'mode', mode,
         '--es', 'endpoint', endpoint,
         '--es', 'commit', commit,
-        '--es', 'sdk', sdkVersion
+        '--es', 'sdk', sdkVersion,
+        '--es', 'runtimeFamily', runtimeFamily
     ]);
 
     const timeout = setTimeout(() => {
@@ -99,18 +100,18 @@ async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion) {
 
 const args = process.argv.slice(2);
 const mode = args[0];
-if (mode === 'produce' && args.length === 4) {
-    runAndroid('produce', null, args[1], args[2], args[3]).catch(error => {
+if (mode === 'produce' && args.length === 5) {
+    runAndroid('produce', null, args[1], args[2], args[3], args[4]).catch(error => {
         console.error(error.stack ?? error);
         process.exitCode = 1;
     });
-} else if (mode === 'verify' && args.length === 5) {
-    runAndroid('verify', args[1], args[2], args[3], args[4]).catch(error => {
+} else if (mode === 'verify' && args.length === 6) {
+    runAndroid('verify', args[1], args[2], args[3], args[4], args[5]).catch(error => {
         console.error(error.stack ?? error);
         process.exitCode = 1;
     });
 } else {
-    console.error('Usage: run-android.mjs produce <corpus-output> <commit> <sdk>');
-    console.error('   or: run-android.mjs verify <producer-root> <report-output> <commit> <sdk>');
+    console.error('Usage: run-android.mjs produce <corpus-output> <commit> <sdk> <runtime-family>');
+    console.error('   or: run-android.mjs verify <producer-root> <report-output> <commit> <sdk> <runtime-family>');
     process.exit(2);
 }
