@@ -15,7 +15,7 @@ namespace SharpLink.Benchmarks;
 [BenchmarkCategory("PendingRequestTable", "Saturation")]
 public class PendingRequestSaturationBenchmarks
 {
-    private static int s_lifecycleState;
+    private static int s_lifecycleState = 0;
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _empty = null!;
     private PendingRequestTable _halfFull = null!;

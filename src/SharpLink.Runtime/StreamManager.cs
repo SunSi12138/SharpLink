@@ -3,7 +3,9 @@ namespace SharpLink.Runtime;
 /// <summary>Provides concurrent request-scoped routing for active RPC streams.</summary>
 internal sealed class StreamManager
 {
-    private readonly StripedLongMap<RequestDispatchers> _dispatchersByRequestId;
+    private StripedLongMap<RequestDispatchers>? _dispatchersByRequestId;
+    private readonly RuntimeConcurrencyOptions _concurrencyOptions;
+    private readonly Lock _dispatchersInitializationGate = new();
     private readonly Action<long, ushort, int>? _acceptBytes;
     private readonly Action<long, ushort, int>? _bytesConsumed;
     private readonly Action<long, ushort>? _streamCompleted;
@@ -29,7 +31,8 @@ internal sealed class StreamManager
         Action<long, ushort, int>? bytesConsumed,
         Action<long, ushort>? streamCompleted)
     {
-        _dispatchersByRequestId = new StripedLongMap<RequestDispatchers>(concurrencyOptions);
+        ArgumentNullException.ThrowIfNull(concurrencyOptions);
+        _concurrencyOptions = concurrencyOptions.CloneValidated();
         _acceptBytes = acceptBytes;
         _bytesConsumed = bytesConsumed;
         _streamCompleted = streamCompleted;
@@ -56,7 +59,7 @@ internal sealed class StreamManager
             return;
         }
 
-        var requestDispatchers = _dispatchersByRequestId.GetOrAdd(
+        var requestDispatchers = GetOrCreateDispatchersByRequestId().GetOrAdd(
             requestId,
             static _ => new RequestDispatchers());
         if (requestDispatchers.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted))
@@ -98,8 +101,12 @@ internal sealed class StreamManager
     /// <inheritdoc />
     internal void Unregister(long requestId, ushort streamId)
     {
-        if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+        {
             return;
+        }
 
         if (requestDispatchers.TryRemove(streamId, out var entry))
         {
@@ -127,7 +134,9 @@ internal sealed class StreamManager
     /// <inheritdoc />
     internal ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
     {
-        if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is not null &&
+            dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
             requestDispatchers.TryAcquire(streamId, out var entry))
         {
             try
@@ -210,8 +219,12 @@ internal sealed class StreamManager
     /// <inheritdoc />
     internal void CompleteStream(long requestId, ushort streamId, Exception? exception)
     {
-        if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+        {
             return;
+        }
 
         if (requestDispatchers.TryCompletePreAdmission(streamId, exception))
             return;
@@ -244,7 +257,9 @@ internal sealed class StreamManager
         ushort streamId,
         Exception? exception)
     {
-        if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
             !requestDispatchers.TryRemove(streamId, out var entry))
         {
             return ValueTask.CompletedTask;
@@ -311,9 +326,13 @@ internal sealed class StreamManager
         if (Interlocked.CompareExchange(ref _termination, termination, null) is not null)
             return;
 
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null)
+            return;
+
         List<Exception>? failures = null;
         var completed = 0;
-        foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
+        foreach (var requestDispatchers in dispatchersByRequestId.DrainValues())
             completed += requestDispatchers.CompleteAll(exception, ref failures);
         SharpLinkTelemetry.AddActiveStreams(-completed);
         Interlocked.Add(ref _activeStreamCount, -completed);
@@ -322,8 +341,12 @@ internal sealed class StreamManager
 
     internal void CompleteRequestStreams(long requestId, Exception? exception)
     {
-        if (!_dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
+        {
             return;
+        }
 
         List<Exception>? failures = null;
         var completed = requestDispatchers.CompleteAll(exception, ref failures);
@@ -385,14 +408,21 @@ internal sealed class StreamManager
         int originalByteCount,
         out ValueTask dispatch)
     {
-        if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null)
+        {
+            dispatch = default;
+            return false;
+        }
+
+        if (dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
             requestDispatchers.TryGetPreAdmission(streamId, out var preAdmission))
         {
             _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
             dispatch = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
             return true;
         }
-        if (_dispatchersByRequestId.TryGetValue(requestId, out requestDispatchers) &&
+        if (dispatchersByRequestId.TryGetValue(requestId, out requestDispatchers) &&
             requestDispatchers.TryGetDiscarding(streamId, out var discarding))
         {
             _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
@@ -426,9 +456,29 @@ internal sealed class StreamManager
         }
     }
 
+    private StripedLongMap<RequestDispatchers> GetOrCreateDispatchersByRequestId()
+    {
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is not null)
+            return dispatchersByRequestId;
+
+        lock (_dispatchersInitializationGate)
+        {
+            dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+            if (dispatchersByRequestId is not null)
+                return dispatchersByRequestId;
+
+            StreamManagerTestHooks.BeforeRoutingMapInitialize?.Invoke();
+            dispatchersByRequestId = new StripedLongMap<RequestDispatchers>(_concurrencyOptions);
+            Volatile.Write(ref _dispatchersByRequestId, dispatchersByRequestId);
+            return dispatchersByRequestId;
+        }
+    }
+
     internal long DroppedStreamFrames => Volatile.Read(ref _droppedStreamFrames);
     internal int ActiveStreamCount => Volatile.Read(ref _activeStreamCount);
     internal bool IsTerminated => Volatile.Read(ref _termination) is not null;
+    internal bool HasMaterializedRoutingState => Volatile.Read(ref _dispatchersByRequestId) is not null;
 
     /// <summary>
     /// Validates business-stream accounting at a lifecycle or test boundary. Dispatcher-entry
@@ -443,8 +493,9 @@ internal sealed class StreamManager
 
     private void RemoveEmptyRequest(long requestId, RequestDispatchers requestDispatchers)
     {
-        if (requestDispatchers.IsEmpty)
-            _dispatchersByRequestId.TryRemove(requestId, requestDispatchers);
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (requestDispatchers.IsEmpty && dispatchersByRequestId is not null)
+            dispatchersByRequestId.TryRemove(requestId, requestDispatchers);
     }
 
     private static Exception? CreateCompletionException(bool isError, string? msg)
@@ -923,5 +974,17 @@ internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispat
         _bytesConsumed = callback;
         _requestId = requestId;
         _streamId = streamId;
+    }
+}
+
+internal static class StreamManagerTestHooks
+{
+    [ThreadStatic]
+    private static Action? s_beforeRoutingMapInitialize;
+
+    internal static Action? BeforeRoutingMapInitialize
+    {
+        get => s_beforeRoutingMapInitialize;
+        set => s_beforeRoutingMapInitialize = value;
     }
 }

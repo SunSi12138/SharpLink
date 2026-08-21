@@ -201,7 +201,9 @@ public sealed class PreCreditPayloadCodecAdapter : IRpcCodecAdapter
 
     private sealed class Scope : IRpcCodecAdapterScope
     {
-        public IRpcCodec<T> CreateCodec<T>()
+        public IRpcCodec<T> CreateCodec<
+            [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
+                System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>()
         {
             if (typeof(T) != typeof(PreCreditPayload))
                 throw new InvalidOperationException($"Unsupported pre-credit AOT codec type: {typeof(T)}.");
