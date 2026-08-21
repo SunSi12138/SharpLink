@@ -13,33 +13,42 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
         var connectTask = client.ConnectAsync().AsTask();
         await transport.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
-        var readinessGate = GetPrivateLock(client, "_readinessGate");
-        Task<Exception?> replacementTask;
-        readinessGate.Enter();
+        var replacementStateGateEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseReplacement = new ManualResetEventSlim();
+        SetPrivateField(
+            client,
+            "_replacementStateGateEnteredForTesting",
+            (Action)(() =>
+            {
+                replacementStateGateEntered.TrySetResult();
+                releaseReplacement.Wait();
+            }));
+
+        var replacementTask = Task.Run(() => Capture(() =>
+            client.ReplaceInterceptors([new PassThroughClientInterceptor()])));
+
         try
         {
-            transport.Fail();
-            Thread.Sleep(50);
-            replacementTask = Task.Run(() => Capture(() =>
-                client.ReplaceInterceptors([new PassThroughClientInterceptor()])));
+            await replacementStateGateEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Ensure(!replacementTask.IsCompleted,
+                "client replacement must pause at the explicit lifecycle handshake");
 
-            Ensure(!replacementTask.Wait(TimeSpan.FromMilliseconds(150)),
-                "client replacement must wait for the lifecycle publication gate");
+            transport.Fail();
+            var connectFailure = await CaptureAsync(connectTask);
+            Ensure(connectFailure is InvalidOperationException { Message: "client connect failed" },
+                "client connect failure must surface");
+            Ensure(client.State == SharpLinkConnectionState.Faulted,
+                "client fault must publish while replacement is paused before the readiness gate");
         }
         finally
         {
-            readinessGate.Exit();
+            releaseReplacement.Set();
         }
-
-        var connectFailure = await CaptureAsync(connectTask);
-        Ensure(connectFailure is InvalidOperationException { Message: "client connect failed" },
-            "client connect failure must surface");
-        Ensure(client.State == SharpLinkConnectionState.Faulted,
-            "client must publish Faulted after the failed initial connect");
 
         var replacementFailure = await replacementTask.WaitAsync(TimeSpan.FromSeconds(3));
         Ensure(replacementFailure is InvalidOperationException,
-            "replacement queued behind the earlier fault publication must be rejected");
+            "replacement must reject the Faulted state published before its readiness-gate check");
     }
 
     [Test]
@@ -92,6 +101,15 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
             ?? throw new Exception($"cannot find private lock '{fieldName}'");
         return (System.Threading.Lock)(field.GetValue(target)
             ?? throw new Exception($"private lock '{fieldName}' is null"));
+    }
+
+    private static void SetPrivateField<T>(object target, string fieldName, T value)
+    {
+        var field = target.GetType().GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find private field '{fieldName}'");
+        field.SetValue(target, value);
     }
 
     private static Exception? Capture(Action action)
