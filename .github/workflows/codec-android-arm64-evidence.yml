@@ -1,0 +1,291 @@
+name: Codec Android ARM64 Evidence
+
+# Native ARM64 Android emulator evidence. This is advisory evidence and is
+# intentionally separate from the Guaranteed desktop release gate.
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/codec-android-arm64-evidence.yml'
+      - 'src/SharpLink.Runtime/Codec/**'
+      - 'src/SharpLink.Runtime/SharpLink.Runtime.csproj'
+      - 'test/SharpLink.CodecCompatibility/**'
+      - 'test/SharpLink.CodecCompatibility.Android/**'
+      - 'test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs'
+
+concurrency:
+  group: codec-android-arm64-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Produce canonical desktop corpus
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- produce
+          --output artifacts/codec-compat/desktop-reference
+
+      - name: Upload canonical desktop corpus
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-android-arm64-corpus-desktop-linux-x64
+          path: artifacts/codec-compat/desktop-reference
+          if-no-files-found: error
+          retention-days: 30
+
+  android-arm64:
+    needs: desktop-reference
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+      ANDROID_API: '35'
+      ANDROID_AVD: sharplink-codec-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Android workload
+        run: dotnet workload install android
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download canonical desktop corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-android-arm64-corpus-desktop-linux-x64
+          path: artifacts/codec-compat/producers/codec-android-arm64-corpus-desktop-linux-x64
+
+      - name: Prepare Android ARM64 emulator
+        shell: bash
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          mkdir -p "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-$ANDROID_API" \
+            "system-images;android-$ANDROID_API;google_apis;arm64-v8a"
+          echo no | "$AVDMANAGER" create avd --force \
+            --name "$ANDROID_AVD" \
+            --package "system-images;android-$ANDROID_API;google_apis;arm64-v8a" \
+            --device pixel_6
+          "$EMULATOR" -version
+          "$EMULATOR" -accel-check || true
+          "$EMULATOR" -list-avds | grep -Fx "$ANDROID_AVD"
+          nohup "$EMULATOR" -avd "$ANDROID_AVD" \
+            -no-window -noaudio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect \
+            > artifacts-android-arm64-emulator.log 2>&1 &
+          for attempt in $(seq 1 180); do
+            if adb get-state >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          adb get-state
+          for attempt in $(seq 1 180); do
+            if [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" != "1" ]]; then
+            cat artifacts-android-arm64-emulator.log
+            exit 1
+          fi
+          abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          echo "Android emulator ABI: $abi"
+          test "$abi" = "arm64-v8a"
+
+      - name: Build and run Android ARM64 Mono producer
+        shell: bash
+        run: |
+          rm -rf test/SharpLink.CodecCompatibility.Android/bin test/SharpLink.CodecCompatibility.Android/obj
+          dotnet build -c Debug -f net10.0-android -r android-arm64 \
+            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
+            -t:SignAndroidPackage \
+            -p:CodecRuntime=mono \
+            -p:AndroidPackageFormats=apk \
+            -p:AndroidBuildApplicationPackage=true
+          apk="$(find test/SharpLink.CodecCompatibility.Android/bin/Debug -name '*-Signed.apk' -type f | head -n 1)"
+          test -n "$apk"
+          cp "$apk" artifacts/codec-compat/android-arm64-mono.apk
+          adb install -r "$apk"
+          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
+            produce artifacts/codec-compat/android-arm64-mono-corpus \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" Mono
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Build and run Android ARM64 CoreCLR producer
+        shell: bash
+        run: |
+          rm -rf test/SharpLink.CodecCompatibility.Android/bin test/SharpLink.CodecCompatibility.Android/obj
+          dotnet build -c Debug -f net10.0-android -r android-arm64 \
+            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
+            -t:SignAndroidPackage \
+            -p:CodecRuntime=coreclr \
+            -p:AndroidPackageFormats=apk \
+            -p:AndroidBuildApplicationPackage=true
+          apk="$(find test/SharpLink.CodecCompatibility.Android/bin/Debug -name '*-Signed.apk' -type f | head -n 1)"
+          test -n "$apk"
+          cp "$apk" artifacts/codec-compat/android-arm64-coreclr.apk
+          adb install -r "$apk"
+          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
+            produce artifacts/codec-compat/android-arm64-coreclr-corpus \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" CoreCLR
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Assemble Android ARM64 producer fan-in
+        shell: bash
+        run: |
+          mkdir -p artifacts/codec-compat/producers/codec-android-arm64-corpus-mono
+          mkdir -p artifacts/codec-compat/producers/codec-android-arm64-corpus-coreclr
+          cp -R artifacts/codec-compat/android-arm64-mono-corpus/. artifacts/codec-compat/producers/codec-android-arm64-corpus-mono/
+          cp -R artifacts/codec-compat/android-arm64-coreclr-corpus/. artifacts/codec-compat/producers/codec-android-arm64-corpus-coreclr/
+
+      - name: Verify documented edges on Android ARM64 Mono
+        shell: bash
+        env:
+          SHARPLINK_SKIP_BUILTIN_RAW: '1'
+        run: |
+          adb install -r artifacts/codec-compat/android-arm64-mono.apk
+          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
+            verify artifacts/codec-compat/producers \
+            artifacts/codec-compat/android-arm64-mono-verification/verification.json \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" Mono
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Append raw evidence for Android ARM64 Mono
+        run: |
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            append-raw artifacts/codec-compat/android-arm64-mono-verification/verification.json \
+            artifacts/codec-compat/producers artifacts/codec-compat/android-arm64-mono-corpus
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            check-report artifacts/codec-compat/android-arm64-mono-verification/verification.json
+
+      - name: Verify documented edges on Android ARM64 CoreCLR
+        shell: bash
+        env:
+          SHARPLINK_SKIP_BUILTIN_RAW: '1'
+        run: |
+          adb install -r artifacts/codec-compat/android-arm64-coreclr.apk
+          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
+            verify artifacts/codec-compat/producers \
+            artifacts/codec-compat/android-arm64-coreclr-verification/verification.json \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" CoreCLR
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Append raw evidence for Android ARM64 CoreCLR
+        run: |
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            append-raw artifacts/codec-compat/android-arm64-coreclr-verification/verification.json \
+            artifacts/codec-compat/producers artifacts/codec-compat/android-arm64-coreclr-corpus
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            check-report artifacts/codec-compat/android-arm64-coreclr-verification/verification.json
+
+      - name: Stop Android emulator
+        if: always()
+        shell: bash
+        run: adb emu kill || true
+
+      - name: Upload Android ARM64 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-android-arm64-evidence
+          path: |
+            artifacts/codec-compat/android-arm64-mono-corpus
+            artifacts/codec-compat/android-arm64-coreclr-corpus
+            artifacts/codec-compat/android-arm64-mono-verification/verification.json
+            artifacts/codec-compat/android-arm64-coreclr-verification/verification.json
+            artifacts-android-arm64-emulator.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  summary:
+    needs: android-arm64
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Android ARM64 verification evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-android-arm64-evidence
+          path: artifacts/codec-compat/verifications
+
+      - name: Require both Android ARM64 consumer reports
+        shell: bash
+        run: |
+          count="$(find artifacts/codec-compat/verifications -name verification.json -type f | wc -l | tr -d ' ')"
+          if [[ "$count" != "2" ]]; then
+            echo "::error::Expected 2 Android ARM64 consumer reports, found $count."
+            exit 1
+          fi
+
+      - name: Aggregate Android ARM64 evidence
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- summarize
+          --input artifacts/codec-compat/verifications
+          --output artifacts/codec-compat/summary
+
+      - name: Upload Android ARM64 evidence summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-android-arm64-evidence-summary
+          path: artifacts/codec-compat/summary
+          if-no-files-found: warn
+          retention-days: 30
