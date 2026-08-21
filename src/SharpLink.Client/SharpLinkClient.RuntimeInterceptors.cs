@@ -2,17 +2,15 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    // Test-only synchronization hook. A null state means ReplaceInterceptors owns
-    // _stateGate and is about to enter _readinessGate; a non-null state means
-    // TransitionTo owns _readinessGate before publishing that requested state.
-    private Action<SharpLinkConnectionState?>? _lifecycleSynchronizationHookForTesting;
+    // Test-only handshake used to order lifecycle races without relying on lock waiter fairness.
+    private Action? _replacementStateGateEnteredForTesting;
 
     public void ReplaceInterceptors(IEnumerable<ISharpLinkClientInterceptor> interceptors)
     {
         var candidate = CreateInterceptorSnapshot(interceptors);
         lock (_stateGate)
         {
-            Volatile.Read(ref _lifecycleSynchronizationHookForTesting)?.Invoke(null);
+            Volatile.Read(ref _replacementStateGateEnteredForTesting)?.Invoke();
             lock (_readinessGate)
             {
                 var state = State;
