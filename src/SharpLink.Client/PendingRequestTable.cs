@@ -63,8 +63,13 @@ internal interface IPendingCallCompletionObserver
 /// </remarks>
 internal sealed class PendingRequestTable : IDisposable
 {
+    private const int DeadlinePageShift = 8;
+    private const int DeadlinePageSize = 1 << DeadlinePageShift;
     private readonly int _indexMask;
-    private readonly SegmentedSlotTable<PendingCall> _slots;
+    private readonly int _capacity;
+    private readonly object _slotsInitializationGate = new();
+    private readonly int[] _deadlinePageCounts;
+    private PendingCall?[]? _slots;
     private readonly IRpcCodecProvider _codecProvider;
     private readonly IPendingCallOwner _owner;
     private readonly TimeProvider _timeProvider;
@@ -73,7 +78,6 @@ internal sealed class PendingRequestTable : IDisposable
     private long _nextId;
     private long _approximateEarliestDeadline = long.MaxValue;
     private int _deadlineScanRunning;
-    private int _lastDeadlineScanInspectedSlots;
     private int _activeSlots;
     private int _waiterCount;
     private int _slotAvailableDisposed;
@@ -99,7 +103,8 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
-        _slots = new SegmentedSlotTable<PendingCall>(capacity);
+        _capacity = capacity;
+        _deadlinePageCounts = new int[(capacity + DeadlinePageSize - 1) >> DeadlinePageShift];
         _indexMask = capacity - 1;
         _codecProvider = codecProvider;
         _owner = owner;
@@ -112,33 +117,26 @@ internal sealed class PendingRequestTable : IDisposable
             Timeout.InfiniteTimeSpan);
     }
 
-    public int Capacity => _slots.Length;
+    public int Capacity => _capacity;
 
     internal int ActiveCount => Volatile.Read(ref _activeSlots);
 
-    internal int MaterializedSegmentCount => _slots.MaterializedSegmentCount;
+    internal bool SlotsMaterialized => Volatile.Read(ref _slots) is not null;
 
-    internal int SegmentSize => _slots.SegmentSize;
-
-    internal int LastDeadlineScanInspectedSlots => Volatile.Read(ref _lastDeadlineScanInspectedSlots);
+    internal int LastDeadlineScanInspectedSlots { get; private set; }
 
     public int Count
     {
         get
         {
-            var count = 0;
-            for (var segmentIndex = 0; segmentIndex < _slots.SegmentCount; segmentIndex++)
-            {
-                var segment = _slots.GetMaterializedSegment(segmentIndex);
-                if (segment is null)
-                    continue;
+            var slots = Volatile.Read(ref _slots);
+            if (slots is null)
+                return 0;
 
-                for (var offset = 0; offset < segment.Length; offset++)
-                {
-                    if (Volatile.Read(ref segment[offset]) is not null)
-                        count++;
-                }
-            }
+            var count = 0;
+            for (var index = 0; index < slots.Length; index++)
+                if (Volatile.Read(ref slots[index]) is not null)
+                    count++;
             return count;
         }
     }
@@ -324,8 +322,12 @@ internal sealed class PendingRequestTable : IDisposable
 
     public bool Dispatch(long id, ref ReadOnlySequence<byte> payload)
     {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return false;
+
         var index = (int)(id & _indexMask);
-        var current = _slots.Read(index);
+        var current = Volatile.Read(ref slots[index]);
         if (current is not null && current.Id == id &&
             current.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
         {
@@ -335,7 +337,7 @@ internal sealed class PendingRequestTable : IDisposable
             // observed before cancellation, deadline, or disconnect can report the terminal result.
             lock (current.CompletionGate)
             {
-                if (!ReferenceEquals(_slots.Read(index), current) ||
+                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) ||
                     current.Id != id ||
                     current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
                 {
@@ -372,13 +374,21 @@ internal sealed class PendingRequestTable : IDisposable
 
     public bool Contains(long id)
     {
-        var call = _slots.Read((int)(id & _indexMask));
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return false;
+
+        var call = Volatile.Read(ref slots[(int)(id & _indexMask)]);
         return call is not null && call.Id == id;
     }
 
     public CancellationToken GetProducerCancellationToken(long id)
     {
-        var call = _slots.Read((int)(id & _indexMask));
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return new CancellationToken(canceled: true);
+
+        var call = Volatile.Read(ref slots[(int)(id & _indexMask)]);
         if (call is null || call.Id != id)
             return new CancellationToken(canceled: true);
         return call.ProducerCancellationToken;
@@ -393,25 +403,21 @@ internal sealed class PendingRequestTable : IDisposable
     public void FailAllPendingRequests(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        for (var segmentIndex = 0; segmentIndex < _slots.SegmentCount; segmentIndex++)
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return;
+
+        for (var index = 0; index < slots.Length; index++)
         {
-            var segment = _slots.GetMaterializedSegment(segmentIndex);
-            if (segment is null)
+            if (!TryTakeCallAtIndex(index, out var call))
                 continue;
 
-            var firstIndex = segmentIndex * _slots.SegmentSize;
-            for (var offset = 0; offset < segment.Length; offset++)
-            {
-                if (!TryTakeCallAtIndex(firstIndex + offset, out var call))
-                    continue;
-
-                var payload = ReadOnlySequence<byte>.Empty;
-                CompleteTakenCall(
-                    call!,
-                    PendingCallCompletionReason.ConnectionClosed,
-                    exception,
-                    ref payload);
-            }
+            var payload = ReadOnlySequence<byte>.Empty;
+            CompleteTakenCall(
+                call!,
+                PendingCallCompletionReason.ConnectionClosed,
+                exception,
+                ref payload);
         }
     }
 
@@ -485,19 +491,14 @@ internal sealed class PendingRequestTable : IDisposable
         var published = false;
         try
         {
+            var slots = GetOrCreateSlots();
             while (true)
             {
-                for (var attempt = 0; attempt < _slots.Length; attempt++)
+                for (var attempt = 0; attempt < slots.Length; attempt++)
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (_slots.Read(index) is not null)
-                        continue;
-
-                    // Materialize storage before operation/PendingCall ownership is acquired so an
-                    // allocation failure can refund the capacity reservation without leaking pooled state.
-                    _slots.EnsureSegment(index);
-                    if (_slots.Read(index) is not null)
+                    if (Volatile.Read(ref slots[index]) is not null)
                         continue;
 
                     operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
@@ -510,7 +511,9 @@ internal sealed class PendingRequestTable : IDisposable
                         deadline,
                         cancellationToken,
                         completionObserver);
-                    if (_slots.CompareExchange(index, call, null) is null)
+                    if (deadline.HasValue)
+                        Interlocked.Increment(ref _deadlinePageCounts[index >> DeadlinePageShift]);
+                    if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
                     {
                         published = true;
                         OnRegistered(call);
@@ -518,6 +521,8 @@ internal sealed class PendingRequestTable : IDisposable
                         return true;
                     }
 
+                    if (deadline.HasValue)
+                        Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                     call.ReturnUnused();
                 }
 
@@ -553,17 +558,14 @@ internal sealed class PendingRequestTable : IDisposable
         var published = false;
         try
         {
+            var slots = GetOrCreateSlots();
             while (true)
             {
-                for (var attempt = 0; attempt < _slots.Length; attempt++)
+                for (var attempt = 0; attempt < slots.Length; attempt++)
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (_slots.Read(index) is not null)
-                        continue;
-
-                    _slots.EnsureSegment(index);
-                    if (_slots.Read(index) is not null)
+                    if (Volatile.Read(ref slots[index]) is not null)
                         continue;
 
                     var call = PendingCall.Rent(
@@ -575,7 +577,9 @@ internal sealed class PendingRequestTable : IDisposable
                         deadline,
                         cancellationToken,
                         completionObserver);
-                    if (_slots.CompareExchange(index, call, null) is null)
+                    if (deadline.HasValue)
+                        Interlocked.Increment(ref _deadlinePageCounts[index >> DeadlinePageShift]);
+                    if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
                     {
                         published = true;
                         OnRegistered(call);
@@ -583,6 +587,8 @@ internal sealed class PendingRequestTable : IDisposable
                         return true;
                     }
 
+                    if (deadline.HasValue)
+                        Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                     call.ReturnUnused();
                 }
 
@@ -600,10 +606,30 @@ internal sealed class PendingRequestTable : IDisposable
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private PendingCall?[] GetOrCreateSlots()
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is not null)
+            return slots;
+
+        lock (_slotsInitializationGate)
+        {
+            slots = Volatile.Read(ref _slots);
+            if (slots is null)
+            {
+                slots = new PendingCall?[_capacity];
+                Volatile.Write(ref _slots, slots);
+            }
+
+            return slots;
+        }
+    }
+
     private bool TryAcquireCapacity()
     {
         var active = Interlocked.Increment(ref _activeSlots);
-        if (active <= _slots.Length)
+        if (active <= _capacity)
             return true;
 
         RefundRejectedCapacity();
@@ -617,7 +643,7 @@ internal sealed class PendingRequestTable : IDisposable
         if (remaining < 0)
             throw new InvalidOperationException("Pending request capacity accounting underflowed.");
 
-        if (remaining < _slots.Length && Volatile.Read(ref _waiterCount) != 0)
+        if (remaining < _capacity && Volatile.Read(ref _waiterCount) != 0)
             SignalSlotAvailable();
 
         if (remaining == 0)
@@ -643,10 +669,17 @@ internal sealed class PendingRequestTable : IDisposable
 
     private bool TryTakeMatchingCall(long id, out PendingCall? call)
     {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+        {
+            call = null;
+            return false;
+        }
+
         var index = (int)(id & _indexMask);
         while (true)
         {
-            var current = _slots.Read(index);
+            var current = Volatile.Read(ref slots[index]);
             if (current is null || current.Id != id)
             {
                 call = null;
@@ -655,13 +688,15 @@ internal sealed class PendingRequestTable : IDisposable
 
             lock (current.CompletionGate)
             {
-                if (!ReferenceEquals(_slots.Read(index), current) || current.Id != id)
+                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
                     continue;
 
-                var exchanged = _slots.CompareExchange(index, null, current);
+                var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
                 if (!ReferenceEquals(exchanged, current))
                     continue;
 
+                if (current.Deadline.HasValue)
+                    Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                 current.WaitUntilRegistered();
                 call = current;
                 return true;
@@ -671,9 +706,10 @@ internal sealed class PendingRequestTable : IDisposable
 
     private bool TryTakeCallAtIndex(int index, out PendingCall? call)
     {
+        var slots = Volatile.Read(ref _slots)!;
         while (true)
         {
-            var current = _slots.Read(index);
+            var current = Volatile.Read(ref slots[index]);
             if (current is null)
             {
                 call = null;
@@ -682,12 +718,14 @@ internal sealed class PendingRequestTable : IDisposable
 
             lock (current.CompletionGate)
             {
-                if (!ReferenceEquals(_slots.Read(index), current))
+                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current))
                     continue;
 
-                if (!ReferenceEquals(_slots.CompareExchange(index, null, current), current))
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
                     continue;
 
+                if (current.Deadline.HasValue)
+                    Interlocked.Decrement(ref _deadlinePageCounts[index >> DeadlinePageShift]);
                 current.WaitUntilRegistered();
                 call = current;
                 return true;
@@ -854,21 +892,29 @@ internal sealed class PendingRequestTable : IDisposable
             return;
         }
 
-        var inspectedSlots = 0;
         try
         {
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
-            var now = _timeProvider.GetTimestamp();
-            for (var segmentIndex = 0; segmentIndex < _slots.SegmentCount; segmentIndex++)
+            var slots = Volatile.Read(ref _slots);
+            if (slots is null)
             {
-                var segment = _slots.GetMaterializedSegment(segmentIndex);
-                if (segment is null)
+                LastDeadlineScanInspectedSlots = 0;
+                return;
+            }
+
+            var now = _timeProvider.GetTimestamp();
+            var inspectedSlots = 0;
+            for (var page = 0; page < _deadlinePageCounts.Length; page++)
+            {
+                if (Volatile.Read(ref _deadlinePageCounts[page]) == 0)
                     continue;
 
-                inspectedSlots += segment.Length;
-                for (var offset = 0; offset < segment.Length; offset++)
+                var start = page << DeadlinePageShift;
+                var end = Math.Min(start + DeadlinePageSize, slots.Length);
+                for (var index = start; index < end; index++)
                 {
-                    var call = Volatile.Read(ref segment[offset]);
+                    inspectedSlots++;
+                    var call = Volatile.Read(ref slots[index]);
                     if (call is null || !call.Deadline.HasValue)
                         continue;
                     if (call.Deadline.Timestamp <= now)
@@ -877,10 +923,11 @@ internal sealed class PendingRequestTable : IDisposable
                         UpdateEarliestDeadline(call.Deadline.Timestamp);
                 }
             }
+
+            LastDeadlineScanInspectedSlots = inspectedSlots;
         }
         finally
         {
-            Volatile.Write(ref _lastDeadlineScanInspectedSlots, inspectedSlots);
             Volatile.Write(ref _deadlineScanRunning, 0);
             var next = Volatile.Read(ref _approximateEarliestDeadline);
             if (next != long.MaxValue)

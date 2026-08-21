@@ -1,7 +1,7 @@
 name: PR Quick
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   pull_request:
@@ -21,10 +21,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Land Issue 252 C2 candidate
-        if: github.event.pull_request.number == 260
-        run: bash .github/issue252-land-c2.sh
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
