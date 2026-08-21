@@ -12,6 +12,19 @@ function simctl(args, env = process.env) {
     return result.stdout;
 }
 
+function simctlDiagnostic(args) {
+    const result = spawnSync('xcrun', ['simctl', ...args], {
+        encoding: 'utf8',
+        timeout: 15_000
+    });
+    return [
+        `$ xcrun simctl ${args.join(' ')}`,
+        `exit=${result.status ?? 'timeout'}`,
+        result.stdout ?? '',
+        result.stderr ?? ''
+    ].join('\n');
+}
+
 async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, targetFramework) {
     const input = mode === 'verify' ? JSON.stringify(await loadEnvelopes(producerRoot)) : null;
     let resolveResult;
@@ -66,10 +79,22 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, target
         SIMCTL_CHILD_SHARPLINK_SDK_VERSION: sdkVersion,
         SIMCTL_CHILD_SHARPLINK_TARGET_FRAMEWORK: targetFramework
     };
-    simctl(['launch', 'booted', 'com.sharplink.codeccompat.ios'], launchEnv);
+    const launchOutput = simctl(
+        ['launch', '--terminate-running-process', 'booted', 'com.sharplink.codeccompat.ios'],
+        launchEnv);
+    console.log(`iOS simulator launch: ${launchOutput.trim()}`);
 
     const timeout = setTimeout(() => {
-        rejectResult(new Error('iOS simulator probe timed out.'));
+        const diagnostics = [
+            simctlDiagnostic(['get_app_container', 'booted', 'com.sharplink.codeccompat.ios', 'app']),
+            simctlDiagnostic([
+                'spawn', 'booted', 'log', 'show',
+                '--last', '3m',
+                '--style', 'compact',
+                '--predicate', 'process CONTAINS[c] "SharpLink" OR eventMessage CONTAINS[c] "SharpLink codec"'
+            ])
+        ].join('\n\n');
+        rejectResult(new Error(`iOS simulator probe timed out.\n${diagnostics}`));
     }, 120_000);
 
     try {
