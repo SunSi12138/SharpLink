@@ -2,11 +2,8 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private long _retainedRequestPayloadCopies;
-
     private IRpcByteBufferWriter CopyAdmissionPayload(ReadOnlySequence<byte> payload)
     {
-        Interlocked.Increment(ref _retainedRequestPayloadCopies);
         var owner = _runtimeContext.Buffers.Rent(checked((int)payload.Length));
         foreach (var segment in payload)
             owner.Write(segment.Span);
