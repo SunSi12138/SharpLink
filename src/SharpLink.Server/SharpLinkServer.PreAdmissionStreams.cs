@@ -19,15 +19,55 @@ internal sealed partial class SharpLinkServer
         if (clientStreamCount == 0)
             return;
 
-        var streamManager = session.StreamManager;
         var admissionController = _admissionController ?? throw new InvalidOperationException(
             "Pre-admission streams require an admission controller.");
-        streamManager.ReservePreAdmissionStreams(
+        ReserveBufferedRequestStreams(
+            session,
+            requestId,
+            clientStreamCount,
+            callState,
+            admissionController.TryReserveAdditionalQueuedBytes,
+            admissionController.ReleaseAdditionalQueuedBytes);
+    }
+
+    private void ReservePreDecodeRequestStreams(
+        RpcSession session,
+        long requestId,
+        int clientStreamCount,
+        ServerCallCancellationState callState)
+    {
+        if (clientStreamCount == 0)
+            return;
+
+        // The call slot is already owned before this temporary buffer is installed. Keep the
+        // reader loop free to consume Cancel/StreamData while synchronous request decompression
+        // runs elsewhere, but cap retained stream bytes to the negotiated connection receive
+        // window so a slow provider cannot create an unbounded handoff queue.
+        var budget = new PreDecodeStreamBufferBudget(
+            _runtimeContext.FlowControl.ConnectionReceiveWindowBytes);
+        ReserveBufferedRequestStreams(
+            session,
+            requestId,
+            clientStreamCount,
+            callState,
+            budget.TryReserve,
+            budget.Release);
+    }
+
+    private void ReserveBufferedRequestStreams(
+        RpcSession session,
+        long requestId,
+        int clientStreamCount,
+        ServerCallCancellationState callState,
+        Func<int, bool> reserveBytes,
+        Action<int> releaseBytes)
+    {
+        session.StreamManager.ReservePreAdmissionStreams(
             requestId,
             clientStreamCount,
             _runtimeContext.Buffers,
-            admissionController.TryReserveAdditionalQueuedBytes,
-            admissionController.ReleaseAdditionalQueuedBytes,
+            reserveBytes,
+            releaseBytes,
             () => callState.TryCancel(
                 ServerCallCancellationReason.AdmissionResourceExhausted),
             compressedPayload =>
@@ -44,6 +84,30 @@ internal sealed partial class SharpLinkServer
                         "Compressed stream decoding did not return an owner."),
                     _runtimeContext.Buffers);
             });
+    }
+
+    private sealed class PreDecodeStreamBufferBudget(int capacity)
+    {
+        private int _remaining = capacity;
+
+        internal bool TryReserve(int bytes)
+        {
+            while (true)
+            {
+                var remaining = Volatile.Read(ref _remaining);
+                if (bytes > remaining)
+                    return false;
+                if (Interlocked.CompareExchange(
+                        ref _remaining,
+                        remaining - bytes,
+                        remaining) == remaining)
+                {
+                    return true;
+                }
+            }
+        }
+
+        internal void Release(int bytes) => Interlocked.Add(ref _remaining, bytes);
     }
 
     private static void DrainRejectedOneWayStreams(
