@@ -32,3 +32,7 @@ dotnet run \
   -- \
   --verify-clean \
   "${assemblies[@]}"
+
+if [[ "${GITHUB_ACTIONS:-}" == "true" && -x "$ROOT/eng/run-issue252-experiment-a-rerun.sh" ]]; then
+  "$ROOT/eng/run-issue252-experiment-a-rerun.sh"
+fi
