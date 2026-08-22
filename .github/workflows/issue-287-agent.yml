@@ -84,14 +84,23 @@ jobs:
           ]:
               assert phrase not in migration, phrase
           PY
-      - name: Capture applied patch
+      - name: Capture applied worktree
         run: |
           git add -N .
           git diff --binary > issue-287-applied.patch
+          tar -czf issue-287-applied-tree.tar.gz \
+            src test eng doc README.md CHANGELOG.md \
+            .github/workflows/release-gate.yml
       - uses: actions/upload-artifact@v4
         with:
           name: issue-287-applied-patch
           path: issue-287-applied.patch
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-287-applied-tree
+          path: issue-287-applied-tree.tar.gz
           if-no-files-found: error
           retention-days: 1
       - name: Restore
