@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +31,9 @@ jobs:
           python3 .github/issue-287-followup.py
           python3 .github/issue-287-generator-tests.py
           python3 .github/issue-287-syntax-fix.py
+          python3 .github/issue-287-inherited-budget.py
+          python3 .github/issue-287-server-handshake-test.py
+          python3 .github/issue-287-docs.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
@@ -57,14 +61,20 @@ jobs:
           git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' src && exit 1 || true
           echo '=== legacy wire compatibility gates ==='
           git grep -n -E 'TimeBudgetMinorVersion|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- src/SharpLink.Client src/SharpLink.Server src/SharpLink.Abstractions/ProtocolV2.cs && exit 1 || true
-          echo '=== remaining active test/demo CallOptions references ==='
-          git grep -n 'SharpLinkCallOptions' -- test demo || true
+          echo '=== stale active docs ==='
+          git grep -n 'SharpLinkCallOptions' -- README.md doc ':!doc/migration.md' && exit 1 || true
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Build solution
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-      - name: Review regression tests
-        run: |
-          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --filter "FullyQualifiedName~SharpLinkClientTimeBudgetTests|FullyQualifiedName~ProtocolV2TimeBudgetCompatibilityTests" -v minimal
+      - name: Unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release
       - name: Generator tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --no-build -c Release -v minimal
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --no-build -c Release
+      - name: Integration tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
