@@ -171,6 +171,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--deadline-workload-evidence", StringComparison.Ordinal))
+        {
+            await DeadlineWorkloadEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--pending-request-segmentation-evidence", StringComparison.Ordinal))
         {
             await PendingRequestSegmentationEvidenceRunner.RunAsync(args[1..]);
