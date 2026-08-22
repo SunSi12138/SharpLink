@@ -12,16 +12,21 @@ internal sealed class ServerCallCapacityGovernor
     // reserved + active <= capacity without a request-path lock.
     private long _state;
     private readonly int _capacity;
+    private readonly ServerCallCapacityGovernorTestHooks? _testHooks;
 
-    internal ServerCallCapacityGovernor(int capacity)
+    internal ServerCallCapacityGovernor(
+        int capacity,
+        ServerCallCapacityGovernorTestHooks? testHooks = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
         _capacity = capacity;
+        _testHooks = testHooks;
     }
 
     internal int Capacity => _capacity;
 
-    internal bool TryReserve(out ServerCallReservation reservation)
+    internal bool TryReserve(
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ServerCallReservation? reservation)
     {
         while (true)
         {
@@ -30,7 +35,7 @@ internal sealed class ServerCallCapacityGovernor
             var active = GetActive(observed);
             if ((long)reserved + active >= _capacity)
             {
-                reservation = null!;
+                reservation = null;
                 return false;
             }
 
@@ -112,6 +117,12 @@ internal sealed class ServerCallCapacityGovernor
         }
     }
 
+    private void NotifyReservationEnteredActivatingForTest()
+        => _testHooks?.ReservationEnteredActivating?.Invoke();
+
+    private void NotifyDisposeObservedActivatingForTest()
+        => _testHooks?.DisposeObservedActivating?.Invoke();
+
     private static int GetReserved(long state) => unchecked((int)(uint)(state >> 32));
 
     private static int GetActive(long state) => unchecked((int)(uint)state);
@@ -157,6 +168,7 @@ internal sealed class ServerCallCapacityGovernor
 
             try
             {
+                _owner.NotifyReservationEnteredActivatingForTest();
                 _owner.ActivateReservation();
                 Volatile.Write(ref _state, Active);
             }
@@ -182,6 +194,7 @@ internal sealed class ServerCallCapacityGovernor
                         _owner.ReleaseReservation();
                         return;
                     case Activating:
+                        _owner.NotifyDisposeObservedActivatingForTest();
                         spinner.SpinOnce();
                         continue;
                     case Active:
@@ -198,6 +211,13 @@ internal sealed class ServerCallCapacityGovernor
             }
         }
     }
+}
+
+internal sealed class ServerCallCapacityGovernorTestHooks
+{
+    internal Action? ReservationEnteredActivating { get; init; }
+
+    internal Action? DisposeObservedActivating { get; init; }
 }
 
 internal readonly record struct ServerCallCapacitySnapshot(
