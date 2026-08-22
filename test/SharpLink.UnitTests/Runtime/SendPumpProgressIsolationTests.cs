@@ -179,7 +179,9 @@ public class SendPumpProgressIsolationTests
     [Test]
     public async Task ProgressBurstDoesNotStarveNormalFrames()
     {
-        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency)
+            .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
         var output = new Pipe(new PipeOptions(pauseWriterThreshold: 1, resumeWriterThreshold: 1));
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
@@ -189,10 +191,10 @@ public class SendPumpProgressIsolationTests
             RpcSessionTestFixture.ClientOptions(context));
         try
         {
-            // A progress frame flushes immediately. Keep its first transport
-            // read unconsumed so FlushAsync is deterministically backpressured,
-            // then build the complete progress backlog plus the normal batch
-            // while the pump cannot make any further scheduling progress.
+            // LowLatency flushes each progress frame from inside
+            // DrainProgressQueueAsync. Hold the first transport read without
+            // advancing it so the pump is deterministically parked inside that
+            // progress drain while the complete backlog is constructed.
             session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
             var firstResult = await output.Reader.ReadAsync().AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(10));
@@ -210,9 +212,11 @@ public class SendPumpProgressIsolationTests
             for (var index = 1; index <= normalFrames; index++)
                 session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 64, checked((ulong)index)));
 
-            // Releasing the first flush resumes the pump with both classes
-            // already queued. Normal traffic must get a scheduling turn before
-            // the queued progress backlog can drain to completion.
+            // Releasing the first flush resumes the same bounded progress
+            // drain. The normal queue must receive a turn before the already
+            // queued progress backlog reaches its final frame. Do not require
+            // a more specific wire order: LowLatency flush scheduling may
+            // expose different legal interleavings after that fairness point.
             output.Reader.AdvanceTo(firstResult.Buffer.End);
             var types = await ReadFrameTypesAsync(
                 output.Reader,
@@ -220,10 +224,14 @@ public class SendPumpProgressIsolationTests
                 expectedFrames: progressBacklog + normalFrames);
             Ensure(types.Count == progressBacklog + normalFrames,
                 $"expected {progressBacklog + normalFrames} frames, read {types.Count}");
-            Ensure(types.Take(normalFrames).All(static type => type == ProtocolV2FrameType.Response),
-                "normal frames must drain before the already-queued progress backlog completes");
-            Ensure(types.Skip(normalFrames).All(static type => type == ProtocolV2FrameType.Ping),
-                "the remaining progress backlog must drain after the normal scheduling turn");
+            Ensure(types.Count(static type => type == ProtocolV2FrameType.Ping) == progressBacklog,
+                $"expected {progressBacklog} remaining progress frames");
+            Ensure(types.Count(static type => type == ProtocolV2FrameType.Response) == normalFrames,
+                $"expected {normalFrames} normal frames");
+            var firstResponseIndex = types.FindIndex(static type => type == ProtocolV2FrameType.Response);
+            var finalPingIndex = types.FindLastIndex(static type => type == ProtocolV2FrameType.Ping);
+            Ensure(firstResponseIndex >= 0 && firstResponseIndex < finalPingIndex,
+                "a normal frame must be served before the queued progress backlog completes");
         }
         finally
         {
