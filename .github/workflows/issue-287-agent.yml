@@ -58,11 +58,5 @@ jobs:
           git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' src && exit 1 || true
       - name: Restore
         run: dotnet restore Sharplink.slnx
-      - name: Build source projects
-        run: |
-          dotnet build src/SharpLink.Abstractions/SharpLink.Abstractions.csproj --no-restore -c Release -v minimal
-          dotnet build src/SharpLink.Runtime/SharpLink.Runtime.csproj --no-restore -c Release -v minimal
-          dotnet build src/SharpLink.Generator/SharpLink.Generator.csproj --no-restore -c Release -v minimal
-          dotnet build src/SharpLink.Sdk/SharpLink.Sdk.csproj --no-restore -c Release -v minimal
-          dotnet build src/SharpLink.Client/SharpLink.Client.csproj --no-restore -c Release -v minimal
-          dotnet build src/SharpLink.Server/SharpLink.Server.csproj --no-restore -c Release -v minimal
+      - name: Build solution
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
