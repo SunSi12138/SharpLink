@@ -36,7 +36,18 @@ jobs:
         run: git diff --exit-code 9b6f627954ec5a0eaca31b4cea5accdd4a6d79c9 HEAD -- src/
 
       - name: Run paired combined-workload and guardrail gates
-        run: bash .github/issue252-active-epoch-window-evidence.sh
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/issue252-active-epoch-window-evidence.sh')
+          text = path.read_text()
+          old = 'dotnet test "$CANDIDATE/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"'
+          new = 'dotnet test --project "$CANDIDATE/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one dotnet test invocation, got {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          bash .github/issue252-active-epoch-window-evidence.sh
 
       - name: Upload evidence results
         if: always()
