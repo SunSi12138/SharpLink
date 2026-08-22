@@ -5,6 +5,9 @@ import { pathToFileURL } from 'node:url';
 
 const BUILTIN_RAW_CATEGORY = 'builtin-semantic-raw';
 const BROWSER_PLATFORM_TAG = 'browser-wasm-browser-mono-net10';
+const EXPECTED_FIXTURE_POLICY_SHA256 = '19ba9cda6e05e7a023af6ce76649deaf330e67d214f553c6611bab45019987d9';
+const ONE_BYTE_FIXTURE_ID_SET = new Set(['Byte', 'ByteEnum']);
+const EXPECTED_PADDING_POISON_FIXTURE_IDS = Object.freeze(['ByteInt32', 'Int64Byte']);
 const DESKTOP_PLATFORM_TAGS = Object.freeze([
     'linux-x64-hosted-desktop-coreclr-net10',
     'linux-arm64-hosted-desktop-coreclr-net10',
@@ -28,6 +31,15 @@ const CONSUMER_IDENTITY_FIELDS = Object.freeze([
     'osArchitecture',
     'pointerSize',
     'isLittleEndian',
+    'compilationMode'
+]);
+const EXACT_RUNTIME_FIELDS = Object.freeze([
+    'sharpLinkCommit',
+    'frameworkDescription',
+    'runtimeVersion',
+    'sdkVersion',
+    'osVersion',
+    'osArchitecture',
     'compilationMode'
 ]);
 const KNOWN_RUNTIME_IDENTITIES = Object.freeze({
@@ -130,6 +142,16 @@ function validateFixtureRegistry(manifest, source) {
     const sorted = [...entries]
         .map(item => ({ id: String(item.id), category: item.category, nativeWidth: item.nativeWidth }))
         .sort((left, right) => left.id.localeCompare(right.id));
+    const policyCanonical = sorted
+        .map(item => `${item.id}\t${item.category}\t${item.nativeWidth ? 1 : 0}\t${ONE_BYTE_FIXTURE_ID_SET.has(item.id) ? 0 : 1}\n`)
+        .join('');
+    const policyHash = sha256(Buffer.from(policyCanonical, 'utf8'));
+    if (policyHash !== EXPECTED_FIXTURE_POLICY_SHA256) {
+        throw new Error(
+            `${source} fixture registry does not match compatibility baseline policy: ` +
+            `expected=${EXPECTED_FIXTURE_POLICY_SHA256}, actual=${policyHash}.`);
+    }
+
     const byId = new Map(sorted.map(item => [item.id, item]));
     return {
         entries: sorted,
@@ -138,8 +160,18 @@ function validateFixtureRegistry(manifest, source) {
         rawFixtureIds: sorted.filter(item => item.category === BUILTIN_RAW_CATEGORY).map(item => item.id),
         rawFixtureIdSet: new Set(sorted.filter(item => item.category === BUILTIN_RAW_CATEGORY).map(item => item.id)),
         nativeWidthFixtureIdSet: new Set(sorted.filter(item => item.nativeWidth).map(item => item.id)),
+        requiresSegmentedFixtureIdSet: new Set(sorted.filter(item => !ONE_BYTE_FIXTURE_ID_SET.has(item.id)).map(item => item.id)),
         key: JSON.stringify(sorted)
     };
+}
+
+function validateExactRuntimeIdentity(manifest, source) {
+    for (const field of EXACT_RUNTIME_FIELDS) {
+        const value = String(manifest?.[field] ?? '');
+        if (value.length === 0 || value.toLowerCase() === 'unknown') {
+            throw new Error(`${source} requires known exact-runtime identity field ${field}; actual=${value || '<missing>'}.`);
+        }
+    }
 }
 
 function validateRuntimeManifestIdentity(manifest, source) {
@@ -160,8 +192,56 @@ function validateRuntimeManifestIdentity(manifest, source) {
                     `expected=${String(expectedValue)}, actual=${String(manifest?.[field])}.`);
             }
         }
+        validateExactRuntimeIdentity(manifest, source);
     }
     return registry;
+}
+
+function validatePaddingPoisonEvidence(manifest, source) {
+    const items = manifest?.paddingPoison;
+    if (!Array.isArray(items)) {
+        throw new Error(`${source} is missing padding-poison evidence.`);
+    }
+    const fixtureIds = items.map(item => String(item?.fixture ?? ''));
+    assertExactSet(fixtureIds, EXPECTED_PADDING_POISON_FIXTURE_IDS, `${source} padding-poison fixture IDs`);
+    if (fixtureIds.length !== EXPECTED_PADDING_POISON_FIXTURE_IDS.length) {
+        throw new Error(`${source} padding-poison evidence contains duplicate or extra rows.`);
+    }
+
+    for (const item of items) {
+        const fixture = String(item.fixture ?? '');
+        const size = Number(item.size);
+        const differing = item.differingByteOffsets;
+        const padding = item.paddingByteOffsets;
+        if (!Number.isInteger(size) || size <= 0 || item.logicalValuesEqual !== true
+            || !Array.isArray(differing) || !Array.isArray(padding) || padding.length === 0) {
+            throw new Error(`${source} has invalid padding-poison metadata for ${fixture}.`);
+        }
+        const uniqueDiffering = new Set(differing);
+        const uniquePadding = new Set(padding);
+        if (uniqueDiffering.size !== differing.length || uniquePadding.size !== padding.length
+            || differing.some(offset => !Number.isInteger(offset) || offset < 0 || offset >= size)
+            || padding.some(offset => !Number.isInteger(offset) || offset < 0 || offset >= size)) {
+            throw new Error(`${source} has invalid padding-poison offsets for ${fixture}.`);
+        }
+
+        const expectedWireEqual = differing.length === 0;
+        const expectedOnlyPadding = differing.every(offset => uniquePadding.has(offset));
+        if (item.wireBytesEqual !== expectedWireEqual || item.differencesOnlyInPadding !== expectedOnlyPadding) {
+            throw new Error(`${source} has inconsistent padding-poison result flags for ${fixture}.`);
+        }
+        for (const field of ['sourceAHash', 'sourceBHash', 'wireAHash', 'wireBHash']) {
+            if (!/^[0-9a-fA-F]{64}$/.test(String(item?.[field] ?? ''))) {
+                throw new Error(`${source} has invalid padding-poison hash ${field} for ${fixture}.`);
+            }
+        }
+
+        const manifestCase = (manifest?.cases ?? []).find(candidate => candidate?.id === fixture);
+        if (manifestCase && Number(manifestCase.size) !== size) {
+            throw new Error(
+                `${source} padding-poison size mismatch for ${fixture}: evidence=${size}, case=${String(manifestCase.size)}.`);
+        }
+    }
 }
 
 function assertSameFixtureRegistry(leftManifest, rightManifest, label) {
@@ -319,6 +399,13 @@ function validateStrictResultSemantics(
     const registry = validateFixtureRegistry(report.consumer, `${source} fixture registry`);
     for (const item of report.results) {
         const fixture = String(item.fixture ?? '');
+        const metadata = registry.byId.get(fixture);
+        if (!metadata || item.category !== metadata.category) {
+            throw new Error(
+                `${source} result fixture metadata mismatch: fixture=${fixture}, category=${String(item.category)}, ` +
+                `expectedCategory=${String(metadata?.category)}.`);
+        }
+
         const portableRawRepresentation = allowPortableRawRepresentation
             && registry.rawFixtureIdSet.has(fixture)
             && item.category === BUILTIN_RAW_CATEGORY
@@ -357,13 +444,11 @@ function validateStrictResultSemantics(
                 `classification=${String(item.classification)}, cross=${String(item.crossDeserializeResult)}, logical=${String(item.logicalEquality)}.`);
         }
 
-        const producerSize = Number(item.producerSize);
-        if (producerSize > 1
+        if (registry.requiresSegmentedFixtureIdSet.has(fixture)
             && (item.segmentedCrossDeserializeResult !== true || item.segmentedLogicalEquality !== true)) {
             throw new Error(
-                `${source} requires segmented semantic success for multi-byte fixture: producer=${String(item.producer)}, fixture=${fixture}, ` +
-                `size=${String(item.producerSize)}, segmentedCross=${String(item.segmentedCrossDeserializeResult)}, ` +
-                `segmentedLogical=${String(item.segmentedLogicalEquality)}.`);
+                `${source} requires segmented semantic success for policy multi-byte fixture: producer=${String(item.producer)}, fixture=${fixture}, ` +
+                `segmentedCross=${String(item.segmentedCrossDeserializeResult)}, segmentedLogical=${String(item.segmentedLogicalEquality)}.`);
         }
         validateByteClassification(item, source, false);
     }
@@ -382,6 +467,7 @@ export async function loadEnvelopes(root, options = {}) {
     for (const manifestFile of manifestFiles) {
         const originalManifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
         const registry = validateRuntimeManifestIdentity(originalManifest, manifestFile);
+        validatePaddingPoisonEvidence(originalManifest, manifestFile);
         if (expectedRegistryKey !== null && registry.key !== expectedRegistryKey) {
             throw new Error(`Producer fixture registry mismatch in ${manifestFile}.`);
         }
@@ -407,6 +493,7 @@ export async function writeCorpus(envelope, outputDirectory) {
     }
     validateSchemaVersion(envelope, 'portable producer envelope');
     const registry = validateRuntimeManifestIdentity(envelope.manifest, 'portable producer manifest');
+    validatePaddingPoisonEvidence(envelope.manifest, 'portable producer manifest');
     validateBuiltinRawCategoryBoundary(envelope.manifest, 'portable producer manifest', registry);
 
     await fs.rm(outputDirectory, { recursive: true, force: true });

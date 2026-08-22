@@ -7,14 +7,24 @@ namespace SharpLink.CodecCompatibility;
 
 internal sealed class RuntimeManifest : IJsonOnDeserialized
 {
+    private string _runtimeFamilySource = DefaultRuntimeFamilySource();
+    private bool _runtimeFamilySourceSpecified;
+
     [JsonRequired]
     public int SchemaVersion { get; set; }
     public string SharpLinkCommit { get; set; } = string.Empty;
     public string TargetFramework { get; set; } = string.Empty;
     public string FrameworkDescription { get; set; } = string.Empty;
     public string RuntimeFamily { get; set; } = string.Empty;
-    [JsonRequired]
-    public string RuntimeFamilySource { get; set; } = DefaultRuntimeFamilySource();
+    public string RuntimeFamilySource
+    {
+        get => _runtimeFamilySource;
+        set
+        {
+            _runtimeFamilySource = value;
+            _runtimeFamilySourceSpecified = true;
+        }
+    }
     public string RuntimeVersion { get; set; } = string.Empty;
     public string SdkVersion { get; set; } = string.Empty;
     public string RuntimeIdentifier { get; set; } = string.Empty;
@@ -27,13 +37,19 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
     public bool IsLittleEndian { get; set; }
     public string CompilationMode { get; set; } = string.Empty;
     public string PlatformTag { get; set; } = string.Empty;
-    [JsonRequired]
     public List<FixtureRegistryEntry> FixtureRegistry { get; set; } = CreateFixtureRegistry();
     public List<CaseManifest> Cases { get; set; } = [];
     public List<PaddingPoisonResult> PaddingPoison { get; set; } = [];
 
     void IJsonOnDeserialized.OnDeserialized()
     {
+        if (SchemaVersion != CompatibilityPolicy.ArtifactSchemaVersion)
+            throw new InvalidOperationException($"Unsupported runtime manifest schemaVersion {SchemaVersion}.");
+
+        if (!_runtimeFamilySourceSpecified || string.IsNullOrWhiteSpace(RuntimeFamilySource))
+            RuntimeFamilySource = InferRuntimeFamilySource(Os);
+        FixtureRegistry ??= CreateFixtureRegistry();
+
         ValidateFixtureRegistry();
         var derivedTag = $"{Os}-{ProcessArchitecture}-{ExecutionEnvironment}-{RuntimeFamily.ToLowerInvariant()}-net10";
         if (!string.Equals(PlatformTag, derivedTag, StringComparison.Ordinal))
@@ -77,6 +93,9 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
                 ValidateKnownIdentity("android", "arm64", "physical-device", RuntimeFamily, "loaded-runtime-library", "android-arm64", "net10.0-android/android-arm64", 8);
                 break;
         }
+
+        if (Cases.Count != 0)
+            CompatibilityPolicy.ValidatePaddingPoisonEvidence(this);
     }
 
     private void ValidateKnownIdentity(
@@ -103,21 +122,12 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
                 $"environment={ExecutionEnvironment}, runtimeFamily={RuntimeFamily}, runtimeFamilySource={RuntimeFamilySource}, " +
                 $"runtimeIdentifier={RuntimeIdentifier}, targetFramework={TargetFramework}, pointerSize={PointerSize}.");
         }
+
+        CompatibilityPolicy.ValidateServicingIdentity(this);
     }
 
     private void ValidateFixtureRegistry()
-    {
-        var expected = global::SharpLink.CodecCompatibility.FixtureRegistry.All
-            .OrderBy(static fixture => fixture.Id, StringComparer.Ordinal)
-            .Select(static fixture => (fixture.Id, fixture.Category, fixture.NativeWidth))
-            .ToArray();
-        var actual = FixtureRegistry
-            .OrderBy(static fixture => fixture.Id, StringComparer.Ordinal)
-            .Select(static fixture => (fixture.Id, fixture.Category, fixture.NativeWidth))
-            .ToArray();
-        if (!actual.SequenceEqual(expected))
-            throw new InvalidOperationException($"Runtime manifest {PlatformTag} fixture registry does not match the shared FixtureRegistry.");
-    }
+        => CompatibilityPolicy.ValidateManifestFixtureRegistry(this);
 
     private static string DefaultRuntimeFamilySource()
         => OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst()
@@ -125,6 +135,15 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
             : OperatingSystem.IsAndroid()
                 ? "loaded-runtime-library"
                 : "runtime-reflection";
+
+    private static string InferRuntimeFamilySource(string os)
+        => string.Equals(os, "browser", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(os, "ios", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(os, "maccatalyst", StringComparison.OrdinalIgnoreCase)
+                ? "platform-runtime-pack"
+                : string.Equals(os, "android", StringComparison.OrdinalIgnoreCase)
+                    ? "loaded-runtime-library"
+                    : "runtime-reflection";
 
     private static List<FixtureRegistryEntry> CreateFixtureRegistry()
         => global::SharpLink.CodecCompatibility.FixtureRegistry.All
@@ -211,6 +230,13 @@ internal sealed class VerificationEntry : IJsonOnDeserialized
 
     void IJsonOnDeserialized.OnDeserialized()
     {
+        var policy = CompatibilityPolicy.GetFixturePolicy(Fixture);
+        if (!string.Equals(Category, policy.Category, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Result category mismatch for producer={Producer}, fixture={Fixture}: expected={policy.Category}, actual={Category}.");
+        }
+
         var raw = string.Equals(Category, "builtin-semantic-raw", StringComparison.Ordinal)
             && (string.Equals(Classification, "IDENTICAL_RAW_REPRESENTATION", StringComparison.Ordinal)
                 || string.Equals(Classification, "RAW_BUILTIN_REPRESENTATION_MISMATCH", StringComparison.Ordinal));
@@ -228,9 +254,20 @@ internal sealed class VerificationEntry : IJsonOnDeserialized
             return;
         }
 
+        if (!Blocking
+            && CrossDeserializeResult == true
+            && LogicalEquality == true
+            && policy.RequiresSegmentedEvidence
+            && (SegmentedCrossDeserializeResult != true || SegmentedLogicalEquality != true))
+        {
+            throw new InvalidOperationException(
+                $"Nonblocking result for producer={Producer}, fixture={Fixture} is missing trusted segmented semantic success.");
+        }
+
         var semanticSuccess = CrossDeserializeResult == true
             && LogicalEquality == true
-            && (ProducerSize <= 1 || (SegmentedCrossDeserializeResult == true && SegmentedLogicalEquality == true));
+            && (!policy.RequiresSegmentedEvidence
+                || (SegmentedCrossDeserializeResult == true && SegmentedLogicalEquality == true));
         if (!semanticSuccess)
             return;
 

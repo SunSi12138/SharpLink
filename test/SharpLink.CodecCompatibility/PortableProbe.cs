@@ -72,7 +72,11 @@ internal static class PortableProbe
             expectedCompilationMode,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
-        var envelope = new CorpusEnvelope { SchemaVersion = 1, Manifest = manifest };
+        var envelope = new CorpusEnvelope
+        {
+            SchemaVersion = CompatibilityPolicy.ArtifactSchemaVersion,
+            Manifest = manifest
+        };
 
         foreach (var fixture in FixtureRegistry.All)
         {
@@ -94,6 +98,7 @@ internal static class PortableProbe
         }
 
         manifest.PaddingPoison = FixtureRegistry.RunPaddingPoison();
+        CompatibilityPolicy.ValidatePaddingPoisonEvidence(manifest);
         return envelope;
     }
 
@@ -113,39 +118,29 @@ internal static class PortableProbe
             expectedCompilationMode,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
-        var report = new VerificationReport { SchemaVersion = 1, Consumer = consumer };
+        var report = new VerificationReport
+        {
+            SchemaVersion = CompatibilityPolicy.ArtifactSchemaVersion,
+            Consumer = consumer
+        };
 
         foreach (var envelope in envelopes.OrderBy(static item => item.Manifest.PlatformTag, StringComparer.Ordinal))
         {
-            if (envelope.SchemaVersion != 1 || envelope.Manifest.SchemaVersion != 1)
+            if (envelope.SchemaVersion != CompatibilityPolicy.ArtifactSchemaVersion
+                || envelope.Manifest.SchemaVersion != CompatibilityPolicy.ArtifactSchemaVersion)
+            {
                 throw new InvalidOperationException($"Unsupported portable corpus schema for {envelope.Manifest.PlatformTag}.");
+            }
 
             var producer = envelope.Manifest;
+            CompatibilityPolicy.ValidatePaddingPoisonEvidence(producer);
             ValidateSameCommit(producer, consumer);
             ValidateProducerCases(envelope);
 
             foreach (var producerCase in producer.Cases.OrderBy(static item => item.Id, StringComparer.Ordinal))
             {
                 if (!FixtureRegistry.ById.TryGetValue(producerCase.Id, out var fixture))
-                {
-                    report.Results.Add(new VerificationEntry
-                    {
-                        Producer = producer.PlatformTag,
-                        Consumer = consumer.PlatformTag,
-                        Fixture = producerCase.Id,
-                        Category = producerCase.Category,
-                        CodecPath = producerCase.CodecPath,
-                        ProducerSize = producerCase.Size,
-                        ConsumerPointerSize = consumer.PointerSize,
-                        ProducerPointerSize = producer.PointerSize,
-                        ProducerFieldOffsets = producerCase.FieldOffsets,
-                        ProducerWireHash = producerCase.WireSha256,
-                        ExpectedLogicalValue = producerCase.ExpectedLogicalValue,
-                        Classification = "PROBE_UNAVAILABLE",
-                        Blocking = true
-                    });
-                    continue;
-                }
+                    throw new InvalidOperationException($"Portable producer {producer.PlatformTag} contains unknown fixture {producerCase.Id}.");
 
                 if (!envelope.CaseBytesBase64.TryGetValue(producerCase.Id, out var base64))
                     throw new InvalidOperationException($"Portable corpus is missing wire bytes for {producer.PlatformTag}/{producerCase.Id}.");
@@ -173,6 +168,8 @@ internal static class PortableProbe
         string? expectedRuntimeFamily,
         string? executionEnvironmentOverride)
     {
+        CompatibilityPolicy.ValidateCurrentFixtureRegistry();
+
         var os = OperatingSystem.IsBrowser()
             ? "browser"
             : OperatingSystem.IsAndroid()
@@ -226,9 +223,9 @@ internal static class PortableProbe
                         ? "ios-runtime"
                         : "hosted-desktop");
 
-        return new RuntimeManifest
+        var manifest = new RuntimeManifest
         {
-            SchemaVersion = 1,
+            SchemaVersion = CompatibilityPolicy.ArtifactSchemaVersion,
             SharpLinkCommit = string.IsNullOrWhiteSpace(sharpLinkCommit) ? "unknown" : sharpLinkCommit,
             TargetFramework = targetFramework,
             FrameworkDescription = RuntimeInformation.FrameworkDescription,
@@ -247,6 +244,10 @@ internal static class PortableProbe
             CompilationMode = compilationMode,
             PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
+
+        CompatibilityPolicy.ValidateManifestFixtureRegistry(manifest);
+        CompatibilityPolicy.ValidateServicingIdentity(manifest);
+        return manifest;
     }
 
     private static void ValidateSameCommit(RuntimeManifest producer, RuntimeManifest consumer)
@@ -270,16 +271,48 @@ internal static class PortableProbe
         if (duplicates.Length != 0)
             throw new InvalidOperationException($"Portable producer {producer.PlatformTag} contains duplicate fixture IDs: {string.Join(", ", duplicates)}.");
 
-        var includesBuiltinRaw = producer.Cases.Any(item => string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal));
-        var expectedIds = FixtureRegistry.All
-            .Where(item => includesBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
+        foreach (var producerCase in producer.Cases)
+        {
+            var policy = CompatibilityPolicy.GetFixturePolicy(producerCase.Id);
+            if (CompatibilityPolicy.BuiltinRawFixtureIds.Contains(producerCase.Id))
+            {
+                throw new InvalidOperationException(
+                    $"Portable semantic verification refuses framework-owned raw fixture {producerCase.Id}; use the representation-only raw evidence path instead.");
+            }
+            if (!string.Equals(producerCase.Category, policy.Category, StringComparison.Ordinal)
+                || producerCase.NativeWidth != policy.NativeWidth)
+            {
+                throw new InvalidOperationException(
+                    $"Portable producer {producer.PlatformTag} metadata mismatch for {producerCase.Id}: " +
+                    $"category={producerCase.Category}, nativeWidth={producerCase.NativeWidth}.");
+            }
+        }
+
+        var expectedIds = CompatibilityPolicy.ExpectedFixtureIds
+            .Where(id => !CompatibilityPolicy.BuiltinRawFixtureIds.Contains(id))
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+        var actualIds = producer.Cases
             .Select(static item => item.Id)
             .OrderBy(static id => id, StringComparer.Ordinal)
             .ToArray();
-        var actualIds = producer.Cases.Select(static item => item.Id).ToHashSet(StringComparer.Ordinal);
-        var missing = expectedIds.Where(id => !actualIds.Contains(id)).ToArray();
-        if (missing.Length != 0)
-            throw new InvalidOperationException($"Portable producer {producer.PlatformTag} is missing expected fixture IDs: {string.Join(", ", missing)}.");
+        if (!actualIds.SequenceEqual(expectedIds, StringComparer.Ordinal))
+        {
+            var actualSet = actualIds.ToHashSet(StringComparer.Ordinal);
+            var expectedSet = expectedIds.ToHashSet(StringComparer.Ordinal);
+            var missing = expectedSet.Except(actualSet, StringComparer.Ordinal).OrderBy(static id => id, StringComparer.Ordinal);
+            var unexpected = actualSet.Except(expectedSet, StringComparer.Ordinal).OrderBy(static id => id, StringComparer.Ordinal);
+            throw new InvalidOperationException(
+                $"Portable producer {producer.PlatformTag} safe fixture set mismatch: " +
+                $"missing=[{string.Join(", ", missing)}], unexpected=[{string.Join(", ", unexpected)}].");
+        }
+
+        var byteIds = envelope.CaseBytesBase64.Keys.OrderBy(static id => id, StringComparer.Ordinal).ToArray();
+        if (!byteIds.SequenceEqual(expectedIds, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Portable producer {producer.PlatformTag} encoded wire-byte set does not match the trusted safe fixture set.");
+        }
     }
 
     private static string DetectRuntimeIdentifier(string os, string processArchitecture)
