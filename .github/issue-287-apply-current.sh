@@ -36,6 +36,7 @@ xz -t /tmp/issue-287-review-round3.patch.xz
 xz -dc /tmp/issue-287-review-round3.patch.xz | git apply -
 python3 .github/issue-287-review-round3-fix.py
 python3 .github/issue-287-review-round3-integration-fix.py
+python3 .github/issue-287-unit-fixes.py
 
 git diff --check
 ! git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' -- src
@@ -48,4 +49,5 @@ assert 'public const int Api = 4;' in Path('src/SharpLink.Abstractions/SharpLink
 assert 'public int ApiVersion => 4;' in Path('src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs').read_text()
 assert 'Get<TContract>(SharpLinkMetadata metadata)' not in Path('src/SharpLink.Abstractions/ISharpLinkClient.cs').read_text()
 assert 'GetWithMetadata<TContract>(SharpLinkMetadata metadata)' in Path('src/SharpLink.Abstractions/ISharpLinkClient.cs').read_text()
+assert 'RpcDeadline deadline)' not in Path('src/SharpLink.Runtime/OwnedFrame.cs').read_text()
 PY
