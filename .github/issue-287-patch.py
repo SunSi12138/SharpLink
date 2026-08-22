@@ -37,13 +37,12 @@ replacement = '''    private ResolvedCallControl ResolveCallControl(
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
 
         // Method policy overrides the client-wide fallback. These are policy-selection layers,
-        // not independent lifetime caps. A parent/inherited RPC lifetime, when propagated, is
-        // the separate constraint that may cap the selected local policy.
-        var selectedTimeout = hasMethodTimeout
-            ? methodTimeout
-            : includeClientDefault && _hasRequestTimeout
-                ? _requestTimeoutValue
-                : null;
+        // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
+        // the client-wide value even on call shapes that do not otherwise use the client default.
+        var selectedTimeout = methodTimeout;
+        if (selectedTimeout is null && (includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)
+            selectedTimeout = _requestTimeoutValue;
+
         var timeProvider = _runtimeContext.TimeProvider;
         var deadline = selectedTimeout is { } timeout
             ? RpcDeadline.Create(timeout, timeProvider)
