@@ -28,6 +28,7 @@ jobs:
           python3 .github/issue-287-tests.py
           python3 .github/issue-287-review-tests.py
           python3 .github/issue-287-followup.py
+          python3 .github/issue-287-generator-tests.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
@@ -64,3 +65,5 @@ jobs:
       - name: Review regression tests
         run: |
           dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --filter "FullyQualifiedName~SharpLinkClientTimeBudgetTests|FullyQualifiedName~ProtocolV2TimeBudgetCompatibilityTests" -v minimal
+      - name: Generator tests
+        run: dotnet test test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --no-build -c Release -v minimal
