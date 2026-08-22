@@ -36,6 +36,7 @@ jobs:
           python3 .github/issue-287-docs.py
           python3 .github/issue-287-review-round2.py
           python3 .github/issue-287-review-round2-followup.py
+          python3 .github/issue-287-review-round2-compile-fixes.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
