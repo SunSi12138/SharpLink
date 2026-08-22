@@ -185,11 +185,14 @@ assert old in text
 text = text.replace(old, new)
 p.write_text(text)
 
-# The server has an explicit handshake implementation; enforce the same breaking minor boundary
-# there, not only in the reusable negotiator used by the client/tests.
+# Older server revisions performed handshake checks inline. Patch that form when present. Newer
+# revisions delegate the server handshake to ProtocolV2Negotiator, which is already patched above.
 server_handshake_patched = 0
+server_uses_negotiator = False
 for p in Path('src/SharpLink.Server').rglob('*.cs'):
     text = p.read_text()
+    if 'ProtocolV2Negotiator.NegotiateServer(' in text:
+        server_uses_negotiator = True
     marker = '''                        var unsupportedRequired = request.RequiredCapabilities & ~supportedCapabilities;
                         if (unsupportedRequired != ProtocolV2Capabilities.None)'''
     if marker not in text:
@@ -205,4 +208,6 @@ for p in Path('src/SharpLink.Server').rglob('*.cs'):
                         else if (unsupportedRequired != ProtocolV2Capabilities.None)'''
     p.write_text(text.replace(marker, replacement))
     server_handshake_patched += 1
-assert server_handshake_patched == 1, server_handshake_patched
+assert server_handshake_patched == 1 or server_uses_negotiator, (
+    server_handshake_patched,
+    server_uses_negotiator)
