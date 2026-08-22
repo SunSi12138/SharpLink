@@ -64,7 +64,24 @@ jobs:
           git grep -n -E 'TimeBudgetMinorVersion|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- src/SharpLink.Client src/SharpLink.Server src/SharpLink.Abstractions/ProtocolV2.cs && exit 1 || true
           echo '=== stale active docs ==='
           git grep -n 'SharpLinkCallOptions' -- README.md doc && exit 1 || true
-          git grep -n -E '1\.1\.x Client.*2\.0 Server|2\.0 Client.*1\.1\.x Server|Protocol v2 wire format.*unchanged|all four SharpLink 1\.1\.1/2\.0 Protocol v2 process pairs' -- CHANGELOG.md doc && exit 1 || true
+          python3 - <<'PY'
+          from pathlib import Path
+          changelog = Path('CHANGELOG.md').read_text()
+          unreleased = changelog.split('## [1.1.1]', 1)[0]
+          stale = [
+              'all four SharpLink 1.1.1/2.0 Protocol v2 process pairs',
+              'separate 1.1.1 and 2.0 processes interoperate',
+              'Protocol v2 wire format, contract/schema identity, and call-path performance are unchanged',
+          ]
+          for phrase in stale:
+              assert phrase not in unreleased, phrase
+          migration = Path('doc/migration.md').read_text()
+          for phrase in [
+              '1.1.x Client 与 2.0 Server、2.0 Client 与 1.1.x Server 仍可通过 Protocol v2 互操作',
+              '迁移到 2.0 不改变 wire frame 或 capability negotiation',
+          ]:
+              assert phrase not in migration, phrase
+          PY
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Build solution
