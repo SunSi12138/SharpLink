@@ -188,12 +188,19 @@ internal static class PortableProbe
                                 : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
                                     ? "linux"
                                     : "unknown";
-        var runtimeFamily = DetectRuntimeFamily();
-        if (!string.IsNullOrWhiteSpace(expectedRuntimeFamily)
-            && !string.Equals(runtimeFamily, expectedRuntimeFamily, StringComparison.OrdinalIgnoreCase))
+        var (runtimeFamily, runtimeFamilySource) = DetectRuntimeFamily();
+        if (!string.IsNullOrWhiteSpace(expectedRuntimeFamily))
         {
-            throw new InvalidOperationException(
-                $"Runtime family mismatch: expected lane {expectedRuntimeFamily}, observed {runtimeFamily} in-process.");
+            if (string.Equals(runtimeFamilySource, "platform-runtime-pack", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Runtime family for {os} is platform/runtime-pack derived and cannot be independently asserted by the lane.");
+            }
+            if (!string.Equals(runtimeFamily, expectedRuntimeFamily, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Runtime family mismatch: expected lane {expectedRuntimeFamily}, observed {runtimeFamily} in-process.");
+            }
         }
 
         var compilationMode = !RuntimeFeature.IsDynamicCodeSupported
@@ -226,6 +233,7 @@ internal static class PortableProbe
             TargetFramework = targetFramework,
             FrameworkDescription = RuntimeInformation.FrameworkDescription,
             RuntimeFamily = runtimeFamily,
+            RuntimeFamilySource = runtimeFamilySource,
             RuntimeVersion = Environment.Version.ToString(),
             SdkVersion = string.IsNullOrWhiteSpace(sdkVersion) ? "unknown" : sdkVersion,
             RuntimeIdentifier = runtimeIdentifier,
@@ -294,19 +302,15 @@ internal static class PortableProbe
         };
     }
 
-    private static string DetectRuntimeFamily()
+    private static (string Family, string Source) DetectRuntimeFamily()
     {
-        // .NET's browser-wasm and iOS runtime packs execute Mono. Mono.Runtime can be
-        // trimmed from these closed-world applications, so reflection alone is not a
-        // reliable runtime discriminator there. OperatingSystem.* is evaluated by the
-        // running target and cannot be supplied by the workflow harness.
         if (OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
-            return "Mono";
+            return ("Mono", "platform-runtime-pack");
 
         if (OperatingSystem.IsAndroid())
-            return DetectAndroidRuntimeFamily();
+            return (DetectAndroidRuntimeFamily(), "loaded-runtime-library");
 
-        return Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono";
+        return (Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono", "runtime-reflection");
     }
 
     private static string DetectAndroidRuntimeFamily()
