@@ -58,22 +58,33 @@ jobs:
               'if (IsCancellationTokenParameter(parameter))')
           p.write_text(text)
           PY
+          xz -dc .github/issue-287-review-round3.patch.xz | git apply -
           git diff --stat
           git diff --check
           echo '=== removed source concepts ==='
           git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' src && exit 1 || true
+          echo '=== removed dead WaitForReady compatibility ==='
+          git grep -n 'WaitForReady' -- src/SharpLink.Client && exit 1 || true
           echo '=== legacy wire compatibility gates ==='
           git grep -n -E 'TimeBudgetMinorVersion|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- src/SharpLink.Client src/SharpLink.Server src/SharpLink.Abstractions/ProtocolV2.cs && exit 1 || true
           echo '=== stale active docs ==='
           git grep -n 'SharpLinkCallOptions' -- README.md doc && exit 1 || true
+          git grep -n 'API 6' -- doc/migration.md doc/getting-started.md doc/troubleshooting.md doc/architecture.md doc/index.md && exit 1 || true
+          bash -n eng/verify-protocol-v2-cross-version.sh
+          git grep -n '1.1.1' -- eng/verify-protocol-v2-cross-version.sh && exit 1 || true
           python3 - <<'PY'
           from pathlib import Path
+          abstractions = Path('src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs').read_text()
+          generator = Path('src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs').read_text()
+          assert 'public const int Api = 4;' in abstractions
+          assert 'public int ApiVersion => 4;' in generator
           changelog = Path('CHANGELOG.md').read_text()
           unreleased = changelog.split('## [1.1.1]', 1)[0]
           stale = [
               'all four SharpLink 1.1.1/2.0 Protocol v2 process pairs',
               'separate 1.1.1 and 2.0 processes interoperate',
               'Protocol v2 wire format, contract/schema identity, and call-path performance are unchanged',
+              'pre-release 2.0-dev API 4 artifacts are likewise rejected',
           ]
           for phrase in stale:
               assert phrase not in unreleased, phrase
@@ -83,6 +94,7 @@ jobs:
               '迁移到 2.0 不改变 wire frame 或 capability negotiation',
           ]:
               assert phrase not in migration, phrase
+          assert '1.1.1/API 3' in migration and 'API 4' in migration
           PY
       - name: Capture applied worktree
         run: |
