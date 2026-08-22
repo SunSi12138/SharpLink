@@ -28,4 +28,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Validate sparse ring candidates
-        run: bash .github/issue252-sparse-ring-evidence.sh
+        shell: bash
+        run: |
+          # The first evidence attempt stopped before candidate tests because detached unit-test
+          # worktrees had not restored their own project assets. Allow the normal test restore;
+          # this changes no candidate code, benchmark workload, or performance gate.
+          sed -i 's/ -c Release --no-restore$/ -c Release/' .github/issue252-sparse-ring-evidence.sh
+          bash .github/issue252-sparse-ring-evidence.sh
