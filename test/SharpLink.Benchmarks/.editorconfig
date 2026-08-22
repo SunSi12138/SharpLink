@@ -2,4 +2,6 @@
 # The one-byte output-limit probe mirrors the production Brotli decoder guard and
 # can execute only after the bounded output is already full. Keep the exception
 # local to this benchmark-only prototype rather than weakening repository rules.
+# Hosted-runner performance conclusions use within-shard relative ratios; independent
+# workflow repetitions are used to check that the selected shape survives VM noise.
 dotnet_diagnostic.CA2014.severity = none
