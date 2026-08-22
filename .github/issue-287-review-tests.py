@@ -54,7 +54,7 @@ public class SharpLinkClientTimeBudgetTests
         parentTimeProvider.Advance(TimeSpan.FromSeconds(2));
         using var scope = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
             "parent",
-            authentication: null,
+            null,
             parentDeadline,
             parentTimeProvider));
 
@@ -95,7 +95,7 @@ public class SharpLinkClientTimeBudgetTests
             HasMethodTimeout: true,
             MethodTimeout: timeout);
 
-    private static TimeSpan ReadTimeBudget(TestProtocolFrame sent)
+    private static TimeSpan ReadTimeBudget(TestSentFrame sent)
         => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
             sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
 
