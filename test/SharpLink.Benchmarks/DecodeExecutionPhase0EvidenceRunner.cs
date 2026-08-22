@@ -714,7 +714,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         var completion = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queuedAt = Stopwatch.GetTimestamp();
         metrics.OnDecodeQueued();
-        var work = new DecodeWorkItem(
+        var work = new ThreadPoolDecodeWorkItem(
             provider,
             compressed,
             output,
@@ -732,7 +732,43 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         return await completion.Task;
     }
 
-    private sealed class DecodeWorkItem
+    private readonly record struct ThreadPoolDecodeWorkItem(
+        ISharpLinkCompressionProvider Provider,
+        ReadOnlyMemory<byte> Compressed,
+        PooledOutput Output,
+        int OriginalLength,
+        CancellationToken CancellationToken,
+        Action? OnDecodeStart,
+        TaskCompletionSource<double> Completion,
+        long QueuedAt,
+        DecodeMetrics Metrics)
+    {
+        internal void Run()
+        {
+            Metrics.OnDecodeDequeued();
+            var schedulerDelay = ElapsedMicroseconds(QueuedAt);
+            try
+            {
+                OnDecodeStart?.Invoke();
+                Metrics.OnDecompress();
+                ValidateProviderResult(
+                    Provider.Decompress(
+                        new ReadOnlySequence<byte>(Compressed),
+                        Output,
+                        OriginalLength,
+                        CancellationToken),
+                    Compressed.Length,
+                    OriginalLength);
+                Completion.TrySetResult(schedulerDelay);
+            }
+            catch (Exception exception)
+            {
+                Completion.TrySetException(exception);
+            }
+        }
+    }
+
+    private sealed class PersistentDecodeWorkItem
     {
         private const int Queued = 0;
         private const int Running = 1;
@@ -749,7 +785,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         private CancellationTokenRegistration _cancellationRegistration;
         private int _state;
 
-        internal DecodeWorkItem(
+        internal PersistentDecodeWorkItem(
             ISharpLinkCompressionProvider provider,
             ReadOnlyMemory<byte> compressed,
             PooledOutput output,
@@ -776,7 +812,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
             if (!_cancellationToken.CanBeCanceled)
                 return;
             _cancellationRegistration = _cancellationToken.Register(
-                static state => ((DecodeWorkItem)state!).CancelBeforeStart(),
+                static state => ((PersistentDecodeWorkItem)state!).CancelBeforeStart(),
                 this);
         }
 
@@ -799,6 +835,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
                 // ownership wins, check the token before any provider-side CRC/decode work.
                 _cancellationToken.ThrowIfCancellationRequested();
                 _onDecodeStart?.Invoke();
+                _cancellationToken.ThrowIfCancellationRequested();
                 _metrics.OnDecompress();
                 ValidateProviderResult(
                     _provider.Decompress(
@@ -830,14 +867,14 @@ internal static class DecodeExecutionPhase0EvidenceRunner
 
     private sealed class PersistentDecodeExecutor : IAsyncDisposable
     {
-        private readonly Channel<DecodeWorkItem> _channel;
+        private readonly Channel<PersistentDecodeWorkItem> _channel;
         private readonly Task[] _workers;
         private readonly DecodeMetrics _metrics;
 
         internal PersistentDecodeExecutor(int workers, int capacity, DecodeMetrics metrics)
         {
             _metrics = metrics;
-            _channel = Channel.CreateBounded<DecodeWorkItem>(new BoundedChannelOptions(capacity)
+            _channel = Channel.CreateBounded<PersistentDecodeWorkItem>(new BoundedChannelOptions(capacity)
             {
                 FullMode = BoundedChannelFullMode.Wait,
                 SingleReader = workers == 1,
@@ -859,7 +896,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         {
             var completion = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
             var queuedAt = Stopwatch.GetTimestamp();
-            var work = new DecodeWorkItem(
+            var work = new PersistentDecodeWorkItem(
                 provider,
                 compressed,
                 output,
