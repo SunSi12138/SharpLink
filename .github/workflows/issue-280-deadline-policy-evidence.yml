@@ -36,36 +36,31 @@ jobs:
       - name: Restore evidence projects
         run: |
           dotnet restore test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj
-          dotnet restore test/SharpLink.DeadlinePolicyFairEvidence/SharpLink.DeadlinePolicyFairEvidence.csproj
+          dotnet restore test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj
 
       - name: Build evidence projects
         run: |
           dotnet build test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj -c Release --no-restore -v minimal
-          dotnet build test/SharpLink.DeadlinePolicyFairEvidence/SharpLink.DeadlinePolicyFairEvidence.csproj -c Release --no-restore -v minimal
+          dotnet build test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -c Release --no-restore -v minimal
 
-      - name: Run deterministic correctness and instrumented evidence
+      - name: Run deterministic correctness suite
         run: >-
           dotnet run -c Release --no-build
           --project test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj
           --
           --correctness
-          --benchmark
-          --primary-rounds 3
-          --boundary-rounds 1
-          --warmup-seconds 1
-          --duration-seconds 2
-          --json artifacts/issue-280/deadline-policy-evidence.json
+          --json artifacts/issue-280/correctness.json
 
-      - name: Run allocation-neutral paired performance evidence
+      - name: Run paired performance decision evidence
         run: >-
           dotnet run -c Release --no-build
-          --project test/SharpLink.DeadlinePolicyFairEvidence/SharpLink.DeadlinePolicyFairEvidence.csproj
+          --project test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj
           --
           --primary-rounds 3
           --boundary-rounds 1
           --warmup-seconds 1
           --duration-seconds 2
-          --json artifacts/issue-280/fair-deadline-policy-evidence.json
+          --json artifacts/issue-280/decision-evidence.json
 
       - name: Publish evidence summary
         if: always()
@@ -75,32 +70,28 @@ jobs:
           import os
           from pathlib import Path
 
-          instrumented_path = Path("artifacts/issue-280/deadline-policy-evidence.json")
-          fair_path = Path("artifacts/issue-280/fair-deadline-policy-evidence.json")
+          correctness_path = Path("artifacts/issue-280/correctness.json")
+          decision_path = Path("artifacts/issue-280/decision-evidence.json")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
               out.write("## Issue #280 policy-aware deadline evidence\n\n")
-              if instrumented_path.exists():
-                  report = json.loads(instrumented_path.read_text())
+              if correctness_path.exists():
+                  report = json.loads(correctness_path.read_text())
                   correctness = report.get("Correctness")
-                  evidence = report.get("Evidence")
                   if correctness:
                       out.write(f"Correctness: **{correctness['Total'] - correctness['Failed']}/{correctness['Total']} passed**.\n\n")
-                  if evidence:
-                      guard = evidence["ZeroDeadlineAllocationGuardrail"]
-                      probe = evidence["ExecutionContextProbe"]
-                      out.write(
-                          f"Zero-deadline guardrail: {guard['AllocatedBytesPerOperation']:.3f} B/op; "
-                          f"runtime timer creates={guard['RuntimeTimerCreates']}; callbacks={guard['RuntimeTimerCallbacks']}.  \n"
-                      )
-                      out.write(f"TimeProvider.System timer ExecutionContext captured by probe: `{probe['Captured']}`.\n\n")
-
-              if not fair_path.exists():
+              if not decision_path.exists():
                   raise SystemExit(0)
-              fair = json.loads(fair_path.read_text())
-              out.write("Primary performance decision lane: **allocation-neutral paired runner**.\n\n")
+              decision = json.loads(decision_path.read_text())
+              guard = decision["ZeroDeadlineGuardrail"]
+              probe = decision["ExecutionContextProbe"]
+              out.write(
+                  f"Zero-deadline guardrail: {guard['AllocatedBytesPerOperation']:.3f} B/op; "
+                  f"runtime timer creates={guard['RuntimeTimerCreates']}; callbacks={guard['RuntimeTimerCallbacks']}.  \n"
+              )
+              out.write(f"TimeProvider.System timer ExecutionContext captured by delayed probe: `{probe['Captured']}`.\n\n")
               out.write("| Scenario | Priority | density | expiry | capacity | QPS Δ per-call | CPU Δ per-call | alloc Δ B/op | shared p99 ms | per-call p99 ms |\n")
               out.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
-              for row in fair["Summaries"]:
+              for row in decision["Summaries"]:
                   out.write(
                       f"| {row['Scenario']} | {row['Priority']} | {row['DeadlineDensityPercent']:.2f}% | "
                       f"{row['ExpiryPercentOfDeadlineCalls']:.2f}% | {row['Capacity']:,} | "
