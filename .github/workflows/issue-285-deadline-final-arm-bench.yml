@@ -1,4 +1,4 @@
-name: Issue 285 Deadline Final Arm Bench
+name: Issue 285 Deadline Hot Path A-B
 
 permissions:
   contents: read
@@ -7,80 +7,93 @@ on:
   push:
     branches:
       - agent/issue-285-deadline-final-arm-bench
-  pull_request:
-    branches:
-      - agent/issue-280-policy-aware-deadline-evidence
   workflow_dispatch:
 
 jobs:
-  evidence:
+  hotpath:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore decision evidence
+      - name: Restrict evidence runner to hot paths
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('test/SharpLink.DeadlinePolicyDecisionEvidence/Program.cs')
+          text = path.read_text(encoding='utf-8')
+          old = '''        foreach (var scenario in Scenarios)\n        {\n'''
+          new = '''        foreach (var scenario in Scenarios)\n        {\n            if (scenario.Name is not ("A-dense-0-concurrent" or "B-zero-deadline-concurrent"))\n                continue;\n'''
+          if old not in text:
+              raise SystemExit('scenario loop shape changed')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          Path('/tmp/PendingRequestTable.fix.cs').write_text(
+              Path('src/SharpLink.Client/PendingRequestTable.cs').read_text(encoding='utf-8'),
+              encoding='utf-8')
+
+      - name: Restore evidence project
         run: dotnet restore test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj
 
-      - name: Build decision evidence
-        run: dotnet build test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -c Release --no-restore -v minimal
+      - name: Run exact dev baseline before fix
+        run: |
+          git show ac7453b21e614b41f39cf21fb76c9d79ea50682a:src/SharpLink.Client/PendingRequestTable.cs > src/SharpLink.Client/PendingRequestTable.cs
+          dotnet build test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -c Release --no-restore -t:Rebuild -v minimal
+          dotnet run -c Release --no-build --project test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -- --primary-rounds 3 --boundary-rounds 1 --warmup-seconds 1 --duration-seconds 2 --json artifacts/issue-285/hotpath-baseline-before.json
 
-      - name: Run paired deadline workload with issue 285 fix
-        run: >-
-          dotnet run -c Release --no-build
-          --project test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj
-          --
-          --primary-rounds 3
-          --boundary-rounds 1
-          --warmup-seconds 1
-          --duration-seconds 2
-          --json artifacts/issue-285/decision-evidence.json
+      - name: Run final issue 285 fix
+        run: |
+          cp /tmp/PendingRequestTable.fix.cs src/SharpLink.Client/PendingRequestTable.cs
+          dotnet build test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -c Release --no-restore -t:Rebuild -v minimal
+          dotnet run -c Release --no-build --project test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -- --primary-rounds 3 --boundary-rounds 1 --warmup-seconds 1 --duration-seconds 2 --json artifacts/issue-285/hotpath-fix.json
 
-      - name: Publish key regression summary
-        if: always()
+      - name: Run exact dev baseline after fix
+        run: |
+          git show ac7453b21e614b41f39cf21fb76c9d79ea50682a:src/SharpLink.Client/PendingRequestTable.cs > src/SharpLink.Client/PendingRequestTable.cs
+          dotnet build test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -c Release --no-restore -t:Rebuild -v minimal
+          dotnet run -c Release --no-build --project test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -- --primary-rounds 3 --boundary-rounds 1 --warmup-seconds 1 --duration-seconds 2 --json artifacts/issue-285/hotpath-baseline-after.json
+
+      - name: Publish normalized hot-path comparison
         shell: python
         run: |
           import json
           import os
+          import statistics
           from pathlib import Path
-          path = Path('artifacts/issue-285/decision-evidence.json')
-          if not path.exists():
-              raise SystemExit(0)
-          report = json.loads(path.read_text())
-          wanted = {
-              'A-dense-0-concurrent',
-              'A-dense-0.01pct-expiry',
-              'A-dense-0.1pct-expiry',
-              'A-dense-1pct-expiry',
-              'P2-capacity-1k',
-              'P3-long-lived'
-          }
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
-              out.write('## Issue #285 deadline final-arm regression evidence\n\n')
-              out.write('| Scenario | shared QPS | shared CPU ns/op | shared p99 ms | shared max ms | per-call QPS delta |\n')
-              out.write('|---|---:|---:|---:|---:|---:|\n')
-              for row in report['Summaries']:
-                  if row['Scenario'] not in wanted:
-                      continue
-                  out.write(
-                      f"| {row['Scenario']} | {row['SharedMedianQps']:.1f} | "
-                      f"{row['SharedMedianCpuNsPerOp']:.1f} | {row['SharedMedianP99LatenessMs']:.3f} | "
-                      f"{row['SharedMedianMaxLatenessMs']:.3f} | {row['PerCallQpsDeltaPercent']:+.2f}% |\n"
-                  )
 
-      - name: Upload issue 285 evidence
-        if: always()
+          reports = {
+              'before': json.loads(Path('artifacts/issue-285/hotpath-baseline-before.json').read_text()),
+              'fix': json.loads(Path('artifacts/issue-285/hotpath-fix.json').read_text()),
+              'after': json.loads(Path('artifacts/issue-285/hotpath-baseline-after.json').read_text()),
+          }
+          def median(report, scenario, field, scheduler='SharedScan'):
+              rows = [r for r in report['Results'] if r['Scenario'] == scenario and r['Scheduler'] == scheduler]
+              return statistics.median(r[field] for r in rows)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
+              out.write('## Issue #285 same-runner hot-path A/B\n\n')
+              out.write('| Scenario | metric | baseline before | fix | baseline after | fix vs bracketing baseline |\n')
+              out.write('|---|---|---:|---:|---:|---:|\n')
+              for scenario in ['A-dense-0-concurrent', 'B-zero-deadline-concurrent']:
+                  for field, label in [('Qps','QPS'), ('CpuNsPerOp','CPU ns/op'), ('AllocatedBytesPerOp','B/op')]:
+                      before = median(reports['before'], scenario, field)
+                      fixed = median(reports['fix'], scenario, field)
+                      after = median(reports['after'], scenario, field)
+                      baseline = (before + after) / 2
+                      delta = (fixed / baseline - 1) * 100 if baseline else 0
+                      out.write(f'| {scenario} | {label} | {before:.3f} | {fixed:.3f} | {after:.3f} | {delta:+.2f}% |\n')
+
+      - name: Upload hot-path evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-285-deadline-final-arm-evidence
-          path: artifacts/issue-285/decision-evidence.json
-          if-no-files-found: warn
+          name: issue-285-hotpath-ab
+          path: artifacts/issue-285/hotpath-*.json
