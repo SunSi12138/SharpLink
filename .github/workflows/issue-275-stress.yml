@@ -4,9 +4,7 @@ permissions:
   contents: read
 
 on:
-  push:
-    branches:
-      - test/issue-275-phase-stabilization
+  pull_request:
   workflow_dispatch:
 
 jobs:
