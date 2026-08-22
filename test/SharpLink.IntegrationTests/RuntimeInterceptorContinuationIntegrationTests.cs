@@ -48,10 +48,10 @@ public class RuntimeInterceptorContinuationIntegrationTests
         var z = new AwaitingServerInterceptor("Z", log);
         harness.Server.ReplaceInterceptors([a, b, c]);
 
-        var first = InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
+        var first = InvokeUnaryAsync(harness.Service);
         await b.Entered;
         Ensure(!first.IsCompleted,
-            "server client-streaming invocation must remain pending before the delayed interceptor advances to next");
+            "server unary invocation must remain pending before the delayed interceptor advances to next");
         EnsureSequence(log, "A:before", "B:before");
 
         harness.Server.ReplaceInterceptors([x, y, z]);
@@ -61,7 +61,7 @@ public class RuntimeInterceptorContinuationIntegrationTests
         EnsureSequence(log, "A:before", "B:before", "C:before", "C:after", "B:after", "A:after");
 
         Clear(log);
-        await InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
+        await InvokeUnaryAsync(harness.Service);
         await Task.WhenAll(x.Completed, y.Completed, z.Completed);
         EnsureSequence(log, "X:before", "Y:before", "Z:before", "Z:after", "Y:after", "X:after");
     }
@@ -88,6 +88,12 @@ public class RuntimeInterceptorContinuationIntegrationTests
         Ensure(await harness.Service.DescribeNumberAsync(2) == 3, "disabled build generation result");
         Ensure(clientLog.IsEmpty, "empty runtime client snapshot must disable the Build interceptor generation");
         Ensure(serverLog.IsEmpty, "empty runtime server snapshot must disable the Build interceptor generation");
+    }
+
+    private static async Task InvokeUnaryAsync(IInterceptorTestService service)
+    {
+        var result = await service.DescribeNumberAsync(9);
+        Ensure(result == 10, $"unary result expected 10, actual {result}");
     }
 
     private static async Task InvokeClientStreamingAsync(IInterceptorTestService service, Task requestRelease)
