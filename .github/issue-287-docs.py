@@ -5,7 +5,7 @@ Path('doc/calls-and-streaming.md').write_text('''# 调用、流式与取消
 
 ## 超时、RpcDeadline 与 TimeBudget
 
-Client 默认请求超时为 30 秒，可用 `UseRequestTimeout` 修改默认值，或用 `DisableRequestTimeout` 关闭默认值。方法 `[Timeout]` 是方法级策略，会覆盖 Client 默认 fallback；例如 Client 默认 30 秒、方法 `[Timeout(120)]` 时，该方法的本地策略为 120 秒，而不是两者取最小值。参数less `[Timeout]` 继续表示使用 Client 默认策略。
+Client 默认请求超时为 30 秒，可用 `UseRequestTimeout` 修改默认值，或用 `DisableRequestTimeout` 关闭默认值。方法 `[Timeout]` 是方法级策略，会覆盖 Client 默认 fallback；例如 Client 默认 30 秒、方法 `[Timeout(120)]` 时，该方法的本地策略为 120 秒，而不是两者取最小值。无参数 `[Timeout]` 继续表示使用 Client 默认策略。
 
 Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock 的 `RpcDeadline`。请求真正发出前再计算剩余 `TimeBudget` 并写入 wire；Server 收到后用自己的 monotonic clock 解析新的本地 `RpcDeadline`。因此 Client/Server 不依赖墙钟同步，wire 也不再传播绝对 UTC deadline。
 
@@ -57,6 +57,9 @@ text = text.replace(
 text = text.replace(
     '调用侧 `CancellationToken`、monotonic deadline 或 stream consumer early-break',
     '调用侧 `CancellationToken`、本地 monotonic `RpcDeadline` 或 stream consumer early-break')
+text = text.replace(
+    'Client context 可替换 `SharpLinkCallOptions` 以增加 metadata，也可返回 `SharpLinkClientInvocationResult` 短路调用。',
+    'Client context 可替换 `Metadata` envelope state，也可返回 `SharpLinkClientInvocationResult` 短路调用。')
 p.write_text(text)
 
 p = Path('doc/protocol-v2.md')
@@ -84,9 +87,15 @@ text = p.read_text()
 pattern = re.compile(
     r'契约方法可以在尾部声明一个 `SharpLinkCallOptions`.*?`DisableRequestTimeout\(\)` 只关闭客户端默认值，显式 deadline、`Timeout` 和 `\[Timeout\]` 仍然生效。',
     re.S)
-replacement = '''RPC 业务契约只声明业务 payload、流参数以及用于协作取消的 `CancellationToken`；调用控制不再通过 `SharpLinkCallOptions` 伪参数进入方法签名。Metadata 等 envelope state 可由 Client interceptor 的 `SharpLinkClientInvocationContext.Metadata` 提供，Server 从 `SharpLinkCallContext` 读取。
+replacement = '''RPC 业务契约只声明业务 payload、流参数以及用于协作取消的 `CancellationToken`；通用调用控制不进入方法签名。Metadata 等 envelope state 可由 Client interceptor 的 `SharpLinkClientInvocationContext.Metadata` 提供，Server 从 `SharpLinkCallContext` 读取。
 
 请求 lifetime 使用分层语义：Client 默认 `Timeout` 是 fallback，方法 `[Timeout]` 可覆盖它；Runtime 把选中的 policy 解析为本地 monotonic `RpcDeadline`，并在真正发送 Request 前写入剩余 `TimeBudget`。Server 根据该 duration 创建自己的本地 deadline，跨机器不比较绝对墙钟。已有父 RPC 的剩余 `TimeBudget` 会限制下游调用，避免中间 hop 重启 lifetime。`DisableRequestTimeout()` 只关闭 Client 默认 fallback；方法 `[Timeout]` 和继承的父 lifetime 仍然生效。'''
 text, count = pattern.subn(replacement, text, count=1)
 assert count == 1, count
+p.write_text(text)
+
+p = Path('doc/runtime-phase-16-engine-api.md')
+text = p.read_text().replace(
+    '`SharpLinkCallOptions`, endpoints, Client/Server builders',
+    'endpoints, Client/Server builders')
 p.write_text(text)
