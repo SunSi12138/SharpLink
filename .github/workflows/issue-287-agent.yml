@@ -41,6 +41,16 @@ jobs:
 
           p = Path('src/SharpLink.Client/SharpLinkClient.Interceptors.cs')
           p.write_text(p.read_text().replace('context.Options', 'context.Metadata'))
+
+          p = Path('src/SharpLink.Generator/RpcGenerator.Analysis.cs')
+          text = p.read_text().replace('                m.Parameters.Count(IsCallOptionsParameter) > 1 ||\n', '')
+          p.write_text(text)
+
+          p = Path('src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs')
+          text = p.read_text().replace(
+              'if (IsCancellationTokenParameter(parameter) || IsCallOptionsParameter(parameter))',
+              'if (IsCancellationTokenParameter(parameter))')
+          p.write_text(text)
           PY
           git diff --stat
           git diff --check
