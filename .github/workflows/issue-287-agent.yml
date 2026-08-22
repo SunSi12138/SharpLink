@@ -24,6 +24,7 @@ jobs:
       - name: Apply prototype patch
         run: |
           python3 .github/issue-287-patch.py
+          python3 .github/issue-287-generator.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/SharpLink.Abstractions/ProtocolV2.cs')
@@ -43,13 +44,15 @@ jobs:
           PY
           git diff --stat
           git diff --check
-          echo '=== remaining source references ==='
-          git grep -n 'SharpLinkCallOptions' src || true
+          echo '=== removed source concepts ==='
+          git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' src && exit 1 || true
       - name: Restore
         run: dotnet restore Sharplink.slnx
-      - name: Build core projects
+      - name: Build source projects
         run: |
           dotnet build src/SharpLink.Abstractions/SharpLink.Abstractions.csproj --no-restore -c Release -v minimal
           dotnet build src/SharpLink.Runtime/SharpLink.Runtime.csproj --no-restore -c Release -v minimal
+          dotnet build src/SharpLink.Generator/SharpLink.Generator.csproj --no-restore -c Release -v minimal
+          dotnet build src/SharpLink.Sdk/SharpLink.Sdk.csproj --no-restore -c Release -v minimal
           dotnet build src/SharpLink.Client/SharpLink.Client.csproj --no-restore -c Release -v minimal
           dotnet build src/SharpLink.Server/SharpLink.Server.csproj --no-restore -c Release -v minimal
