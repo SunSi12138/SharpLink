@@ -1,0 +1,32 @@
+name: Issue 287 temporary workbench
+
+on:
+  push:
+    branches:
+      - issue-287-call-control-cleanup
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Inspect issue 287 surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== HEAD ==='
+          git log -1 --oneline
+          echo '=== SharpLinkCallOptions references ==='
+          git grep -n 'SharpLinkCallOptions' -- ':!*.lock' || true
+          echo '=== Deadline wire references ==='
+          git grep -n -E 'HasDeadline|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- ':!*.lock' || true
+          echo '=== Generator call-options references ==='
+          git grep -n -E 'IsCallOptions|CallOptionsMethod|HasCallOptions' src/SharpLink.Generator test/SharpLink.Generator.Tests || true
+          echo '=== Workflow files ==='
+          find .github/workflows -maxdepth 1 -type f -printf '%f\n' | sort
