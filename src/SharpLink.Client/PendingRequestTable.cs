@@ -861,7 +861,7 @@ internal sealed class PendingRequestTable : IDisposable
                 continue;
             }
 
-            ArmDeadlineTimer(deadlineTimestamp);
+            ReconcileDeadlineTimer();
             return;
         }
     }
@@ -900,9 +900,21 @@ internal sealed class PendingRequestTable : IDisposable
         finally
         {
             Volatile.Write(ref _deadlineScanRunning, 0);
+            ReconcileDeadlineTimer();
+        }
+    }
+
+    private void ReconcileDeadlineTimer()
+    {
+        while (Volatile.Read(ref _disposed) == 0)
+        {
             var next = Volatile.Read(ref _approximateEarliestDeadline);
-            if (next != long.MaxValue)
-                ArmDeadlineTimer(next);
+            if (next == long.MaxValue)
+                return;
+
+            ArmDeadlineTimer(next);
+            if (Volatile.Read(ref _approximateEarliestDeadline) == next)
+                return;
         }
     }
 
