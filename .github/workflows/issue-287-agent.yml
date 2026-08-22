@@ -34,6 +34,7 @@ jobs:
           python3 .github/issue-287-inherited-budget.py
           python3 .github/issue-287-server-handshake-test.py
           python3 .github/issue-287-docs.py
+          python3 .github/issue-287-review-round2.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
@@ -62,7 +63,8 @@ jobs:
           echo '=== legacy wire compatibility gates ==='
           git grep -n -E 'TimeBudgetMinorVersion|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- src/SharpLink.Client src/SharpLink.Server src/SharpLink.Abstractions/ProtocolV2.cs && exit 1 || true
           echo '=== stale active docs ==='
-          git grep -n 'SharpLinkCallOptions' -- README.md doc ':!doc/migration.md' && exit 1 || true
+          git grep -n 'SharpLinkCallOptions' -- README.md doc && exit 1 || true
+          git grep -n -E '1\.1\.x Client.*2\.0 Server|2\.0 Client.*1\.1\.x Server|Protocol v2 wire format.*unchanged|all four SharpLink 1\.1\.1/2\.0 Protocol v2 process pairs' -- CHANGELOG.md doc && exit 1 || true
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Build solution
