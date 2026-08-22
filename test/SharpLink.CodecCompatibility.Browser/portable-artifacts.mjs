@@ -93,6 +93,32 @@ const CONSUMER_IDENTITY_FIELDS = Object.freeze([
     'isLittleEndian',
     'compilationMode'
 ]);
+const PORTABLE_CONSUMER_RUNTIME_IDENTITIES = Object.freeze({
+    'android-x64-emulator-mono-net10': Object.freeze({
+        runtimeIdentifier: 'android-x64',
+        targetFramework: 'net10.0-android/android-x64'
+    }),
+    'android-x64-emulator-coreclr-net10': Object.freeze({
+        runtimeIdentifier: 'android-x64',
+        targetFramework: 'net10.0-android/android-x64'
+    }),
+    'ios-x64-simulator-mono-net10': Object.freeze({
+        runtimeIdentifier: 'iossimulator-x64',
+        targetFramework: 'net10.0-ios/iossimulator-x64'
+    }),
+    'ios-arm64-simulator-mono-net10': Object.freeze({
+        runtimeIdentifier: 'iossimulator-arm64',
+        targetFramework: 'net10.0-ios/iossimulator-arm64'
+    }),
+    'android-arm64-physical-device-mono-net10': Object.freeze({
+        runtimeIdentifier: 'android-arm64',
+        targetFramework: 'net10.0-android/android-arm64'
+    }),
+    'android-arm64-physical-device-coreclr-net10': Object.freeze({
+        runtimeIdentifier: 'android-arm64',
+        targetFramework: 'net10.0-android/android-arm64'
+    })
+});
 
 async function findNamedFiles(root, fileName) {
     const found = [];
@@ -214,6 +240,41 @@ function validateResultConsumers(report, source) {
     }
 }
 
+function validatePortableConsumerRuntimeIdentity(report, source) {
+    const platformTag = String(report?.consumer?.platformTag ?? '');
+    const expected = PORTABLE_CONSUMER_RUNTIME_IDENTITIES[platformTag];
+    if (!expected) return;
+
+    const runtimeIdentifier = String(report.consumer.runtimeIdentifier ?? '');
+    const targetFramework = String(report.consumer.targetFramework ?? '');
+    if (runtimeIdentifier !== expected.runtimeIdentifier || targetFramework !== expected.targetFramework) {
+        throw new Error(
+            `${source} has inconsistent effective runtime identity for ${platformTag}: ` +
+            `runtimeIdentifier=${runtimeIdentifier || '<missing>'}, targetFramework=${targetFramework || '<missing>'}; ` +
+            `expected runtimeIdentifier=${expected.runtimeIdentifier}, targetFramework=${expected.targetFramework}.`);
+    }
+}
+
+function validateExpectedNativeWidthDifference(item, fixture, source) {
+    const producerPointerSize = Number(item.producerPointerSize);
+    const consumerPointerSize = Number(item.consumerPointerSize);
+    const producerSize = Number(item.producerSize);
+    const consumerSize = Number(item.consumerSize);
+    const nativeSlots = fixture === 'NativePair' ? 2 : 1;
+    if (!Number.isInteger(producerPointerSize)
+        || producerPointerSize <= 0
+        || !Number.isInteger(consumerPointerSize)
+        || consumerPointerSize <= 0
+        || producerPointerSize === consumerPointerSize
+        || producerSize !== producerPointerSize * nativeSlots
+        || consumerSize !== consumerPointerSize * nativeSlots) {
+        throw new Error(
+            `${source} has invalid EXPECTED_ARCH_DEPENDENT evidence: producer=${String(item.producer)}, fixture=${fixture}, ` +
+            `producerPointerSize=${String(item.producerPointerSize)}, consumerPointerSize=${String(item.consumerPointerSize)}, ` +
+            `producerSize=${String(item.producerSize)}, consumerSize=${String(item.consumerSize)}.`);
+    }
+}
+
 function validateStrictResultSemantics(
     report,
     source,
@@ -246,6 +307,7 @@ function validateStrictResultSemantics(
             && item.segmentedCrossDeserializeResult == null
             && item.segmentedLogicalEquality == null;
         if (expectedNativeWidthDifference) {
+            validateExpectedNativeWidthDifference(item, fixture, source);
             continue;
         }
 
@@ -434,6 +496,7 @@ export async function checkVerificationReport(reportFile) {
     const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
     validateVerificationReportSchema(report, reportFile);
     validateResultConsumers(report, reportFile);
+    validatePortableConsumerRuntimeIdentity(report, reportFile);
     if (report?.browserProbeError || report?.portableProbeError) {
         throw new Error(report.browserProbeError ?? report.portableProbeError);
     }

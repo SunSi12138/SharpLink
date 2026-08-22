@@ -18,7 +18,7 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null,
+        string? expectedCompilationMode = null,
         string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
@@ -26,7 +26,7 @@ internal static class PortableProbe
             sharpLinkCommit,
             sdkVersion,
             targetFramework,
-            compilationModeOverride,
+            expectedCompilationMode,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
         return JsonSerializer.Serialize(envelope, typeof(CorpusEnvelope), PortableJsonContext.Default);
@@ -37,7 +37,7 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null,
+        string? expectedCompilationMode = null,
         string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
@@ -51,7 +51,7 @@ internal static class PortableProbe
             sharpLinkCommit,
             sdkVersion,
             targetFramework,
-            compilationModeOverride,
+            expectedCompilationMode,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
         return JsonSerializer.Serialize(report, typeof(VerificationReport), PortableJsonContext.Default);
@@ -61,7 +61,7 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null,
+        string? expectedCompilationMode = null,
         string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
@@ -69,7 +69,7 @@ internal static class PortableProbe
             sharpLinkCommit,
             sdkVersion,
             targetFramework,
-            compilationModeOverride,
+            expectedCompilationMode,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
         var envelope = new CorpusEnvelope { SchemaVersion = 1, Manifest = manifest };
@@ -102,7 +102,7 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride = null,
+        string? expectedCompilationMode = null,
         string? expectedRuntimeFamily = null,
         string? executionEnvironmentOverride = null)
     {
@@ -110,7 +110,7 @@ internal static class PortableProbe
             sharpLinkCommit,
             sdkVersion,
             targetFramework,
-            compilationModeOverride,
+            expectedCompilationMode,
             expectedRuntimeFamily,
             executionEnvironmentOverride);
         var report = new VerificationReport { SchemaVersion = 1, Consumer = consumer };
@@ -169,7 +169,7 @@ internal static class PortableProbe
         string sharpLinkCommit,
         string sdkVersion,
         string targetFramework,
-        string? compilationModeOverride,
+        string? expectedCompilationMode,
         string? expectedRuntimeFamily,
         string? executionEnvironmentOverride)
     {
@@ -196,12 +196,18 @@ internal static class PortableProbe
                 $"Runtime family mismatch: expected lane {expectedRuntimeFamily}, observed {runtimeFamily} in-process.");
         }
 
-        var compilationMode = compilationModeOverride
-            ?? (!RuntimeFeature.IsDynamicCodeSupported
-                ? "AOT"
-                : RuntimeFeature.IsDynamicCodeCompiled
-                    ? "JIT"
-                    : "Interpreter");
+        var compilationMode = !RuntimeFeature.IsDynamicCodeSupported
+            ? "AOT"
+            : RuntimeFeature.IsDynamicCodeCompiled
+                ? "JIT"
+                : "Interpreter";
+        if (!string.IsNullOrWhiteSpace(expectedCompilationMode)
+            && !string.Equals(compilationMode, expectedCompilationMode, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Compilation mode mismatch: expected lane {expectedCompilationMode}, observed {compilationMode} in-process.");
+        }
+
         var processArchitecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
         var runtimeIdentifier = DetectRuntimeIdentifier(os, processArchitecture);
         var executionEnvironment = executionEnvironmentOverride

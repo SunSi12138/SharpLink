@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace SharpLink.CodecCompatibility;
 
-internal sealed class RuntimeManifest
+internal sealed class RuntimeManifest : IJsonOnDeserialized
 {
     [JsonRequired]
     public int SchemaVersion { get; set; }
@@ -26,6 +26,39 @@ internal sealed class RuntimeManifest
     public string PlatformTag { get; set; } = string.Empty;
     public List<CaseManifest> Cases { get; set; } = [];
     public List<PaddingPoisonResult> PaddingPoison { get; set; } = [];
+
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        switch (PlatformTag)
+        {
+            case "android-x64-emulator-mono-net10":
+            case "android-x64-emulator-coreclr-net10":
+                ValidatePortableRuntimeIdentity("android-x64", "net10.0-android/android-x64");
+                break;
+            case "ios-x64-simulator-mono-net10":
+                ValidatePortableRuntimeIdentity("iossimulator-x64", "net10.0-ios/iossimulator-x64");
+                break;
+            case "ios-arm64-simulator-mono-net10":
+                ValidatePortableRuntimeIdentity("iossimulator-arm64", "net10.0-ios/iossimulator-arm64");
+                break;
+            case "android-arm64-physical-device-mono-net10":
+            case "android-arm64-physical-device-coreclr-net10":
+                ValidatePortableRuntimeIdentity("android-arm64", "net10.0-android/android-arm64");
+                break;
+        }
+    }
+
+    private void ValidatePortableRuntimeIdentity(string expectedRuntimeIdentifier, string expectedTargetFramework)
+    {
+        if (!string.Equals(RuntimeIdentifier, expectedRuntimeIdentifier, StringComparison.Ordinal)
+            || !string.Equals(TargetFramework, expectedTargetFramework, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Runtime manifest {PlatformTag} has inconsistent effective identity: " +
+                $"runtimeIdentifier={RuntimeIdentifier}, targetFramework={TargetFramework}; " +
+                $"expected runtimeIdentifier={expectedRuntimeIdentifier}, targetFramework={expectedTargetFramework}.");
+        }
+    }
 }
 
 internal sealed class CaseManifest

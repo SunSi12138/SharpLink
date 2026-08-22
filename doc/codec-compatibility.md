@@ -21,7 +21,7 @@ The release-gated desktop matrix in `.github/workflows/codec-compatibility.yml` 
 
 The workflow is invoked by both PR Quick and Release Gate. Every desktop target is both a producer and a consumer: each consumer downloads all six producer corpora and invokes its own `UnsafeBlitCodec<T>` to deserialize producer bytes. A central Linux summary job only aggregates the per-runtime reports; it does not stand in for Windows or macOS decode execution.
 
-Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the actual OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, RID, endianness, compilation mode, execution environment, and SharpLink commit. Runtime family is observed in-process; portable lanes may assert an expected family, but the harness does not overwrite the observed manifest value. The manifest is the source of truth.
+Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the actual OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, RID, endianness, compilation mode, execution environment, and SharpLink commit. Runtime family and compilation mode are observed in-process; portable lanes may assert expected values, but the harness does not overwrite the observed manifest values. The manifest is the source of truth.
 
 A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
 
@@ -88,7 +88,7 @@ SharpLink.CodecCompatibility describe
 SharpLink.CodecCompatibility produce --output <dir>
 SharpLink.CodecCompatibility verify --input <producer-root> --output <verification.json>
 SharpLink.CodecCompatibility self --output <dir>
-SharpLink.CodecCompatibility summarize --input <verification-root> --output <dir>
+SharpLink.CodecCompatibility summarize --input <verification-root> --output <dir> --profile <desktop|mobile|android-arm64-device>
 ```
 
 Portable hosts reuse the same fixture and verification implementation:
@@ -136,6 +136,8 @@ Native-width fixtures remain in the corpus even when pointer-width pairs differ.
 ## Padding poison evidence
 
 Padding-sensitive fixtures are also constructed over backing memory prefilled with different byte patterns before assigning the same logical fields. The probe records whether equal logical values produce equal raw wire bytes, the differing offsets, the known padding offsets, and source/wire hashes.
+
+This experiment has produced a concrete finding. In PR Quick run `32508067269`, the Linux x64 producer recorded equal logical values but different `UnsafeBlitCodec<T>` wire bytes for `ByteInt32` at offsets 1-3 and `Int64Byte` at offsets 9-15. Every differing byte was inside the fixture's known padding region. The current raw-blit fallback therefore transmits source padding state for these layouts; this behavior is observed evidence, not a hypothetical possibility. The separate security/product evaluation of information-disclosure risk and possible mitigations is tracked in #269.
 
 This is evidence only. A padding difference does not by itself imply a production fix, mandatory `Pack=1`, a new attribute, or removal of the raw blit fallback. Any product restriction or canonicalization change requires a separate implementation decision and performance evaluation.
 

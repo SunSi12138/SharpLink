@@ -43,7 +43,7 @@ public static class Application
                     commit,
                     sdk,
                     targetFramework,
-                    compilationModeOverride: "Interpreter",
+                    expectedCompilationMode: "Interpreter",
                     expectedRuntimeFamily: "Mono",
                     executionEnvironmentOverride: "simulator");
             }
@@ -55,7 +55,7 @@ public static class Application
                     commit,
                     sdk,
                     targetFramework,
-                    compilationModeOverride: "Interpreter",
+                    expectedCompilationMode: "Interpreter",
                     expectedRuntimeFamily: "Mono",
                     executionEnvironmentOverride: "simulator");
             }
