@@ -124,9 +124,11 @@ internal sealed partial class SharpLinkServer
             preDecodeRequest);
         try
         {
-            // Diagnostic experiment: queue the pooled item directly without flowing the request
-            // ExecutionContext so accepted-path evidence can isolate context-flow cost from the
-            // unavoidable ThreadPool handoff. This commit is not intended as the final semantics.
+            // Queue the pooled item directly so the ThreadPool does not allocate a callback wrapper.
+            // Prefer the current worker's local queue: the reader loop can consume already-buffered
+            // Cancel frames before yielding, while work stealing still lets another worker start
+            // decode when the reader remains active. The captured ExecutionContext is restored by
+            // the work item and the ThreadPool resets the worker context afterward.
             if (!ThreadPool.UnsafeQueueUserWorkItem(workItem, preferLocal: true))
             {
                 throw new InvalidOperationException("Unable to queue compressed RPC dispatch.");
@@ -296,6 +298,7 @@ internal sealed partial class SharpLinkServer
         private ServiceRegistration? _serviceInfo;
         private bool _reusePreDecodeMetadata;
         private ServerRequestEnvelope _preDecodeRequest;
+        private ExecutionContext? _executionContext;
 
         private CompressedCancellableRpcWorkItem()
         {
@@ -330,6 +333,7 @@ internal sealed partial class SharpLinkServer
             workItem._serviceInfo = serviceInfo;
             workItem._reusePreDecodeMetadata = reusePreDecodeMetadata;
             workItem._preDecodeRequest = preDecodeRequest;
+            workItem._executionContext = ExecutionContext.Capture();
             return workItem;
         }
 
@@ -337,6 +341,10 @@ internal sealed partial class SharpLinkServer
         {
             try
             {
+                var executionContext = _executionContext;
+                if (executionContext is not null)
+                    ExecutionContext.Restore(executionContext);
+
                 ExecuteCore();
             }
             finally
@@ -375,6 +383,7 @@ internal sealed partial class SharpLinkServer
             _serviceInfo = null;
             _reusePreDecodeMetadata = false;
             _preDecodeRequest = default;
+            _executionContext = null;
 
             var retained = Interlocked.Increment(ref s_retainedCount);
             if (retained <= MaxRetained)
