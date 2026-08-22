@@ -30,6 +30,8 @@ Two independent hosted-runner workflow executions were used for the initial exec
 - workflow run `32568724302`, benchmark head `10b33c25914f3d6762904b6ead7202cb72a1d781`;
 - workflow run `32568891389`, benchmark-equivalent head `0744415a4ab2abf04a8b1ea04d34f3a64df583c6`.
 
+Those runs predate D's queue-owned cancellation work-item/registration path and are historical evidence only. Any quantitative D range used by the final ADR must be regenerated from two independent hosted-runner executions of the cancellation-safe D hot path.
+
 Both runs used 4 logical CPUs, but GitHub assigned different AMD EPYC models across shards/runs. The strategy ordering below remained stable despite that reassignment.
 
 ## Evidence collected
@@ -62,7 +64,7 @@ This preserves the #244 requirement while comparing execution models.
 
 ## Results
 
-B (`InlineProvider`) is the within-shard baseline (`1.000`). The ranges below are the two independent workflow medians. These D ratios describe **fixed-worker overhead with an unsaturated executor queue**; they do not, by themselves, prove bounded-queue saturation behavior.
+B (`InlineProvider`) is the within-shard baseline (`1.000`). The ranges below are the two independent **pre-cancellation-safe-D** workflow medians and are retained temporarily as historical comparison only; they are not quantitative support for the current D implementation. These D ratios describe fixed-worker overhead with an unsaturated executor queue and also predate the queued-cancellation work-item/registration cost.
 
 | Payload / compressibility | A QPS / CPU | C QPS / CPU | D QPS / CPU | Interpretation |
 | --- | --- | --- | --- | --- |
@@ -87,13 +89,9 @@ A separate probe fixes queue capacity independently of offered concurrency (`que
 
 This probe exists specifically to validate the bounded/backpressure path that the original comparative D queue (`max(32, concurrency * 2)`) could not saturate. Its blocked-writer counts and wait distributions are stored separately from the A/B/C/D throughput ratios; saturation evidence must not be blended into the unsaturated comparative QPS table.
 
-The same fixed-capacity runner also executes a **queued-cancellation ownership probe**. It fills the queue while all workers remain gated, cancels every queue-owned request, and requires all of the following before workers are released:
+Queued cancellation is now exercised through the **same `DecodeCaseRuntime -> PersistentDecodeExecutor -> PersistentDecodeWorkItem` path used by comparative D**, not through a parallel executor/state-machine implementation. A deterministic worker gate holds actual D work in queue ownership. Before worker release, cancellation must complete the real caller path and the probe asserts that the real call reservation, retained-compressed lease, and decoded-output lease are all released while provider/decompress count remains `0` and the cancelled work items remain queued.
 
-- caller-side reservation/buffer ownership completes/releases promptly;
-- provider-start count remains `0`;
-- every queued work item transitions atomically from queue ownership to cancelled-before-start ownership.
-
-After worker release/drain, the probe requires every cancelled item to be skipped before provider execution and still requires provider-start count `= 0`. The candidate work item performs an explicit cancellation check immediately after a worker wins the queue-to-running ownership transition and before any provider/CRC work, covering the race where cancellation arrives as ownership transfers to a worker.
+After worker release/drain, the actual D work items must all take the `CancelledBeforeStart` skip path: queue depth reaches `0`, skipped-cancel count equals the number of cancelled requests, provider/decompress count remains `0`, and no request ownership is reacquired or leaked. This directly protects the ordering on which safe early return of the pooled retained/decoded buffers depends.
 
 This is the required semantic shape for production D: cancellation may complete caller ownership early only if cancellation wins while the item is still queue-owned. If a worker has already won ownership, the caller must continue to await that worker so retained/decoded buffers cannot be returned while provider code may still access them.
 
@@ -122,7 +120,7 @@ The executor queue must be fixed/bounded independently of offered request concur
 
 2. **Use D / persistent bounded DecodeExecutor for expensive remote-cancellable decode.**
    - Keep the reader/control-plane path free to process Cancel/deadline/close/Stop while decode is supervised by a small persistent worker set.
-   - The comparative 1 MiB evidence shows that fixed-worker D avoids the repeated Brotli-loop-yield cost paid by this C prototype. The separate saturation probe validates the fixed-capacity bounded-channel/backpressure mechanism, and the queued-cancellation probe validates cancellation before provider start without prematurely releasing worker-owned buffers.
+   - The comparative 1 MiB evidence shows that fixed-worker D avoids the repeated Brotli-loop-yield cost paid by this C prototype. The separate saturation probe validates the fixed-capacity bounded-channel/backpressure mechanism, and the actual-D queued-cancellation probe validates cancellation before provider start together with real reservation/pooled-lease release ordering.
    - The exact production threshold remains an internal policy decision that must be validated end-to-end; Phase 0 selects the execution **shape**, not a threshold value or a new public configuration API.
 
 3. **Do not productionize A.**
