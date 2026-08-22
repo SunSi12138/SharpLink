@@ -15,7 +15,7 @@ on:
 jobs:
   evidence:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
@@ -33,13 +33,17 @@ jobs:
       - name: Prove production source is unchanged
         run: git diff --exit-code origin/dev...HEAD -- src/
 
-      - name: Restore evidence project
-        run: dotnet restore test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj
+      - name: Restore evidence projects
+        run: |
+          dotnet restore test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj
+          dotnet restore test/SharpLink.DeadlinePolicyFairEvidence/SharpLink.DeadlinePolicyFairEvidence.csproj
 
-      - name: Build evidence project
-        run: dotnet build test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj -c Release --no-restore -v minimal
+      - name: Build evidence projects
+        run: |
+          dotnet build test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj -c Release --no-restore -v minimal
+          dotnet build test/SharpLink.DeadlinePolicyFairEvidence/SharpLink.DeadlinePolicyFairEvidence.csproj -c Release --no-restore -v minimal
 
-      - name: Run deterministic correctness and paired evidence
+      - name: Run deterministic correctness and instrumented evidence
         run: >-
           dotnet run -c Release --no-build
           --project test/SharpLink.DeadlinePolicyEvidence/SharpLink.DeadlinePolicyEvidence.csproj
@@ -52,6 +56,17 @@ jobs:
           --duration-seconds 2
           --json artifacts/issue-280/deadline-policy-evidence.json
 
+      - name: Run allocation-neutral paired performance evidence
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.DeadlinePolicyFairEvidence/SharpLink.DeadlinePolicyFairEvidence.csproj
+          --
+          --primary-rounds 3
+          --boundary-rounds 1
+          --warmup-seconds 1
+          --duration-seconds 2
+          --json artifacts/issue-280/fair-deadline-policy-evidence.json
+
       - name: Publish evidence summary
         if: always()
         shell: python
@@ -60,41 +75,45 @@ jobs:
           import os
           from pathlib import Path
 
-          path = Path("artifacts/issue-280/deadline-policy-evidence.json")
-          if not path.exists():
-              raise SystemExit(0)
-          report = json.loads(path.read_text())
-          evidence = report.get("Evidence")
-          correctness = report.get("Correctness")
+          instrumented_path = Path("artifacts/issue-280/deadline-policy-evidence.json")
+          fair_path = Path("artifacts/issue-280/fair-deadline-policy-evidence.json")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
               out.write("## Issue #280 policy-aware deadline evidence\n\n")
-              if correctness:
-                  out.write(f"Correctness: **{correctness['Total'] - correctness['Failed']}/{correctness['Total']} passed**.\n\n")
-              if not evidence:
+              if instrumented_path.exists():
+                  report = json.loads(instrumented_path.read_text())
+                  correctness = report.get("Correctness")
+                  evidence = report.get("Evidence")
+                  if correctness:
+                      out.write(f"Correctness: **{correctness['Total'] - correctness['Failed']}/{correctness['Total']} passed**.\n\n")
+                  if evidence:
+                      guard = evidence["ZeroDeadlineAllocationGuardrail"]
+                      probe = evidence["ExecutionContextProbe"]
+                      out.write(
+                          f"Zero-deadline guardrail: {guard['AllocatedBytesPerOperation']:.3f} B/op; "
+                          f"runtime timer creates={guard['RuntimeTimerCreates']}; callbacks={guard['RuntimeTimerCallbacks']}.  \n"
+                      )
+                      out.write(f"TimeProvider.System timer ExecutionContext captured by probe: `{probe['Captured']}`.\n\n")
+
+              if not fair_path.exists():
                   raise SystemExit(0)
-              guard = evidence["ZeroDeadlineAllocationGuardrail"]
-              probe = evidence["ExecutionContextProbe"]
-              out.write(
-                  f"Zero-deadline guardrail: {guard['AllocatedBytesPerOperation']:.3f} B/op; "
-                  f"runtime timer creates={guard['RuntimeTimerCreates']}; callbacks={guard['RuntimeTimerCallbacks']}.  \n"
-              )
-              out.write(f"TimeProvider.System timer ExecutionContext captured: `{probe['Captured']}`.\n\n")
+              fair = json.loads(fair_path.read_text())
+              out.write("Primary performance decision lane: **allocation-neutral paired runner**.\n\n")
               out.write("| Scenario | Priority | density | expiry | capacity | QPS Δ per-call | CPU Δ per-call | alloc Δ B/op | shared p99 ms | per-call p99 ms |\n")
               out.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
-              for row in evidence["Summaries"]:
+              for row in fair["Summaries"]:
                   out.write(
                       f"| {row['Scenario']} | {row['Priority']} | {row['DeadlineDensityPercent']:.2f}% | "
                       f"{row['ExpiryPercentOfDeadlineCalls']:.2f}% | {row['Capacity']:,} | "
                       f"{row['PerCallQpsDeltaPercent']:+.2f}% | {row['PerCallCpuDeltaPercent']:+.2f}% | "
-                      f"{row['PerCallAllocationDeltaBytesPerOperation']:+.2f} | "
-                      f"{row['SharedMedianP99LatenessMilliseconds']:.3f} | "
-                      f"{row['PerCallMedianP99LatenessMilliseconds']:.3f} |\n"
+                      f"{row['PerCallAllocationDeltaBytesPerOp']:+.2f} | "
+                      f"{row['SharedMedianP99LatenessMs']:.3f} | "
+                      f"{row['PerCallMedianP99LatenessMs']:.3f} |\n"
                   )
 
-      - name: Upload evidence report
+      - name: Upload evidence reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: issue-280-deadline-policy-evidence
-          path: artifacts/issue-280/deadline-policy-evidence.json
+          path: artifacts/issue-280/*.json
           if-no-files-found: warn
