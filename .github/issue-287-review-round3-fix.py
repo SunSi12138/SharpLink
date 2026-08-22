@@ -149,3 +149,12 @@ test = '''    [Test]
 '''
 assert marker in text
 p.write_text(text.replace(marker, test + marker, 1))
+
+# CreateSessionOverTestTransport completes the handshake by default. The emission test only needs
+# a ready session, so do not attempt to complete the same handshake twice.
+p = Path('test/SharpLink.UnitTests/Runtime/SendPumpTests.cs')
+text = p.read_text()
+old = '''        RpcSessionTestFixture.CompleteHandshake(session);
+        var frame = new PooledByteBufferWriter();'''
+assert text.count(old) == 1
+p.write_text(text.replace(old, '        var frame = new PooledByteBufferWriter();', 1))
