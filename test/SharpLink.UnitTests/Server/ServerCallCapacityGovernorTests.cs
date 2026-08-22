@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using SharpLink.Server;
 
@@ -137,6 +138,63 @@ public class ServerCallCapacityGovernorTests
     }
 
     [Test]
+    public async Task DisposeDuringActivationReleasesCapacityExactlyOnce()
+    {
+        using var activationEntered = new ManualResetEventSlim();
+        using var releaseActivation = new ManualResetEventSlim();
+        using var disposeObservedActivating = new ManualResetEventSlim();
+
+        var hooks = new ServerCallCapacityGovernorTestHooks
+        {
+            ReservationEnteredActivating = () =>
+            {
+                activationEntered.Set();
+                if (!releaseActivation.Wait(TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("Timed out waiting to release activation transition.");
+            },
+            DisposeObservedActivating = () => disposeObservedActivating.Set(),
+        };
+        var governor = new ServerCallCapacityGovernor(1, hooks);
+        Ensure(governor.TryReserve(out var reservation), "reservation must acquire capacity");
+
+        var activateTask = Task.Run(reservation.Activate);
+        Task? disposeTask = null;
+        try
+        {
+            Ensure(
+                activationEntered.Wait(TimeSpan.FromSeconds(10)),
+                "activation must pause after Reserved -> Activating");
+
+            disposeTask = Task.Run(reservation.Dispose);
+            Ensure(
+                disposeObservedActivating.Wait(TimeSpan.FromSeconds(10)),
+                "dispose must observe the Activating state before activation is released");
+
+            var inFlight = governor.CaptureSnapshot();
+            await Assert.That(inFlight.ReservedCalls).IsEqualTo(1);
+            await Assert.That(inFlight.ActiveCalls).IsEqualTo(0);
+            await Assert.That(inFlight.OccupiedCalls).IsEqualTo(1);
+            await Assert.That(governor.TryReserve(out _)).IsFalse();
+        }
+        finally
+        {
+            releaseActivation.Set();
+        }
+
+        await activateTask;
+        if (disposeTask is not null)
+            await disposeTask;
+
+        var released = governor.CaptureSnapshot();
+        await Assert.That(released.ReservedCalls).IsEqualTo(0);
+        await Assert.That(released.ActiveCalls).IsEqualTo(0);
+        await Assert.That(released.OccupiedCalls).IsEqualTo(0);
+        Ensure(governor.TryReserve(out var replacement), "capacity must be reusable after activation/dispose race");
+        replacement.Dispose();
+        governor.AssertInvariant();
+    }
+
+    [Test]
     public async Task ActivationDoesNotPermitAnAdditionalCall()
     {
         var governor = new ServerCallCapacityGovernor(1);
@@ -196,7 +254,7 @@ public class ServerCallCapacityGovernorTests
             .Throws<ArgumentOutOfRangeException>();
     }
 
-    private static void Ensure(bool condition, string message)
+    private static void Ensure([DoesNotReturnIf(false)] bool condition, string message)
     {
         if (!condition)
             throw new InvalidOperationException(message);
