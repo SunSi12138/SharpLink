@@ -13,75 +13,12 @@ const DESKTOP_PLATFORM_TAGS = Object.freeze([
     'macos-arm64-hosted-desktop-coreclr-net10',
     'macos-x64-hosted-desktop-coreclr-net10'
 ]);
-const FIXTURE_IDS = Object.freeze([
-    'Byte',
-    'Int16',
-    'Int32',
-    'Int64',
-    'Single',
-    'Double',
-    'Half',
-    'Int128',
-    'UInt128',
-    'Guid',
-    'Int32Pair',
-    'ByteInt32',
-    'ByteInt64',
-    'Int64Byte',
-    'ByteShortIntLong',
-    'ByteDouble',
-    'ShortLongByte',
-    'NestedPadded',
-    'SequentialDefault',
-    'Pack1',
-    'Pack2',
-    'Pack4',
-    'Pack8',
-    'ExplicitLayout',
-    'NativeInt',
-    'NativeUInt',
-    'NativePair',
-    'ByteEnum',
-    'ShortEnum',
-    'IntEnum',
-    'LongEnum',
-    'EnumContainer',
-    'Large64',
-    'Large256',
-    'Large1024',
-    'Large2048',
-    'Vector3Value',
-    'TimestampFlags',
-    'IdentityCounter',
-    'GeometryValue',
-    'DateOnlyRaw',
-    'DateTimeRaw',
-    'DateTimeOffsetRaw',
-    'TimeOnlyRaw',
-    'TimeSpanRaw',
-    'IndexRaw',
-    'RangeRaw',
-    'RuneRaw',
-    'DecimalRaw'
-]);
-const NATIVE_WIDTH_FIXTURE_ID_SET = new Set(['NativeInt', 'NativeUInt', 'NativePair']);
-const RAW_FIXTURE_IDS = Object.freeze([
-    'DateOnlyRaw',
-    'DateTimeRaw',
-    'DateTimeOffsetRaw',
-    'TimeOnlyRaw',
-    'TimeSpanRaw',
-    'IndexRaw',
-    'RangeRaw',
-    'RuneRaw',
-    'DecimalRaw'
-]);
-const RAW_FIXTURE_ID_SET = new Set(RAW_FIXTURE_IDS);
 const CONSUMER_IDENTITY_FIELDS = Object.freeze([
     'platformTag',
     'targetFramework',
     'frameworkDescription',
     'runtimeFamily',
+    'runtimeFamilySource',
     'runtimeVersion',
     'sdkVersion',
     'runtimeIdentifier',
@@ -93,30 +30,58 @@ const CONSUMER_IDENTITY_FIELDS = Object.freeze([
     'isLittleEndian',
     'compilationMode'
 ]);
-const PORTABLE_CONSUMER_RUNTIME_IDENTITIES = Object.freeze({
+const KNOWN_RUNTIME_IDENTITIES = Object.freeze({
+    'linux-x64-hosted-desktop-coreclr-net10': Object.freeze({
+        os: 'linux', processArchitecture: 'x64', executionEnvironment: 'hosted-desktop', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'linux-x64', targetFramework: 'net10.0', pointerSize: 8
+    }),
+    'linux-arm64-hosted-desktop-coreclr-net10': Object.freeze({
+        os: 'linux', processArchitecture: 'arm64', executionEnvironment: 'hosted-desktop', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'linux-arm64', targetFramework: 'net10.0', pointerSize: 8
+    }),
+    'windows-x64-hosted-desktop-coreclr-net10': Object.freeze({
+        os: 'windows', processArchitecture: 'x64', executionEnvironment: 'hosted-desktop', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'win-x64', targetFramework: 'net10.0', pointerSize: 8
+    }),
+    'windows-arm64-hosted-desktop-coreclr-net10': Object.freeze({
+        os: 'windows', processArchitecture: 'arm64', executionEnvironment: 'hosted-desktop', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'win-arm64', targetFramework: 'net10.0', pointerSize: 8
+    }),
+    'macos-x64-hosted-desktop-coreclr-net10': Object.freeze({
+        os: 'macos', processArchitecture: 'x64', executionEnvironment: 'hosted-desktop', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'osx-x64', targetFramework: 'net10.0', pointerSize: 8
+    }),
+    'macos-arm64-hosted-desktop-coreclr-net10': Object.freeze({
+        os: 'macos', processArchitecture: 'arm64', executionEnvironment: 'hosted-desktop', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'osx-arm64', targetFramework: 'net10.0', pointerSize: 8
+    }),
+    'browser-wasm-browser-mono-net10': Object.freeze({
+        os: 'browser', processArchitecture: 'wasm', executionEnvironment: 'browser', runtimeFamily: 'Mono',
+        runtimeFamilySource: 'platform-runtime-pack', runtimeIdentifier: 'browser-wasm', targetFramework: 'net10.0/browser-wasm', pointerSize: 4
+    }),
     'android-x64-emulator-mono-net10': Object.freeze({
-        runtimeIdentifier: 'android-x64',
-        targetFramework: 'net10.0-android/android-x64'
+        os: 'android', processArchitecture: 'x64', executionEnvironment: 'emulator', runtimeFamily: 'Mono',
+        runtimeFamilySource: 'loaded-runtime-library', runtimeIdentifier: 'android-x64', targetFramework: 'net10.0-android/android-x64', pointerSize: 8
     }),
     'android-x64-emulator-coreclr-net10': Object.freeze({
-        runtimeIdentifier: 'android-x64',
-        targetFramework: 'net10.0-android/android-x64'
+        os: 'android', processArchitecture: 'x64', executionEnvironment: 'emulator', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'loaded-runtime-library', runtimeIdentifier: 'android-x64', targetFramework: 'net10.0-android/android-x64', pointerSize: 8
     }),
     'ios-x64-simulator-mono-net10': Object.freeze({
-        runtimeIdentifier: 'iossimulator-x64',
-        targetFramework: 'net10.0-ios/iossimulator-x64'
+        os: 'ios', processArchitecture: 'x64', executionEnvironment: 'simulator', runtimeFamily: 'Mono',
+        runtimeFamilySource: 'platform-runtime-pack', runtimeIdentifier: 'iossimulator-x64', targetFramework: 'net10.0-ios/iossimulator-x64', pointerSize: 8
     }),
     'ios-arm64-simulator-mono-net10': Object.freeze({
-        runtimeIdentifier: 'iossimulator-arm64',
-        targetFramework: 'net10.0-ios/iossimulator-arm64'
+        os: 'ios', processArchitecture: 'arm64', executionEnvironment: 'simulator', runtimeFamily: 'Mono',
+        runtimeFamilySource: 'platform-runtime-pack', runtimeIdentifier: 'iossimulator-arm64', targetFramework: 'net10.0-ios/iossimulator-arm64', pointerSize: 8
     }),
     'android-arm64-physical-device-mono-net10': Object.freeze({
-        runtimeIdentifier: 'android-arm64',
-        targetFramework: 'net10.0-android/android-arm64'
+        os: 'android', processArchitecture: 'arm64', executionEnvironment: 'physical-device', runtimeFamily: 'Mono',
+        runtimeFamilySource: 'loaded-runtime-library', runtimeIdentifier: 'android-arm64', targetFramework: 'net10.0-android/android-arm64', pointerSize: 8
     }),
     'android-arm64-physical-device-coreclr-net10': Object.freeze({
-        runtimeIdentifier: 'android-arm64',
-        targetFramework: 'net10.0-android/android-arm64'
+        os: 'android', processArchitecture: 'arm64', executionEnvironment: 'physical-device', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'loaded-runtime-library', runtimeIdentifier: 'android-arm64', targetFramework: 'net10.0-android/android-arm64', pointerSize: 8
     })
 });
 
@@ -143,9 +108,74 @@ function validateSchemaVersion(value, source) {
     }
 }
 
+function validateFixtureRegistry(manifest, source) {
+    const entries = manifest?.fixtureRegistry;
+    if (!Array.isArray(entries) || entries.length === 0) {
+        throw new Error(`${source} is missing shared fixture registry metadata.`);
+    }
+    const ids = entries.map(item => String(item?.id ?? ''));
+    if (ids.some(id => id.length === 0)) {
+        throw new Error(`${source} fixture registry contains a missing fixture id.`);
+    }
+    const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))].sort();
+    if (duplicates.length !== 0) {
+        throw new Error(`${source} fixture registry contains duplicate ids: ${duplicates.join(', ')}.`);
+    }
+    for (const item of entries) {
+        if (typeof item.category !== 'string' || typeof item.nativeWidth !== 'boolean') {
+            throw new Error(`${source} has invalid fixture registry metadata for ${String(item.id)}.`);
+        }
+    }
+
+    const sorted = [...entries]
+        .map(item => ({ id: String(item.id), category: item.category, nativeWidth: item.nativeWidth }))
+        .sort((left, right) => left.id.localeCompare(right.id));
+    const byId = new Map(sorted.map(item => [item.id, item]));
+    return {
+        entries: sorted,
+        byId,
+        fixtureIds: sorted.map(item => item.id),
+        rawFixtureIds: sorted.filter(item => item.category === BUILTIN_RAW_CATEGORY).map(item => item.id),
+        rawFixtureIdSet: new Set(sorted.filter(item => item.category === BUILTIN_RAW_CATEGORY).map(item => item.id)),
+        nativeWidthFixtureIdSet: new Set(sorted.filter(item => item.nativeWidth).map(item => item.id)),
+        key: JSON.stringify(sorted)
+    };
+}
+
+function validateRuntimeManifestIdentity(manifest, source) {
+    validateSchemaVersion(manifest, source);
+    const registry = validateFixtureRegistry(manifest, source);
+    const platformTag = String(manifest?.platformTag ?? '');
+    const derivedTag = `${String(manifest?.os ?? '')}-${String(manifest?.processArchitecture ?? '')}-${String(manifest?.executionEnvironment ?? '')}-${String(manifest?.runtimeFamily ?? '').toLowerCase()}-net10`;
+    if (platformTag !== derivedTag) {
+        throw new Error(`${source} platformTag mismatch: recorded=${platformTag || '<missing>'}, derived=${derivedTag}.`);
+    }
+
+    const expected = KNOWN_RUNTIME_IDENTITIES[platformTag];
+    if (expected) {
+        for (const [field, expectedValue] of Object.entries(expected)) {
+            if (manifest?.[field] !== expectedValue) {
+                throw new Error(
+                    `${source} runtime identity mismatch for ${platformTag}/${field}: ` +
+                    `expected=${String(expectedValue)}, actual=${String(manifest?.[field])}.`);
+            }
+        }
+    }
+    return registry;
+}
+
+function assertSameFixtureRegistry(leftManifest, rightManifest, label) {
+    const left = validateFixtureRegistry(leftManifest, `${label} left registry`);
+    const right = validateFixtureRegistry(rightManifest, `${label} right registry`);
+    if (left.key !== right.key) {
+        throw new Error(`${label} fixture registry mismatch.`);
+    }
+    return left;
+}
+
 function validateVerificationReportSchema(report, source) {
     validateSchemaVersion(report, source);
-    validateSchemaVersion(report?.consumer, `${source} consumer manifest`);
+    validateRuntimeManifestIdentity(report?.consumer, `${source} consumer manifest`);
     if (!Array.isArray(report?.results)) {
         throw new Error(`Verification report ${source} is missing results.`);
     }
@@ -181,20 +211,23 @@ function assertExactResultKeySet(report, expectedProducers, expectedFixtures, la
     }
 }
 
-function validateBuiltinRawCategoryBoundary(manifest, source) {
+function validateBuiltinRawCategoryBoundary(manifest, source, registry = validateFixtureRegistry(manifest, source)) {
     for (const item of manifest?.cases ?? []) {
-        const trustedRaw = RAW_FIXTURE_ID_SET.has(item.id);
-        const declaredRaw = item.category === BUILTIN_RAW_CATEGORY;
-        if (trustedRaw !== declaredRaw) {
+        const metadata = registry.byId.get(String(item.id));
+        if (!metadata) {
+            throw new Error(`${source} contains fixture ${String(item.id)} that is absent from the shared fixture registry.`);
+        }
+        if (item.category !== metadata.category) {
             throw new Error(
-                `${source} raw safety metadata mismatch for ${item.id}: trustedRaw=${trustedRaw}, category=${item.category ?? '<missing>'}.`);
+                `${source} fixture category mismatch for ${item.id}: expected=${metadata.category}, actual=${item.category ?? '<missing>'}.`);
         }
     }
 }
 
-function validateRawFixtureSet(envelope, source) {
-    validateBuiltinRawCategoryBoundary(envelope.manifest, source);
-    const rawCases = (envelope.manifest.cases ?? []).filter(item => RAW_FIXTURE_ID_SET.has(item.id));
+function validateRawFixtureSet(envelope, source, expectedManifest = envelope.manifest) {
+    const registry = assertSameFixtureRegistry(envelope.manifest, expectedManifest, `${source} shared registry`);
+    validateBuiltinRawCategoryBoundary(envelope.manifest, source, registry);
+    const rawCases = (envelope.manifest.cases ?? []).filter(item => registry.rawFixtureIdSet.has(item.id));
     const duplicateIds = rawCases
         .map(item => item.id)
         .filter((id, index, ids) => ids.indexOf(id) !== index);
@@ -202,8 +235,8 @@ function validateRawFixtureSet(envelope, source) {
         throw new Error(`${source} contains duplicate raw fixture IDs: ${[...new Set(duplicateIds)].sort().join(', ')}.`);
     }
 
-    assertExactSet(rawCases.map(item => item.id), RAW_FIXTURE_IDS, `${source} raw fixture IDs`);
-    return new Map(rawCases.map(item => [item.id, item]));
+    assertExactSet(rawCases.map(item => item.id), registry.rawFixtureIds, `${source} raw fixture IDs`);
+    return { cases: new Map(rawCases.map(item => [item.id, item])), registry };
 }
 
 function validateSameCommit(producerManifest, consumerManifest, source) {
@@ -216,6 +249,7 @@ function validateSameCommit(producerManifest, consumerManifest, source) {
 }
 
 function validateConsumerIdentity(localManifest, consumerManifest, source) {
+    assertSameFixtureRegistry(localManifest, consumerManifest, `${source} registry`);
     for (const field of CONSUMER_IDENTITY_FIELDS) {
         const localValue = localManifest?.[field];
         const consumerValue = consumerManifest?.[field];
@@ -240,21 +274,6 @@ function validateResultConsumers(report, source) {
     }
 }
 
-function validatePortableConsumerRuntimeIdentity(report, source) {
-    const platformTag = String(report?.consumer?.platformTag ?? '');
-    const expected = PORTABLE_CONSUMER_RUNTIME_IDENTITIES[platformTag];
-    if (!expected) return;
-
-    const runtimeIdentifier = String(report.consumer.runtimeIdentifier ?? '');
-    const targetFramework = String(report.consumer.targetFramework ?? '');
-    if (runtimeIdentifier !== expected.runtimeIdentifier || targetFramework !== expected.targetFramework) {
-        throw new Error(
-            `${source} has inconsistent effective runtime identity for ${platformTag}: ` +
-            `runtimeIdentifier=${runtimeIdentifier || '<missing>'}, targetFramework=${targetFramework || '<missing>'}; ` +
-            `expected runtimeIdentifier=${expected.runtimeIdentifier}, targetFramework=${expected.targetFramework}.`);
-    }
-}
-
 function validateExpectedNativeWidthDifference(item, fixture, source) {
     const producerPointerSize = Number(item.producerPointerSize);
     const consumerPointerSize = Number(item.consumerPointerSize);
@@ -275,15 +294,33 @@ function validateExpectedNativeWidthDifference(item, fixture, source) {
     }
 }
 
+function validateByteClassification(item, source, raw) {
+    const byteEqual = item.byteForByteEquality === true;
+    const expectedClassification = raw
+        ? (byteEqual ? 'IDENTICAL_RAW_REPRESENTATION' : 'RAW_BUILTIN_REPRESENTATION_MISMATCH')
+        : (byteEqual ? 'IDENTICAL_BYTES_AND_COMPATIBLE' : 'DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE');
+    if (item.classification !== expectedClassification) {
+        throw new Error(
+            `${source} classification/byte invariant mismatch: producer=${String(item.producer)}, fixture=${String(item.fixture)}, ` +
+            `classification=${String(item.classification)}, expected=${expectedClassification}, byteEqual=${String(item.byteForByteEquality)}.`);
+    }
+    if (byteEqual ? item.firstDifferingByteOffset != null : item.firstDifferingByteOffset == null) {
+        throw new Error(
+            `${source} first-difference invariant mismatch: producer=${String(item.producer)}, fixture=${String(item.fixture)}, ` +
+            `byteEqual=${String(item.byteForByteEquality)}, firstDiff=${String(item.firstDifferingByteOffset)}.`);
+    }
+}
+
 function validateStrictResultSemantics(
     report,
     source,
     allowPortableRawRepresentation = true,
     allowExpectedNativeWidthDifference = false) {
+    const registry = validateFixtureRegistry(report.consumer, `${source} fixture registry`);
     for (const item of report.results) {
         const fixture = String(item.fixture ?? '');
         const portableRawRepresentation = allowPortableRawRepresentation
-            && RAW_FIXTURE_ID_SET.has(fixture)
+            && registry.rawFixtureIdSet.has(fixture)
             && item.category === BUILTIN_RAW_CATEGORY
             && item.crossDeserializeResult == null
             && item.logicalEquality == null
@@ -296,11 +333,12 @@ function validateStrictResultSemantics(
                     `${source} has raw representation-only row with unexpected classification ${String(item.classification)}: ` +
                     `producer=${String(item.producer)}, fixture=${fixture}.`);
             }
+            validateByteClassification(item, source, true);
             continue;
         }
 
         const expectedNativeWidthDifference = allowExpectedNativeWidthDifference
-            && NATIVE_WIDTH_FIXTURE_ID_SET.has(fixture)
+            && registry.nativeWidthFixtureIdSet.has(fixture)
             && item.classification === 'EXPECTED_ARCH_DEPENDENT'
             && item.crossDeserializeResult == null
             && item.logicalEquality == null
@@ -327,6 +365,7 @@ function validateStrictResultSemantics(
                 `size=${String(item.producerSize)}, segmentedCross=${String(item.segmentedCrossDeserializeResult)}, ` +
                 `segmentedLogical=${String(item.segmentedLogicalEquality)}.`);
         }
+        validateByteClassification(item, source, false);
     }
 }
 
@@ -339,12 +378,17 @@ export async function loadEnvelopes(root, options = {}) {
     const excludeBuiltinRaw = options.excludeBuiltinRaw
         ?? process.env.SHARPLINK_SKIP_BUILTIN_RAW === '1';
     const envelopes = [];
+    let expectedRegistryKey = null;
     for (const manifestFile of manifestFiles) {
         const originalManifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
-        validateSchemaVersion(originalManifest, manifestFile);
-        validateBuiltinRawCategoryBoundary(originalManifest, manifestFile);
+        const registry = validateRuntimeManifestIdentity(originalManifest, manifestFile);
+        if (expectedRegistryKey !== null && registry.key !== expectedRegistryKey) {
+            throw new Error(`Producer fixture registry mismatch in ${manifestFile}.`);
+        }
+        expectedRegistryKey ??= registry.key;
+        validateBuiltinRawCategoryBoundary(originalManifest, manifestFile, registry);
         const cases = (originalManifest.cases ?? []).filter(
-            item => !excludeBuiltinRaw || !RAW_FIXTURE_ID_SET.has(item.id));
+            item => !excludeBuiltinRaw || !registry.rawFixtureIdSet.has(item.id));
         const manifest = { ...originalManifest, cases };
         const corpusRoot = path.dirname(manifestFile);
         const caseBytesBase64 = {};
@@ -362,8 +406,8 @@ export async function writeCorpus(envelope, outputDirectory) {
         throw new Error('Portable producer output is not a corpus envelope.');
     }
     validateSchemaVersion(envelope, 'portable producer envelope');
-    validateSchemaVersion(envelope.manifest, 'portable producer manifest');
-    validateBuiltinRawCategoryBoundary(envelope.manifest, 'portable producer manifest');
+    const registry = validateRuntimeManifestIdentity(envelope.manifest, 'portable producer manifest');
+    validateBuiltinRawCategoryBoundary(envelope.manifest, 'portable producer manifest', registry);
 
     await fs.rm(outputDirectory, { recursive: true, force: true });
     await fs.mkdir(path.join(outputDirectory, 'cases'), { recursive: true });
@@ -423,6 +467,7 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
     const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
     validateVerificationReportSchema(report, reportFile);
     validateResultConsumers(report, reportFile);
+    const reportRegistry = validateFixtureRegistry(report.consumer, `${reportFile} consumer registry`);
     const producers = await loadEnvelopes(producerRoot, { excludeBuiltinRaw: false });
     const localEnvelopes = await loadEnvelopes(localCorpusRoot, { excludeBuiltinRaw: false });
     if (localEnvelopes.length !== 1) {
@@ -432,13 +477,13 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
     const local = localEnvelopes[0];
     validateSameCommit(local.manifest, report.consumer, `${local.manifest.platformTag} local raw corpus`);
     validateConsumerIdentity(local.manifest, report.consumer, `${local.manifest.platformTag} local raw corpus`);
-    const localCases = validateRawFixtureSet(local, `${local.manifest.platformTag} local corpus`);
+    const localRaw = validateRawFixtureSet(local, `${local.manifest.platformTag} local corpus`, report.consumer);
     for (const producer of producers) {
         validateSameCommit(producer.manifest, report.consumer, `${producer.manifest.platformTag} raw producer`);
-        const producerCases = validateRawFixtureSet(producer, `${producer.manifest.platformTag} producer`);
-        for (const fixtureId of RAW_FIXTURE_IDS) {
-            const producerCase = producerCases.get(fixtureId);
-            const localCase = localCases.get(fixtureId);
+        const producerRaw = validateRawFixtureSet(producer, `${producer.manifest.platformTag} producer`, report.consumer);
+        for (const fixtureId of reportRegistry.rawFixtureIds) {
+            const producerCase = producerRaw.cases.get(fixtureId);
+            const localCase = localRaw.cases.get(fixtureId);
             const producerEncoded = producer.caseBytesBase64[fixtureId];
             const localEncoded = local.caseBytesBase64[fixtureId];
             if (typeof producerEncoded !== 'string' || typeof localEncoded !== 'string') {
@@ -496,7 +541,6 @@ export async function checkVerificationReport(reportFile) {
     const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
     validateVerificationReportSchema(report, reportFile);
     validateResultConsumers(report, reportFile);
-    validatePortableConsumerRuntimeIdentity(report, reportFile);
     if (report?.browserProbeError || report?.portableProbeError) {
         throw new Error(report.browserProbeError ?? report.portableProbeError);
     }
@@ -546,6 +590,7 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
         throw new Error(
             `Browser forward consumer identity mismatch: expected=${BROWSER_PLATFORM_TAG}, actual=${String(forward.consumer.platformTag ?? '<missing>')}.`);
     }
+    const registry = validateFixtureRegistry(forward.consumer, 'Browser forward fixture registry');
     const expectedForwardProducers = [...DESKTOP_PLATFORM_TAGS, BROWSER_PLATFORM_TAG];
     assertExactSet(
         forward.results.map(item => String(item.producer ?? '')),
@@ -554,7 +599,7 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
     assertExactResultKeySet(
         forward,
         expectedForwardProducers,
-        FIXTURE_IDS,
+        registry.fixtureIds,
         'Browser forward result keys');
     validateStrictResultSemantics(forward, forwardReportFile, true, true);
 
@@ -575,6 +620,7 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
         const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
         validateVerificationReportSchema(report, reportFile);
         validateResultConsumers(report, reportFile);
+        assertSameFixtureRegistry(report.consumer, forward.consumer, `${reportFile} Browser evidence registry`);
         const consumer = String(report.consumer.platformTag ?? '');
         reverseConsumers.push(consumer);
         if (String(report.consumer.sharpLinkCommit ?? '') !== expectedCommit) {
@@ -588,7 +634,7 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
         assertExactResultKeySet(
             report,
             [BROWSER_PLATFORM_TAG],
-            FIXTURE_IDS,
+            registry.fixtureIds,
             `${reportFile} Browser-to-desktop result keys`);
         validateStrictResultSemantics(report, reportFile, true, true);
         reverseRows += report.results.length;
