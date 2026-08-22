@@ -1,0 +1,62 @@
+name: Issue 275 Focused Stress
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - test/issue-275-phase-stabilization
+  workflow_dispatch:
+
+jobs:
+  focused-stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Stress server replacement generation 100x
+        shell: bash
+        run: |
+          set -euo pipefail
+          for iteration in $(seq 1 100); do
+            echo "server replacement iteration ${iteration}/100"
+            dotnet run -c Release --no-build \
+              --project test/SharpLink.IntegrationTests \
+              -- \
+              --maximum-parallel-tests 1 \
+              --timeout 120s \
+              --treenode-filter "/*/*/RuntimeInterceptorContinuationIntegrationTests/ServerReplacementBeforeDownstreamNextAdvancesShouldRetainCapturedGeneration"
+          done
+
+      - name: Stress hosted connectivity publication 100x
+        shell: bash
+        run: |
+          set -euo pipefail
+          for iteration in $(seq 1 100); do
+            echo "hosted readiness iteration ${iteration}/100"
+            dotnet test \
+              --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+              -c Release \
+              --no-build \
+              -- \
+              --maximum-parallel-tests 1 \
+              --timeout 120s \
+              --treenode-filter "/*/*/SharpLinkClientAccessorTests/HostedStartShouldPublishConnectivityBeforeStaticReadinessTargetConverges"
+          done
