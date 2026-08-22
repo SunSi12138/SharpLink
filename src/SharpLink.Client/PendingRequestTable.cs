@@ -862,8 +862,10 @@ internal sealed class PendingRequestTable : IDisposable
                 continue;
             }
 
-            Interlocked.Increment(ref _deadlineScheduleVersion);
+            var version = Interlocked.Increment(ref _deadlineScheduleVersion);
             ArmDeadlineTimer(deadlineTimestamp);
+            if (Volatile.Read(ref _deadlineScheduleVersion) != version)
+                ReconcileDeadlineTimer();
             return;
         }
     }
