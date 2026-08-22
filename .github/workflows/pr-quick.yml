@@ -1,12 +1,9 @@
 name: PR Quick
 
 permissions:
-  contents: write
+  contents: read
 
 on:
-  push:
-    branches:
-      - agent/issue-285-deadline-final-arm-race
   pull_request:
   workflow_dispatch:
 
@@ -15,44 +12,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  issue-285-linearize:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: agent/issue-285-deadline-final-arm-race
-          fetch-depth: 0
-
-      - name: Move schedule generation before earliest CAS
-        shell: python
-        run: |
-          from pathlib import Path
-
-          path = Path('src/SharpLink.Client/PendingRequestTable.cs')
-          text = path.read_text(encoding='utf-8')
-          old = '''            if (Interlocked.CompareExchange(\n                    ref _approximateEarliestDeadline,\n                    deadlineTimestamp,\n                    current) != current)\n            {\n                continue;\n            }\n\n            var version = Interlocked.Increment(ref _deadlineScheduleVersion);\n            ArmDeadlineTimer(deadlineTimestamp);\n'''
-          new = '''            var version = Interlocked.Increment(ref _deadlineScheduleVersion);\n            if (Interlocked.CompareExchange(\n                    ref _approximateEarliestDeadline,\n                    deadlineTimestamp,\n                    current) != current)\n            {\n                continue;\n            }\n\n            ArmDeadlineTimer(deadlineTimestamp);\n'''
-          if old not in text:
-              raise SystemExit('expected issue-285 source shape not found')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-      - name: Restore workflow and commit patch
-        run: |
-          git checkout origin/dev -- .github/workflows/pr-quick.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/SharpLink.Client/PendingRequestTable.cs .github/workflows/pr-quick.yml
-          git commit -m 'fix(client): linearize deadline schedule generation'
-          git push origin HEAD:agent/issue-285-deadline-final-arm-race
-
   codec-compatibility:
-    if: github.event_name != 'push'
     uses: ./.github/workflows/codec-compatibility.yml
 
   quick:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:

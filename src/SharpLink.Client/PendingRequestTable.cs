@@ -854,6 +854,7 @@ internal sealed class PendingRequestTable : IDisposable
             var current = Volatile.Read(ref _approximateEarliestDeadline);
             if (current <= deadlineTimestamp)
                 return;
+            var version = Interlocked.Increment(ref _deadlineScheduleVersion);
             if (Interlocked.CompareExchange(
                     ref _approximateEarliestDeadline,
                     deadlineTimestamp,
@@ -862,7 +863,6 @@ internal sealed class PendingRequestTable : IDisposable
                 continue;
             }
 
-            var version = Interlocked.Increment(ref _deadlineScheduleVersion);
             ArmDeadlineTimer(deadlineTimestamp);
             if (Volatile.Read(ref _deadlineScheduleVersion) != version)
                 ReconcileDeadlineTimer();
