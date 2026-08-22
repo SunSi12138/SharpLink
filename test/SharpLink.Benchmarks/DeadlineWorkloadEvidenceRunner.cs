@@ -151,11 +151,11 @@ internal static class DeadlineWorkloadEvidenceRunner
             var state = new WorkerState(table, timeProvider, scenario, gate, ready);
             workers[index] = state;
             tasks[index] = Task.Factory.StartNew(
-                static boxed => RunWorker((WorkerState)boxed!),
+                static boxed => RunWorkerAsync((WorkerState)boxed!),
                 state,
                 CancellationToken.None,
                 TaskCreationOptions.LongRunning,
-                TaskScheduler.Default);
+                TaskScheduler.Default).Unwrap();
         }
 
         ready.Wait();
@@ -206,7 +206,7 @@ internal static class DeadlineWorkloadEvidenceRunner
             aggregateHistogram.OverflowCount);
     }
 
-    private static WorkerResult RunWorker(WorkerState state)
+    private static async Task<WorkerResult> RunWorkerAsync(WorkerState state)
     {
         state.Ready.Signal();
         state.Gate.Wait();
@@ -251,7 +251,7 @@ internal static class DeadlineWorkloadEvidenceRunner
             {
                 try
                 {
-                    _ = state.Operations[index].AsValueTask().GetAwaiter().GetResult();
+                    _ = await state.Operations[index].AsValueTask().ConfigureAwait(false);
                     throw new InvalidOperationException("A deadline workload timeout completed successfully.");
                 }
                 catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.DeadlineExceeded)
