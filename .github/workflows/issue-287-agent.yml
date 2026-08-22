@@ -84,6 +84,16 @@ jobs:
           ]:
               assert phrase not in migration, phrase
           PY
+      - name: Capture applied patch
+        run: |
+          git add -N .
+          git diff --binary > issue-287-applied.patch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-287-applied-patch
+          path: issue-287-applied.patch
+          if-no-files-found: error
+          retention-days: 1
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Build solution
