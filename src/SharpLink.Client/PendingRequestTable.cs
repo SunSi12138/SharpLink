@@ -74,7 +74,6 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly ITimer _deadlineTimer;
     private long _nextId;
     private long _approximateEarliestDeadline = long.MaxValue;
-    private long _deadlineScheduleVersion;
     private int _deadlineScanRunning;
     private int _activeSlots;
     private int _waiterCount;
@@ -854,7 +853,6 @@ internal sealed class PendingRequestTable : IDisposable
             var current = Volatile.Read(ref _approximateEarliestDeadline);
             if (current <= deadlineTimestamp)
                 return;
-            var version = Interlocked.Increment(ref _deadlineScheduleVersion);
             if (Interlocked.CompareExchange(
                     ref _approximateEarliestDeadline,
                     deadlineTimestamp,
@@ -863,9 +861,7 @@ internal sealed class PendingRequestTable : IDisposable
                 continue;
             }
 
-            ArmDeadlineTimer(deadlineTimestamp);
-            if (Volatile.Read(ref _deadlineScheduleVersion) != version)
-                ReconcileDeadlineTimer();
+            ReconcileDeadlineTimer();
             return;
         }
     }
@@ -881,7 +877,6 @@ internal sealed class PendingRequestTable : IDisposable
         try
         {
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
-            Interlocked.Increment(ref _deadlineScheduleVersion);
             var slots = Volatile.Read(ref _slots);
             if (slots is null)
                 return;
@@ -913,13 +908,12 @@ internal sealed class PendingRequestTable : IDisposable
     {
         while (Volatile.Read(ref _disposed) == 0)
         {
-            var version = Volatile.Read(ref _deadlineScheduleVersion);
             var next = Volatile.Read(ref _approximateEarliestDeadline);
             if (next == long.MaxValue)
                 return;
 
             ArmDeadlineTimer(next);
-            if (Volatile.Read(ref _deadlineScheduleVersion) == version)
+            if (Volatile.Read(ref _approximateEarliestDeadline) == next)
                 return;
         }
     }
