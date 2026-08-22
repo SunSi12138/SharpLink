@@ -1,0 +1,39 @@
+name: Issue 252 Striped Byte Deadline Evidence
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - agent/issue-252-striped-byte-markers
+  workflow_dispatch:
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run theory-selected striped byte candidate evidence
+        run: bash .github/issue252-striped-byte-evidence.sh
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-252-striped-byte-evidence
+          path: ${{ runner.temp }}/issue252-striped-byte-results/*.json
+          if-no-files-found: warn
