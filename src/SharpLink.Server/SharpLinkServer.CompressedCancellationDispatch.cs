@@ -284,7 +284,10 @@ internal sealed partial class SharpLinkServer
     private sealed class CompressedCancellableRpcWorkItem : IThreadPoolWorkItem
     {
         private const int MaxRetained = 4096;
-        private static readonly ConcurrentBag<CompressedCancellableRpcWorkItem> Pool = new();
+        // Rent runs on the request-loop thread while Return runs on the decode worker.
+        // A FIFO queue avoids ConcurrentBag's cross-thread local-bag steal bookkeeping
+        // while retaining pooled work items without per-return node allocation.
+        private static readonly ConcurrentQueue<CompressedCancellableRpcWorkItem> Pool = new();
         private static int s_retainedCount;
 
         private SharpLinkServer? _server;
@@ -317,7 +320,7 @@ internal sealed partial class SharpLinkServer
             bool reusePreDecodeMetadata,
             ServerRequestEnvelope preDecodeRequest)
         {
-            if (!Pool.TryTake(out var workItem))
+            if (!Pool.TryDequeue(out var workItem))
                 workItem = new CompressedCancellableRpcWorkItem();
             else
                 Interlocked.Decrement(ref s_retainedCount);
@@ -387,7 +390,7 @@ internal sealed partial class SharpLinkServer
 
             var retained = Interlocked.Increment(ref s_retainedCount);
             if (retained <= MaxRetained)
-                Pool.Add(this);
+                Pool.Enqueue(this);
             else
                 Interlocked.Decrement(ref s_retainedCount);
         }
