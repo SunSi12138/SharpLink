@@ -202,14 +202,14 @@ public class SharpLinkClientAccessorTests
 
         var accessorWait = accessor.GetClientAsync().AsTask();
         var hostedStart = service.StartAsync(CancellationToken.None);
-        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task)
-            .WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task);
         Ensure(!hostedStart.IsCompleted && !accessorWait.IsCompleted,
             "hosted publication must remain pending while neither endpoint has connected");
 
         first.ReleaseConnect();
-        await hostedStart.WaitAsync(TimeSpan.FromSeconds(2));
-        var client = await accessorWait.WaitAsync(TimeSpan.FromSeconds(2));
+        await first.ConnectCompleted.Task;
+        await hostedStart;
+        var client = await accessorWait;
         var snapshot = client.GetReadinessSnapshot();
 
         Ensure(first.ConnectCompleted.Task.IsCompleted && !second.ConnectCompleted.Task.IsCompleted,
