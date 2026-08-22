@@ -16,17 +16,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Inspect issue 287 surfaces
+      - name: Inspect implementation details
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== HEAD ==='
-          git log -1 --oneline
-          echo '=== SharpLinkCallOptions references ==='
-          git grep -n 'SharpLinkCallOptions' -- ':!*.lock' || true
-          echo '=== Deadline wire references ==='
-          git grep -n -E 'HasDeadline|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- ':!*.lock' || true
-          echo '=== Generator call-options references ==='
-          git grep -n -E 'IsCallOptions|CallOptionsMethod|HasCallOptions' src/SharpLink.Generator test/SharpLink.Generator.Tests || true
-          echo '=== Workflow files ==='
-          find .github/workflows -maxdepth 1 -type f -printf '%f\n' | sort
+          echo '=== RpcDeadline definitions/usages ==='
+          git grep -n 'RpcDeadline' src | head -120 || true
+          echo '=== Deadline-related abstractions/runtime ==='
+          git grep -n -E 'TimestampFrequency|UtcDeadline|Remaining|NegotiatedMinor|MinorVersion' src/SharpLink.* | head -220 || true
+          echo '=== Invoker wire writer ==='
+          sed -n '940,1080p' src/SharpLink.Client/SharpLinkClient.Invokers.cs
+          echo '=== Proxy emitter ==='
+          sed -n '100,190p' src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs
+          sed -n '330,380p' src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs
+          echo '=== Stub emitter ==='
+          sed -n '260,330p' src/SharpLink.Generator/RpcGenerator.StubEmitter.cs
+          echo '=== Models ==='
+          sed -n '1,115p' src/SharpLink.Generator/RpcGenerator.Models.cs
+          echo '=== Generator registration ==='
+          sed -n '50,165p' src/SharpLink.Generator/RpcGenerator.cs
+          echo '=== Analysis special parameter helpers ==='
+          sed -n '520,760p' src/SharpLink.Generator/RpcGenerator.Analysis.cs
+          sed -n '1090,1190p' src/SharpLink.Generator/RpcGenerator.Analysis.cs
+          echo '=== Session negotiated properties ==='
+          git grep -n -E 'NegotiatedCapabilities|NegotiatedMinor|MinorVersion' src/SharpLink.Runtime src/SharpLink.Client src/SharpLink.Server | head -220 || true
