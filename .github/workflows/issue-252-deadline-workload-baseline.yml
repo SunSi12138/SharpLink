@@ -1,0 +1,83 @@
+name: Issue 252 Deadline Workload Baseline
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - agent/issue-252-deadline-workload-baseline
+  workflow_dispatch:
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Prove production source matches dev baseline
+        run: git diff --exit-code 9b6f627954ec5a0eaca31b4cea5accdd4a6d79c9 HEAD -- src/
+
+      - name: Restore benchmark project
+        run: dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+
+      - name: Build benchmark project
+        run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+
+      - name: Run comprehensive deadline workload baseline
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          --
+          --deadline-workload-evidence
+          --rounds 3
+          --warmup-seconds 2
+          --duration-seconds 8
+          --json artifacts/issue-252/deadline-workload-baseline.json
+          --production-baseline-sha 9b6f627954ec5a0eaca31b4cea5accdd4a6d79c9
+
+      - name: Publish summary
+        if: always()
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("artifacts/issue-252/deadline-workload-baseline.json")
+          if not report_path.exists():
+              raise SystemExit(0)
+          report = json.loads(report_path.read_text())
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Issue #252 comprehensive deadline workload baseline\n\n")
+              summary.write(f"Production baseline: `{report['ProductionBaselineSha']}`  \n")
+              summary.write(f"Runtime: `{report['RuntimeVersion']}`; logical CPUs: {report['ProcessorCount']}\n\n")
+              summary.write("| Scenario | QPS | CPU ns/op | B/op | timer cb/s | p95 late ms | p99 late ms |\n")
+              summary.write("|---|---:|---:|---:|---:|---:|---:|\n")
+              for row in report["Summaries"]:
+                  summary.write(
+                      f"| {row['Scenario']} | {row['MedianQps']:.1f} | "
+                      f"{row['MedianCpuNanosecondsPerOperation']:.1f} | "
+                      f"{row['MedianAllocatedBytesPerOperation']:.1f} | "
+                      f"{row['MedianTimerCallbacksPerSecond']:.1f} | "
+                      f"{row['MedianP95LatenessMilliseconds']:.3f} | "
+                      f"{row['MedianP99LatenessMilliseconds']:.3f} |\n"
+                  )
+
+      - name: Upload baseline report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-252-deadline-workload-baseline
+          path: artifacts/issue-252/deadline-workload-baseline.json
+          if-no-files-found: warn
