@@ -1,5 +1,7 @@
 using System.IO.Pipelines;
+using System.Net;
 using System.Reflection;
+using System.Threading;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 
@@ -159,6 +161,8 @@ public class ServerRequestPermitTests
 
     private sealed class IdleListener : IServerTransportListener
     {
+        public EndPoint? LocalEndPoint => null;
+
         public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromException<ITransportConnection>(new OperationCanceledException(cancellationToken));
 
