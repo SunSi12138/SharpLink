@@ -1,0 +1,78 @@
+name: Agent Issue 252 Scan Counter Cleanup
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - agent/issue-252-pending-segments
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-252-pending-segments
+          fetch-depth: 0
+
+      - name: Apply review cleanup
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('src/SharpLink.Client/PendingRequestTable.cs')
+          text = source.read_text()
+
+          def one(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one source match, got {count}: {old!r}')
+              text = text.replace(old, new, 1)
+
+          one('    internal int LastDeadlineScanInspectedSlots { get; private set; }\n\n', '')
+          one('''            if (slots is null)\n            {\n                LastDeadlineScanInspectedSlots = 0;\n                return;\n            }\n\n            var now = _timeProvider.GetTimestamp();\n            var inspectedSlots = 0;\n            for (var index = 0; index < slots.Length; index++)\n            {\n                inspectedSlots++;\n''', '''            if (slots is null)\n                return;\n\n            var now = _timeProvider.GetTimestamp();\n            for (var index = 0; index < slots.Length; index++)\n            {\n''')
+          one('''            }\n\n            LastDeadlineScanInspectedSlots = inspectedSlots;\n        }\n''', '''            }\n        }\n''')
+          if not text.endswith('\n'):
+              text += '\n'
+          source.write_text(text)
+
+          runner = Path('test/SharpLink.Benchmarks/PendingRequestSegmentationEvidenceRunner.cs')
+          text = runner.read_text()
+          old = 'inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity'
+          count = text.count(old)
+          if count != 2:
+              raise SystemExit(f'expected two runner scan-counter references, got {count}')
+          text = text.replace(old, 'inspectedSlots = GetOptionalBoolean(table, "SlotsMaterialized") is false ? 0 : Capacity')
+          helper = '''    private static int? GetOptionalInt32(object instance, string propertyName)\n    {\n        var property = instance.GetType().GetProperty(\n            propertyName,\n            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);\n        return property?.GetValue(instance) is int value ? value : null;\n    }\n\n'''
+          if text.count(helper) != 1:
+              raise SystemExit('expected one GetOptionalInt32 helper')
+          text = text.replace(helper, '', 1)
+          if not text.endswith('\n'):
+              text += '\n'
+          runner.write_text(text)
+          PY
+
+          rm -f .github/workflows/agent-issue252-remove-scan-counter.yml
+          git diff --check
+
+      - name: Validate cleanup
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/SharpLink.Client/PendingRequestTable.cs test/SharpLink.Benchmarks/PendingRequestSegmentationEvidenceRunner.cs .github/workflows/agent-issue252-remove-scan-counter.yml
+          git commit -m 'perf(client): remove scan evidence counter'
+          git push origin HEAD:agent/issue-252-pending-segments
