@@ -1,0 +1,176 @@
+from pathlib import Path
+
+# The typed request fast path must follow the same emission-time TimeBudget stamping path as the
+# general RpcChannel request writer.
+p = Path('src/SharpLink.Client/SharpLinkClient.Invokers.cs')
+text = p.read_text()
+count = text.count('GetWireTimeBudgetValue(deadline)')
+assert count == 1, count
+text = text.replace('GetWireTimeBudgetValue(deadline)', '0L', 1)
+# This file has one request-writer ownership transfer; carry the frozen RpcDeadline with it.
+count = text.count('            session.SendPacket(writer);')
+assert count == 1, count
+text = text.replace('            session.SendPacket(writer);', '            session.SendPacket(writer, deadline);', 1)
+p.write_text(text)
+
+# Ownership transfers to the session after SendPacket; the regression must not dispose the owner a
+# second time from the test scope.
+p = Path('test/SharpLink.UnitTests/Runtime/SendPumpTests.cs')
+text = p.read_text().replace(
+    '        using var frame = new PooledByteBufferWriter();\n        var token = ProtocolV2FrameWriter.BeginFrame(\n            frame,\n            ProtocolV2FrameType.Request,',
+    '        var frame = new PooledByteBufferWriter();\n        var token = ProtocolV2FrameWriter.BeginFrame(\n            frame,\n            ProtocolV2FrameType.Request,',
+    1)
+p.write_text(text)
+
+# Reviewer edge cases: the lifetime is frozen before user interceptors run, including a
+# short-circuit that never invokes next; an interceptor delay before next also reduces the final
+# emitted TimeBudget rather than starting a fresh timeout at the terminal invoker.
+Path('test/SharpLink.UnitTests/Client/SharpLinkClientInterceptorDeadlineTests.cs').write_text(r'''using System.Buffers.Binary;
+using SharpLink.Client;
+using SharpLink.Sdk;
+using SharpLink.UnitTests.Runtime;
+
+namespace SharpLink.UnitTests.Client;
+
+public class SharpLinkClientInterceptorDeadlineTests
+{
+    private static readonly RpcMethodDescriptor SMethod = new(
+        ContractId: 1,
+        MethodId: 2872,
+        Kind: RpcMethodKind.Unary,
+        HasResponsePayload: true,
+        HasClientStreams: false,
+        HasMethodTimeout: false,
+        MethodTimeout: null);
+
+    [Test]
+    public async Task ShortCircuitShouldStillHonorFrozenLogicalInvocationDeadline()
+    {
+        var clock = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(clock);
+                builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
+                builder.AddInterceptor(new AdvancingShortCircuitInterceptor(clock));
+            });
+
+        var failure = await CaptureSharpLinkException(InvokeUnary(client).AsTask());
+
+        Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "a short-circuit result returned after the frozen deadline must be rejected");
+        Ensure(client.State == SharpLinkConnectionState.Created,
+            "deadline validation of a short circuit must not establish a transport connection");
+        Ensure(!await transport.Connection.TryWaitForSentPacket(
+                ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(25)),
+            "a short-circuit path must not emit a request");
+    }
+
+    [Test]
+    public async Task InterceptorDelayBeforeNextShouldReduceEmittedTimeBudget()
+    {
+        var clock = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(clock);
+                builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
+                builder.AddInterceptor(new AdvanceThenNextInterceptor(clock));
+            });
+        await client.ConnectAsync();
+
+        var invocation = InvokeUnary(client).AsTask();
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var budgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
+        Ensure(budgetTicks == TimeSpan.FromSeconds(2).Ticks,
+            "the terminal invoker must reuse the pre-interceptor RpcDeadline");
+
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId), 42);
+        Ensure(await invocation == 42, "intercepted response");
+    }
+
+    private static ValueTask<int> InvokeUnary(SharpLinkClient client)
+    {
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        return channel.InvokeUnaryAsync(
+            SMethod,
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default);
+    }
+
+    private static async Task<SharpLinkException> CaptureSharpLinkException(Task task)
+    {
+        try
+        {
+            await task;
+            throw new Exception("expected SharpLinkException");
+        }
+        catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+    }
+
+    private sealed class AdvancingShortCircuitInterceptor(ManualTimeProvider clock)
+        : ISharpLinkClientInterceptor
+    {
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            clock.Advance(TimeSpan.FromSeconds(6));
+            return ValueTask.FromResult(new SharpLinkClientInvocationResult(42));
+        }
+    }
+
+    private sealed class AdvanceThenNextInterceptor(ManualTimeProvider clock)
+        : ISharpLinkClientInterceptor
+    {
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            clock.Advance(TimeSpan.FromSeconds(3));
+            return next(context);
+        }
+    }
+
+    private static void Ensure(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
+    }
+}
+''')
+
+Path('test/SharpLink.UnitTests/Server/DeadlinePublicSurfaceTests.cs').write_text(r'''using SharpLink.Server;
+
+namespace SharpLink.UnitTests.Server;
+
+public class DeadlinePublicSurfaceTests
+{
+    [Test]
+    public void AbsoluteDeadlineCompatibilityPropertiesShouldNotRemainPublic()
+    {
+        Ensure(typeof(SharpLinkCallContextSnapshot).GetProperty("Deadline") is null,
+            "call context must not retain the old absolute Deadline property");
+        Ensure(typeof(SharpLinkAdmissionContext).GetProperty("Deadline") is null,
+            "admission context must not retain the old absolute Deadline property");
+    }
+
+    private static void Ensure(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
+    }
+}
+''')
