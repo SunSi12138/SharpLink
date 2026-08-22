@@ -488,7 +488,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         };
     }
 
-    private enum DecodeStrategy
+    internal enum DecodeStrategy
     {
         ThreadPoolHandoff,
         InlineProvider,
@@ -496,20 +496,20 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         PersistentExecutor
     }
 
-    private enum AdmissionMode
+    internal enum AdmissionMode
     {
         Off,
         Immediate,
         Queued
     }
 
-    private enum CapacityMode
+    internal enum CapacityMode
     {
         Available,
         Full
     }
 
-    private sealed class DecodeFixture
+    internal sealed class DecodeFixture
     {
         private DecodeFixture(int payloadSize, bool compressible, byte[] compressed)
         {
@@ -541,7 +541,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         }
     }
 
-    private sealed class DecodeCaseRuntime : IAsyncDisposable
+    internal sealed class DecodeCaseRuntime : IAsyncDisposable
     {
         private readonly DecodeFixture _fixture;
         private readonly DecodeStrategy _strategy;
@@ -561,7 +561,10 @@ internal static class DecodeExecutionPhase0EvidenceRunner
             AdmissionMode admissionMode,
             CapacityMode capacityMode,
             int concurrency,
-            int quantumBytes)
+            int quantumBytes,
+            int? executorQueueCapacity = null,
+            Task? executorWorkerGate = null,
+            Action? onExecutorWorkPublished = null)
         {
             _fixture = fixture;
             _strategy = strategy;
@@ -579,8 +582,10 @@ internal static class DecodeExecutionPhase0EvidenceRunner
             {
                 _executor = new PersistentDecodeExecutor(
                     Math.Clamp(Environment.ProcessorCount, 1, 4),
-                    Math.Max(32, concurrency * 2),
-                    _metrics);
+                    executorQueueCapacity ?? Math.Max(32, concurrency * 2),
+                    _metrics,
+                    executorWorkerGate,
+                    onExecutorWorkPublished);
             }
         }
 
@@ -824,6 +829,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
             if (Interlocked.CompareExchange(ref _state, Running, Queued) != Queued)
             {
                 _cancellationRegistration.Dispose();
+                _metrics.OnCancelledWorkSkipped();
                 return;
             }
 
@@ -870,10 +876,19 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         private readonly Channel<PersistentDecodeWorkItem> _channel;
         private readonly Task[] _workers;
         private readonly DecodeMetrics _metrics;
+        private readonly Task? _workerGate;
+        private readonly Action? _onWorkPublished;
 
-        internal PersistentDecodeExecutor(int workers, int capacity, DecodeMetrics metrics)
+        internal PersistentDecodeExecutor(
+            int workers,
+            int capacity,
+            DecodeMetrics metrics,
+            Task? workerGate = null,
+            Action? onWorkPublished = null)
         {
             _metrics = metrics;
+            _workerGate = workerGate;
+            _onWorkPublished = onWorkPublished;
             _channel = Channel.CreateBounded<PersistentDecodeWorkItem>(new BoundedChannelOptions(capacity)
             {
                 FullMode = BoundedChannelFullMode.Wait,
@@ -911,6 +926,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
             try
             {
                 await _channel.Writer.WriteAsync(work, cancellationToken);
+                _onWorkPublished?.Invoke();
             }
             catch
             {
@@ -929,6 +945,8 @@ internal static class DecodeExecutionPhase0EvidenceRunner
 
         private async Task WorkerAsync()
         {
+            if (_workerGate is not null)
+                await _workerGate;
             await foreach (var work in _channel.Reader.ReadAllAsync())
                 work.Run();
         }
@@ -1112,6 +1130,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         private long _peakDecodedBytes;
         private long _decodeQueueDepth;
         private long _peakDecodeQueueDepth;
+        private long _skippedCancelledWorkItems;
 
         internal void OnDecompress() => Interlocked.Increment(ref _decompressCalls);
 
@@ -1142,6 +1161,8 @@ internal static class DecodeExecutionPhase0EvidenceRunner
 
         internal void OnDecodeDequeued() => Interlocked.Decrement(ref _decodeQueueDepth);
 
+        internal void OnCancelledWorkSkipped() => Interlocked.Increment(ref _skippedCancelledWorkItems);
+
         internal void Reset()
         {
             if (Volatile.Read(ref _retainedBytes) != 0 ||
@@ -1155,6 +1176,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
             Interlocked.Exchange(ref _peakRetainedBytes, 0);
             Interlocked.Exchange(ref _peakDecodedBytes, 0);
             Interlocked.Exchange(ref _peakDecodeQueueDepth, 0);
+            Interlocked.Exchange(ref _skippedCancelledWorkItems, 0);
         }
 
         internal DecodeMetricsSnapshot Capture()
@@ -1163,9 +1185,13 @@ internal static class DecodeExecutionPhase0EvidenceRunner
                 Volatile.Read(ref _decodedRentCount),
                 Volatile.Read(ref _decodedBytesRented),
                 Volatile.Read(ref _retainedRentCount),
+                Volatile.Read(ref _retainedBytes),
                 Volatile.Read(ref _peakRetainedBytes),
+                Volatile.Read(ref _decodedBytes),
                 Volatile.Read(ref _peakDecodedBytes),
-                Volatile.Read(ref _peakDecodeQueueDepth));
+                Volatile.Read(ref _decodeQueueDepth),
+                Volatile.Read(ref _peakDecodeQueueDepth),
+                Volatile.Read(ref _skippedCancelledWorkItems));
 
         private static void UpdatePeak(ref long target, long value)
         {
@@ -1180,14 +1206,18 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         }
     }
 
-    private readonly record struct DecodeMetricsSnapshot(
+    internal readonly record struct DecodeMetricsSnapshot(
         long DecompressCalls,
         long DecodedRentCount,
         long DecodedBytesRented,
         long RetainedRentCount,
+        long CurrentRetainedBytes,
         long PeakRetainedBytes,
+        long CurrentDecodedBytes,
         long PeakDecodedBytes,
-        long PeakDecodeQueueDepth);
+        long CurrentDecodeQueueDepth,
+        long PeakDecodeQueueDepth,
+        long SkippedCancelledWorkItems);
 
     private readonly record struct DecodeRequestResult(
         bool Accepted,
