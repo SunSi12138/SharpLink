@@ -119,13 +119,11 @@ public class ServerRequestPermitTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+        return RpcSessionTestFixture.CreateSessionOverTestTransport(
             id,
             input.Reader,
             output.Writer,
             RpcSessionTestFixture.ServerOptions());
-        RpcSessionTestFixture.CompleteHandshake(session);
-        return session;
     }
 
     private static ServerConnectionState CreateConnection(RpcSession session)
