@@ -119,8 +119,6 @@ internal sealed class PendingRequestTable : IDisposable
 
     internal bool SlotsMaterialized => Volatile.Read(ref _slots) is not null;
 
-    internal int LastDeadlineScanInspectedSlots { get; private set; }
-
     public int Count
     {
         get
@@ -881,16 +879,11 @@ internal sealed class PendingRequestTable : IDisposable
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
             var slots = Volatile.Read(ref _slots);
             if (slots is null)
-            {
-                LastDeadlineScanInspectedSlots = 0;
                 return;
-            }
 
             var now = _timeProvider.GetTimestamp();
-            var inspectedSlots = 0;
             for (var index = 0; index < slots.Length; index++)
             {
-                inspectedSlots++;
                 var call = Volatile.Read(ref slots[index]);
                 if (call is null || !call.Deadline.HasValue)
                     continue;
@@ -903,8 +896,6 @@ internal sealed class PendingRequestTable : IDisposable
                     UpdateEarliestDeadline(call.Deadline.Timestamp);
                 }
             }
-
-            LastDeadlineScanInspectedSlots = inspectedSlots;
         }
         finally
         {

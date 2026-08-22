@@ -180,7 +180,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
             active,
             deadlines,
             iterations,
-            inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity,
+            inspectedSlots = GetOptionalBoolean(table, "SlotsMaterialized") is false ? 0 : Capacity,
             nanosecondsPerScan = elapsedTicks * 1_000_000_000d / Stopwatch.Frequency / iterations
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
@@ -232,7 +232,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
             p50LatenessMilliseconds = Percentile(lateness, 0.50),
             p95LatenessMilliseconds = Percentile(lateness, 0.95),
             maxLatenessMilliseconds = lateness[^1],
-            inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity
+            inspectedSlots = GetOptionalBoolean(table, "SlotsMaterialized") is false ? 0 : Capacity
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
     }
@@ -425,14 +425,6 @@ internal static class PendingRequestSegmentationEvidenceRunner
             propertyName,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         return property?.GetValue(instance) is bool value ? value : null;
-    }
-
-    private static int? GetOptionalInt32(object instance, string propertyName)
-    {
-        var property = instance.GetType().GetProperty(
-            propertyName,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        return property?.GetValue(instance) is int value ? value : null;
     }
 
     private static int GetInt32(
