@@ -14,7 +14,7 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
     public string FrameworkDescription { get; set; } = string.Empty;
     public string RuntimeFamily { get; set; } = string.Empty;
     [JsonRequired]
-    public string RuntimeFamilySource { get; set; } = string.Empty;
+    public string RuntimeFamilySource { get; set; } = DefaultRuntimeFamilySource();
     public string RuntimeVersion { get; set; } = string.Empty;
     public string SdkVersion { get; set; } = string.Empty;
     public string RuntimeIdentifier { get; set; } = string.Empty;
@@ -118,6 +118,13 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
         if (!actual.SequenceEqual(expected))
             throw new InvalidOperationException($"Runtime manifest {PlatformTag} fixture registry does not match the shared FixtureRegistry.");
     }
+
+    private static string DefaultRuntimeFamilySource()
+        => OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst()
+            ? "platform-runtime-pack"
+            : OperatingSystem.IsAndroid()
+                ? "loaded-runtime-library"
+                : "runtime-reflection";
 
     private static List<FixtureRegistryEntry> CreateFixtureRegistry()
         => global::SharpLink.CodecCompatibility.FixtureRegistry.All
