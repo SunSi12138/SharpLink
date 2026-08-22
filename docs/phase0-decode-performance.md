@@ -5,11 +5,11 @@ This slice is benchmark-only and is stacked on the reviewed call-reservation pri
 ## Candidate execution models
 
 - **A — ThreadPoolHandoff**: one per-request ThreadPool handoff before synchronous provider decode. This is the #261-style scheduling baseline.
-- **B — InlineProvider**: reserve, call the existing synchronous compression provider inline, then activate. The built-in Brotli provider already decodes in bounded 8 KiB output chunks and checks cancellation in its loop.
-- **C — CooperativeQuantum**: benchmark-only Brotli decoder that preserves SharpLink integrity-trailer/CRC validation, decodes in the same 8 KiB chunks, and reschedules after a bounded 64 KiB output quantum.
-- **D — PersistentExecutor**: persistent fixed workers with explicit queued-work ownership. The comparative A/B/C/D matrix measures this executor with an unsaturated queue; a separate fixed-capacity saturation probe exercises bounded-channel backpressure explicitly.
+- **B — InlineProvider**: reserve, call the existing synchronous compression provider inline, then activate. The built-in Brotli provider already decodes in bounded 8 KiB output chunks and checks cancellation in its decode loop.
+- **C — CooperativeQuantum**: benchmark-only Brotli-loop prototype that preserves SharpLink integrity-trailer/CRC validation, decodes in the same 8 KiB chunks, and reschedules after a bounded 64 KiB output quantum. The integrity CRC is still a whole-input synchronous scan before the first cancellation check/yield, so C is **not** an end-to-end bounded cooperative decode pipeline.
+- **D — PersistentExecutor**: persistent fixed workers with explicit queued-work ownership. The comparative A/B/C/D matrix measures this executor with an unsaturated queue; separate fixed-capacity probes exercise bounded-channel backpressure and cancellation while work is still queue-owned.
 
-The C implementation is intentionally local to the benchmark project. It is not a proposed public provider API or production implementation.
+The C implementation is intentionally local to the benchmark project. It is not a proposed public provider API or production implementation, and its results apply only to this Brotli-loop `Task.Yield` shape rather than cooperative decode in general.
 
 ## Matrix
 
@@ -68,22 +68,34 @@ B (`InlineProvider`) is the within-shard baseline (`1.000`). The ranges below ar
 | --- | --- | --- | --- | --- |
 | 1 KiB / high | `0.772–0.773` / `1.300–1.407` | `0.993–1.009` / `0.997–1.003` | `0.645–0.690` / `1.547–1.556` | scheduling dominates; B/C are effectively equivalent |
 | 1 KiB / low | `0.666–0.789` / `1.257–1.560` | `0.981–1.003` / `0.991–1.016` | `0.589–0.700` / `1.418–1.759` | per-request handoff/executor is too expensive |
-| 64 KiB / high | `0.974–0.979` / `1.022–1.023` | `1.000–1.000` / `0.999–0.999` | `0.976–0.978` / `1.024–1.024` | 64 KiB quantum does not materially yield; B/C remain best |
-| 64 KiB / low | `0.952–0.964` / `1.039–1.050` | `0.984–0.986` / `1.016–1.019` | `0.945–0.954` / `1.049–1.062` | B remains the cheapest execution shape |
-| 1 MiB / high | `0.972–0.976` / `1.034–1.036` | `0.914–0.938` / `1.120–1.149` | `0.971–0.974` / `1.035–1.043` | D reaches A-like fixed-worker throughput/CPU without per-request ThreadPool ownership |
-| 1 MiB / low | `0.953–0.963` / `1.044–1.051` | `0.939–0.948` / `1.068–1.071` | `0.967–0.974` / `1.044–1.044` | D is the best fixed-worker offload candidate; C pays repeated-yield cost |
+| 64 KiB / high | `0.974–0.979` / `1.022–1.023` | `1.000–1.000` / `0.999–0.999` | `0.976–0.978` / `1.024–1.024` | 64 KiB Brotli-loop quantum does not materially yield; B/C remain best in this prototype |
+| 64 KiB / low | `0.952–0.964` / `1.039–1.050` | `0.984–0.986` / `1.016–1.019` | `0.945–0.954` / `1.049–1.062` | B remains the cheapest measured execution shape |
+| 1 MiB / high | `0.972–0.976` / `1.034–1.036` | `0.914–0.938` / `1.120–1.149` | `0.971–0.974` / `1.035–1.043` | D reaches A-like fixed-worker throughput/CPU; this C prototype pays repeated Brotli-loop yields |
+| 1 MiB / low | `0.953–0.963` / `1.044–1.051` | `0.939–0.948` / `1.068–1.071` | `0.967–0.974` / `1.044–1.044` | D is the best measured fixed-worker offload candidate; this C prototype pays repeated-yield cost |
 
-P99 follows the same small-payload conclusion: A/D add substantial scheduler tails at 1 KiB, while C is essentially B until the quantum is crossed. At 1 MiB and high offered concurrency, A/D queueing can create large request-latency tails. That is not an argument for an unbounded inline reader loop; it is evidence that production D must combine bounded worker concurrency with explicit queue/retained/decoded resource budgets and admission/backpressure.
+P99 follows the same small-payload conclusion: A/D add substantial scheduler tails at 1 KiB, while C is essentially B until the output quantum is crossed. At 1 MiB and high offered concurrency, A/D queueing can create large request-latency tails. That is not an argument for an unbounded inline reader loop; it is evidence that production D must combine bounded worker concurrency with explicit queue/retained/decoded resource budgets and admission/backpressure.
 
 The cancellation probe directly cancels the decode token after decode begins. It verifies provider/executor token observation, but it does **not** model the key network property that an inline RequestLoop cannot consume a later remote Cancel/close/Stop frame while it is synchronously decoding. It therefore cannot establish a safe remote-cancellable inline threshold or bound reader-loop/control-plane stall.
 
 For 1 MiB probes, cancellation was observed in essentially every case in both runs, and median local token-observation time was similar between B/A/C/D for the same compressibility. This means D does not introduce a material cancellation-token reaction penalty once work has begun; it does not prove anything about how quickly a remote control frame is read when B is running inline.
 
-### Fixed-capacity executor saturation probe
+C's cancellation/yield evidence also has a specific boundary: `Crc32Accumulator.Compute` scans the complete compressed payload synchronously before the Brotli loop starts. For low-compressibility 1 MiB inputs that can mean nearly the whole compressed input is traversed before C reaches its first cancellation check or output-quantum yield. The measurements therefore compare B against a **Brotli-loop-only cooperative prototype**; they do not establish the cost or viability of a design that also makes integrity validation cooperative.
+
+### Fixed-capacity executor saturation and queued-cancellation probes
 
 A separate probe fixes queue capacity independently of offered concurrency (`queue capacity = 8`, `concurrency = 128`, `operations = 256`). Executor workers are deliberately held behind a gate until at least one `ChannelWriter.WriteAsync` is observed to complete asynchronously. The probe fails if no blocked writer is recorded or if submitted decode work does not complete after workers are released.
 
 This probe exists specifically to validate the bounded/backpressure path that the original comparative D queue (`max(32, concurrency * 2)`) could not saturate. Its blocked-writer counts and wait distributions are stored separately from the A/B/C/D throughput ratios; saturation evidence must not be blended into the unsaturated comparative QPS table.
+
+The same fixed-capacity runner also executes a **queued-cancellation ownership probe**. It fills the queue while all workers remain gated, cancels every queue-owned request, and requires all of the following before workers are released:
+
+- caller-side reservation/buffer ownership completes/releases promptly;
+- provider-start count remains `0`;
+- every queued work item transitions atomically from queue ownership to cancelled-before-start ownership.
+
+After worker release/drain, the probe requires every cancelled item to be skipped before provider execution and still requires provider-start count `= 0`. The candidate work item performs an explicit cancellation check immediately after a worker wins the queue-to-running ownership transition and before any provider/CRC work, covering the race where cancellation arrives as ownership transfers to a worker.
+
+This is the required semantic shape for production D: cancellation may complete caller ownership early only if cancellation wins while the item is still queue-owned. If a worker has already won ownership, the caller must continue to await that worker so retained/decoded buffers cannot be returned while provider code may still access them.
 
 ### Resource-budget observation
 
@@ -110,17 +122,17 @@ The executor queue must be fixed/bounded independently of offered request concur
 
 2. **Use D / persistent bounded DecodeExecutor for expensive remote-cancellable decode.**
    - Keep the reader/control-plane path free to process Cancel/deadline/close/Stop while decode is supervised by a small persistent worker set.
-   - The comparative 1 MiB evidence shows that fixed-worker D has substantially lower repeated-yield cost than C. The separate saturation probe validates the fixed-capacity bounded-channel/backpressure mechanism rather than inferring it from the unsaturated throughput matrix.
+   - The comparative 1 MiB evidence shows that fixed-worker D avoids the repeated Brotli-loop-yield cost paid by this C prototype. The separate saturation probe validates the fixed-capacity bounded-channel/backpressure mechanism, and the queued-cancellation probe validates cancellation before provider start without prematurely releasing worker-owned buffers.
    - The exact production threshold remains an internal policy decision that must be validated end-to-end; Phase 0 selects the execution **shape**, not a threshold value or a new public configuration API.
 
 3. **Do not productionize A.**
    - A remains the #261 comparison baseline.
    - At large payloads it can approach D's unsaturated fixed-worker throughput, but it provides no durable bounded/fair executor ownership model and is especially expensive for small payloads.
 
-4. **Do not productionize C as a separate execution model.**
-   - Up to 64 KiB, C mostly behaves like B because the quantum is not crossed.
-   - At 1 MiB, repeated cooperative yields consistently cost more CPU/QPS than D's fixed-worker path in the comparative matrix.
-   - Keeping a second provider-specific decode state machine would add ownership and maintenance complexity without winning the measured large-payload tradeoff.
+4. **Do not productionize this C prototype as a separate execution model.**
+   - Up to 64 KiB output, it mostly behaves like B because the Brotli output quantum is not crossed.
+   - At 1 MiB, its repeated Brotli-loop yields consistently cost more CPU/QPS than D's fixed-worker path in the comparative matrix.
+   - Its synchronous whole-input CRC means Phase 0 has **not** evaluated a fully cooperative integrity+decode pipeline. The data therefore does not rule out such a design in general; it only shows that carrying this provider-specific Brotli-loop `Task.Yield` prototype alongside B + D is not justified by the measured tradeoff.
 
 ## Production follow-up implied by this ADR
 
@@ -133,6 +145,8 @@ Required gates before calling that slice complete:
 - compression safety is always-on and independent of `_admissionController != null`;
 - capacity/policy rejected compressed requests keep `Decompress=0` and decoded rent `=0`;
 - D is supervised, bounded, fair across connections, and has no detached per-request workers;
+- queued D cancellation before worker start skips provider/CRC work and releases caller ownership without waiting for worker service;
+- cancellation racing queue-to-worker ownership performs a pre-provider token check, while worker-owned work prevents early buffer return;
 - retained/decoded byte budgets are enforced before retention/rent;
 - remote Cancel/deadline/close/Stop are exercised during executor decode;
 - a real RequestLoop remote-control-frame probe measures Cancel/close/Stop observation while testing any proposed inline threshold, starting with the 64 KiB hypothesis;
@@ -142,4 +156,4 @@ Required gates before calling that slice complete:
 
 ## Interpretation boundary
 
-This evidence selects the execution shape before production plumbing. It does not establish the final `RequestPermit`, Stop/Drain implementation, decode byte-budget values, remote-cancellable inline threshold, dynamic policy generation, fairness algorithm, or public configuration surface. Those remain production work under #273, with adaptive B + D as the selected shape.
+This evidence selects the execution shape before production plumbing. It does not establish the final `RequestPermit`, Stop/Drain implementation, decode byte-budget values, remote-cancellable inline threshold, dynamic policy generation, fairness algorithm, or public configuration surface. It also does not benchmark a fully cooperative integrity+decode implementation. Those remain production/research work under #273, with adaptive B + D as the selected shape.
