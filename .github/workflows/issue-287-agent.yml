@@ -31,6 +31,15 @@ jobs:
               '    public const ushort TimeBudgetMinorVersion = 4;',
               '    /// <summary>Protocol minor version that encodes request lifetime as remaining TimeBudget ticks.</summary>\n    public const ushort TimeBudgetMinorVersion = 4;')
           p.write_text(text)
+
+          p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
+          text = p.read_text().replace(
+              'DateTimeOffset? deadline = null,',
+              'RpcDeadline deadline = default,')
+          p.write_text(text)
+
+          p = Path('src/SharpLink.Client/SharpLinkClient.Interceptors.cs')
+          p.write_text(p.read_text().replace('context.Options', 'context.Metadata'))
           PY
           git diff --stat
           git diff --check
