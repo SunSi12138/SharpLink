@@ -24,6 +24,14 @@ jobs:
       - name: Apply prototype patch
         run: |
           python3 .github/issue-287-patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/SharpLink.Abstractions/ProtocolV2.cs')
+          text = p.read_text().replace(
+              '    public const ushort TimeBudgetMinorVersion = 4;',
+              '    /// <summary>Protocol minor version that encodes request lifetime as remaining TimeBudget ticks.</summary>\n    public const ushort TimeBudgetMinorVersion = 4;')
+          p.write_text(text)
+          PY
           git diff --stat
           git diff --check
           echo '=== remaining source references ==='
