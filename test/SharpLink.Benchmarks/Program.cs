@@ -57,6 +57,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--phase0-decode-backpressure-evidence", StringComparison.Ordinal))
+        {
+            await DecodeExecutorBackpressureEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--buffer-writer-growth-evidence", StringComparison.Ordinal))
         {
             BufferWriterGrowthEvidenceRunner.Run();
