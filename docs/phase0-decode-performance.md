@@ -7,7 +7,7 @@ This slice is benchmark-only and is stacked on the reviewed call-reservation pri
 - **A — ThreadPoolHandoff**: one per-request ThreadPool handoff before synchronous provider decode. This is the #261-style scheduling baseline.
 - **B — InlineProvider**: reserve, call the existing synchronous compression provider inline, then activate. The built-in Brotli provider already decodes in bounded 8 KiB output chunks and checks cancellation in its loop.
 - **C — CooperativeQuantum**: benchmark-only Brotli decoder that preserves SharpLink integrity-trailer/CRC validation, decodes in the same 8 KiB chunks, and reschedules after a bounded 64 KiB output quantum.
-- **D — PersistentExecutor**: bounded channel plus a fixed persistent worker set (1..4 workers based on runner CPU count), with explicit ownership transfer.
+- **D — PersistentExecutor**: persistent fixed workers with explicit queued-work ownership. The comparative A/B/C/D matrix measures this executor with an unsaturated queue; a separate fixed-capacity saturation probe exercises bounded-channel backpressure explicitly.
 
 The C implementation is intentionally local to the benchmark project. It is not a proposed public provider API or production implementation.
 
@@ -25,7 +25,7 @@ Each payload/compressibility shard runs all four strategies across:
 
 The queued-admission shape is deliberately one scheduler continuation, not a production `AdmissionProgram` implementation. It isolates how an already-asynchronous admission continuation interacts with the decode execution model without prematurely coupling the benchmark to #264 production wiring.
 
-Two independent hosted-runner workflow executions were used for the decision. Relative ratios are calculated only against B inside the same payload/compressibility shard; absolute QPS is not compared across hosted VMs.
+Two independent hosted-runner workflow executions were used for the initial execution-shape comparison. Relative ratios are calculated only against B inside the same payload/compressibility shard; absolute QPS is not compared across hosted VMs.
 
 - workflow run `32568724302`, benchmark head `10b33c25914f3d6762904b6ead7202cb72a1d781`;
 - workflow run `32568891389`, benchmark-equivalent head `0744415a4ab2abf04a8b1ea04d34f3a64df583c6`.
@@ -34,7 +34,7 @@ Both runs used 4 logical CPUs, but GitHub assigned different AMD EPYC models acr
 
 ## Evidence collected
 
-Per matrix case:
+Per comparative matrix case:
 
 - QPS;
 - process CPU ns/op;
@@ -46,7 +46,7 @@ Per matrix case:
 - peak decoded bytes in flight;
 - peak explicit decode queue depth;
 - scheduler/worker delay P50/P99;
-- remote cancellation observation probe when applicable.
+- local cancellation-token observation probe when applicable.
 
 A separate burst probe records synthetic drain-completion latency for each strategy. It is useful for relative executor supervision cost but is not a substitute for the production Stop/Drain integration suite.
 
@@ -62,7 +62,7 @@ This preserves the #244 requirement while comparing execution models.
 
 ## Results
 
-B (`InlineProvider`) is the within-shard baseline (`1.000`). The ranges below are the two independent workflow medians.
+B (`InlineProvider`) is the within-shard baseline (`1.000`). The ranges below are the two independent workflow medians. These D ratios describe **fixed-worker overhead with an unsaturated executor queue**; they do not, by themselves, prove bounded-queue saturation behavior.
 
 | Payload / compressibility | A QPS / CPU | C QPS / CPU | D QPS / CPU | Interpretation |
 | --- | --- | --- | --- | --- |
@@ -70,14 +70,20 @@ B (`InlineProvider`) is the within-shard baseline (`1.000`). The ranges below ar
 | 1 KiB / low | `0.666–0.789` / `1.257–1.560` | `0.981–1.003` / `0.991–1.016` | `0.589–0.700` / `1.418–1.759` | per-request handoff/executor is too expensive |
 | 64 KiB / high | `0.974–0.979` / `1.022–1.023` | `1.000–1.000` / `0.999–0.999` | `0.976–0.978` / `1.024–1.024` | 64 KiB quantum does not materially yield; B/C remain best |
 | 64 KiB / low | `0.952–0.964` / `1.039–1.050` | `0.984–0.986` / `1.016–1.019` | `0.945–0.954` / `1.049–1.062` | B remains the cheapest execution shape |
-| 1 MiB / high | `0.972–0.976` / `1.034–1.036` | `0.914–0.938` / `1.120–1.149` | `0.971–0.974` / `1.035–1.043` | D reaches A-like throughput/CPU without per-request ThreadPool ownership |
-| 1 MiB / low | `0.953–0.963` / `1.044–1.051` | `0.939–0.948` / `1.068–1.071` | `0.967–0.974` / `1.044–1.044` | D is the best bounded-offload candidate; C pays repeated-yield cost |
+| 1 MiB / high | `0.972–0.976` / `1.034–1.036` | `0.914–0.938` / `1.120–1.149` | `0.971–0.974` / `1.035–1.043` | D reaches A-like fixed-worker throughput/CPU without per-request ThreadPool ownership |
+| 1 MiB / low | `0.953–0.963` / `1.044–1.051` | `0.939–0.948` / `1.068–1.071` | `0.967–0.974` / `1.044–1.044` | D is the best fixed-worker offload candidate; C pays repeated-yield cost |
 
 P99 follows the same small-payload conclusion: A/D add substantial scheduler tails at 1 KiB, while C is essentially B until the quantum is crossed. At 1 MiB and high offered concurrency, A/D queueing can create large request-latency tails. That is not an argument for an unbounded inline reader loop; it is evidence that production D must combine bounded worker concurrency with explicit queue/retained/decoded resource budgets and admission/backpressure.
 
-The cancellation probe directly cancels the decode token after decode begins. It verifies provider/executor token observation, but it does **not** model the key network property that an inline RequestLoop cannot consume a later remote Cancel frame while it is synchronously decoding. Therefore B's best CPU/QPS result cannot by itself justify using B for arbitrarily expensive remote-cancellable decode.
+The cancellation probe directly cancels the decode token after decode begins. It verifies provider/executor token observation, but it does **not** model the key network property that an inline RequestLoop cannot consume a later remote Cancel/close/Stop frame while it is synchronously decoding. It therefore cannot establish a safe remote-cancellable inline threshold or bound reader-loop/control-plane stall.
 
-For 1 MiB probes, cancellation was observed in essentially every case in both runs, and median observation time was similar between B/A/C/D for the same compressibility. This means D does not introduce a material cancellation-token reaction penalty once work has begun; its main cost is queue/scheduler latency.
+For 1 MiB probes, cancellation was observed in essentially every case in both runs, and median local token-observation time was similar between B/A/C/D for the same compressibility. This means D does not introduce a material cancellation-token reaction penalty once work has begun; it does not prove anything about how quickly a remote control frame is read when B is running inline.
+
+### Fixed-capacity executor saturation probe
+
+A separate probe fixes queue capacity independently of offered concurrency (`queue capacity = 8`, `concurrency = 128`, `operations = 256`). Executor workers are deliberately held behind a gate until at least one `ChannelWriter.WriteAsync` is observed to complete asynchronously. The probe fails if no blocked writer is recorded or if submitted decode work does not complete after workers are released.
+
+This probe exists specifically to validate the bounded/backpressure path that the original comparative D queue (`max(32, concurrency * 2)`) could not saturate. Its blocked-writer counts and wait distributions are stored separately from the A/B/C/D throughput ratios; saturation evidence must not be blended into the unsaturated comparative QPS table.
 
 ### Resource-budget observation
 
@@ -95,25 +101,25 @@ The executor queue must be fixed/bounded independently of offered request concur
 
 ## ADR — selected Phase 0 execution model
 
-**Decision: select an adaptive B + D production model.**
+**Decision: select an adaptive B + D production model, with the inline threshold left unresolved until production RequestLoop control-plane evidence exists.**
 
 1. **Use B / inline provider decode for the cheap path.**
    - Non-remote-cancellable accepted requests should decode inline after all required permits are held.
-   - Remote-cancellable requests whose validated estimated decode cost is within the inline budget should also decode inline.
-   - The Phase 0 evidence supports **64 KiB of declared/original output as the initial inline-budget candidate**, because B/C remain effectively equivalent through that point while A/D pay unnecessary scheduling cost.
+   - Remote-cancellable requests may decode inline only when a production RequestLoop experiment shows that the chosen cost budget keeps remote Cancel/close/Stop observation within an explicit control-plane stall budget.
+   - **64 KiB declared/original output is only the first threshold hypothesis to test**, because B/C have similar CPU/QPS through that size. Phase 0 does not establish 64 KiB as a safe remote-cancellable inline budget.
 
 2. **Use D / persistent bounded DecodeExecutor for expensive remote-cancellable decode.**
-   - Above the inline budget, keep the reader/control-plane path free to process Cancel/deadline/close/Stop while decode is supervised by a small persistent worker set.
-   - The 1 MiB evidence shows D at roughly `0.967–0.974x` QPS and `1.035–1.044x` CPU versus inline in the tested shards, materially better than C's repeated-yield cost while avoiding A's per-request ThreadPool scheduling model.
-   - The exact production threshold should remain an internal policy input and can be tuned with later end-to-end evidence; Phase 0 selects the execution **shape**, not a new public configuration API.
+   - Keep the reader/control-plane path free to process Cancel/deadline/close/Stop while decode is supervised by a small persistent worker set.
+   - The comparative 1 MiB evidence shows that fixed-worker D has substantially lower repeated-yield cost than C. The separate saturation probe validates the fixed-capacity bounded-channel/backpressure mechanism rather than inferring it from the unsaturated throughput matrix.
+   - The exact production threshold remains an internal policy decision that must be validated end-to-end; Phase 0 selects the execution **shape**, not a threshold value or a new public configuration API.
 
 3. **Do not productionize A.**
    - A remains the #261 comparison baseline.
-   - At large payloads it can approach D's throughput, but it provides no durable bounded/fair executor ownership model and is especially expensive for small payloads.
+   - At large payloads it can approach D's unsaturated fixed-worker throughput, but it provides no durable bounded/fair executor ownership model and is especially expensive for small payloads.
 
 4. **Do not productionize C as a separate execution model.**
    - Up to 64 KiB, C mostly behaves like B because the quantum is not crossed.
-   - At 1 MiB, repeated cooperative yields consistently cost more CPU/QPS than D.
+   - At 1 MiB, repeated cooperative yields consistently cost more CPU/QPS than D's fixed-worker path in the comparative matrix.
    - Keeping a second provider-specific decode state machine would add ownership and maintenance complexity without winning the measured large-payload tradeoff.
 
 ## Production follow-up implied by this ADR
@@ -129,10 +135,11 @@ Required gates before calling that slice complete:
 - D is supervised, bounded, fair across connections, and has no detached per-request workers;
 - retained/decoded byte budgets are enforced before retention/rent;
 - remote Cancel/deadline/close/Stop are exercised during executor decode;
+- a real RequestLoop remote-control-frame probe measures Cancel/close/Stop observation while testing any proposed inline threshold, starting with the 64 KiB hypothesis;
 - generation capture for #262/#264 remains stable across awaits and does not reset ResourceGovernor state;
 - uncompressed/default fast path is re-measured after production wiring;
 - final end-to-end performance gate re-runs the relevant payload/concurrency matrix against the selected production implementation.
 
 ## Interpretation boundary
 
-This evidence selects the execution model before production plumbing. It does not establish the final `RequestPermit`, Stop/Drain implementation, decode byte-budget values, dynamic policy generation, fairness algorithm, or public configuration surface. Those remain production work under #273, with the selected adaptive B + D model as the constraint.
+This evidence selects the execution shape before production plumbing. It does not establish the final `RequestPermit`, Stop/Drain implementation, decode byte-budget values, remote-cancellable inline threshold, dynamic policy generation, fairness algorithm, or public configuration surface. Those remain production work under #273, with adaptive B + D as the selected shape.
