@@ -21,10 +21,10 @@ internal static class DeadlineWorkloadEvidenceRunner
 
     private static readonly Scenario[] Scenarios =
     [
-        new("single-fast", workers: 1, batchSize: 64, deadlineMilliseconds: 5, expirePercent: 10),
-        new("concurrent-fast", workers: 4, batchSize: 64, deadlineMilliseconds: 5, expirePercent: 10),
-        new("concurrent-normal", workers: 4, batchSize: 128, deadlineMilliseconds: 20, expirePercent: 10),
-        new("deadline-heavy", workers: 4, batchSize: 64, deadlineMilliseconds: 5, expirePercent: 50)
+        new("single-fast", 1, 64, 5, 10),
+        new("concurrent-fast", 4, 64, 5, 10),
+        new("concurrent-normal", 4, 128, 20, 10),
+        new("deadline-heavy", 4, 64, 5, 50)
     ];
 
     public static async Task RunAsync(string[] args)
@@ -55,7 +55,7 @@ internal static class DeadlineWorkloadEvidenceRunner
             Console.WriteLine(JsonSerializer.Serialize(new { kind = "summary", summary }));
 
         var report = new EvidenceReport(
-            schemaVersion: 1,
+            1,
             productionBaselineSha,
             Environment.Version.ToString(),
             Environment.ProcessorCount,
@@ -153,7 +153,7 @@ internal static class DeadlineWorkloadEvidenceRunner
         }
 
         ready.Wait();
-        var process = Process.GetCurrentProcess();
+        using var process = Process.GetCurrentProcess();
         var timerCallbacksBefore = timeProvider.TimerCallbackCount;
         var allocationsBefore = captureMetrics ? GC.GetTotalAllocatedBytes(precise: true) : 0;
         var cpuBefore = captureMetrics ? process.TotalProcessorTime : TimeSpan.Zero;
@@ -196,7 +196,7 @@ internal static class DeadlineWorkloadEvidenceRunner
             timerCallbacksAfter - timerCallbacksBefore,
             aggregateHistogram.PercentileMilliseconds(0.95),
             aggregateHistogram.PercentileMilliseconds(0.99),
-            aggregateHistogram.MaxMilliseconds,
+            aggregateHistogram.MaxObservedMilliseconds,
             aggregateHistogram.OverflowCount);
     }
 
@@ -358,17 +358,17 @@ internal static class DeadlineWorkloadEvidenceRunner
     private sealed class LatenessHistogram
     {
         private const int BucketMicroseconds = 10;
-        private const int MaxMilliseconds = 1000;
-        private const int BucketCount = MaxMilliseconds * 1000 / BucketMicroseconds + 1;
+        private const int MaxTrackedMilliseconds = 1000;
+        private const int BucketCount = MaxTrackedMilliseconds * 1000 / BucketMicroseconds + 1;
         private readonly long[] _counts = new long[BucketCount + 1];
         private long _total;
         private int _maxBucket;
 
         internal long OverflowCount => _counts[^1];
 
-        internal double MaxMilliseconds
+        internal double MaxObservedMilliseconds
             => _maxBucket >= BucketCount
-                ? MaxMilliseconds
+                ? MaxTrackedMilliseconds
                 : _maxBucket * BucketMicroseconds / 1000d;
 
         internal void RecordTimestampDelta(long timestampDelta, long frequency)
@@ -403,11 +403,11 @@ internal static class DeadlineWorkloadEvidenceRunner
                 if (seen >= target)
                 {
                     return index >= BucketCount
-                        ? MaxMilliseconds
+                        ? MaxTrackedMilliseconds
                         : index * BucketMicroseconds / 1000d;
                 }
             }
-            return MaxMilliseconds;
+            return MaxTrackedMilliseconds;
         }
     }
 
