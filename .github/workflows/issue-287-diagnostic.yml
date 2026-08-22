@@ -1,0 +1,74 @@
+name: Issue 287 targeted diagnostics
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-287-targeted-diagnostics
+  cancel-in-progress: true
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-287-call-control-cleanup
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Apply current issue patch
+        run: bash .github/issue-287-apply-current.sh
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+      - name: Build solution
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Time arithmetic
+        run: >-
+          timeout 4m dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --
+          --treenode-filter "/*/*/SharpLinkTimePrecisionTests/*"
+          --maximum-parallel-tests 1 --output Detailed
+      - name: Client interceptor deadlines
+        run: >-
+          timeout 4m dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --
+          --treenode-filter "/*/*/SharpLinkClientInterceptorDeadlineTests/*"
+          --maximum-parallel-tests 1 --output Detailed
+      - name: Client time budget
+        run: >-
+          timeout 4m dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --
+          --treenode-filter "/*/*/SharpLinkClientTimeBudgetTests/*"
+          --maximum-parallel-tests 1 --output Detailed
+      - name: Pending request deadline races
+        run: >-
+          timeout 4m dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --
+          --treenode-filter "/*/*/PendingRequestTableTests/*"
+          --maximum-parallel-tests 1 --output Detailed
+      - name: Send pump deadline emission
+        run: >-
+          timeout 4m dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --
+          --treenode-filter "/*/*/SendPumpTests/*"
+          --maximum-parallel-tests 1 --output Detailed
+      - name: Server envelope and protocol budget
+        run: >-
+          timeout 5m dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --
+          --treenode-filter "/*/*/(ServerRequestEnvelopeReaderTests)|(ProtocolV2TimeBudgetCompatibilityTests)/*"
+          --maximum-parallel-tests 1 --output Detailed
+      - name: Generator tests
+        run: timeout 5m dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --no-build -c Release -- --maximum-parallel-tests 1
+      - name: Integration tests
+        run: >-
+          timeout 10m dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
