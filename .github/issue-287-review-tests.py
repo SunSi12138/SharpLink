@@ -23,14 +23,7 @@ public class SharpLinkClientTimeBudgetTests
             });
         await client.ConnectAsync();
 
-        var method = new RpcMethodDescriptor(
-            ContractId: 1,
-            MethodId: 287,
-            Kind: RpcMethodKind.Unary,
-            HasResponsePayload: true,
-            HasClientStreams: false,
-            HasMethodTimeout: true,
-            MethodTimeout: TimeSpan.FromSeconds(120));
+        var method = MethodWithTimeout(TimeSpan.FromSeconds(120));
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
 
@@ -45,14 +38,66 @@ public class SharpLinkClientTimeBudgetTests
 
         Ensure((sent.Header.Flags & ProtocolV2FrameFlags.HasTimeBudget) != 0,
             "explicit method timeout should emit a TimeBudget");
-        var timeBudgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
-            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
-        Ensure(timeBudgetTicks == TimeSpan.FromSeconds(120).Ticks,
+        Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(120),
             "method timeout must override, not be min-capped by, the 30 second client fallback");
 
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
         Ensure(await invocation == 0, "method-timeout override response");
     }
+
+    [Test]
+    public async Task InheritedTimeBudgetShouldCapSelectedMethodPolicyWithoutRestartingIt()
+    {
+        var parentTimeProvider = new ManualTimeProvider();
+        var childTimeProvider = new ManualTimeProvider();
+        var parentDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(6), parentTimeProvider);
+        parentTimeProvider.Advance(TimeSpan.FromSeconds(2));
+        using var scope = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
+            "parent",
+            authentication: null,
+            parentDeadline,
+            parentTimeProvider));
+
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(childTimeProvider);
+                builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
+            });
+        await client.ConnectAsync();
+
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var invocation = channel.InvokeUnaryAsync(
+            MethodWithTimeout(TimeSpan.FromSeconds(120)),
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default).AsTask();
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+
+        Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(4),
+            "a downstream call must propagate the parent's remaining TimeBudget instead of restarting 120 seconds");
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
+        Ensure(await invocation == 0, "inherited-budget response");
+    }
+
+    private static RpcMethodDescriptor MethodWithTimeout(TimeSpan timeout)
+        => new(
+            ContractId: 1,
+            MethodId: 287,
+            Kind: RpcMethodKind.Unary,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: true,
+            MethodTimeout: timeout);
+
+    private static TimeSpan ReadTimeBudget(TestProtocolFrame sent)
+        => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
 
     private static void Ensure(bool condition, string message)
     {
