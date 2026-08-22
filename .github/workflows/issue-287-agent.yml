@@ -1,9 +1,9 @@
 name: Issue 287 temporary workbench
 
 on:
-  push:
+  pull_request:
     branches:
-      - issue-287-call-control-cleanup
+      - dev
 
 permissions:
   contents: read
