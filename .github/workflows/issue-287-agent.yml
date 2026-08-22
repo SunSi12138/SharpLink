@@ -66,6 +66,7 @@ jobs:
             > /tmp/issue-287-review-round3.patch.xz
           xz -t /tmp/issue-287-review-round3.patch.xz
           xz -dc /tmp/issue-287-review-round3.patch.xz | git apply -
+          python3 .github/issue-287-review-round3-fix.py
           git diff --stat
           git diff --check
           echo '=== removed source concepts ==='
