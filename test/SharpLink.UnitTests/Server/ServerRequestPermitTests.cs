@@ -32,7 +32,8 @@ public class ServerRequestPermitTests
             var admission = server.TryReserveCall(connection, out var permit);
             Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && permit is not null,
                 "first permit must reserve call capacity");
-            Ensure(permit.IsReserved && !permit.IsActive,
+            var reservedPermit = permit!;
+            Ensure(reservedPermit.IsReserved && !reservedPermit.IsActive,
                 "new permit must start in Reserved state");
             Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
                    server.ActiveCallCountForDiagnostics == 1 &&
@@ -44,15 +45,15 @@ public class ServerRequestPermitTests
                    rejectedPermit is null,
                 "a Reserved permit must consume the configured connection capacity before activation");
 
-            var alias = permit;
-            permit.Activate();
-            Ensure(permit.IsActive && !permit.IsReserved,
+            var alias = reservedPermit;
+            reservedPermit.Activate();
+            Ensure(reservedPermit.IsActive && !reservedPermit.IsReserved,
                 "Activate must move the unique permit to Active without changing occupied capacity");
             Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
                 "activation must not acquire a second call slot");
 
             alias.Dispose();
-            permit.Dispose();
+            reservedPermit.Dispose();
             Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
                    server.ActiveCallCountForDiagnostics == 0 &&
                    connection.ActiveCalls == 0,
@@ -62,7 +63,7 @@ public class ServerRequestPermitTests
             Ensure(recovered == SharpLinkServer.ServerCallAdmissionResult.Acquired &&
                    recoveredPermit is not null,
                 "capacity must be reusable after permit disposal");
-            recoveredPermit.Dispose();
+            recoveredPermit!.Dispose();
             Ensure(server.ActiveCallCountForDiagnostics == 0 && connection.ActiveCalls == 0,
                 "disposing a still-Reserved permit must roll capacity back without activation");
         }
@@ -95,7 +96,8 @@ public class ServerRequestPermitTests
         var admission = server.TryReserveCall(connection, out var permit);
         Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && permit is not null,
             "permit reservation");
-        Ensure(permit.IsReserved, "permit must remain Reserved for the drain-boundary probe");
+        var reservedPermit = permit!;
+        Ensure(reservedPermit.IsReserved, "permit must remain Reserved for the drain-boundary probe");
 
         SetServerState(server, 3); // Draining
         InvokeTrySignalCallsDrained(server);
@@ -104,7 +106,7 @@ public class ServerRequestPermitTests
         Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
             "Reserved ownership must remain counted across the server drain boundary");
 
-        permit.Dispose();
+        reservedPermit.Dispose();
         await server.CallsDrainedForDiagnostics.WaitAsync(TimeSpan.FromSeconds(1));
         Ensure(server.ActiveCallCountForDiagnostics == 0 && connection.ActiveCalls == 0,
             "disposing the Reserved permit must release both capacity scopes");
