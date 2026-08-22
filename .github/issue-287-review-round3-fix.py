@@ -193,3 +193,18 @@ new = '''            session.SendPacket(frame, deadline);
 assert text.count(old) == 1
 text = text.replace(old, new, 1)
 p.write_text(text)
+
+# Development API bumps are not cumulative. The published 1.1.1 baseline is API 3, so all 2.0
+# generator stamps and current-manifest fixtures use API 4 consistently. Pre-release 5/6 stamps
+# are not compatibility boundaries.
+p = Path('src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs')
+text = p.read_text()
+old = ', 6, 2, \\"{EscapeString(ExecutingGeneratorVersion)}\\")]'
+new = ', 4, 2, \\"{EscapeString(ExecutingGeneratorVersion)}\\")]'
+assert text.count(old) == 1
+p.write_text(text.replace(old, new, 1))
+
+p = Path('test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs')
+text = p.read_text()
+assert text.count(', 6, 2,') == 3
+p.write_text(text.replace(', 6, 2,', ', 4, 2,'))
