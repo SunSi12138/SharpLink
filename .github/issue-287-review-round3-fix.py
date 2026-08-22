@@ -169,7 +169,14 @@ replace_once(
     'src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs',
     r'), 6, 2, \"{EscapeString',
     r'), 4, 2, \"{EscapeString')
+replace_once(
+    'src/SharpLink.Generator/RpcGenerator.ReferencedManifestBootstrap.cs',
+    '                    attribute.ConstructorArguments[1].Value is not 5 ||',
+    '                    attribute.ConstructorArguments[1].Value is not 4 ||')
 p = Path('test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs')
 text = p.read_text()
 assert text.count(', 6, 2,') == 3
-p.write_text(text.replace(', 6, 2,', ', 4, 2,'))
+text = text.replace(', 6, 2,', ', 4, 2,')
+text = text.replace('legacy API 3 locators must not be bootstrapped into an API 5 process',
+                    'legacy API 3 locators must not be bootstrapped into an API 4 process')
+p.write_text(text)
