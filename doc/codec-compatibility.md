@@ -21,7 +21,7 @@ The release-gated desktop matrix in `.github/workflows/codec-compatibility.yml` 
 
 The workflow is invoked by both PR Quick and Release Gate. Every desktop target is both a producer and a consumer: each consumer downloads all six producer corpora and invokes its own `UnsafeBlitCodec<T>` to deserialize producer bytes. A central Linux summary job only aggregates the per-runtime reports; it does not stand in for Windows or macOS decode execution.
 
-Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the actual OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, RID, endianness, compilation mode, execution environment, and SharpLink commit. Runtime family and compilation mode are observed in-process; portable lanes may assert expected values, but the harness does not overwrite the observed manifest values. The manifest is the source of truth.
+Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, runtime-family provenance, RID, endianness, compilation mode, execution environment, and SharpLink commit. Compilation mode is observed in-process. Runtime-family provenance is explicit: desktop uses runtime reflection, Android inspects loaded runtime libraries, while Browser/iOS record Mono as derived from the selected platform/runtime pack rather than presenting that platform fact as an independent runtime-family assertion. Expected lane values never overwrite recorded identity fields. The manifest and its provenance fields are the evidence source of truth.
 
 A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
 
@@ -39,7 +39,7 @@ The current evidence-backed environments include:
 - iOS Simulator x64: Mono, Interpreter;
 - iOS Simulator arm64: Mono, Interpreter.
 
-Browser evidence in `.github/workflows/codec-compatibility.yml` is bidirectional with the six desktop identities. The Browser consumer downloads all six desktop corpora plus its own corpus. Separately, six non-gating desktop evidence consumers download the Browser-produced corpus and execute the safe fixtures on Linux x64/arm64, Windows x64/arm64, and macOS x64/arm64. Framework-owned raw fixtures are compared as representation evidence rather than unsafe semantic materialization.
+Browser evidence in `.github/workflows/codec-compatibility.yml` is bidirectional with the six desktop identities. The Browser consumer downloads all six desktop corpora plus its own corpus. Separately, six non-gating desktop evidence consumers download the Browser-produced corpus and execute the safe fixtures on Linux x64/arm64, Windows x64/arm64, and macOS x64/arm64. Framework-owned raw fixtures are compared as representation evidence rather than unsafe semantic materialization. The Browser gate additionally requires the observed wasm32 identity (`pointerSize=4`, `runtimeIdentifier=browser-wasm`, and `targetFramework=net10.0/browser-wasm`) rather than relying on the platform tag alone.
 
 Mobile evidence is defined by `.github/workflows/codec-mobile-compatibility.yml`. It is intentionally an evidence graph rather than an all-to-all five-platform matrix. The currently documented edges are:
 
@@ -58,7 +58,7 @@ The mobile workflow executes the same shared fixture corpus in the target runtim
 
 Evidence is tied to the environment recorded in the artifact manifest. In particular, simulator/emulator evidence must not be presented as physical-device evidence, and successful execution of an experimental runtime does not turn that runtime into a SharpLink product guarantee.
 
-Validation run `32448182736` exercised the previous portable artifact path and completed successfully for Android Mono, Android CoreCLR, iOS Simulator x64, and iOS Simulator arm64. New probe changes must produce a new mobile evidence run before those changes are claimed as validated on mobile.
+Evidence claims must be backed by successful current-head workflow artifacts after probe or evidence-contract changes; older successful artifacts do not validate newer harness behavior.
 
 ### Investigational / not guaranteed yet
 
@@ -99,7 +99,7 @@ Portable hosts reuse the same fixture and verification implementation:
 
 These workload-specific host projects are deliberately not added to the normal solution build. Their dedicated workflows install the required WebAssembly/Android/iOS workloads and execute them in their actual host environments.
 
-A producer writes a versioned `manifest.json` plus one raw binary file per logical fixture. The manifest records layout metadata, raw-wire hashes, runtime identity, execution environment, and padding-poison evidence. The logical fixture definitions in source are the source of truth; observed bytes are evidence, not a permanent wire specification. Schema-bearing artifacts require an explicit `schemaVersion`; schema-less input is rejected instead of being treated as version 1 by default.
+A producer writes a versioned `manifest.json` plus one raw binary file per logical fixture. The manifest records layout metadata, raw-wire hashes, runtime identity, execution environment, padding-poison evidence, and fixture-registry metadata generated from the authoritative C# `FixtureRegistry`. Portable JS tooling derives the full fixture set, framework-raw subset, and native-width subset from that metadata and rejects registry drift; it does not maintain a second hand-written logical fixture registry. The logical fixture definitions in source are the source of truth; observed bytes are evidence, not a permanent wire specification. Schema-bearing artifacts require an explicit `schemaVersion`; schema-less input is rejected instead of being treated as version 1 by default.
 
 Portable Browser/mobile hosts exchange the same corpus and verification schema through a JSON envelope. The portable artifact contract uses `System.Text.Json` source-generated metadata so trimming/linking on mobile hosts cannot silently remove manifest fields.
 
@@ -115,7 +115,7 @@ Consumers report, per producer/fixture pair:
 - exception information when decode fails;
 - a classification such as `IDENTICAL_BYTES_AND_COMPATIBLE`, `DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE`, `SIZE_OR_LAYOUT_MISMATCH`, `DESERIALIZE_REJECTED`, `DESERIALIZED_VALUE_MISMATCH`, `SEGMENTED_DESERIALIZE_REJECTED`, `SEGMENTED_DESERIALIZED_VALUE_MISMATCH`, `EXPECTED_ARCH_DEPENDENT`, or `PROBE_UNAVAILABLE`.
 
-Semantic result fields are tri-state. `true` and `false` mean the semantic operation actually ran and produced that result; `null` / `not-run` means the operation was intentionally not executed. Raw representation-only evidence must never set logical equality to `true` merely because bytes match. Raw representation evidence also recomputes and validates the producer and local SHA-256 hashes before classifying byte identity.
+Semantic result fields are tri-state. `true` and `false` mean the semantic operation actually ran and produced that result; `null` / `not-run` means the operation was intentionally not executed. Raw representation-only evidence must never set logical equality to `true` merely because bytes match. Raw representation evidence also recomputes and validates the producer and local SHA-256 hashes before classifying byte identity. Strict gates require classification, byte equality, and first-difference metadata to agree with the validated semantic or raw-representation outcome.
 
 The desktop aggregator emits both `compatibility-summary.json` and `compatibility-summary.md`. The mobile evidence aggregator emits the same report format over its explicitly documented edges; that aggregation is not an assertion that every listed mobile environment consumed every other producer.
 
