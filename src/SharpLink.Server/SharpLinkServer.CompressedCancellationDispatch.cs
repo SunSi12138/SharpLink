@@ -284,7 +284,7 @@ internal sealed partial class SharpLinkServer
     private sealed class CompressedCancellableRpcWorkItem : IThreadPoolWorkItem
     {
         private const int MaxRetained = 4096;
-        private static readonly ConcurrentStack<CompressedCancellableRpcWorkItem> Pool = new();
+        private static readonly ConcurrentBag<CompressedCancellableRpcWorkItem> Pool = new();
         private static int s_retainedCount;
 
         private SharpLinkServer? _server;
@@ -317,7 +317,7 @@ internal sealed partial class SharpLinkServer
             bool reusePreDecodeMetadata,
             ServerRequestEnvelope preDecodeRequest)
         {
-            if (!Pool.TryPop(out var workItem))
+            if (!Pool.TryTake(out var workItem))
                 workItem = new CompressedCancellableRpcWorkItem();
             else
                 Interlocked.Decrement(ref s_retainedCount);
@@ -387,7 +387,7 @@ internal sealed partial class SharpLinkServer
 
             var retained = Interlocked.Increment(ref s_retainedCount);
             if (retained <= MaxRetained)
-                Pool.Push(this);
+                Pool.Add(this);
             else
                 Interlocked.Decrement(ref s_retainedCount);
         }
