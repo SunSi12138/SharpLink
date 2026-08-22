@@ -26,14 +26,9 @@ jobs:
           python3 .github/issue-287-patch.py
           python3 .github/issue-287-generator.py
           python3 .github/issue-287-tests.py
+          python3 .github/issue-287-review-tests.py
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('src/SharpLink.Abstractions/ProtocolV2.cs')
-          text = p.read_text().replace(
-              '    public const ushort TimeBudgetMinorVersion = 4;',
-              '    /// <summary>Protocol minor version that encodes request lifetime as remaining TimeBudget ticks.</summary>\n    public const ushort TimeBudgetMinorVersion = 4;')
-          p.write_text(text)
-
           p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
           text = p.read_text().replace(
               'DateTimeOffset? deadline = null,',
@@ -57,9 +52,14 @@ jobs:
           git diff --check
           echo '=== removed source concepts ==='
           git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' src && exit 1 || true
+          echo '=== legacy wire compatibility gates ==='
+          git grep -n -E 'TimeBudgetMinorVersion|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- src/SharpLink.Client src/SharpLink.Server src/SharpLink.Abstractions/ProtocolV2.cs && exit 1 || true
           echo '=== remaining active test/demo CallOptions references ==='
           git grep -n 'SharpLinkCallOptions' -- test demo || true
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Build solution
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Review regression tests
+        run: |
+          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --filter "FullyQualifiedName~SharpLinkClientTimeBudgetTests|FullyQualifiedName~ProtocolV2TimeBudgetCompatibilityTests" -v minimal
