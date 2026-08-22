@@ -1,7 +1,7 @@
 namespace SharpLink.Server;
 
 /// <summary>
-/// Allocation-free Phase 0 primitive for the #273 two-phase call lifecycle.
+/// Phase 0 primitive for the #273 two-phase call lifecycle.
 /// A reservation consumes call capacity immediately and remains capacity-owning
 /// when it is activated; activation only changes lifecycle accounting.
 /// </summary>
@@ -30,7 +30,7 @@ internal sealed class ServerCallCapacityGovernor
             var active = GetActive(observed);
             if ((long)reserved + active >= _capacity)
             {
-                reservation = default;
+                reservation = null!;
                 return false;
             }
 
@@ -120,62 +120,82 @@ internal sealed class ServerCallCapacityGovernor
         => ((long)(uint)reserved << 32) | (uint)active;
 
     /// <summary>
-    /// Single-owner value representing one capacity slot. The request path must not
-    /// copy this value after acquisition; ownership is transferred by ref until it is
-    /// either activated and eventually disposed, or disposed while still reserved.
+    /// Identity-bearing Phase 0 reservation for one capacity slot. Aliases refer to
+    /// the same lifecycle state, so a stale reference cannot release a later lease.
+    /// Production wiring should fold this identity/state into the unique request permit
+    /// or request context instead of treating this standalone allocation as the target shape.
     /// </summary>
-    internal struct ServerCallReservation : IDisposable
+    internal sealed class ServerCallReservation : IDisposable
     {
-        private ServerCallCapacityGovernor? _owner;
-        private ReservationState _state;
+        private const int Reserved = 0;
+        private const int Activating = 1;
+        private const int Active = 2;
+        private const int Disposed = 3;
+
+        private readonly ServerCallCapacityGovernor _owner;
+        private int _state = Reserved;
 
         internal ServerCallReservation(ServerCallCapacityGovernor owner)
         {
             _owner = owner;
-            _state = ReservationState.Reserved;
         }
 
-        internal bool IsReserved => _owner is not null && _state == ReservationState.Reserved;
+        internal bool IsReserved => Volatile.Read(ref _state) == Reserved;
 
-        internal bool IsActive => _owner is not null && _state == ReservationState.Active;
+        internal bool IsActive => Volatile.Read(ref _state) == Active;
 
         internal void Activate()
         {
-            var owner = _owner ?? throw new ObjectDisposedException(nameof(ServerCallReservation));
-            if (_state != ReservationState.Reserved)
-                throw new InvalidOperationException("Only a reserved call can be activated.");
+            var observed = Interlocked.CompareExchange(ref _state, Activating, Reserved);
+            if (observed != Reserved)
+            {
+                if (observed == Disposed)
+                    throw new ObjectDisposedException(nameof(ServerCallReservation));
 
-            owner.ActivateReservation();
-            _state = ReservationState.Active;
+                throw new InvalidOperationException("Only a reserved call can be activated.");
+            }
+
+            try
+            {
+                _owner.ActivateReservation();
+                Volatile.Write(ref _state, Active);
+            }
+            catch
+            {
+                Volatile.Write(ref _state, Reserved);
+                throw;
+            }
         }
 
         public void Dispose()
         {
-            var owner = _owner;
-            if (owner is null)
-                return;
-
-            switch (_state)
+            var spinner = new SpinWait();
+            while (true)
             {
-                case ReservationState.Reserved:
-                    owner.ReleaseReservation();
-                    break;
-                case ReservationState.Active:
-                    owner.ReleaseActiveCall();
-                    break;
-                default:
-                    throw new InvalidOperationException("Unknown server call reservation state.");
+                var observed = Volatile.Read(ref _state);
+                switch (observed)
+                {
+                    case Reserved:
+                        if (Interlocked.CompareExchange(ref _state, Disposed, Reserved) != Reserved)
+                            continue;
+
+                        _owner.ReleaseReservation();
+                        return;
+                    case Activating:
+                        spinner.SpinOnce();
+                        continue;
+                    case Active:
+                        if (Interlocked.CompareExchange(ref _state, Disposed, Active) != Active)
+                            continue;
+
+                        _owner.ReleaseActiveCall();
+                        return;
+                    case Disposed:
+                        return;
+                    default:
+                        throw new InvalidOperationException("Unknown server call reservation state.");
+                }
             }
-
-            _state = ReservationState.None;
-            _owner = null;
-        }
-
-        private enum ReservationState : byte
-        {
-            None,
-            Reserved,
-            Active
         }
     }
 }
