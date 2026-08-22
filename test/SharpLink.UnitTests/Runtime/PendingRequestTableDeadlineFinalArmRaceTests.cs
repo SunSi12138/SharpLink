@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Reflection;
 using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Client;
@@ -56,6 +57,67 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
             "the earlier call must expire at its own monotonic deadline");
         Ensure(!later.IsCompleted,
             "the later call must remain pending when the earlier deadline expires");
+
+        Ensure(table.TryComplete(
+            laterId,
+            PendingCallCompletionReason.ConnectionClosed,
+            new IOException("test cleanup")),
+            "later call cleanup");
+        Ensure(await CaptureExceptionAsync(later) is IOException,
+            "later call cleanup result");
+    }
+
+    [Test]
+    public async Task ReconcileMustValidateActualEarliestValueAfterStaleArm()
+    {
+        var timeProvider = new FinalArmRaceTimeProvider(blockChangeNumber: 2);
+        using var table = new PendingRequestTable(
+            8,
+            Int32CodecProvider.Instance,
+            NoopOwner.Instance,
+            timeProvider);
+
+        var laterDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(10), timeProvider);
+        var later = table.Rent(
+            Int32Codec.Instance,
+            PendingCallKind.Unary,
+            laterDeadline,
+            CancellationToken.None,
+            out var laterId).AsValueTask().AsTask();
+
+        var tableType = typeof(PendingRequestTable);
+        var reconcile = tableType.GetMethod(
+            "ReconcileDeadlineTimer",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(tableType.FullName, "ReconcileDeadlineTimer");
+        var arm = tableType.GetMethod(
+            "ArmDeadlineTimer",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(tableType.FullName, "ArmDeadlineTimer");
+        var earliest = tableType.GetField(
+            "_approximateEarliestDeadline",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingFieldException(tableType.FullName, "_approximateEarliestDeadline");
+
+        var reconcileTask = Task.Run(() => reconcile.Invoke(table, parameters: null));
+        Ensure(timeProvider.BlockedChangeEntered.Wait(CoordinationTimeout),
+            "reconciliation should sample the ten-second earliest value before its stale arm is applied");
+
+        var earlierDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
+
+        // Model the review interleaving directly: schedule identity has already been observed,
+        // then the actual earliest deadline moves earlier before the stale arm completes. Using
+        // reflection here avoids adding a production-only test hook to the registration hot path.
+        earliest.SetValue(table, earlierDeadline.Timestamp);
+        arm.Invoke(table, [earlierDeadline.Timestamp]);
+        Ensure(timeProvider.GetScheduledDelay() == TimeSpan.FromSeconds(1),
+            "the simulated earlier writer should arm the one-second deadline first");
+
+        timeProvider.ReleaseBlockedChange.Set();
+        await reconcileTask.WaitAsync(CoordinationTimeout);
+
+        Ensure(timeProvider.GetScheduledDelay() == TimeSpan.FromSeconds(1),
+            "a stale ten-second arm must be rejected by validating the actual shared earliest value");
 
         Ensure(table.TryComplete(
             laterId,
