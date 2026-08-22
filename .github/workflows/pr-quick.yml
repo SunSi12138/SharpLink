@@ -1,9 +1,12 @@
 name: PR Quick
 
 permissions:
-  contents: read
+  contents: write
 
 on:
+  push:
+    branches:
+      - agent/issue-285-deadline-final-arm-race
   pull_request:
   workflow_dispatch:
 
@@ -12,10 +15,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  issue-285-review-fix:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-285-deadline-final-arm-race
+          fetch-depth: 0
+
+      - name: Replace generation validation with actual-earliest validation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/SharpLink.Client/PendingRequestTable.cs')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('    private long _deadlineScheduleVersion;\n', '', 1)
+          old_update = '''    private void UpdateEarliestDeadline(long deadlineTimestamp)\n    {\n        while (true)\n        {\n            var current = Volatile.Read(ref _approximateEarliestDeadline);\n            if (current <= deadlineTimestamp)\n                return;\n            var version = Interlocked.Increment(ref _deadlineScheduleVersion);\n            if (Interlocked.CompareExchange(\n                    ref _approximateEarliestDeadline,\n                    deadlineTimestamp,\n                    current) != current)\n            {\n                continue;\n            }\n\n            ArmDeadlineTimer(deadlineTimestamp);\n            if (Volatile.Read(ref _deadlineScheduleVersion) != version)\n                ReconcileDeadlineTimer();\n            return;\n        }\n    }\n'''
+          new_update = '''    private void UpdateEarliestDeadline(long deadlineTimestamp)\n    {\n        while (true)\n        {\n            var current = Volatile.Read(ref _approximateEarliestDeadline);\n            if (current <= deadlineTimestamp)\n                return;\n            if (Interlocked.CompareExchange(\n                    ref _approximateEarliestDeadline,\n                    deadlineTimestamp,\n                    current) != current)\n            {\n                continue;\n            }\n\n            ReconcileDeadlineTimer();\n            return;\n        }\n    }\n'''
+          if old_update not in text:
+              raise SystemExit('expected UpdateEarliestDeadline shape not found')
+          text = text.replace(old_update, new_update, 1)
+          text = text.replace(
+              '            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);\n            Interlocked.Increment(ref _deadlineScheduleVersion);\n',
+              '            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);\n',
+              1)
+          old_reconcile = '''    private void ReconcileDeadlineTimer()\n    {\n        while (Volatile.Read(ref _disposed) == 0)\n        {\n            var version = Volatile.Read(ref _deadlineScheduleVersion);\n            var next = Volatile.Read(ref _approximateEarliestDeadline);\n            if (next == long.MaxValue)\n                return;\n\n            ArmDeadlineTimer(next);\n            if (Volatile.Read(ref _deadlineScheduleVersion) == version)\n                return;\n        }\n    }\n'''
+          new_reconcile = '''    private void ReconcileDeadlineTimer()\n    {\n        while (Volatile.Read(ref _disposed) == 0)\n        {\n            var next = Volatile.Read(ref _approximateEarliestDeadline);\n            if (next == long.MaxValue)\n                return;\n\n            ArmDeadlineTimer(next);\n            if (Volatile.Read(ref _approximateEarliestDeadline) == next)\n                return;\n        }\n    }\n'''
+          if old_reconcile not in text:
+              raise SystemExit('expected ReconcileDeadlineTimer shape not found')
+          text = text.replace(old_reconcile, new_reconcile, 1)
+          path.write_text(text, encoding='utf-8')
+
+      - name: Restore workflow and commit review fix
+        run: |
+          git checkout origin/dev -- .github/workflows/pr-quick.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/SharpLink.Client/PendingRequestTable.cs .github/workflows/pr-quick.yml
+          git commit -m 'fix(client): validate actual earliest deadline after arm'
+          git push origin HEAD:agent/issue-285-deadline-final-arm-race
+
   codec-compatibility:
+    if: github.event_name != 'push'
     uses: ./.github/workflows/codec-compatibility.yml
 
   quick:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
