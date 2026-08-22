@@ -170,7 +170,7 @@ public class SharpLinkClientAccessorTests
     }
 
     [Test]
-    [Timeout(60_000)]
+    [TUnit.Core.Timeout(60_000)]
     public async Task HostedStartShouldPublishConnectivityBeforeStaticReadinessTargetConverges()
     {
         var first = new GatedConnectTransportFactory();
