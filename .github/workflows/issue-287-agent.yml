@@ -58,7 +58,14 @@ jobs:
               'if (IsCancellationTokenParameter(parameter))')
           p.write_text(text)
           PY
-          xz -dc .github/issue-287-review-round3.patch.xz | git apply -
+          cat \
+            .github/issue-287-review-round3.part0 \
+            .github/issue-287-review-round3.part1 \
+            .github/issue-287-review-round3.part2 \
+            .github/issue-287-review-round3.part3 \
+            > /tmp/issue-287-review-round3.patch.xz
+          xz -t /tmp/issue-287-review-round3.patch.xz
+          xz -dc /tmp/issue-287-review-round3.patch.xz | git apply -
           git diff --stat
           git diff --check
           echo '=== removed source concepts ==='
