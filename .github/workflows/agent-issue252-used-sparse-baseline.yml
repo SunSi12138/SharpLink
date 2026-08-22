@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/issue-252-used-sparse-baseline
+  pull_request:
+    branches:
+      - dev
 
 permissions:
   contents: read
@@ -16,7 +19,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          ref: agent/issue-252-used-sparse-baseline
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -28,7 +32,8 @@ jobs:
         run: |
           set -euo pipefail
           expected=9b6f627954ec5a0eaca31b4cea5accdd4a6d79c9
-          actual=$(git rev-parse HEAD^)
+          git fetch --no-tags origin dev
+          actual=$(git merge-base HEAD origin/dev)
           echo "issue252_dev_baseline=$actual"
           test "$actual" = "$expected"
           dotnet --info
