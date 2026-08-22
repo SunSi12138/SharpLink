@@ -18,20 +18,20 @@ public class RuntimeInterceptorContinuationIntegrationTests
         harness.Client.ReplaceInterceptors([a, b, c]);
 
         var first = InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
-        await b.Entered.WaitAsync(TimeSpan.FromSeconds(3));
+        await b.Entered;
         Ensure(!first.IsCompleted,
             "client-streaming invocation must remain pending before the delayed interceptor advances to next");
         EnsureSequence(log, "A:before", "B:before");
 
         harness.Client.ReplaceInterceptors([x, y, z]);
         b.Release();
-        await first.WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(a.Completed, b.Completed, c.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        await first;
+        await Task.WhenAll(a.Completed, b.Completed, c.Completed);
         EnsureSequence(log, "A:before", "B:before", "C:before", "C:after", "B:after", "A:after");
 
         Clear(log);
-        await InvokeClientStreamingAsync(harness.Service, Task.CompletedTask).WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(x.Completed, y.Completed, z.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        await InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
+        await Task.WhenAll(x.Completed, y.Completed, z.Completed);
         EnsureSequence(log, "X:before", "Y:before", "Z:before", "Z:after", "Y:after", "X:after");
     }
 
@@ -49,20 +49,20 @@ public class RuntimeInterceptorContinuationIntegrationTests
         harness.Server.ReplaceInterceptors([a, b, c]);
 
         var first = InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
-        await b.Entered.WaitAsync(TimeSpan.FromSeconds(3));
+        await b.Entered;
         Ensure(!first.IsCompleted,
             "server client-streaming invocation must remain pending before the delayed interceptor advances to next");
         EnsureSequence(log, "A:before", "B:before");
 
         harness.Server.ReplaceInterceptors([x, y, z]);
         b.Release();
-        await first.WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(a.Completed, b.Completed, c.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        await first;
+        await Task.WhenAll(a.Completed, b.Completed, c.Completed);
         EnsureSequence(log, "A:before", "B:before", "C:before", "C:after", "B:after", "A:after");
 
         Clear(log);
-        await InvokeClientStreamingAsync(harness.Service, Task.CompletedTask).WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.WhenAll(x.Completed, y.Completed, z.Completed).WaitAsync(TimeSpan.FromSeconds(3));
+        await InvokeClientStreamingAsync(harness.Service, Task.CompletedTask);
+        await Task.WhenAll(x.Completed, y.Completed, z.Completed);
         EnsureSequence(log, "X:before", "Y:before", "Z:before", "Z:after", "Y:after", "X:after");
     }
 
