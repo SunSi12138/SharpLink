@@ -171,7 +171,8 @@ public class SharpLinkClientAccessorTests
 
     [Test]
     [TUnit.Core.Timeout(60_000)]
-    public async Task HostedStartShouldPublishConnectivityBeforeStaticReadinessTargetConverges()
+    public async Task HostedStartShouldPublishConnectivityBeforeStaticReadinessTargetConverges(
+        CancellationToken cancellationToken)
     {
         var first = new GatedConnectTransportFactory();
         var second = new GatedConnectTransportFactory();
@@ -202,15 +203,15 @@ public class SharpLinkClientAccessorTests
             NullLoggerFactory.Instance);
 
         var accessorWait = accessor.GetClientAsync().AsTask();
-        var hostedStart = service.StartAsync(CancellationToken.None);
-        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task);
+        var hostedStart = service.StartAsync(cancellationToken);
+        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task).WaitAsync(cancellationToken);
         Ensure(!hostedStart.IsCompleted && !accessorWait.IsCompleted,
             "hosted publication must remain pending while neither endpoint has connected");
 
         first.ReleaseConnect();
-        await first.ConnectCompleted.Task;
-        await hostedStart;
-        var client = await accessorWait;
+        await first.ConnectCompleted.Task.WaitAsync(cancellationToken);
+        await hostedStart.WaitAsync(cancellationToken);
+        var client = await accessorWait.WaitAsync(cancellationToken);
         var snapshot = client.GetReadinessSnapshot();
 
         Ensure(first.ConnectCompleted.Task.IsCompleted && !second.ConnectCompleted.Task.IsCompleted,
