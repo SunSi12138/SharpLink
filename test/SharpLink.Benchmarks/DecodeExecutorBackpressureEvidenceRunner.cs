@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 using SharpLink.Abstractions;
+using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
 
