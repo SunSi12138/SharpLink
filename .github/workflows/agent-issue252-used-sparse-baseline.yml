@@ -1,0 +1,102 @@
+name: Agent Issue 252 Used Sparse Baseline
+
+on:
+  push:
+    branches:
+      - agent/issue-252-used-sparse-baseline
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=9b6f627954ec5a0eaca31b4cea5accdd4a6d79c9
+          actual=$(git rev-parse HEAD^)
+          echo "issue252_dev_baseline=$actual"
+          test "$actual" = "$expected"
+          dotnet --info
+
+      - name: Build evidence runner
+        run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -v minimal
+
+      - name: Measure used-but-sparse retained memory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import statistics
+          import subprocess
+
+          project = 'test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj'
+          counts = (1, 4, 64)
+          rounds = 3
+
+          def run(mode, connections):
+              cmd = [
+                  'dotnet', 'run', '--project', project,
+                  '-c', 'Release', '--no-build', '--',
+                  '--pending-request-segmentation-evidence', mode,
+                  '--active', '0', '--connections', str(connections),
+              ]
+              completed = subprocess.run(cmd, check=True, text=True, capture_output=True)
+              lines = [line.strip() for line in completed.stdout.splitlines() if line.strip().startswith('{')]
+              if not lines:
+                  raise RuntimeError(f'no JSON output for {mode}/{connections}: {completed.stdout}\n{completed.stderr}')
+              return json.loads(lines[-1])
+
+          samples = {}
+          for connections in counts:
+              samples[connections] = {'unused': [], 'used_idle': []}
+              for round_no in range(1, rounds + 1):
+                  order = ('unused', 'used_idle') if round_no % 2 else ('used_idle', 'unused')
+                  for variant in order:
+                      mode = 'memory' if variant == 'unused' else 'churn-memory'
+                      row = run(mode, connections)
+                      samples[connections][variant].append(row['retainedBytesPerConnection'])
+                      print('ISSUE252_SAMPLE=' + json.dumps({
+                          'connections': connections,
+                          'round': round_no,
+                          'variant': variant,
+                          'retainedBytesPerConnection': row['retainedBytesPerConnection'],
+                          'slotsMaterialized': row.get('slotsMaterialized'),
+                          'implementation': row.get('implementation'),
+                      }, separators=(',', ':')))
+
+          result = {
+              'experiment': 'issue252-used-but-sparse-post-merge-baseline',
+              'dev_sha': '9b6f627954ec5a0eaca31b4cea5accdd4a6d79c9',
+              'capacity': 65536,
+              'rounds': rounds,
+              'scenarios': [],
+          }
+          for connections in counts:
+              unused = statistics.median(samples[connections]['unused'])
+              used = statistics.median(samples[connections]['used_idle'])
+              delta = used - unused
+              result['scenarios'].append({
+                  'connections': connections,
+                  'unused_retained_bytes_per_connection_median': unused,
+                  'used_idle_retained_bytes_per_connection_median': used,
+                  'used_once_incremental_bytes_per_connection': delta,
+                  'used_once_incremental_mib_total': delta * connections / (1024 * 1024),
+              })
+          print('USED_SPARSE_RESULT=' + json.dumps(result, separators=(',', ':')))
+          PY
