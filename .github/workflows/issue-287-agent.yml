@@ -35,6 +35,7 @@ jobs:
           python3 .github/issue-287-server-handshake-test.py
           python3 .github/issue-287-docs.py
           python3 .github/issue-287-review-round2.py
+          python3 .github/issue-287-review-round2-followup.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
