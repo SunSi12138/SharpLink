@@ -1,14 +1,6 @@
 from pathlib import Path
 
 
-def replace_once(path: str, old: str, new: str):
-    p = Path(path)
-    text = p.read_text()
-    count = text.count(old)
-    assert count == 1, (path, count, old[:80])
-    p.write_text(text.replace(old, new, 1))
-
-
 # The round-3 diff was produced before this new file was staged, so create the narrow
 # metadata-bound channel explicitly in the workbench.
 Path('src/SharpLink.Client/SharpLinkMetadataRpcChannel.cs').write_text('''namespace SharpLink.Client;
@@ -90,8 +82,8 @@ internal sealed class SharpLinkMetadataRpcChannel(
 ''')
 
 # These three methods are already async. SendRpcCall normally completes synchronously, but its
-# ValueTask return exists for the deadline-sensitive emission path; await it here so the compiler
-# and future changes cannot silently drop a non-completed send.
+# ValueTask return exists for the deadline-sensitive emission path; await it here so a future
+# non-completed send cannot be dropped.
 p = Path('src/SharpLink.Client/SharpLinkClient.Invokers.cs')
 text = p.read_text()
 for old in [
@@ -108,17 +100,7 @@ for old in [
 ]:
     assert text.count(old) == 1, old[:80]
     text = text.replace(old, old.replace('SendRpcCall(', 'await SendRpcCall('), 1)
-# All three selected calls end with control.Metadata and can safely await their ValueTask.
-# Replace only the first three non-observeEmission call endings after the inserted awaits.
-parts = text.split('await SendRpcCall(')
-assert len(parts) == 4, len(parts)
-for index in range(1, 4):
-    assert 'control.Metadata);' in parts[index]
-    parts[index] = parts[index].replace(
-        'control.Metadata);',
-        'control.Metadata).ConfigureAwait(false);',
-        1)
-p.write_text('await SendRpcCall('.join(parts))
+p.write_text(text)
 
 # Preserve the capability the old partition test demonstrated: the caller can choose metadata
 # independently for concurrent invocations on the same client and method, without a business
