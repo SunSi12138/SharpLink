@@ -35,23 +35,20 @@ replacement = '''    private ResolvedCallControl ResolveCallControl(
     {
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
-        var timeProvider = _runtimeContext.TimeProvider;
-        var utcNow = timeProvider.GetUtcNow();
-        var timestampNow = timeProvider.GetTimestamp();
-        DateTimeOffset? utcDeadline = null;
-        if (methodTimeout is { } explicitMethodTimeout)
-            AddDeadlineCandidate(ref utcDeadline, AddTimeout(utcNow, explicitMethodTimeout));
-        if ((includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)
-            AddDeadlineCandidate(ref utcDeadline, AddTimeout(utcNow, _requestTimeoutValue));
 
-        var deadline = utcDeadline is { } value
-            ? RpcDeadline.Create(
-                value,
-                utcNow,
-                timestampNow,
-                timeProvider.TimestampFrequency)
+        // Method policy overrides the client-wide fallback. These are policy-selection layers,
+        // not independent lifetime caps. A parent/inherited RPC lifetime, when propagated, is
+        // the separate constraint that may cap the selected local policy.
+        var selectedTimeout = hasMethodTimeout
+            ? methodTimeout
+            : includeClientDefault && _hasRequestTimeout
+                ? _requestTimeoutValue
+                : null;
+        var timeProvider = _runtimeContext.TimeProvider;
+        var deadline = selectedTimeout is { } timeout
+            ? RpcDeadline.Create(timeout, timeProvider)
             : default;
-        if (deadline.IsExpired(timestampNow))
+        if (deadline.IsExpired(timeProvider))
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
             deadline,
@@ -61,11 +58,24 @@ replacement = '''    private ResolvedCallControl ResolveCallControl(
 
 '''
 text = text[:start] + replacement + text[end:]
+text = re.sub(
+    r'\n    private static void AddDeadlineCandidate\(.*?\n    \}\n(?=\n    private bool WouldReachDeadline)',
+    '\n',
+    text,
+    flags=re.S)
+text = re.sub(
+    r'\n    private static DateTimeOffset AddTimeout\(.*?\n    \}\n(?=\n    private static SharpLinkException CreateDeadlineExceededException)',
+    '\n',
+    text,
+    flags=re.S)
 p.write_text(text)
 
 p = Path('src/SharpLink.Abstractions/ProtocolV2.cs')
 text = p.read_text()
-text = text.replace('public const ushort MinorVersion = 3;', 'public const ushort MinorVersion = 4;\n    public const ushort TimeBudgetMinorVersion = 4;')
+text = text.replace(
+    'public const ushort MinorVersion = 3;',
+    'public const ushort MinorVersion = 4;\n\n    /// <summary>Old protocol minors used absolute wall-clock deadlines and are not wire-compatible.</summary>\n    public const ushort MinimumCompatibleMinorVersion = 4;')
+text = text.replace('The request prefix contains a deadline.', 'The request prefix contains a remaining RPC time budget.')
 text = text.replace('HasDeadline = 1 << 2,', 'HasTimeBudget = 1 << 2,')
 p.write_text(text)
 
@@ -74,8 +84,63 @@ for name in Path('src').rglob('*.cs'):
     if 'ProtocolV2FrameFlags.HasDeadline' in text:
         name.write_text(text.replace('ProtocolV2FrameFlags.HasDeadline', 'ProtocolV2FrameFlags.HasTimeBudget'))
 
+# Protocol 2.4 is the breaking boundary for TimeBudget wire semantics. Do not negotiate older
+# minors and then reinterpret their absolute-deadline field as a duration.
+p = Path('src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs')
+text = p.read_text()
+text = text.replace(
+    '''        if (minorVersion > ProtocolV2Constants.MinorVersion)
+            throw new ArgumentOutOfRangeException(nameof(minorVersion));''',
+    '''        if (minorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion ||
+            minorVersion > ProtocolV2Constants.MinorVersion)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minorVersion));
+        }''')
+text = text.replace(
+    '''        if (response.MinorVersion > offer.MinorVersion)
+        {
+            throw Failure(
+                SharpLinkErrorCode.Unimplemented,
+                $"Server requires unsupported protocol minor version {response.MinorVersion}.");
+        }''',
+    '''        if (response.MinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
+        {
+            throw Failure(
+                SharpLinkErrorCode.Unimplemented,
+                $"Server selected incompatible protocol minor version {response.MinorVersion}; " +
+                $"minimum supported is {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
+        }
+        if (response.MinorVersion > offer.MinorVersion)
+        {
+            throw Failure(
+                SharpLinkErrorCode.Unimplemented,
+                $"Server requires unsupported protocol minor version {response.MinorVersion}.");
+        }''')
+text = text.replace(
+    '''    private static void ValidatePeerOffer(in ProtocolV2HandshakeRequest offer)
+    {
+        ValidatePeerLimits(''',
+    '''    private static void ValidatePeerOffer(in ProtocolV2HandshakeRequest offer)
+    {
+        if (offer.MinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
+        {
+            throw Failure(
+                SharpLinkErrorCode.Unimplemented,
+                $"Peer protocol minor version {offer.MinorVersion} is incompatible; " +
+                $"minimum supported is {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
+        }
+        ValidatePeerLimits(''')
+p.write_text(text)
+
 p = Path('src/SharpLink.Abstractions/RpcDeadline.cs')
 text = p.read_text()
+text = text.replace(
+    '''/// <summary>
+/// Keeps the wire UTC deadline separate from the monotonic timestamp used for local timing.
+/// </summary>''',
+    '''/// <summary>
+/// Represents a process-local RPC lifetime boundary using a monotonic timestamp.
+/// </summary>''')
 marker = '    internal static RpcDeadline Create(DateTimeOffset utcDeadline, long timestamp)\n        => new(utcDeadline, timestamp);\n'
 addition = '''    internal static RpcDeadline Create(TimeSpan timeBudget, TimeProvider timeProvider)
     {
@@ -114,10 +179,10 @@ for filename in [
                     writer.Advance(sizeof(long));
                 }''', '''if (deadline.HasValue)
                 {
-                    var lifetimeSpan = writer.GetSpan(sizeof(long));
+                    var timeBudgetSpan = writer.GetSpan(sizeof(long));
                     BinaryPrimitives.WriteInt64LittleEndian(
-                        lifetimeSpan,
-                        GetWireLifetimeValue(session, deadline));
+                        timeBudgetSpan,
+                        GetWireTimeBudgetValue(deadline));
                     writer.Advance(sizeof(long));
                 }''')
     text = text.replace('control.Deadline.UtcDeadline,\n                    control.Metadata)', 'control.Deadline,\n                    control.Metadata)')
@@ -127,17 +192,12 @@ for filename in [
 p = Path('src/SharpLink.Client/SharpLinkClient.CallOptions.cs')
 text = p.read_text()
 marker = '    private static SharpLinkException CreateDeadlineExceededException()\n'
-helper = '''    private long GetWireLifetimeValue(RpcSession session, RpcDeadline deadline)
+helper = '''    private long GetWireTimeBudgetValue(RpcDeadline deadline)
     {
-        if (session.NegotiatedOptions?.ProtocolMinorVersion >= ProtocolV2Constants.TimeBudgetMinorVersion)
-        {
-            var remaining = deadline.GetRemaining(_runtimeContext.TimeProvider);
-            if (remaining <= TimeSpan.Zero)
-                throw CreateDeadlineExceededException();
-            return remaining.Ticks;
-        }
-
-        return deadline.UtcDeadline!.Value.ToUnixTimeMilliseconds();
+        var remaining = deadline.GetRemaining(_runtimeContext.TimeProvider);
+        if (remaining <= TimeSpan.Zero)
+            throw CreateDeadlineExceededException();
+        return remaining.Ticks;
     }
 
 '''
@@ -152,38 +212,19 @@ end = text.index('\n        SharpLinkMetadata? metadata = null;', start)
 replacement = '''        var deadline = default(RpcDeadline);
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
-            if (!reader.TryReadLittleEndian(out long lifetimeValue))
-                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "Request time budget is truncated.");
-
-            if (session.NegotiatedOptions?.ProtocolMinorVersion >= ProtocolV2Constants.TimeBudgetMinorVersion)
+            if (!reader.TryReadLittleEndian(out long timeBudgetTicks))
             {
-                if (lifetimeValue < 0)
-                {
-                    throw new SharpLinkProtocolViolationException(
-                        ProtocolViolationReason.MalformedFrame,
-                        "Request time budget cannot be negative.");
-                }
-                deadline = RpcDeadline.Create(TimeSpan.FromTicks(lifetimeValue), timeProvider);
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request time budget is truncated.");
             }
-            else
+            if (timeBudgetTicks < 0)
             {
-                try
-                {
-                    var utcDeadline = DateTimeOffset.FromUnixTimeMilliseconds(lifetimeValue);
-                    deadline = RpcDeadline.Create(
-                        utcDeadline,
-                        timeProvider.GetUtcNow(),
-                        timeProvider.GetTimestamp(),
-                        timeProvider.TimestampFrequency);
-                }
-                catch (ArgumentOutOfRangeException exception)
-                {
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.ProtocolViolation,
-                        "Request deadline is outside the supported UTC range.",
-                        exception);
-                }
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request time budget cannot be negative.");
             }
+            deadline = RpcDeadline.Create(TimeSpan.FromTicks(timeBudgetTicks), timeProvider);
         }
 '''
 text = text[:start] + replacement + text[end:]
