@@ -1,0 +1,5 @@
+[DecodeExecutionPhase0EvidenceRunner.cs]
+# The one-byte output-limit probe mirrors the production Brotli decoder guard and
+# can execute only after the bounded output is already full. Keep the exception
+# local to this benchmark-only prototype rather than weakening repository rules.
+dotnet_diagnostic.CA2014.severity = none
