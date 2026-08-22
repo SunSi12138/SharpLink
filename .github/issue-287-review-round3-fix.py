@@ -81,6 +81,22 @@ internal sealed class SharpLinkMetadataRpcChannel(
 }
 ''')
 
+# Caller-selected metadata is a narrow optional capability. Built-in SharpLink clients implement
+# it, but unrelated third-party ISharpLinkClient implementations are not forced to add a dummy
+# method just because 2.0 gained this envelope capability.
+for name, interface_name in [
+    ('src/SharpLink.Abstractions/ISharpLinkClient.cs', 'ISharpLinkClient'),
+    ('src/SharpLink.Abstractions/ISharpLinkMultiClusterClient.cs', 'ISharpLinkMultiClusterClient'),
+]:
+    p = Path(name)
+    text = p.read_text()
+    old = '    TContract Get<TContract>(SharpLinkMetadata metadata) where TContract : IService;'
+    new = f'''    TContract Get<TContract>(SharpLinkMetadata metadata) where TContract : IService
+        => throw new NotSupportedException(
+            "This {interface_name} implementation does not support caller-selected metadata.");'''
+    assert text.count(old) == 1, name
+    p.write_text(text.replace(old, new, 1))
+
 # These three methods are already async. SendRpcCall normally completes synchronously, but its
 # ValueTask return exists for the deadline-sensitive emission path; await it here so a future
 # non-completed send cannot be dropped.
