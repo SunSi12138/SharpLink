@@ -1219,7 +1219,7 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         long PeakDecodeQueueDepth,
         long SkippedCancelledWorkItems);
 
-    private readonly record struct DecodeRequestResult(
+    internal readonly record struct DecodeRequestResult(
         bool Accepted,
         double SchedulerDelayMicroseconds);
 
