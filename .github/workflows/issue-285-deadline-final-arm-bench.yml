@@ -1,0 +1,83 @@
+name: Issue 285 Deadline Final Arm Bench
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - agent/issue-285-deadline-final-arm-bench
+  workflow_dispatch:
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore decision evidence
+        run: dotnet restore test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj
+
+      - name: Build decision evidence
+        run: dotnet build test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj -c Release --no-restore -v minimal
+
+      - name: Run paired deadline workload with issue 285 fix
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.DeadlinePolicyDecisionEvidence/SharpLink.DeadlinePolicyDecisionEvidence.csproj
+          --
+          --primary-rounds 3
+          --boundary-rounds 1
+          --warmup-seconds 1
+          --duration-seconds 2
+          --json artifacts/issue-285/decision-evidence.json
+
+      - name: Publish key regression summary
+        if: always()
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          path = Path('artifacts/issue-285/decision-evidence.json')
+          if not path.exists():
+              raise SystemExit(0)
+          report = json.loads(path.read_text())
+          wanted = {
+              'A-dense-0-concurrent',
+              'A-dense-0.01pct-expiry',
+              'A-dense-0.1pct-expiry',
+              'A-dense-1pct-expiry',
+              'P2-capacity-1k',
+              'P3-long-lived'
+          }
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
+              out.write('## Issue #285 deadline final-arm regression evidence\n\n')
+              out.write('| Scenario | shared QPS | shared CPU ns/op | shared p99 ms | shared max ms | per-call QPS delta |\n')
+              out.write('|---|---:|---:|---:|---:|---:|\n')
+              for row in report['Summaries']:
+                  if row['Scenario'] not in wanted:
+                      continue
+                  out.write(
+                      f"| {row['Scenario']} | {row['SharedMedianQps']:.1f} | "
+                      f"{row['SharedMedianCpuNsPerOp']:.1f} | {row['SharedMedianP99LatenessMs']:.3f} | "
+                      f"{row['SharedMedianMaxLatenessMs']:.3f} | {row['PerCallQpsDeltaPercent']:+.2f}% |\n"
+                  )
+
+      - name: Upload issue 285 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-285-deadline-final-arm-evidence
+          path: artifacts/issue-285/decision-evidence.json
+          if-no-files-found: warn
