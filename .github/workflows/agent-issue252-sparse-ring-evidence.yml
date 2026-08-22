@@ -1,0 +1,31 @@
+name: Agent Issue 252 Sparse Ring Evidence
+
+on:
+  push:
+    branches:
+      - agent/issue-252-sparse-ring-evidence
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-252-sparse-ring-evidence
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Validate sparse ring candidates
+        run: bash .github/issue252-sparse-ring-evidence.sh
