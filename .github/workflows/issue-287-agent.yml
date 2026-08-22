@@ -65,6 +65,6 @@ jobs:
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
       - name: Review regression tests
         run: |
-          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --filter "FullyQualifiedName~SharpLinkClientTimeBudgetTests|FullyQualifiedName~ProtocolV2TimeBudgetCompatibilityTests" -v minimal
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --filter "FullyQualifiedName~SharpLinkClientTimeBudgetTests|FullyQualifiedName~ProtocolV2TimeBudgetCompatibilityTests" -v minimal
       - name: Generator tests
-        run: dotnet test test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --no-build -c Release -v minimal
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --no-build -c Release -v minimal
