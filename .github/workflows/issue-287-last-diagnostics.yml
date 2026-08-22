@@ -1,0 +1,88 @@
+name: Issue 287 last diagnostics
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  client-classes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-287-call-control-cleanup
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - run: bash .github/issue-287-apply-current.sh
+      - run: dotnet restore Sharplink.slnx && dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Client classes
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          for cls in \
+            ClientConnectionConsumerAbandonmentTests \
+            DynamicEndpointResolverTests \
+            EndpointSelectionKernelTests \
+            LateResponseLogLimiterTests \
+            SharpClientBuilderTests \
+            SharpLinkClientBackgroundTaskTests \
+            SharpLinkClientCallControlTests \
+            SharpLinkClientCancellationTests \
+            SharpLinkClientInterceptorDeadlineTests \
+            SharpLinkClientLifecycleStateTests \
+            SharpLinkClientReadinessTests \
+            SharpLinkClientRetryTests \
+            SharpLinkClientTimeBudgetTests \
+            SharpLinkClientTimeoutTests \
+            SharpLinkMultiClusterClientTests \
+            StaticEndpointBuilderTests
+          do
+            echo "===== $cls ====="
+            timeout 30s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release -- \
+              --treenode-filter "/*/SharpLink.UnitTests.Client/$cls/*" --maximum-parallel-tests 1 --output Detailed
+            code=$?
+            echo "===== $cls exit=$code ====="
+            if [ $code -ne 0 ]; then rc=1; fi
+          done
+          exit $rc
+
+  progress-order:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-287-call-control-cleanup
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - run: bash .github/issue-287-apply-current.sh
+      - name: Add diagnostic sequence to assertion
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs')
+          s=p.read_text()
+          old='''            Ensure(types.Skip(1).Take(24).All(static type => type == ProtocolV2FrameType.Ping),\n                "the full progress backlog must drain first");'''
+          new='''            Ensure(types.Skip(1).Take(24).All(static type => type == ProtocolV2FrameType.Ping),\n                $"the full progress backlog must drain first; sequence={string.Join(',', types)}");'''
+          assert s.count(old)==1
+          p.write_text(s.replace(old,new,1))
+          PY
+      - run: dotnet restore Sharplink.slnx && dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - run: >-
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release --
+          --treenode-filter "/*/SharpLink.UnitTests.Runtime/SendPumpProgressIsolationTests/ProgressBurstDoesNotStarveNormalFrames"
+          --maximum-parallel-tests 1 --output Detailed
