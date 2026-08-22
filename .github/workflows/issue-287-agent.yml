@@ -25,6 +25,7 @@ jobs:
         run: |
           python3 .github/issue-287-patch.py
           python3 .github/issue-287-generator.py
+          python3 .github/issue-287-tests.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/SharpLink.Abstractions/ProtocolV2.cs')
@@ -56,6 +57,8 @@ jobs:
           git diff --check
           echo '=== removed source concepts ==='
           git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' src && exit 1 || true
+          echo '=== remaining active test/demo CallOptions references ==='
+          git grep -n 'SharpLinkCallOptions' -- test demo || true
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Build solution
