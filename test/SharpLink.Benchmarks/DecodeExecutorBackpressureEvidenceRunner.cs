@@ -10,15 +10,16 @@ namespace SharpLink.Benchmarks;
 
 /// <summary>
 /// Explicit saturation and queued-cancellation probes for the Phase 0 persistent decode
-/// executor candidate. Unlike the comparative A/B/C/D matrix, these probes fix queue
-/// capacity independently of offered concurrency and deliberately hold workers so queue
-/// ownership can be observed before provider execution begins.
+/// executor candidate. Saturation uses a minimal local fixed-capacity channel harness;
+/// queued cancellation deliberately drives the exact D runtime/work-item/lease path used by
+/// the comparative matrix so ownership ordering cannot diverge between the probe and D.
 /// </summary>
 internal static class DecodeExecutorBackpressureEvidenceRunner
 {
     private const int DefaultQueueCapacity = 8;
     private const int DefaultConcurrency = 128;
     private const int DefaultOperations = 256;
+    private const int DefaultQuantumBytes = 64 * 1024;
 
     internal static async Task RunAsync(string[] args)
     {
@@ -37,28 +38,25 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
                 "Backpressure evidence requires concurrency greater than queue capacity.");
         }
 
+        var fixture = DecodeExecutionPhase0EvidenceRunner.DecodeFixture.Create(payloadSize, compressible);
         var provider = CompressionProviderBenchmarks.CreateProvider("fastest");
-        var compressed = CreateCompressedFixture(provider, payloadSize, compressible);
         var saturation = await MeasureSaturationAsync(
             provider,
-            compressed,
+            fixture.Compressed,
             payloadSize,
             workerCount,
             queueCapacity,
             concurrency,
             operations);
         var queuedCancellation = await MeasureQueuedCancellationAsync(
-            provider,
-            compressed,
-            payloadSize,
-            workerCount,
+            fixture,
             queueCapacity);
 
         var result = new DecodeExecutorBackpressureEvidenceResult(
             DateTimeOffset.UtcNow,
             payloadSize,
             compressible,
-            compressed.Length,
+            fixture.Compressed.Length,
             workerCount,
             queueCapacity,
             concurrency,
@@ -92,6 +90,9 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
             $"providerStarts={queuedCancellation.ProviderStarts} " +
             $"skippedBeforeProvider={queuedCancellation.SkippedBeforeProvider} " +
             $"ownershipReleasedBeforeWorkerStart={queuedCancellation.OwnershipReleasedBeforeWorkerStart} " +
+            $"reservationReleased={queuedCancellation.ReservationReleasedBeforeWorkerStart} " +
+            $"retainedLeaseReleased={queuedCancellation.RetainedLeaseReleasedBeforeWorkerStart} " +
+            $"decodedLeaseReleased={queuedCancellation.DecodedLeaseReleasedBeforeWorkerStart} " +
             $"cancelCompletionUs={queuedCancellation.CancellationCompletionMicroseconds:F2}");
     }
 
@@ -104,7 +105,7 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
         int concurrency,
         int operations)
     {
-        using var metrics = new BackpressureMetrics(queueCapacity);
+        using var metrics = new BackpressureMetrics();
         await using var executor = new SaturatedDecodeExecutor(
             workerCount,
             queueCapacity,
@@ -124,11 +125,7 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
                     var index = Interlocked.Increment(ref next);
                     if (index >= operations)
                         return;
-                    await executor.EnqueueAsync(
-                        provider,
-                        compressed,
-                        payloadSize,
-                        CancellationToken.None);
+                    await executor.EnqueueAsync(provider, compressed, payloadSize);
                 }
             });
         }
@@ -163,21 +160,30 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
     }
 
     private static async Task<QueuedCancellationEvidenceResult> MeasureQueuedCancellationAsync(
-        ISharpLinkCompressionProvider provider,
-        ReadOnlyMemory<byte> compressed,
-        int payloadSize,
-        int workerCount,
+        DecodeExecutionPhase0EvidenceRunner.DecodeFixture fixture,
         int queueCapacity)
     {
-        using var metrics = new BackpressureMetrics(queueCapacity);
-        await using var executor = new SaturatedDecodeExecutor(
-            workerCount,
-            queueCapacity,
-            metrics);
-        var ownershipInFlight = 0;
+        var workerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var allWorkPublished = new ManualResetEventSlim(false);
+        var publishedCount = 0;
         var unexpectedCompletions = 0;
         var cancellationSources = new CancellationTokenSource[queueCapacity];
         var requests = new Task[queueCapacity];
+
+        await using var runtime = new DecodeExecutionPhase0EvidenceRunner.DecodeCaseRuntime(
+            fixture,
+            DecodeExecutionPhase0EvidenceRunner.DecodeStrategy.PersistentExecutor,
+            DecodeExecutionPhase0EvidenceRunner.AdmissionMode.Off,
+            DecodeExecutionPhase0EvidenceRunner.CapacityMode.Available,
+            queueCapacity,
+            DefaultQuantumBytes,
+            executorQueueCapacity: queueCapacity,
+            executorWorkerGate: workerGate.Task,
+            onExecutorWorkPublished: () =>
+            {
+                if (Interlocked.Increment(ref publishedCount) == queueCapacity)
+                    allWorkPublished.Set();
+            });
 
         try
         {
@@ -185,35 +191,32 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
             {
                 var cancellation = new CancellationTokenSource();
                 cancellationSources[index] = cancellation;
-                Interlocked.Increment(ref ownershipInFlight);
                 requests[index] = Task.Run(async () =>
                 {
                     try
                     {
-                        await executor.EnqueueAsync(
-                            provider,
-                            compressed,
-                            payloadSize,
-                            cancellation.Token);
+                        _ = await runtime.ExecuteAsync(cancellation.Token);
                         Interlocked.Increment(ref unexpectedCompletions);
                     }
                     catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
                     {
                     }
-                    finally
-                    {
-                        Interlocked.Decrement(ref ownershipInFlight);
-                    }
                 });
             }
 
-            if (!metrics.QueueFilled.Wait(TimeSpan.FromSeconds(5)))
-                throw new TimeoutException("Queued-cancellation probe did not fill the fixed executor queue.");
-            var beforeCancel = metrics.Capture();
-            if (beforeCancel.ProviderStartCount != 0)
-                throw new InvalidOperationException("Queued-cancellation probe started provider work before worker release.");
-            if (beforeCancel.CurrentQueuedWorkItems != queueCapacity)
-                throw new InvalidOperationException("Queued-cancellation probe did not hold every request in queue ownership.");
+            if (!allWorkPublished.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("Actual-D queued-cancellation probe did not publish every work item.");
+
+            var beforeCancelCapacity = runtime.CaptureCapacitySnapshot();
+            var beforeCancelMetrics = runtime.CaptureMetrics();
+            if (beforeCancelCapacity.OccupiedCalls != queueCapacity)
+                throw new InvalidOperationException("Actual-D probe did not hold every call reservation while queued.");
+            if (beforeCancelMetrics.CurrentDecodeQueueDepth != queueCapacity)
+                throw new InvalidOperationException("Actual-D probe did not hold every work item in the real D queue.");
+            if (beforeCancelMetrics.CurrentRetainedBytes <= 0 || beforeCancelMetrics.CurrentDecodedBytes <= 0)
+                throw new InvalidOperationException("Actual-D probe did not hold the real retained/decoded leases while queued.");
+            if (beforeCancelMetrics.DecompressCalls != 0)
+                throw new InvalidOperationException("Actual-D probe entered provider work before workers were released.");
 
             var cancellationStarted = Stopwatch.GetTimestamp();
             foreach (var cancellation in cancellationSources)
@@ -222,65 +225,64 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
             var cancellationCompletionMicroseconds =
                 Stopwatch.GetElapsedTime(cancellationStarted).TotalNanoseconds / 1000d;
 
-            var beforeWorkerRelease = metrics.Capture();
-            if (Volatile.Read(ref ownershipInFlight) != 0)
-            {
-                throw new InvalidOperationException(
-                    "Queued cancellation did not release caller reservation/buffer ownership before worker service.");
-            }
-            if (Volatile.Read(ref unexpectedCompletions) != 0)
-                throw new InvalidOperationException("Queued-cancellation probe unexpectedly completed decode work.");
-            if (beforeWorkerRelease.ProviderStartCount != 0)
-                throw new InvalidOperationException("Queued cancellation entered provider work before worker service.");
-            if (beforeWorkerRelease.QueuedCancellationCount != queueCapacity)
-                throw new InvalidOperationException("Queued-cancellation probe did not cancel every queued work item.");
+            var beforeWorkerCapacity = runtime.CaptureCapacitySnapshot();
+            var beforeWorkerMetrics = runtime.CaptureMetrics();
+            var reservationReleased = beforeWorkerCapacity.OccupiedCalls == 0;
+            var retainedLeaseReleased = beforeWorkerMetrics.CurrentRetainedBytes == 0;
+            var decodedLeaseReleased = beforeWorkerMetrics.CurrentDecodedBytes == 0;
+            var ownershipReleased = reservationReleased && retainedLeaseReleased && decodedLeaseReleased;
 
-            executor.ReleaseWorkers();
-            await executor.StopAsync();
-            var afterDrain = metrics.Capture();
-            if (afterDrain.ProviderStartCount != 0)
+            if (Volatile.Read(ref unexpectedCompletions) != 0)
+                throw new InvalidOperationException("Actual-D queued-cancellation probe unexpectedly completed decode work.");
+            if (!ownershipReleased)
             {
                 throw new InvalidOperationException(
-                    "A request cancelled while queued entered provider decode after worker release.");
+                    "Actual-D queued cancellation did not release reservation/retained/decoded ownership before worker service.");
             }
-            if (afterDrain.SkippedCancelledWorkItems != queueCapacity)
-                throw new InvalidOperationException("Workers did not skip every queued-cancelled work item.");
-            if (afterDrain.CurrentQueuedWorkItems != 0)
-                throw new InvalidOperationException("Queued-cancellation probe left cancelled work in the executor queue.");
+            if (beforeWorkerMetrics.DecompressCalls != 0)
+                throw new InvalidOperationException("Actual-D queued cancellation entered provider work before worker service.");
+            if (beforeWorkerMetrics.CurrentDecodeQueueDepth != queueCapacity)
+            {
+                throw new InvalidOperationException(
+                    "Actual-D queued cancellation dequeued work before the deterministic worker gate was released.");
+            }
+
+            workerGate.TrySetResult();
+            await runtime.StopExecutorAsync();
+            var afterDrainCapacity = runtime.CaptureCapacitySnapshot();
+            var afterDrainMetrics = runtime.CaptureMetrics();
+            if (afterDrainMetrics.DecompressCalls != 0)
+            {
+                throw new InvalidOperationException(
+                    "A request cancelled while queued entered the actual D provider after worker release.");
+            }
+            if (afterDrainMetrics.SkippedCancelledWorkItems != queueCapacity)
+                throw new InvalidOperationException("Actual D did not skip every queued-cancelled work item.");
+            if (afterDrainMetrics.CurrentDecodeQueueDepth != 0)
+                throw new InvalidOperationException("Actual-D queued-cancellation probe left work in the executor queue.");
+            if (afterDrainCapacity.OccupiedCalls != 0 ||
+                afterDrainMetrics.CurrentRetainedBytes != 0 ||
+                afterDrainMetrics.CurrentDecodedBytes != 0)
+            {
+                throw new InvalidOperationException("Actual-D queued-cancellation probe leaked request ownership after drain.");
+            }
 
             return new QueuedCancellationEvidenceResult(
                 queueCapacity,
-                afterDrain.ProviderStartCount,
-                afterDrain.SkippedCancelledWorkItems,
-                Volatile.Read(ref ownershipInFlight) == 0,
+                afterDrainMetrics.DecompressCalls,
+                afterDrainMetrics.SkippedCancelledWorkItems,
+                ownershipReleased,
+                reservationReleased,
+                retainedLeaseReleased,
+                decodedLeaseReleased,
                 cancellationCompletionMicroseconds);
         }
         finally
         {
-            executor.ReleaseWorkers();
+            workerGate.TrySetResult();
             foreach (var cancellation in cancellationSources)
                 cancellation?.Dispose();
         }
-    }
-
-    private static byte[] CreateCompressedFixture(
-        ISharpLinkCompressionProvider provider,
-        int payloadSize,
-        bool compressible)
-    {
-        var payload = new byte[payloadSize];
-        if (compressible)
-            Array.Fill(payload, (byte)0x2a);
-        else
-            new Random(42).NextBytes(payload);
-        var output = new ArrayBufferWriter<byte>(payloadSize * 2 + 1024);
-        var result = provider.Compress(
-            new ReadOnlySequence<byte>(payload),
-            output,
-            payloadSize * 2 + 1024);
-        if (result.ConsumedBytes != payloadSize || result.WrittenBytes != output.WrittenCount)
-            throw new InvalidOperationException("Backpressure fixture compression returned inconsistent counts.");
-        return output.WrittenSpan.ToArray();
     }
 
     private static int GetPayloadSize(string[] args)
@@ -328,7 +330,7 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
 
     private sealed class SaturatedDecodeExecutor : IAsyncDisposable
     {
-        private readonly Channel<DecodeWorkItem> _channel;
+        private readonly Channel<SaturationDecodeWorkItem> _channel;
         private readonly Task[] _workers;
         private readonly TaskCompletionSource _workerGate =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -341,7 +343,7 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
             BackpressureMetrics metrics)
         {
             _metrics = metrics;
-            _channel = Channel.CreateBounded<DecodeWorkItem>(new BoundedChannelOptions(queueCapacity)
+            _channel = Channel.CreateBounded<SaturationDecodeWorkItem>(new BoundedChannelOptions(queueCapacity)
             {
                 FullMode = BoundedChannelFullMode.Wait,
                 SingleReader = workerCount == 1,
@@ -356,45 +358,35 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
         internal async ValueTask EnqueueAsync(
             ISharpLinkCompressionProvider provider,
             ReadOnlyMemory<byte> compressed,
-            int originalLength,
-            CancellationToken cancellationToken)
+            int originalLength)
         {
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var work = new DecodeWorkItem(
+            var work = new SaturationDecodeWorkItem(
                 provider,
                 compressed,
                 originalLength,
-                cancellationToken,
                 completion,
                 _metrics);
             var writeStarted = Stopwatch.GetTimestamp();
-            var write = _channel.Writer.WriteAsync(work, cancellationToken);
-            try
+            var write = _channel.Writer.WriteAsync(work);
+            if (!write.IsCompletedSuccessfully)
             {
-                if (!write.IsCompletedSuccessfully)
-                {
-                    _metrics.OnBackpressureWaitStarted();
-                    try
-                    {
-                        await write;
-                    }
-                    finally
-                    {
-                        _metrics.OnBackpressureWaitCompleted(
-                            Stopwatch.GetElapsedTime(writeStarted).TotalNanoseconds / 1000d);
-                    }
-                }
-                else
+                _metrics.OnBackpressureWaitStarted();
+                try
                 {
                     await write;
                 }
+                finally
+                {
+                    _metrics.OnBackpressureWaitCompleted(
+                        Stopwatch.GetElapsedTime(writeStarted).TotalNanoseconds / 1000d);
+                }
             }
-            catch
+            else
             {
-                throw;
+                await write;
             }
 
-            work.EnableQueuedCancellation();
             _metrics.OnWorkEnqueued();
             await completion.Task;
         }
@@ -421,95 +413,38 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
         }
     }
 
-    private sealed class DecodeWorkItem
+    private readonly record struct SaturationDecodeWorkItem(
+        ISharpLinkCompressionProvider Provider,
+        ReadOnlyMemory<byte> Compressed,
+        int OriginalLength,
+        TaskCompletionSource Completion,
+        BackpressureMetrics Metrics)
     {
-        private const int Queued = 0;
-        private const int Running = 1;
-        private const int CancelledBeforeStart = 2;
-        private readonly ISharpLinkCompressionProvider _provider;
-        private readonly ReadOnlyMemory<byte> _compressed;
-        private readonly int _originalLength;
-        private readonly CancellationToken _cancellationToken;
-        private readonly TaskCompletionSource _completion;
-        private readonly BackpressureMetrics _metrics;
-        private CancellationTokenRegistration _cancellationRegistration;
-        private int _state;
-
-        internal DecodeWorkItem(
-            ISharpLinkCompressionProvider provider,
-            ReadOnlyMemory<byte> compressed,
-            int originalLength,
-            CancellationToken cancellationToken,
-            TaskCompletionSource completion,
-            BackpressureMetrics metrics)
-        {
-            _provider = provider;
-            _compressed = compressed;
-            _originalLength = originalLength;
-            _cancellationToken = cancellationToken;
-            _completion = completion;
-            _metrics = metrics;
-        }
-
-        internal void EnableQueuedCancellation()
-        {
-            if (!_cancellationToken.CanBeCanceled)
-                return;
-            _cancellationRegistration = _cancellationToken.Register(
-                static state => ((DecodeWorkItem)state!).CancelBeforeStart(),
-                this);
-        }
-
         internal void Run()
         {
-            _metrics.OnWorkDequeued();
-            if (Interlocked.CompareExchange(ref _state, Running, Queued) != Queued)
-            {
-                _cancellationRegistration.Dispose();
-                _metrics.OnCancelledWorkSkipped();
-                return;
-            }
-
-            _cancellationRegistration.Dispose();
+            Metrics.OnWorkDequeued();
             try
             {
-                // Cancellation that wins while queue ownership is still held completes the
-                // caller before worker service. A cancellation racing after ownership transfer
-                // is checked here before any provider-side CRC/decompression work begins.
-                _cancellationToken.ThrowIfCancellationRequested();
-                _metrics.OnProviderStarted();
-                var output = new ArrayBufferWriter<byte>(_originalLength);
-                var result = _provider.Decompress(
-                    new ReadOnlySequence<byte>(_compressed),
+                var output = new ArrayBufferWriter<byte>(OriginalLength);
+                var result = Provider.Decompress(
+                    new ReadOnlySequence<byte>(Compressed),
                     output,
-                    _originalLength,
-                    _cancellationToken);
-                if (result.ConsumedBytes != _compressed.Length ||
-                    result.WrittenBytes != _originalLength ||
-                    output.WrittenCount != _originalLength)
+                    OriginalLength,
+                    CancellationToken.None);
+                if (result.ConsumedBytes != Compressed.Length ||
+                    result.WrittenBytes != OriginalLength ||
+                    output.WrittenCount != OriginalLength)
                 {
                     throw new InvalidOperationException(
                         "Backpressure decode returned inconsistent provider counts.");
                 }
-                _metrics.OnWorkCompleted();
-                _completion.TrySetResult();
-            }
-            catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
-            {
-                _completion.TrySetCanceled(_cancellationToken);
+                Metrics.OnWorkCompleted();
+                Completion.TrySetResult();
             }
             catch (Exception exception)
             {
-                _completion.TrySetException(exception);
+                Completion.TrySetException(exception);
             }
-        }
-
-        private void CancelBeforeStart()
-        {
-            if (Interlocked.CompareExchange(ref _state, CancelledBeforeStart, Queued) != Queued)
-                return;
-            _metrics.OnQueuedCancellation();
-            _completion.TrySetCanceled(_cancellationToken);
         }
     }
 
@@ -517,23 +452,13 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
     {
         private readonly object _gate = new();
         private readonly List<double> _waitMicroseconds = [];
-        private readonly int _queueCapacity;
         private long _backpressureWaitCount;
         private long _pendingWriters;
         private long _peakPendingWriters;
         private long _completedWorkItems;
         private long _queuedWorkItems;
-        private long _providerStartCount;
-        private long _queuedCancellationCount;
-        private long _skippedCancelledWorkItems;
-
-        internal BackpressureMetrics(int queueCapacity)
-        {
-            _queueCapacity = queueCapacity;
-        }
 
         internal ManualResetEventSlim BackpressureObserved { get; } = new(false);
-        internal ManualResetEventSlim QueueFilled { get; } = new(false);
 
         internal void OnBackpressureWaitStarted()
         {
@@ -550,20 +475,9 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
                 _waitMicroseconds.Add(microseconds);
         }
 
-        internal void OnWorkEnqueued()
-        {
-            var queued = Interlocked.Increment(ref _queuedWorkItems);
-            if (queued >= _queueCapacity)
-                QueueFilled.Set();
-        }
+        internal void OnWorkEnqueued() => Interlocked.Increment(ref _queuedWorkItems);
 
         internal void OnWorkDequeued() => Interlocked.Decrement(ref _queuedWorkItems);
-
-        internal void OnProviderStarted() => Interlocked.Increment(ref _providerStartCount);
-
-        internal void OnQueuedCancellation() => Interlocked.Increment(ref _queuedCancellationCount);
-
-        internal void OnCancelledWorkSkipped() => Interlocked.Increment(ref _skippedCancelledWorkItems);
 
         internal void OnWorkCompleted() => Interlocked.Increment(ref _completedWorkItems);
 
@@ -579,17 +493,10 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
                 Percentile(waits, 0.50),
                 Percentile(waits, 0.99),
                 Volatile.Read(ref _completedWorkItems),
-                Volatile.Read(ref _queuedWorkItems),
-                Volatile.Read(ref _providerStartCount),
-                Volatile.Read(ref _queuedCancellationCount),
-                Volatile.Read(ref _skippedCancelledWorkItems));
+                Volatile.Read(ref _queuedWorkItems));
         }
 
-        public void Dispose()
-        {
-            BackpressureObserved.Dispose();
-            QueueFilled.Dispose();
-        }
+        public void Dispose() => BackpressureObserved.Dispose();
 
         private static double Percentile(double[] values, double percentile)
         {
@@ -621,10 +528,7 @@ internal static class DecodeExecutorBackpressureEvidenceRunner
         double MedianWaitMicroseconds,
         double P99WaitMicroseconds,
         long CompletedWorkItems,
-        long CurrentQueuedWorkItems,
-        long ProviderStartCount,
-        long QueuedCancellationCount,
-        long SkippedCancelledWorkItems);
+        long CurrentQueuedWorkItems);
 
     private readonly record struct SaturationEvidenceResult(
         double ElapsedSeconds,
@@ -641,6 +545,9 @@ internal sealed record QueuedCancellationEvidenceResult(
     long ProviderStarts,
     long SkippedBeforeProvider,
     bool OwnershipReleasedBeforeWorkerStart,
+    bool ReservationReleasedBeforeWorkerStart,
+    bool RetainedLeaseReleasedBeforeWorkerStart,
+    bool DecodedLeaseReleasedBeforeWorkerStart,
     double CancellationCompletionMicroseconds);
 
 internal sealed record DecodeExecutorBackpressureEvidenceResult(
