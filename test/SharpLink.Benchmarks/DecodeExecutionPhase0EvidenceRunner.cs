@@ -732,39 +732,99 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         return await completion.Task;
     }
 
-    private readonly record struct DecodeWorkItem(
-        ISharpLinkCompressionProvider Provider,
-        ReadOnlyMemory<byte> Compressed,
-        PooledOutput Output,
-        int OriginalLength,
-        CancellationToken CancellationToken,
-        Action? OnDecodeStart,
-        TaskCompletionSource<double> Completion,
-        long QueuedAt,
-        DecodeMetrics Metrics)
+    private sealed class DecodeWorkItem
     {
+        private const int Queued = 0;
+        private const int Running = 1;
+        private const int CancelledBeforeStart = 2;
+        private readonly ISharpLinkCompressionProvider _provider;
+        private readonly ReadOnlyMemory<byte> _compressed;
+        private readonly PooledOutput _output;
+        private readonly int _originalLength;
+        private readonly CancellationToken _cancellationToken;
+        private readonly Action? _onDecodeStart;
+        private readonly TaskCompletionSource<double> _completion;
+        private readonly long _queuedAt;
+        private readonly DecodeMetrics _metrics;
+        private CancellationTokenRegistration _cancellationRegistration;
+        private int _state;
+
+        internal DecodeWorkItem(
+            ISharpLinkCompressionProvider provider,
+            ReadOnlyMemory<byte> compressed,
+            PooledOutput output,
+            int originalLength,
+            CancellationToken cancellationToken,
+            Action? onDecodeStart,
+            TaskCompletionSource<double> completion,
+            long queuedAt,
+            DecodeMetrics metrics)
+        {
+            _provider = provider;
+            _compressed = compressed;
+            _output = output;
+            _originalLength = originalLength;
+            _cancellationToken = cancellationToken;
+            _onDecodeStart = onDecodeStart;
+            _completion = completion;
+            _queuedAt = queuedAt;
+            _metrics = metrics;
+        }
+
+        internal void EnableQueuedCancellation()
+        {
+            if (!_cancellationToken.CanBeCanceled)
+                return;
+            _cancellationRegistration = _cancellationToken.Register(
+                static state => ((DecodeWorkItem)state!).CancelBeforeStart(),
+                this);
+        }
+
+        internal void DisposeQueuedCancellation() => _cancellationRegistration.Dispose();
+
         internal void Run()
         {
-            Metrics.OnDecodeDequeued();
-            var schedulerDelay = ElapsedMicroseconds(QueuedAt);
+            _metrics.OnDecodeDequeued();
+            if (Interlocked.CompareExchange(ref _state, Running, Queued) != Queued)
+            {
+                _cancellationRegistration.Dispose();
+                return;
+            }
+
+            _cancellationRegistration.Dispose();
+            var schedulerDelay = ElapsedMicroseconds(_queuedAt);
             try
             {
-                OnDecodeStart?.Invoke();
-                Metrics.OnDecompress();
+                // Queue-owned cancellation may complete the caller early; after worker
+                // ownership wins, check the token before any provider-side CRC/decode work.
+                _cancellationToken.ThrowIfCancellationRequested();
+                _onDecodeStart?.Invoke();
+                _metrics.OnDecompress();
                 ValidateProviderResult(
-                    Provider.Decompress(
-                        new ReadOnlySequence<byte>(Compressed),
-                        Output,
-                        OriginalLength,
-                        CancellationToken),
-                    Compressed.Length,
-                    OriginalLength);
-                Completion.TrySetResult(schedulerDelay);
+                    _provider.Decompress(
+                        new ReadOnlySequence<byte>(_compressed),
+                        _output,
+                        _originalLength,
+                        _cancellationToken),
+                    _compressed.Length,
+                    _originalLength);
+                _completion.TrySetResult(schedulerDelay);
+            }
+            catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
+            {
+                _completion.TrySetCanceled(_cancellationToken);
             }
             catch (Exception exception)
             {
-                Completion.TrySetException(exception);
+                _completion.TrySetException(exception);
             }
+        }
+
+        private void CancelBeforeStart()
+        {
+            if (Interlocked.CompareExchange(ref _state, CancelledBeforeStart, Queued) != Queued)
+                return;
+            _completion.TrySetCanceled(_cancellationToken);
         }
     }
 
@@ -799,22 +859,25 @@ internal static class DecodeExecutionPhase0EvidenceRunner
         {
             var completion = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
             var queuedAt = Stopwatch.GetTimestamp();
+            var work = new DecodeWorkItem(
+                provider,
+                compressed,
+                output,
+                originalLength,
+                cancellationToken,
+                onDecodeStart,
+                completion,
+                queuedAt,
+                _metrics);
+            work.EnableQueuedCancellation();
             _metrics.OnDecodeQueued();
             try
             {
-                await _channel.Writer.WriteAsync(new DecodeWorkItem(
-                    provider,
-                    compressed,
-                    output,
-                    originalLength,
-                    cancellationToken,
-                    onDecodeStart,
-                    completion,
-                    queuedAt,
-                    _metrics), cancellationToken);
+                await _channel.Writer.WriteAsync(work, cancellationToken);
             }
             catch
             {
+                work.DisposeQueuedCancellation();
                 _metrics.OnDecodeDequeued();
                 throw;
             }
