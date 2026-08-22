@@ -58,6 +58,19 @@ jobs:
             --quantum-bytes 65536 \
             --output "$output/evidence.json"
 
+      - name: Run fixed-capacity executor backpressure probe
+        shell: bash
+        run: |
+          output="artifacts/performance/phase0/${{ matrix.payload }}-${{ matrix.compressibility }}"
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+            --phase0-decode-backpressure-evidence \
+            --payload-size ${{ matrix.payload }} \
+            --compressibility ${{ matrix.compressibility }} \
+            --queue-capacity 8 \
+            --concurrency 128 \
+            --operations 256 \
+            --output "$output/backpressure.json"
+
       - name: Upload raw evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
