@@ -61,7 +61,7 @@ internal static class DeadlineWorkloadEvidenceRunner
             Console.WriteLine(JsonSerializer.Serialize(new { kind = "summary", summary }));
 
         var report = new EvidenceReport(
-            1,
+            2,
             productionBaselineSha,
             Environment.Version.ToString(),
             Environment.ProcessorCount,
@@ -90,25 +90,27 @@ internal static class DeadlineWorkloadEvidenceRunner
         int durationSeconds)
     {
         var timeProvider = new CountingTimeProvider();
+        var owner = new EvidenceOwner(Capacity, timeProvider);
         using var table = new PendingRequestTable(
             Capacity,
             Int32CodecProvider.Instance,
-            NoopOwner.Instance,
+            owner,
             timeProvider);
 
-        _ = RunPhase(table, timeProvider, scenario, TimeSpan.FromSeconds(warmupSeconds), captureMetrics: false);
+        _ = RunPhase(table, owner, timeProvider, scenario, TimeSpan.FromSeconds(warmupSeconds), captureMetrics: false);
+        EnsureTableDrained(table, owner, "warmup");
+        owner.ResetMeasurements();
         timeProvider.ResetTimerCallbackCount();
         ForceFullGc();
 
         var measured = RunPhase(
             table,
+            owner,
             timeProvider,
             scenario,
             TimeSpan.FromSeconds(durationSeconds),
             captureMetrics: true);
-
-        if (table.Count != 0)
-            throw new InvalidOperationException($"Deadline workload leaked {table.Count} pending calls.");
+        EnsureTableDrained(table, owner, "measurement");
 
         return new RoundResult(
             scenario.Name,
@@ -137,6 +139,7 @@ internal static class DeadlineWorkloadEvidenceRunner
 
     private static PhaseResult RunPhase(
         PendingRequestTable table,
+        EvidenceOwner owner,
         CountingTimeProvider timeProvider,
         Scenario scenario,
         TimeSpan duration,
@@ -148,7 +151,7 @@ internal static class DeadlineWorkloadEvidenceRunner
         var tasks = new Task<WorkerResult>[scenario.Workers];
         for (var index = 0; index < workers.Length; index++)
         {
-            var state = new WorkerState(table, timeProvider, scenario, gate, ready);
+            var state = new WorkerState(table, owner, timeProvider, scenario, gate, ready);
             workers[index] = state;
             tasks[index] = Task.Factory.StartNew(
                 static boxed => RunWorkerAsync((WorkerState)boxed!),
@@ -178,18 +181,39 @@ internal static class DeadlineWorkloadEvidenceRunner
         long completed = 0;
         long normalCompletions = 0;
         long deadlineCompletions = 0;
-        var aggregateHistogram = new LatenessHistogram();
         foreach (var task in tasks)
         {
             var worker = task.GetAwaiter().GetResult();
             completed += worker.Completed;
             normalCompletions += worker.NormalCompletions;
             deadlineCompletions += worker.DeadlineCompletions;
-            aggregateHistogram.Merge(worker.Histogram);
         }
 
+        var ownerSnapshot = owner.Snapshot();
         if (completed == 0 || deadlineCompletions == 0)
             throw new InvalidOperationException("Deadline workload produced no measurable completions.");
+        if (ownerSnapshot.Registered != completed || ownerSnapshot.Completed != completed)
+        {
+            throw new InvalidOperationException(
+                $"Owner accounting mismatch: workers={completed}, registered={ownerSnapshot.Registered}, completed={ownerSnapshot.Completed}.");
+        }
+        if (ownerSnapshot.DeadlineCompletions != deadlineCompletions ||
+            ownerSnapshot.NormalCompletions != normalCompletions)
+        {
+            throw new InvalidOperationException(
+                $"Completion accounting mismatch: worker normal/deadline={normalCompletions}/{deadlineCompletions}, " +
+                $"owner={ownerSnapshot.NormalCompletions}/{ownerSnapshot.DeadlineCompletions}.");
+        }
+        if (ownerSnapshot.MissingDeadlineTracking != 0)
+        {
+            throw new InvalidOperationException(
+                $"Deadline completion raced ahead of evidence tracking {ownerSnapshot.MissingDeadlineTracking} time(s).");
+        }
+        if (ownerSnapshot.ProducerCancellationFailures != 0)
+        {
+            throw new InvalidOperationException(
+                $"Unexpected producer-cancellation callback failures: {ownerSnapshot.ProducerCancellationFailures}.");
+        }
 
         var elapsedSeconds = (stopped - started) / (double)timeProvider.TimestampFrequency;
         return new PhaseResult(
@@ -200,10 +224,10 @@ internal static class DeadlineWorkloadEvidenceRunner
             captureMetrics ? (cpuAfter - cpuBefore).TotalSeconds : 0,
             captureMetrics ? allocationsAfter - allocationsBefore : 0,
             timerCallbacksAfter - timerCallbacksBefore,
-            aggregateHistogram.PercentileMilliseconds(0.95),
-            aggregateHistogram.PercentileMilliseconds(0.99),
-            aggregateHistogram.MaxObservedMilliseconds,
-            aggregateHistogram.OverflowCount);
+            ownerSnapshot.P95LatenessMilliseconds,
+            ownerSnapshot.P99LatenessMilliseconds,
+            ownerSnapshot.MaxLatenessMilliseconds,
+            ownerSnapshot.LatenessOverflowCount);
     }
 
     private static async Task<WorkerResult> RunWorkerAsync(WorkerState state)
@@ -236,6 +260,7 @@ internal static class DeadlineWorkloadEvidenceRunner
                     deadline,
                     CancellationToken.None,
                     out state.RequestIds[index]);
+                state.Owner.TrackDeadline(state.RequestIds[index], dueTimestamp);
             }
 
             for (var index = expireCount; index < state.Scenario.BatchSize; index++)
@@ -256,8 +281,6 @@ internal static class DeadlineWorkloadEvidenceRunner
                 }
                 catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.DeadlineExceeded)
                 {
-                    var observed = state.TimeProvider.GetTimestamp();
-                    state.Histogram.RecordTimestampDelta(observed - dueTimestamp, state.TimeProvider.TimestampFrequency);
                     deadlineCompletions++;
                 }
             }
@@ -265,7 +288,7 @@ internal static class DeadlineWorkloadEvidenceRunner
             completed += state.Scenario.BatchSize;
         }
 
-        return new WorkerResult(completed, normalCompletions, deadlineCompletions, state.Histogram);
+        return new WorkerResult(completed, normalCompletions, deadlineCompletions);
     }
 
     private static ScenarioSummary Summarize(Scenario scenario, List<RoundResult> allResults)
@@ -302,6 +325,16 @@ internal static class DeadlineWorkloadEvidenceRunner
         if (!table.Dispatch(requestId, ref payload))
             throw new InvalidOperationException("Deadline workload JIT warm-up failed.");
         _ = operation.AsValueTask().GetAwaiter().GetResult();
+    }
+
+    private static void EnsureTableDrained(PendingRequestTable table, EvidenceOwner owner, string phase)
+    {
+        if (table.Count != 0 || table.ActiveCount != 0)
+        {
+            throw new InvalidOperationException(
+                $"Deadline workload {phase} leaked pending calls: Count={table.Count}, ActiveCount={table.ActiveCount}.");
+        }
+        owner.EnsureNoOutstandingTracking(phase);
     }
 
     private static long ToTimestampTicks(TimeSpan duration, long frequency)
@@ -345,20 +378,123 @@ internal static class DeadlineWorkloadEvidenceRunner
 
     private sealed class WorkerState(
         PendingRequestTable table,
+        EvidenceOwner owner,
         CountingTimeProvider timeProvider,
         Scenario scenario,
         ManualResetEventSlim gate,
         CountdownEvent ready)
     {
         internal PendingRequestTable Table { get; } = table;
+        internal EvidenceOwner Owner { get; } = owner;
         internal CountingTimeProvider TimeProvider { get; } = timeProvider;
         internal Scenario Scenario { get; } = scenario;
         internal ManualResetEventSlim Gate { get; } = gate;
         internal CountdownEvent Ready { get; } = ready;
         internal RpcRequestOperation<int>[] Operations { get; } = new RpcRequestOperation<int>[scenario.BatchSize];
         internal long[] RequestIds { get; } = new long[scenario.BatchSize];
-        internal LatenessHistogram Histogram { get; } = new();
         internal long StopTimestamp { get; set; }
+    }
+
+    private sealed class EvidenceOwner : IPendingCallOwner
+    {
+        private readonly int _indexMask;
+        private readonly CountingTimeProvider _timeProvider;
+        private readonly long[] _trackedRequestIds;
+        private readonly long[] _dueTimestamps;
+        private readonly LatenessHistogram _histogram = new();
+        private long _registered;
+        private long _completed;
+        private long _deadlineCompletions;
+        private long _normalCompletions;
+        private long _missingDeadlineTracking;
+        private long _producerCancellationFailures;
+
+        internal EvidenceOwner(int capacity, CountingTimeProvider timeProvider)
+        {
+            _indexMask = capacity - 1;
+            _timeProvider = timeProvider;
+            _trackedRequestIds = new long[capacity];
+            _dueTimestamps = new long[capacity];
+        }
+
+        internal void TrackDeadline(long requestId, long dueTimestamp)
+        {
+            var index = (int)(requestId & _indexMask);
+            Volatile.Write(ref _dueTimestamps[index], dueTimestamp);
+            Volatile.Write(ref _trackedRequestIds[index], requestId);
+        }
+
+        public void OnPendingCallRegistered() => Interlocked.Increment(ref _registered);
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+            var index = (int)(completion.RequestId & _indexMask);
+            var tracked = Interlocked.CompareExchange(
+                ref _trackedRequestIds[index],
+                0,
+                completion.RequestId) == completion.RequestId;
+            var dueTimestamp = tracked ? Volatile.Read(ref _dueTimestamps[index]) : 0;
+            if (tracked)
+                Volatile.Write(ref _dueTimestamps[index], 0);
+
+            if (completion.Reason == PendingCallCompletionReason.DeadlineExceeded)
+            {
+                if (!tracked || dueTimestamp == 0)
+                {
+                    Interlocked.Increment(ref _missingDeadlineTracking);
+                }
+                else
+                {
+                    _histogram.RecordTimestampDelta(
+                        _timeProvider.GetTimestamp() - dueTimestamp,
+                        _timeProvider.TimestampFrequency);
+                }
+                Interlocked.Increment(ref _deadlineCompletions);
+            }
+            else
+            {
+                Interlocked.Increment(ref _normalCompletions);
+            }
+
+            Interlocked.Increment(ref _completed);
+        }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+            => Interlocked.Increment(ref _producerCancellationFailures);
+
+        internal OwnerSnapshot Snapshot()
+            => new(
+                Volatile.Read(ref _registered),
+                Volatile.Read(ref _completed),
+                Volatile.Read(ref _deadlineCompletions),
+                Volatile.Read(ref _normalCompletions),
+                Volatile.Read(ref _missingDeadlineTracking),
+                Volatile.Read(ref _producerCancellationFailures),
+                _histogram.PercentileMilliseconds(0.95),
+                _histogram.PercentileMilliseconds(0.99),
+                _histogram.MaxObservedMilliseconds,
+                _histogram.OverflowCount);
+
+        internal void ResetMeasurements()
+        {
+            EnsureNoOutstandingTracking("reset");
+            Interlocked.Exchange(ref _registered, 0);
+            Interlocked.Exchange(ref _completed, 0);
+            Interlocked.Exchange(ref _deadlineCompletions, 0);
+            Interlocked.Exchange(ref _normalCompletions, 0);
+            Interlocked.Exchange(ref _missingDeadlineTracking, 0);
+            Interlocked.Exchange(ref _producerCancellationFailures, 0);
+            _histogram.Clear();
+        }
+
+        internal void EnsureNoOutstandingTracking(string phase)
+        {
+            for (var index = 0; index < _trackedRequestIds.Length; index++)
+            {
+                if (Volatile.Read(ref _trackedRequestIds[index]) != 0)
+                    throw new InvalidOperationException($"Deadline workload {phase} retained request tracking at slot {index}.");
+            }
+        }
     }
 
     private sealed class LatenessHistogram
@@ -370,12 +506,18 @@ internal static class DeadlineWorkloadEvidenceRunner
         private long _total;
         private int _maxBucket;
 
-        internal long OverflowCount => _counts[^1];
+        internal long OverflowCount => Volatile.Read(ref _counts[^1]);
 
         internal double MaxObservedMilliseconds
-            => _maxBucket >= BucketCount
-                ? MaxTrackedMilliseconds
-                : _maxBucket * BucketMicroseconds / 1000d;
+        {
+            get
+            {
+                var maxBucket = Volatile.Read(ref _maxBucket);
+                return maxBucket >= BucketCount
+                    ? MaxTrackedMilliseconds
+                    : maxBucket * BucketMicroseconds / 1000d;
+            }
+        }
 
         internal void RecordTimestampDelta(long timestampDelta, long frequency)
         {
@@ -383,29 +525,21 @@ internal static class DeadlineWorkloadEvidenceRunner
             var bucket = (int)Math.Ceiling(latenessMicroseconds / BucketMicroseconds);
             if (bucket >= BucketCount)
                 bucket = BucketCount;
-            _counts[bucket]++;
-            _total++;
-            if (bucket > _maxBucket)
-                _maxBucket = bucket;
-        }
-
-        internal void Merge(LatenessHistogram other)
-        {
-            for (var index = 0; index < _counts.Length; index++)
-                _counts[index] += other._counts[index];
-            _total += other._total;
-            _maxBucket = Math.Max(_maxBucket, other._maxBucket);
+            Interlocked.Increment(ref _counts[bucket]);
+            Interlocked.Increment(ref _total);
+            UpdateMaxBucket(bucket);
         }
 
         internal double PercentileMilliseconds(double percentile)
         {
-            if (_total == 0)
+            var total = Volatile.Read(ref _total);
+            if (total == 0)
                 return 0;
-            var target = (long)Math.Ceiling(_total * percentile);
+            var target = (long)Math.Ceiling(total * percentile);
             long seen = 0;
             for (var index = 0; index < _counts.Length; index++)
             {
-                seen += _counts[index];
+                seen += Volatile.Read(ref _counts[index]);
                 if (seen >= target)
                 {
                     return index >= BucketCount
@@ -414,6 +548,25 @@ internal static class DeadlineWorkloadEvidenceRunner
                 }
             }
             return MaxTrackedMilliseconds;
+        }
+
+        internal void Clear()
+        {
+            Array.Clear(_counts);
+            Volatile.Write(ref _total, 0);
+            Volatile.Write(ref _maxBucket, 0);
+        }
+
+        private void UpdateMaxBucket(int bucket)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _maxBucket);
+                if (current >= bucket)
+                    return;
+                if (Interlocked.CompareExchange(ref _maxBucket, bucket, current) == current)
+                    return;
+            }
         }
     }
 
@@ -516,8 +669,19 @@ internal static class DeadlineWorkloadEvidenceRunner
     private sealed record WorkerResult(
         long Completed,
         long NormalCompletions,
+        long DeadlineCompletions);
+
+    private sealed record OwnerSnapshot(
+        long Registered,
+        long Completed,
         long DeadlineCompletions,
-        LatenessHistogram Histogram);
+        long NormalCompletions,
+        long MissingDeadlineTracking,
+        long ProducerCancellationFailures,
+        double P95LatenessMilliseconds,
+        double P99LatenessMilliseconds,
+        double MaxLatenessMilliseconds,
+        long LatenessOverflowCount);
 
     private sealed record PhaseResult(
         double ElapsedSeconds,
