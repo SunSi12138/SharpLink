@@ -157,4 +157,39 @@ text = p.read_text()
 old = '''        RpcSessionTestFixture.CompleteHandshake(session);
         var frame = new PooledByteBufferWriter();'''
 assert text.count(old) == 1
-p.write_text(text.replace(old, '        var frame = new PooledByteBufferWriter();', 1))
+text = text.replace(old, '        var frame = new PooledByteBufferWriter();', 1)
+
+# Observe the explicit MaxLatency arm through the same stable hook used by the existing timed-batch
+# tests. ActiveTimerCount can legitimately miss a short create/dispose handoff.
+old = '''        var clock = new ManualTimeProvider();
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(clock)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var maxLatency = TimeSpan.FromSeconds(5);'''
+new = '''        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromSeconds(5);
+        var provider = new TimerArmObservingTimeProvider(clock, maxLatency);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);'''
+assert text.count(old) == 1
+text = text.replace(old, new, 1)
+text = text.replace(
+    '        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), clock);',
+    '        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), provider);',
+    1)
+old = '''            session.SendPacket(frame, deadline);
+            for (var i = 0; i < 1000 && clock.ActiveTimerCount == 0; i++)
+                await Task.Yield();
+            Ensure(clock.ActiveTimerCount > 0, "timed batch must arm its provider timer");
+            clock.Advance(maxLatency);'''
+new = '''            session.SendPacket(frame, deadline);
+            await provider.ExpectedTimerArmed.WaitAsync(TimeSpan.FromSeconds(2));
+            clock.Advance(maxLatency);'''
+assert text.count(old) == 1
+text = text.replace(old, new, 1)
+p.write_text(text)
