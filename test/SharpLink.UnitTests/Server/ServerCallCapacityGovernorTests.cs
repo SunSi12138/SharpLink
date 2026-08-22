@@ -75,18 +75,64 @@ public class ServerCallCapacityGovernorTests
     }
 
     [Test]
-    public async Task DisposeIsExactlyOnceForOneReservationOwner()
+    public async Task DisposeIsExactlyOnceAcrossAliases()
+    {
+        var governor = new ServerCallCapacityGovernor(1);
+        Ensure(governor.TryReserve(out var reservation), "reservation must acquire capacity");
+        var alias = reservation;
+        reservation.Activate();
+
+        reservation.Dispose();
+        alias.Dispose();
+
+        var snapshot = governor.CaptureSnapshot();
+        await Assert.That(snapshot.ReservedCalls).IsEqualTo(0);
+        await Assert.That(snapshot.ActiveCalls).IsEqualTo(0);
+        governor.AssertInvariant();
+    }
+
+    [Test]
+    public async Task StaleAliasCannotReleaseAReplacementReservation()
+    {
+        var governor = new ServerCallCapacityGovernor(1);
+        Ensure(governor.TryReserve(out var first), "first reservation must acquire capacity");
+        var stale = first;
+
+        first.Activate();
+        first.Dispose();
+
+        Ensure(governor.TryReserve(out var current), "replacement reservation must acquire capacity");
+        try
+        {
+            stale.Dispose();
+
+            var snapshot = governor.CaptureSnapshot();
+            await Assert.That(snapshot.ReservedCalls).IsEqualTo(1);
+            await Assert.That(snapshot.ActiveCalls).IsEqualTo(0);
+            await Assert.That(snapshot.OccupiedCalls).IsEqualTo(1);
+            await Assert.That(governor.TryReserve(out _)).IsFalse();
+            governor.AssertInvariant();
+        }
+        finally
+        {
+            current.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task ConcurrentAliasDisposalReleasesCapacityExactlyOnce()
     {
         var governor = new ServerCallCapacityGovernor(1);
         Ensure(governor.TryReserve(out var reservation), "reservation must acquire capacity");
         reservation.Activate();
 
-        reservation.Dispose();
-        reservation.Dispose();
+        Parallel.For(0, 10_000, _ => reservation.Dispose());
 
         var snapshot = governor.CaptureSnapshot();
         await Assert.That(snapshot.ReservedCalls).IsEqualTo(0);
         await Assert.That(snapshot.ActiveCalls).IsEqualTo(0);
+        Ensure(governor.TryReserve(out var replacement), "capacity must be reusable after concurrent disposal");
+        replacement.Dispose();
         governor.AssertInvariant();
     }
 
