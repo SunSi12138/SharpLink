@@ -45,6 +45,10 @@ internal static class AdmissionPartitionReviewEvidence
                     partitions,
                     concurrency,
                     expiredChurn: false).ConfigureAwait(false));
+                results.Add(await RunPoolActivePeersAsync(
+                    label,
+                    partitions,
+                    concurrency).ConfigureAwait(false));
             }
         }
 
@@ -108,17 +112,7 @@ internal static class AdmissionPartitionReviewEvidence
         };
         options.UseConcurrency(1);
 
-        var contexts = Enumerable.Range(0, partitions)
-            .Select(index => new SharpLinkAdmissionContext(
-                1,
-                2,
-                RpcMethodKind.Unary,
-                $"partition-{index}",
-                null,
-                null,
-                null))
-            .ToArray();
-
+        var contexts = CreateContexts(partitions);
         using var pool = new AdmissionPartitionPool(
             static context => context.ConnectionId,
             options,
@@ -164,39 +158,99 @@ internal static class AdmissionPartitionReviewEvidence
             });
         }
 
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        using var process = Process.GetCurrentProcess();
-        process.Refresh();
-        var cpuBefore = process.TotalProcessorTime;
-        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
-        var startedAll = Stopwatch.GetTimestamp();
-        startGate.Set();
-        await Task.WhenAll(tasks).ConfigureAwait(false);
-        var elapsed = Stopwatch.GetElapsedTime(startedAll);
-        process.Refresh();
-        var cpuAfter = process.TotalProcessorTime;
-        var allocatedAfter = GC.GetTotalAllocatedBytes(precise: true);
-
-        Array.Sort(latencies);
+        var sample = await MeasureAsync(tasks, startGate, latencies).ConfigureAwait(false);
         var reclaimScansAfter = ReadCounter(pool, "ReclaimScanCount");
         var reclaimVisitedAfter = ReadCounter(pool, "ReclaimEntriesVisited");
 
-        return new AdmissionPartitionEvidenceResult
+        return CreateResult(
+            label,
+            kind,
+            partitions,
+            concurrency,
+            operationCount,
+            sample,
+            CounterDelta(reclaimScansBefore, reclaimScansAfter),
+            CounterDelta(reclaimVisitedBefore, reclaimVisitedAfter));
+    }
+
+    private static async Task<AdmissionPartitionEvidenceResult> RunPoolActivePeersAsync(
+        string label,
+        int partitions,
+        int concurrency)
+    {
+        var time = new ManualTimeProvider();
+        var options = new SharpLinkPartitionAdmissionOptions
         {
-            Label = label,
-            Kind = kind,
-            Partitions = partitions,
-            Concurrency = concurrency,
-            Operations = operationCount,
-            ThroughputPerSecond = operationCount / elapsed.TotalSeconds,
-            P99Us = PercentileUs(latencies, 99),
-            CpuUsPerOperation = (cpuAfter - cpuBefore).TotalMicroseconds / operationCount,
-            AllocatedBytesPerOperation = (allocatedAfter - allocatedBefore) / (double)operationCount,
-            ReclaimScans = CounterDelta(reclaimScansBefore, reclaimScansAfter),
-            ReclaimEntriesVisited = CounterDelta(reclaimVisitedBefore, reclaimVisitedAfter)
+            MaxPartitions = partitions,
+            IdleTimeout = TimeSpan.FromMinutes(5)
         };
+        options.UseConcurrency(1);
+        var contexts = CreateContexts(partitions);
+
+        using var pool = new AdmissionPartitionPool(
+            static context => context.ConnectionId,
+            options,
+            queueLimit: 0,
+            time);
+        var held = new AdmissionPartitionLease?[partitions];
+        for (var index = 0; index < contexts.Length; index++)
+            held[index] = pool.TryAcquire(contexts[index])!;
+
+        // Keep every peer active while partition-0 cycles through release/reacquire.
+        held[0]!.Dispose();
+        held[0] = null;
+
+        try
+        {
+            var operationsPerWorker = concurrency switch
+            {
+                1 => 20_000,
+                32 => 2_000,
+                _ => 500
+            };
+            var operationCount = checked(concurrency * operationsPerWorker);
+            var latencies = new long[operationCount];
+            using var startGate = new ManualResetEventSlim(false);
+            var tasks = new Task[concurrency];
+            var reclaimScansBefore = ReadCounter(pool, "ReclaimScanCount");
+            var reclaimVisitedBefore = ReadCounter(pool, "ReclaimEntriesVisited");
+
+            for (var worker = 0; worker < concurrency; worker++)
+            {
+                var workerIndex = worker;
+                tasks[worker] = Task.Run(() =>
+                {
+                    startGate.Wait();
+                    var offset = workerIndex * operationsPerWorker;
+                    for (var operation = 0; operation < operationsPerWorker; operation++)
+                    {
+                        var started = Stopwatch.GetTimestamp();
+                        var lease = pool.TryAcquire(contexts[0])
+                            ?? throw new InvalidOperationException("active-peer evidence unexpectedly rejected partition-0");
+                        lease.Dispose();
+                        latencies[offset + operation] = Stopwatch.GetTimestamp() - started;
+                    }
+                });
+            }
+
+            var sample = await MeasureAsync(tasks, startGate, latencies).ConfigureAwait(false);
+            var reclaimScansAfter = ReadCounter(pool, "ReclaimScanCount");
+            var reclaimVisitedAfter = ReadCounter(pool, "ReclaimEntriesVisited");
+            return CreateResult(
+                label,
+                "pool-active-peers",
+                partitions,
+                concurrency,
+                operationCount,
+                sample,
+                CounterDelta(reclaimScansBefore, reclaimScansAfter),
+                CounterDelta(reclaimVisitedBefore, reclaimVisitedAfter));
+        }
+        finally
+        {
+            for (var index = held.Length - 1; index >= 0; index--)
+                held[index]?.Dispose();
+        }
     }
 
     private static async Task<AdmissionPartitionEvidenceResult> RunRpcAsync(
@@ -220,19 +274,21 @@ internal static class AdmissionPartitionReviewEvidence
                         partition.UseConcurrency(4096);
                     }))).ConfigureAwait(false);
 
-        for (var operation = 0; operation < partitions * 2; operation++)
+        var warmupOperations = Math.Max(partitions * 2, 10_000);
+        for (var operation = 0; operation < warmupOperations; operation++)
         {
             var result = await environment.Rpc.AddAsync(10, 20).ConfigureAwait(false);
             if (result != 30)
                 throw new InvalidOperationException($"RPC warmup returned {result} instead of 30.");
         }
         Interlocked.Exchange(ref selectorIndex, -1);
+        await Task.Delay(100).ConfigureAwait(false);
 
         var operationsPerWorker = concurrency switch
         {
-            1 => 5_000,
-            32 => 500,
-            _ => 150
+            1 => 50_000,
+            32 => 1_000,
+            _ => 300
         };
         var operationCount = checked(concurrency * operationsPerWorker);
         var latencies = new long[operationCount];
@@ -289,6 +345,69 @@ internal static class AdmissionPartitionReviewEvidence
         };
     }
 
+    private static SharpLinkAdmissionContext[] CreateContexts(int partitions)
+        => Enumerable.Range(0, partitions)
+            .Select(index => new SharpLinkAdmissionContext(
+                1,
+                2,
+                RpcMethodKind.Unary,
+                $"partition-{index}",
+                null,
+                null,
+                null))
+            .ToArray();
+
+    private static async Task<MeasurementSample> MeasureAsync(
+        Task[] tasks,
+        ManualResetEventSlim startGate,
+        long[] latencies)
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        var cpuBefore = process.TotalProcessorTime;
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        var startedAll = Stopwatch.GetTimestamp();
+        startGate.Set();
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var elapsed = Stopwatch.GetElapsedTime(startedAll);
+        process.Refresh();
+        var cpuAfter = process.TotalProcessorTime;
+        var allocatedAfter = GC.GetTotalAllocatedBytes(precise: true);
+        Array.Sort(latencies);
+        return new MeasurementSample(
+            elapsed,
+            cpuAfter - cpuBefore,
+            allocatedAfter - allocatedBefore,
+            PercentileUs(latencies, 99));
+    }
+
+    private static AdmissionPartitionEvidenceResult CreateResult(
+        string label,
+        string kind,
+        int partitions,
+        int concurrency,
+        int operationCount,
+        MeasurementSample sample,
+        long reclaimScans,
+        long reclaimEntriesVisited)
+        => new()
+        {
+            Label = label,
+            Kind = kind,
+            Partitions = partitions,
+            Concurrency = concurrency,
+            Operations = operationCount,
+            ThroughputPerSecond = operationCount / sample.Elapsed.TotalSeconds,
+            P99Us = sample.P99Us,
+            CpuUsPerOperation = sample.Cpu.TotalMicroseconds / operationCount,
+            AllocatedBytesPerOperation = sample.AllocatedBytes / (double)operationCount,
+            ReclaimScans = reclaimScans,
+            ReclaimEntriesVisited = reclaimEntriesVisited
+        };
+
     private static long ReadCounter(AdmissionPartitionPool pool, string propertyName)
     {
         var property = typeof(AdmissionPartitionPool).GetProperty(
@@ -308,6 +427,12 @@ internal static class AdmissionPartitionReviewEvidence
             sortedTicks.Length - 1);
         return sortedTicks[rank] * 1_000_000d / Stopwatch.Frequency;
     }
+
+    private readonly record struct MeasurementSample(
+        TimeSpan Elapsed,
+        TimeSpan Cpu,
+        long AllocatedBytes,
+        double P99Us);
 
     private sealed class ManualTimeProvider : TimeProvider
     {
