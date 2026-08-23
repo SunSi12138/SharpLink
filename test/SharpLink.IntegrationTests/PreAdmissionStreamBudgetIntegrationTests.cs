@@ -215,12 +215,12 @@ public class PreAdmissionStreamBudgetIntegrationTests
         {
             get
             {
-                var field = _server.GetType().GetField(
+                var controllerField = _server.GetType().GetField(
                     "_admissionController",
                     System.Reflection.BindingFlags.Instance |
                     System.Reflection.BindingFlags.NonPublic)
                     ?? throw new Exception("cannot find server admission controller field");
-                var controller = field.GetValue(_server)
+                var controller = controllerField.GetValue(_server)
                     ?? throw new Exception("server admission controller is unavailable");
                 var property = controller.GetType().GetProperty(
                     "QueuedBytes",
