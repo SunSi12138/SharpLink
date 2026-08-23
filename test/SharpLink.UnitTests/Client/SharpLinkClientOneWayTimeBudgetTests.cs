@@ -46,7 +46,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
 
-        var failure = await CaptureSharpLinkExceptionAsync(invocation);
+        var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "an initial OneWay client-stream Request that expires in the send queue must fail locally");
         Ensure(!probe.Started,
