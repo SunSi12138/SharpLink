@@ -54,12 +54,6 @@ public sealed record SharpLinkGeneratedServiceDescriptor(
     IReadOnlyList<Type> Dependencies,
     Func<IServiceProvider, object> Activator);
 
-/// <summary>Describes the compile-time wire policy selected for one closed Codec target.</summary>
-public sealed record SharpLinkGeneratedCodecPolicyDescriptor(
-    Type TargetType,
-    string SchemaId,
-    string WireFormatId);
-
 /// <summary>Provides all artifacts generated for one owner assembly.</summary>
 public interface ISharpLinkGeneratedAssemblyManifest
 {
@@ -87,10 +81,6 @@ public interface ISharpLinkGeneratedAssemblyManifest
     /// <summary>Gets generated Codec factories owned by this assembly.</summary>
     IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
 
-    /// <summary>Gets manifest-scoped wire policies for Codec targets resolved by generated artifacts.</summary>
-    IReadOnlyList<SharpLinkGeneratedCodecPolicyDescriptor> CodecPolicies
-        => Array.Empty<SharpLinkGeneratedCodecPolicyDescriptor>();
-
     /// <summary>Gets the identities of generated assemblies that this manifest depends on.</summary>
     IReadOnlyList<string> Dependencies { get; }
 }
@@ -99,7 +89,7 @@ public interface ISharpLinkGeneratedAssemblyManifest
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>The current generated manifest API version.</summary>
-    public const int Api = 4;
+    public const int Api = 3;
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;
