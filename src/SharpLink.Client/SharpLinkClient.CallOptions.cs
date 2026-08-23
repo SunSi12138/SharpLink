@@ -19,9 +19,9 @@ internal sealed partial class SharpLinkClient
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
         // the client-wide value even on call shapes that do not otherwise use the client default.
         TimeSpan? selectedTimeout = hasMethodTimeout
-            ? methodTimeout
-            : includeClientDefault
-                ? _requestTimeout
+            ? methodTimeout ?? (_hasRequestTimeout ? _requestTimeoutValue : null)
+            : includeClientDefault && _hasRequestTimeout
+                ? _requestTimeoutValue
                 : null;
 
         var timeProvider = _runtimeContext.TimeProvider;
