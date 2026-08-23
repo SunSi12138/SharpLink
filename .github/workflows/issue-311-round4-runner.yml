@@ -22,13 +22,16 @@ jobs:
         run: |
           python - <<'PYRUN'
           from pathlib import Path
-          import textwrap
 
           source = Path('.github/workflows/issue-311-round4-patch.yml').read_text()
           marker = "          python - <<'PY'\n"
           start = source.index(marker) + len(marker)
           end = source.index("\n          PY\n", start)
-          script = textwrap.dedent(source[start:end])
+          raw = source[start:end]
+          first = next(line for line in raw.splitlines() if line.strip())
+          indent = len(first) - len(first.lstrip())
+          prefix = ' ' * indent
+          script = '\n'.join(line[indent:] if line.startswith(prefix) else line for line in raw.splitlines())
           script = script.replace(
               'SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))',
               'SharpLink.Sdk.RpcCodecAdapter(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))')
