@@ -518,7 +518,6 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 connection,
                 requestOwner);
-
         }
         catch (OperationCanceledException exception)
         {
@@ -764,7 +763,14 @@ internal sealed partial class SharpLinkServer
             {
                 await session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    MapServerCancellationException(callState, callState.Deadline),
+                    MapServiceException(
+                        e,
+                        callContext,
+                        session,
+                        stub,
+                        methodId,
+                        requestId,
+                        cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);
             }
             else
