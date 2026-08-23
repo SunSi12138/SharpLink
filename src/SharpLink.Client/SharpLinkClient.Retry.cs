@@ -87,9 +87,8 @@ internal sealed partial class SharpLinkClient
                     continue;
                 }
 
-                if (WouldReachDeadline(control.Deadline, delay))
-                    throw CreateDeadlineExceededException();
-                await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
+                await DelayForRetryOrAdmissionAsync(
+                    delay, control.Deadline, cancellationToken).ConfigureAwait(false);
             }
         }
 
