@@ -63,4 +63,7 @@ internal sealed partial class SharpLinkServer
 
     internal int DecodeSkippedBeforeStartForDiagnostics
         => Volatile.Read(ref _decodeExecutor)?.SkippedBeforeStart ?? 0;
+
+    internal int DecodeStartedWorkCountForDiagnostics
+        => Volatile.Read(ref _decodeExecutor)?.StartedWorkItems ?? 0;
 }
