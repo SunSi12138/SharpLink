@@ -7,58 +7,37 @@ permissions:
   contents: write
 
 jobs:
-  wrapper:
+  patch:
     runs-on: ubuntu-latest
     steps:
       - run: |
           python - <<'PY'
-          import re
+          from pathlib import Path
           import subprocess
 
-          source = subprocess.check_output([
-              'git', 'show',
-              'a6f824d5043a4cd9f5e9cc8481035b5f87d832d4:.github/workflows/issue-311-round4-patch.yml'
-          ], text=True)
-          marker = "          python - <<'PY'\n"
-          start = source.index(marker) + len(marker)
-          end = source.index("\n          PY\n", start)
-          raw = source[start:end]
-          first = next(line for line in raw.splitlines() if line.strip())
-          indent = len(first) - len(first.lstrip())
-          prefix = ' ' * indent
-          script = '\n'.join(line[indent:] if line.startswith(prefix) else line for line in raw.splitlines())
-          script = script.replace(
-              'SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))',
-              'SharpLink.Sdk.RpcCodecAdapter(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))')
+          path = Path('src/SharpLink.Runtime/Codec/RpcCodecProvider.cs')
+          text = path.read_text()
+          old = 'internal IRpcCodec GetCodec(IRpcCodecProvider provider)'
+          new = 'internal IRpcCodec GetCodec(IRpcCodecProvider provider)'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one concrete GetCodec signature, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
 
-          helper = '\n'.join([
-              'def replace_exact(path, old, new, count=1):',
-              '    text = read(path)',
-              '    actual = text.count(old)',
-              '    if actual == count:',
-              '        write(path, text.replace(old, new, count))',
-              '        return',
-              '    parts = []',
-              '    for line in old.splitlines():',
-              '        stripped = line.strip()',
-              '        if stripped:',
-              '            escaped = re.escape(stripped).replace(r"\\ ", r"[ \\t]+")',
-              '            parts.append(r"[ \\t]*" + escaped + r"[ \\t]*")',
-              '        else:',
-              '            parts.append(r"[ \\t]*")',
-              '    pattern = r"\\r?\\n".join(parts)',
-              '    new_text, actual = re.subn(pattern, lambda _: new, text, count=count)',
-              '    if actual != count:',
-              '        raise SystemExit(f"{path}: expected {count} whitespace-tolerant matches, found {actual}")',
-              '    write(path, new_text)',
-          ])
-          script, replaced = re.subn(
-              r'def replace_exact\(path, old, new, count=1\):\n.*?(?=\ndef replace_regex)',
-              lambda _: helper + '\n',
-              script,
-              count=1,
-              flags=re.S)
-          if replaced != 1:
-              raise SystemExit('could not replace stored replace_exact helper')
-          exec(compile(script, 'issue-311-round4-patch.py', 'exec'), {'__name__': '__main__'})
+          files = [
+              'src/SharpLink.Abstractions/IRpcChannel.cs',
+              'src/SharpLink.Client/SharpLinkClient.RpcChannel.cs',
+              'src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs',
+              'src/SharpLink.Generator/RpcGenerator.ContractManifest.cs',
+              'src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs',
+              'src/SharpLink.Runtime/Codec/RpcCodecProvider.cs',
+              'src/SharpLink.Runtime/Codec/RpcManifestCodecProvider.cs',
+              'src/SharpLink.Runtime/SharpLinkRuntimeContext.cs',
+              'src/SharpLink.Server/SharpLinkServer.Assemblies.cs',
+              'test/SharpLink.Generator.Tests/RpcCodecRouteContractManifestTests.cs',
+              'test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs',
+              'test/SharpLink.UnitTests/Runtime/RpcManifestCodecProviderTests.cs',
+          ]
+          subprocess.run(
+              ['dotnet', 'format', 'Sharplink.slnx', 'whitespace', '--include', *files],
+              check=True)
           PY
