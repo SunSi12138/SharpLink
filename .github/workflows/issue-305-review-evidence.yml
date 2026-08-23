@@ -26,7 +26,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Record environment
+      - name: Prepare formal load-test harness
         run: |
           mkdir -p artifacts/issue-305-review
           {
@@ -37,196 +37,103 @@ jobs:
             echo "head=${{ github.event.pull_request.head.sha }}"
           } | tee artifacts/issue-305-review/environment.txt
 
-      - name: Generate contention harness
-        run: |
-          mkdir -p artifacts/issue-305-review-harness
-          cat > artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj <<'EOF'
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <OutputType>Exe</OutputType>
-              <AssemblyName>SharpLink.Benchmarks</AssemblyName>
-              <TargetFramework>net10.0</TargetFramework>
-              <Nullable>enable</Nullable>
-              <ImplicitUsings>enable</ImplicitUsings>
-              <IsPackable>false</IsPackable>
-            </PropertyGroup>
-            <ItemGroup>
-              <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
-              <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
-              <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
-              <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
-              <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
-              <ProjectReference Include="../../src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
-              <ProjectReference Include="../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-            </ItemGroup>
-            <ItemGroup>
-              <Compile Include="../../test/SharpLink.Benchmarks/BenchmarkContracts.cs" Link="BenchmarkContracts.cs" />
-              <Compile Include="../../test/SharpLink.Benchmarks/BenchmarkService.cs" Link="BenchmarkService.cs" />
-              <Compile Include="../../test/SharpLink.Benchmarks/BenchmarkEnvironment.cs" Link="BenchmarkEnvironment.cs" />
-            </ItemGroup>
-            <ItemGroup>
-              <PackageReference Include="SharpPack" />
-            </ItemGroup>
-          </Project>
-          EOF
+          cat > /tmp/issue305-patch-loadtest.py <<'PY'
+          from pathlib import Path
 
-          cat > artifacts/issue-305-review-harness/Program.cs <<'EOF'
-          using System.Diagnostics;
-          using SharpLink.Server;
+          path = Path('test/SharpLink.LoadTest/Program.cs')
+          text = path.read_text()
+          old_validation = '''if (admissionMode is not ("disabled" or "immediate" or "queue" or "reject"))'''
+          new_validation = '''if (admissionMode is not ("disabled" or "immediate" or "partition-immediate" or "queue" or "reject"))'''
+          old_switch = '''            "immediate" => builder.UseAdmissionControl(admission =>\n                admission.Global.UseConcurrency(4096)),\n            "queue" => builder.UseAdmissionControl(admission =>'''
+          new_switch = '''            "immediate" => builder.UseAdmissionControl(admission =>\n                admission.Global.UseConcurrency(4096)),\n            "partition-immediate" => builder.UseAdmissionControl(admission =>\n                admission.UsePartition(\n                    static _ => "hot",\n                    partition =>\n                    {\n                        partition.MaxPartitions = 1;\n                        partition.UseConcurrency(4096);\n                    })),\n            "queue" => builder.UseAdmissionControl(admission =>'''
+          if old_validation not in text or old_switch not in text:
+              raise SystemExit('load-test admission patch anchors changed')
+          text = text.replace(old_validation, new_validation, 1)
+          text = text.replace(old_switch, new_switch, 1)
+          path.write_text(text)
+          PY
 
-          namespace SharpLink.Benchmarks;
-
-          internal static class Program
-          {
-              private const int WarmupIterationsPerWorker = 2000;
-              private const int MeasurementIterationsPerWorker = 20000;
-
-              public static async Task Main(string[] args)
-              {
-                  var label = args.Length > 0 ? args[0] : "unknown";
-                  var order = args.Length > 1 ? args[1] : "32,128";
-                  foreach (var text in order.Split(',', StringSplitOptions.RemoveEmptyEntries))
-                  {
-                      var concurrency = int.Parse(text);
-                      await RunAsync(label, concurrency);
-                  }
-              }
-
-              private static async Task RunAsync(string label, int concurrency)
-              {
-                  await using var environment = await BenchmarkEnvironment.CreateAsync(
-                      configureServer: builder => builder.UseAdmissionControl(
-                          options => options.UsePartition(
-                              _ => "hot",
-                              partition =>
-                              {
-                                  partition.MaxPartitions = 1;
-                                  partition.UseConcurrency(4096);
-                              })));
-
-                  await ExecuteAsync(environment.Rpc, concurrency, WarmupIterationsPerWorker, record: null);
-
-                  var samples = new double[concurrency * MeasurementIterationsPerWorker];
-                  var started = Stopwatch.GetTimestamp();
-                  await ExecuteAsync(
-                      environment.Rpc,
-                      concurrency,
-                      MeasurementIterationsPerWorker,
-                      samples);
-                  var elapsed = Stopwatch.GetElapsedTime(started);
-
-                  Array.Sort(samples);
-                  var p50 = Percentile(samples, 0.50);
-                  var p99 = Percentile(samples, 0.99);
-                  var qps = samples.Length / elapsed.TotalSeconds;
-                  Console.WriteLine(
-                      $"RESULT label={label} c={concurrency} samples={samples.Length} " +
-                      $"qps={qps:F2} p50_us={p50:F3} p99_us={p99:F3} elapsed_s={elapsed.TotalSeconds:F3}");
-              }
-
-              private static async Task ExecuteAsync(
-                  IBenchmarkRpc rpc,
-                  int concurrency,
-                  int iterationsPerWorker,
-                  double[]? record)
-              {
-                  var start = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                  var workers = new Task[concurrency];
-                  for (var worker = 0; worker < concurrency; worker++)
-                  {
-                      var workerIndex = worker;
-                      workers[worker] = RunWorkerAsync(
-                          rpc,
-                          start.Task,
-                          workerIndex,
-                          iterationsPerWorker,
-                          record);
-                  }
-                  start.SetResult(true);
-                  await Task.WhenAll(workers);
-              }
-
-              private static async Task RunWorkerAsync(
-                  IBenchmarkRpc rpc,
-                  Task start,
-                  int worker,
-                  int iterations,
-                  double[]? record)
-              {
-                  await start.ConfigureAwait(false);
-                  var offset = worker * iterations;
-                  for (var iteration = 0; iteration < iterations; iteration++)
-                  {
-                      var timestamp = Stopwatch.GetTimestamp();
-                      var result = await rpc.AddAsync(10, 20).ConfigureAwait(false);
-                      if (result != 30)
-                          throw new InvalidOperationException($"unexpected RPC result {result}");
-                      if (record is not null)
-                      {
-                          record[offset + iteration] =
-                              Stopwatch.GetElapsedTime(timestamp).TotalMicroseconds;
-                      }
-                  }
-              }
-
-              private static double Percentile(double[] sorted, double percentile)
-              {
-                  var index = (int)Math.Ceiling(sorted.Length * percentile) - 1;
-                  return sorted[Math.Clamp(index, 0, sorted.Length - 1)];
-              }
-          }
-          EOF
-
-      - name: Build frozen baseline harness
+      - name: Build frozen baseline load test
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git checkout --force "$BASE_SHA"
-          rm -rf artifacts/issue-305-review-harness/obj artifacts/issue-305-review-harness/bin
-          dotnet restore artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj
-          dotnet publish artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj \
+          python3 /tmp/issue305-patch-loadtest.py
+          dotnet restore test/SharpLink.LoadTest/SharpLink.LoadTest.csproj
+          dotnet publish test/SharpLink.LoadTest/SharpLink.LoadTest.csproj \
             -c Release --no-restore -o /tmp/issue305-baseline
 
-      - name: Build candidate harness
+      - name: Build candidate load test
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           git checkout --force "$HEAD_SHA"
-          rm -rf artifacts/issue-305-review-harness/obj artifacts/issue-305-review-harness/bin
-          dotnet restore artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj
-          dotnet publish artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj \
+          python3 /tmp/issue305-patch-loadtest.py
+          dotnet restore test/SharpLink.LoadTest/SharpLink.LoadTest.csproj
+          dotnet publish test/SharpLink.LoadTest/SharpLink.LoadTest.csproj \
             -c Release --no-restore -o /tmp/issue305-candidate
 
-      - name: Run alternating c32/c128 samples
+      - name: Run formal c32/c128 samples
         run: |
-          mkdir -p artifacts/issue-305-review
-          : > artifacts/issue-305-review/contention.log
-          run_sample() {
+          mkdir -p artifacts/issue-305-review/runs
+          : > artifacts/issue-305-review/formal-load.log
+
+          run_stage() {
             local binary="$1"
             local label="$2"
-            local order="$3"
-            echo "=== $label order=$order ===" | tee -a artifacts/issue-305-review/contention.log
-            "$binary/SharpLink.Benchmarks" "$label" "$order" \
-              | tee -a artifacts/issue-305-review/contention.log
+            local concurrency="$3"
+            local output="artifacts/issue-305-review/runs/${label}-c${concurrency}.log"
+            echo "=== $label c=$concurrency ===" | tee -a artifacts/issue-305-review/formal-load.log
+            "$binary/SharpLink.LoadTest" \
+              --mode local \
+              --transport tcp \
+              --operation add \
+              --duration 10 \
+              --warmup 3 \
+              --concurrency "$concurrency" \
+              --min-connections 1 \
+              --max-connections 1 \
+              --request-timeout disabled \
+              --admission partition-immediate \
+              --recording formal \
+              --maximum-recorded-operations 5000000 \
+              --metrics-port 0 \
+              | tee "$output"
+            local result
+            result=$(grep '^\[Result\]' "$output" | tail -1)
+            if [ -z "$result" ]; then
+              echo "missing result for $label c=$concurrency" >&2
+              exit 1
+            fi
+            echo "SAMPLE label=$label $result" | tee -a artifacts/issue-305-review/formal-load.log
           }
-          run_sample /tmp/issue305-baseline baseline-r1 32,128
-          run_sample /tmp/issue305-candidate candidate-r1 32,128
-          run_sample /tmp/issue305-candidate candidate-r2 128,32
-          run_sample /tmp/issue305-baseline baseline-r2 128,32
-          run_sample /tmp/issue305-baseline baseline-r3 32,128
-          run_sample /tmp/issue305-candidate candidate-r3 32,128
 
-      - name: Evaluate P99 gate
+          run_stage /tmp/issue305-baseline baseline-r1 32
+          run_stage /tmp/issue305-candidate candidate-r1 32
+          run_stage /tmp/issue305-candidate candidate-r1 128
+          run_stage /tmp/issue305-baseline baseline-r1 128
+
+          run_stage /tmp/issue305-candidate candidate-r2 128
+          run_stage /tmp/issue305-baseline baseline-r2 128
+          run_stage /tmp/issue305-baseline baseline-r2 32
+          run_stage /tmp/issue305-candidate candidate-r2 32
+
+          run_stage /tmp/issue305-baseline baseline-r3 32
+          run_stage /tmp/issue305-candidate candidate-r3 32
+          run_stage /tmp/issue305-candidate candidate-r3 128
+          run_stage /tmp/issue305-baseline baseline-r3 128
+
+      - name: Evaluate formal P99 gate
         run: |
           python3 - <<'PY'
           import re
           import statistics
           from pathlib import Path
 
-          text = Path('artifacts/issue-305-review/contention.log').read_text()
+          text = Path('artifacts/issue-305-review/formal-load.log').read_text()
           pattern = re.compile(
-              r'RESULT label=(?P<label>\S+) c=(?P<c>\d+) samples=(?P<samples>\d+) '
-              r'qps=(?P<qps>[0-9.]+) p50_us=(?P<p50>[0-9.]+) p99_us=(?P<p99>[0-9.]+)')
+              r'SAMPLE label=(?P<label>\S+) \[Result\] op=add c=(?P<c>\d+) '
+              r'qps=(?P<qps>[0-9.]+).*?p99=(?P<p99>[0-9.]+)us')
           rows = []
           for match in pattern.finditer(text):
               row = match.groupdict()
@@ -234,17 +141,15 @@ jobs:
                   'label': row['label'],
                   'kind': 'candidate' if row['label'].startswith('candidate') else 'baseline',
                   'c': int(row['c']),
-                  'samples': int(row['samples']),
                   'qps': float(row['qps']),
-                  'p50': float(row['p50']),
                   'p99': float(row['p99']),
               })
 
           if len(rows) != 12:
-              raise SystemExit(f'expected 12 result rows, got {len(rows)}')
+              raise SystemExit(f'expected 12 formal result rows, got {len(rows)}')
 
           lines = [
-              '# Issue #305 c32/c128 contention evidence',
+              '# Issue #305 formal c32/c128 contention evidence',
               '',
               '| Concurrency | Baseline median P99 | A2 median P99 | P99 delta | Baseline median QPS | A2 median QPS | QPS delta | Gate |',
               '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |',
@@ -262,16 +167,14 @@ jobs:
               gate = 'PASS' if p99_delta <= 3.0 else 'FAIL'
               failed |= gate == 'FAIL'
               lines.append(
-                  f'| {concurrency} | {bp99:.3f} us | {cp99:.3f} us | {p99_delta:+.2f}% | '
+                  f'| {concurrency} | {bp99:.2f} us | {cp99:.2f} us | {p99_delta:+.2f}% | '
                   f'{bqps:.0f} | {cqps:.0f} | {qps_delta:+.2f}% | **{gate}** |')
 
           lines += [
               '',
-              'Method: three samples per variant on the same GitHub-hosted runner, alternating B/A/A/B/B/A; '
-              'each sample uses a partition-enabled full TCP RPC, one hot partition, concurrency limit 4096, '
-              '2000 warm-up RPCs/worker and 20000 measured RPCs/worker. The gate is candidate median P99 not worse than baseline median by >3%.',
+              'Method: the repository `SharpLink.LoadTest` formal latency recorder, three 10-second measurement stages per variant/concurrency after 3-second warm-up, one TCP connection, one hot partition, partition concurrency limit 4096. Baseline and A2 are separate published binaries and samples are interleaved. The same runner-only load-test patch adds `partition-immediate` to both binaries; it does not change the compared admission implementation.',
               '',
-              'Raw per-run results are in `contention.log`.',
+              'Raw stage logs are under `runs/`, and extracted results are in `formal-load.log`.',
           ]
           summary = '\n'.join(lines) + '\n'
           Path('artifacts/issue-305-review/summary.md').write_text(summary)
@@ -279,7 +182,7 @@ jobs:
           with open(Path(__import__('os').environ['GITHUB_STEP_SUMMARY']), 'a') as stream:
               stream.write(summary)
           if failed:
-              raise SystemExit('Issue #305 P99 gate failed')
+              raise SystemExit('Issue #305 formal P99 gate failed')
           PY
 
       - name: Upload evidence
