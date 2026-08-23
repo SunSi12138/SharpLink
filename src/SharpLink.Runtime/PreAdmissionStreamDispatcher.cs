@@ -7,8 +7,7 @@ namespace SharpLink.Runtime;
 /// </summary>
 internal sealed class PreAdmissionStreamDispatcher(
     SharpLinkBufferWriterPool buffers,
-    Func<int, bool> reserveBytes,
-    Action<int> releaseBytes,
+    Func<int, IDisposable?> reserveBytes,
     Action capacityExceeded,
     Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null)
     : IStreamConsumptionAwareDispatcher, IStreamDispatchLease
@@ -49,10 +48,9 @@ internal sealed class PreAdmissionStreamDispatcher(
         if (attached is not null)
             return DispatchAttached(attached, payload, encodedByteCount);
 
-        var retainedBytes = checked((int)payload.Length);
-        if (retainedBytes == 0)
-            retainedBytes = 1;
-        if (!reserveBytes(retainedBytes))
+        var retainedBytes = Math.Max(1, checked((int)payload.Length));
+        var byteLease = reserveBytes(retainedBytes);
+        if (byteLease is null)
         {
             _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
             capacityExceeded();
@@ -68,7 +66,7 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
         catch
         {
-            releaseBytes(retainedBytes);
+            byteLease.Dispose();
             throw;
         }
 
@@ -76,14 +74,13 @@ internal sealed class PreAdmissionStreamDispatcher(
         {
             if (_dispatcher is null && !_completed)
             {
-                _items.Enqueue(new BufferedItem(owner, retainedBytes, encodedByteCount));
+                _items.Enqueue(new BufferedItem(owner, byteLease, encodedByteCount));
                 return ValueTask.CompletedTask;
             }
             attached = _dispatcher;
         }
 
-        buffers.Return(owner);
-        releaseBytes(retainedBytes);
+        ReleaseRetainedBuffer(owner, byteLease);
         if (attached is null)
         {
             _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
@@ -108,8 +105,9 @@ internal sealed class PreAdmissionStreamDispatcher(
                 : DecodeAndDispatch(attached, wirePayload, originalByteCount, decoder);
         }
 
-        var retainedBytes = checked((int)wirePayload.Length);
-        if (!reserveBytes(retainedBytes))
+        var retainedBytes = Math.Max(1, checked((int)wirePayload.Length));
+        var byteLease = reserveBytes(retainedBytes);
+        if (byteLease is null)
         {
             _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
             capacityExceeded();
@@ -125,7 +123,7 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
         catch
         {
-            releaseBytes(retainedBytes);
+            byteLease.Dispose();
             throw;
         }
 
@@ -135,7 +133,7 @@ internal sealed class PreAdmissionStreamDispatcher(
             {
                 _items.Enqueue(new BufferedItem(
                     owner,
-                    retainedBytes,
+                    byteLease,
                     originalByteCount,
                     IsCompressed: true));
                 return ValueTask.CompletedTask;
@@ -149,8 +147,7 @@ internal sealed class PreAdmissionStreamDispatcher(
             if (attached is null)
             {
                 _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
-                buffers.Return(owner);
-                releaseBytes(retainedBytes);
+                ReleaseRetainedBuffer(owner, byteLease);
                 return ValueTask.CompletedTask;
             }
             dispatch = attached is DiscardingStreamDispatcher
@@ -166,18 +163,16 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
         catch
         {
-            buffers.Return(owner);
-            releaseBytes(retainedBytes);
+            ReleaseRetainedBuffer(owner, byteLease);
             throw;
         }
         if (dispatch.IsCompletedSuccessfully)
         {
-            buffers.Return(owner);
-            releaseBytes(retainedBytes);
+            ReleaseRetainedBuffer(owner, byteLease);
             return ValueTask.CompletedTask;
         }
         return AwaitRetainedCompressedDispatchAsync(
-            dispatch, owner, retainedBytes);
+            dispatch, owner, byteLease);
     }
 
     internal bool TryBeginAttach(IStreamDispatcher dispatcher, out bool alreadyCompleted)
@@ -335,8 +330,7 @@ internal sealed class PreAdmissionStreamDispatcher(
                 }
                 finally
                 {
-                    buffers.Return(item.Owner);
-                    releaseBytes(item.RetainedBytes);
+                    ReleaseRetainedBuffer(item.Owner, item.ByteLease);
                 }
             }
 
@@ -455,7 +449,7 @@ internal sealed class PreAdmissionStreamDispatcher(
     private async ValueTask AwaitRetainedCompressedDispatchAsync(
         ValueTask dispatch,
         IRpcByteBufferWriter owner,
-        int retainedBytes)
+        IDisposable byteLease)
     {
         try
         {
@@ -463,8 +457,7 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
         finally
         {
-            buffers.Return(owner);
-            releaseBytes(retainedBytes);
+            ReleaseRetainedBuffer(owner, byteLease);
         }
     }
 
@@ -518,15 +511,26 @@ internal sealed class PreAdmissionStreamDispatcher(
     {
         foreach (var item in items)
         {
-            buffers.Return(item.Owner);
-            releaseBytes(item.RetainedBytes);
+            ReleaseRetainedBuffer(item.Owner, item.ByteLease);
             _bytesConsumed?.Invoke(_requestId, _streamId, item.EncodedByteCount);
+        }
+    }
+
+    private void ReleaseRetainedBuffer(IRpcByteBufferWriter owner, IDisposable byteLease)
+    {
+        try
+        {
+            buffers.Return(owner);
+        }
+        finally
+        {
+            byteLease.Dispose();
         }
     }
 
     private readonly record struct BufferedItem(
         IRpcByteBufferWriter Owner,
-        int RetainedBytes,
+        IDisposable ByteLease,
         int EncodedByteCount,
         bool IsCompressed = false);
 }
