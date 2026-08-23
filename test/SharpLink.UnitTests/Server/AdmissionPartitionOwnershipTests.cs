@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.RateLimiting;
 using SharpLink.Abstractions;
 using SharpLink.Server;
@@ -151,7 +152,7 @@ public sealed class AdmissionPartitionOwnershipTests
         internal int AttemptCount { get; private set; }
         internal TrackingRateLimitLease? LastLease { get; private set; }
         public override TimeSpan? IdleDuration => null;
-        public override int GetAvailablePermits() => int.MaxValue;
+        public override RateLimiterStatistics? GetStatistics() => null;
 
         protected override RateLimitLease AttemptAcquireCore(int permitCount)
         {
