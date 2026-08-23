@@ -29,7 +29,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '623e408445085de085ce77976bea842fe67e94700df4bae2597c7d06ce34b89f  .github/issue-287-review4.patch.xz.b64' | sha256sum -c -
           base64 -d .github/issue-287-review4.patch.xz.b64 > /tmp/issue-287-review4.patch.xz
           xz -t /tmp/issue-287-review4.patch.xz
           xz -dc /tmp/issue-287-review4.patch.xz > /tmp/issue-287-review4.patch
