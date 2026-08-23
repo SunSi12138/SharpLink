@@ -182,15 +182,15 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         if (_draining.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
             return ValueTask.FromResult(AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable));
 
-        AdmissionPartitionLease? partitionLease = null;
+        AdmissionPartitionEntry? partitionEntry = null;
         if (_partitions is not null)
         {
-            partitionLease = _partitions.TryAcquire(context);
-            if (partitionLease is null)
+            partitionEntry = _partitions.TryAcquire(context);
+            if (partitionEntry is null)
                 return ValueTask.FromResult(AdmissionDecision.Reject("partition_capacity"));
         }
 
-        var request = CreateRequest(context, partitionLease);
+        var request = CreateRequest(context, partitionEntry);
         if (request.TryAcquire(this, out var lease, out var failedSlot))
             return ValueTask.FromResult(AdmissionDecision.Accept(lease!));
 
@@ -228,21 +228,21 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 
     private AdmissionRequest CreateRequest(
         SharpLinkAdmissionContext context,
-        AdmissionPartitionLease? partitionLease)
+        AdmissionPartitionEntry? partitionEntry)
     {
         _contracts.TryGetValue(context.ContractId, out var contract);
         _methods.TryGetValue((context.ContractId, context.MethodId), out var method);
         var count = (_global?.SlotCount ?? 0) +
                     (contract?.SlotCount ?? 0) +
                     (method?.SlotCount ?? 0) +
-                    (partitionLease?.Runtime.SlotCount ?? 0);
+                    (partitionEntry?.Runtime.SlotCount ?? 0);
         var slots = new AdmissionLimiterSlot[count];
         count = 0;
         _global?.AppendTo(slots, ref count);
         contract?.AppendTo(slots, ref count);
         method?.AppendTo(slots, ref count);
-        partitionLease?.Runtime.AppendTo(slots, ref count);
-        return new AdmissionRequest(slots, count, partitionLease);
+        partitionEntry?.Runtime.AppendTo(slots, ref count);
+        return new AdmissionRequest(slots, count, partitionEntry);
     }
 
     private async ValueTask<AdmissionDecision> WaitForAdmissionAsync(
@@ -487,12 +487,12 @@ internal sealed class AdmissionLease : IDisposable
     private SharpLinkAdmissionController? _owner;
     private RateLimitLease? _singleLease;
     private RateLimitLease[]? _leases;
-    private AdmissionPartitionLease? _partition;
+    private AdmissionPartitionEntry? _partition;
 
     internal AdmissionLease(
         SharpLinkAdmissionController owner,
         RateLimitLease singleLease,
-        AdmissionPartitionLease? partition)
+        AdmissionPartitionEntry? partition)
     {
         _owner = owner;
         _singleLease = singleLease;
@@ -503,7 +503,7 @@ internal sealed class AdmissionLease : IDisposable
     internal AdmissionLease(
         SharpLinkAdmissionController owner,
         RateLimitLease[] leases,
-        AdmissionPartitionLease? partition)
+        AdmissionPartitionEntry? partition)
     {
         _owner = owner;
         _leases = leases;
@@ -523,7 +523,8 @@ internal sealed class AdmissionLease : IDisposable
             for (var index = leases.Length - 1; index >= 0; index--)
                 leases[index]?.Dispose();
         }
-        Interlocked.Exchange(ref _partition, null)?.Dispose();
+        var partition = Interlocked.Exchange(ref _partition, null);
+        partition?.Owner.Release(partition);
         owner.OnLeaseDisposed();
     }
 }
@@ -531,9 +532,9 @@ internal sealed class AdmissionLease : IDisposable
 internal sealed class AdmissionRequest(
     AdmissionLimiterSlot[] slots,
     int slotCount,
-    AdmissionPartitionLease? partition) : IDisposable
+    AdmissionPartitionEntry? partition) : IDisposable
 {
-    private AdmissionPartitionLease? _partition = partition;
+    private AdmissionPartitionEntry? _partition = partition;
     private readonly RateLimitLease?[]? _retainedLeases =
         HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
 
@@ -644,7 +645,8 @@ internal sealed class AdmissionRequest(
         if (_retainedLeases is not null)
             for (var index = _retainedLeases.Length - 1; index >= 0; index--)
                 Interlocked.Exchange(ref _retainedLeases[index], null)?.Dispose();
-        Interlocked.Exchange(ref _partition, null)?.Dispose();
+        var partition = Interlocked.Exchange(ref _partition, null);
+        partition?.Owner.Release(partition);
     }
 
     private static bool HasRetainedSlot(AdmissionLimiterSlot[] slots, int slotCount)
@@ -767,7 +769,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
         _timeProvider = timeProvider;
     }
 
-    internal AdmissionPartitionLease? TryAcquire(SharpLinkAdmissionContext context)
+    internal AdmissionPartitionEntry? TryAcquire(SharpLinkAdmissionContext context)
     {
         var selected = _selector(context);
         if (selected is { Length: > 256 })
@@ -788,6 +790,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 if (_entries.Count >= _options.MaxPartitions)
                     return null;
                 entry = new AdmissionPartitionEntry(
+                    this,
                     AdmissionRuleRuntime.Create(_options, _queueLimit, "partition"));
                 _entries.Add(key, entry);
                 SharpLinkTelemetry.AddAdmissionActivePartitions(1);
@@ -796,7 +799,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
             entry.IsIdle = false;
         }
         DisposeRules(evicted);
-        return new AdmissionPartitionLease(this, entry);
+        return entry;
     }
 
     internal void Release(AdmissionPartitionEntry entry)
@@ -940,19 +943,13 @@ internal sealed class AdmissionPartitionPool : IDisposable
     }
 }
 
-internal sealed class AdmissionPartitionEntry(AdmissionRuleRuntime runtime)
+internal sealed class AdmissionPartitionEntry(
+    AdmissionPartitionPool owner,
+    AdmissionRuleRuntime runtime)
 {
+    internal AdmissionPartitionPool Owner { get; } = owner;
     internal AdmissionRuleRuntime Runtime { get; } = runtime;
     internal int References;
     internal long IdleSince;
     internal bool IsIdle;
-}
-
-internal sealed class AdmissionPartitionLease(
-    AdmissionPartitionPool owner,
-    AdmissionPartitionEntry entry) : IDisposable
-{
-    private AdmissionPartitionPool? _owner = owner;
-    internal AdmissionRuleRuntime Runtime => entry.Runtime;
-    public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Release(entry);
 }
