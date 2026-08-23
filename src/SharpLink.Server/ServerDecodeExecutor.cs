@@ -35,6 +35,10 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
     internal int WorkerCount => _workers.Length;
 
+    /// <summary>
+    /// Number of decode operations waiting for worker service, including writers currently blocked
+    /// by the bounded channel. This is intentionally a pending-work count rather than Channel.Count.
+    /// </summary>
     internal int QueueDepth => Volatile.Read(ref _queueDepth);
 
     internal int SkippedBeforeStart => Volatile.Read(ref _skippedBeforeStart);
@@ -67,18 +71,23 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         workItem.EnableQueuedCancellation(cancellationToken);
+        Interlocked.Increment(ref _queueDepth);
         var published = false;
         try
         {
             await _channel.Writer.WriteAsync(workItem, cancellationToken).ConfigureAwait(false);
             published = true;
-            Interlocked.Increment(ref _queueDepth);
             await workItem.Completion.ConfigureAwait(false);
         }
         catch
         {
             if (!published)
+            {
                 workItem.AbandonBeforePublication();
+                var remaining = Interlocked.Decrement(ref _queueDepth);
+                if (remaining < 0)
+                    throw new InvalidOperationException("Server decode queue depth accounting underflowed.");
+            }
             throw;
         }
     }
