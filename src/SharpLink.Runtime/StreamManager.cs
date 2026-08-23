@@ -62,7 +62,8 @@ internal sealed class StreamManager
         var requestDispatchers = GetOrCreateDispatchersByRequestId().GetOrAdd(
             requestId,
             static _ => new RequestDispatchers());
-        if (requestDispatchers.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted))
+        if (dispatcher is not DiscardingStreamDispatcher &&
+            requestDispatchers.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted))
         {
             if (alreadyCompleted)
                 Unregister(requestId, streamId);
@@ -117,7 +118,7 @@ internal sealed class StreamManager
             {
                 if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                     consumptionAware.SetBytesConsumedCallback(null, 0, 0);
-                _streamCompleted?.Invoke(requestId, streamId);
+                PublishReceiveTerminal(requestId, streamId, entry);
             }
             finally
             {
@@ -226,8 +227,11 @@ internal sealed class StreamManager
             return;
         }
 
-        if (requestDispatchers.TryCompletePreAdmission(streamId, exception))
+        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var retainedEntry))
+        {
+            PublishReceiveTerminal(requestId, streamId, retainedEntry);
             return;
+        }
 
         if (requestDispatchers.TryRemove(streamId, out var entry))
         {
@@ -237,7 +241,7 @@ internal sealed class StreamManager
             try
             {
                 dispatcher.Complete(exception);
-                _streamCompleted?.Invoke(requestId, streamId);
+                PublishReceiveTerminal(requestId, streamId, entry);
             }
             finally
             {
@@ -310,7 +314,7 @@ internal sealed class StreamManager
         {
             if (entry.Dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 consumptionAware.SetBytesConsumedCallback(null, 0, 0);
-            _streamCompleted?.Invoke(requestId, streamId);
+            PublishReceiveTerminal(requestId, streamId, entry);
         }
         finally
         {
@@ -370,7 +374,8 @@ internal sealed class StreamManager
         Func<int, bool> reserveBytes,
         Action<int> releaseBytes,
         Action capacityExceeded,
-        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null)
+        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
+        bool retainUntilLocalCompletion = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamCount);
         for (var index = 1; index <= streamCount; index++)
@@ -383,8 +388,20 @@ internal sealed class StreamManager
                     reserveBytes,
                     releaseBytes,
                     capacityExceeded,
-                    decodeCompressed));
+                    decodeCompressed,
+                    retainUntilLocalCompletion));
         }
+    }
+
+    /// <summary>
+    /// Transitions already-installed inbound routes to discard mode without creating a route when
+    /// no stable route exists. This is the local-completion path for OneWay calls.
+    /// </summary>
+    internal void AbandonExistingRequestStreams(long requestId, int streamCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(streamCount);
+        for (var index = 1; index <= streamCount; index++)
+            _ = TryAbandonExistingStream(requestId, checked((ushort)index));
     }
 
     internal void DrainRejectedRequestStreams(long requestId, int streamCount)
@@ -393,12 +410,29 @@ internal sealed class StreamManager
         for (var index = 1; index <= streamCount; index++)
         {
             var streamId = checked((ushort)index);
+            if (TryAbandonExistingStream(requestId, streamId))
+                continue;
             Register(
                 requestId,
                 streamId,
                 new DiscardingStreamDispatcher(),
                 ignoreExisting: true);
         }
+    }
+
+    private bool TryAbandonExistingStream(long requestId, ushort streamId)
+    {
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+            !requestDispatchers.TryAbandonInboundRoute(streamId, out var alreadyCompleted))
+        {
+            return false;
+        }
+
+        if (alreadyCompleted)
+            Unregister(requestId, streamId);
+        return true;
     }
 
     internal bool TryDispatchPreAdmissionCompressed(
@@ -447,13 +481,19 @@ internal sealed class StreamManager
         try
         {
             entry.Dispatcher.Complete(exception);
-            _streamCompleted?.Invoke(requestId, streamId);
+            PublishReceiveTerminal(requestId, streamId, entry);
         }
         finally
         {
             entry.Detach();
             RemoveEmptyRequest(requestId, requestDispatchers);
         }
+    }
+
+    private void PublishReceiveTerminal(long requestId, ushort streamId, DispatcherEntry entry)
+    {
+        if (entry.TryPublishReceiveTerminal())
+            _streamCompleted?.Invoke(requestId, streamId);
     }
 
     private StripedLongMap<RequestDispatchers> GetOrCreateDispatchersByRequestId()
@@ -591,29 +631,81 @@ internal sealed class StreamManager
             }
         }
 
-        public bool TryCompletePreAdmission(ushort streamId, Exception? exception)
+        public bool TryAbandonInboundRoute(ushort streamId, out bool alreadyCompleted)
         {
+            alreadyCompleted = false;
             if (streamId == 0)
             {
-                if (Volatile.Read(ref _defaultDispatcher)?.Dispatcher is not
-                    PreAdmissionStreamDispatcher preAdmission || preAdmission.IsAttached)
+                var entry = Volatile.Read(ref _defaultDispatcher);
+                if (entry?.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                preAdmission.Complete(exception);
-                return true;
+                try
+                {
+                    preAdmission.Abandon(out alreadyCompleted);
+                    return true;
+                }
+                finally
+                {
+                    entry.Release();
+                }
             }
 
+            DispatcherEntry? acquiredEntry;
+            PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
                 if (!_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
-                    preAdmission.IsAttached)
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                preAdmission.Complete(exception);
+                acquiredEntry = entry;
+                acquiredPreAdmission = preAdmission;
+            }
+            try
+            {
+                acquiredPreAdmission.Abandon(out alreadyCompleted);
                 return true;
+            }
+            finally
+            {
+                acquiredEntry.Release();
+            }
+        }
+
+        public bool TryCompleteRetainedRoute(
+            ushort streamId,
+            Exception? exception,
+            out DispatcherEntry entry)
+        {
+            if (streamId == 0)
+            {
+                var found = Volatile.Read(ref _defaultDispatcher);
+                if (found?.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+                    preAdmission.TryCompleteAndRetain(exception))
+                {
+                    entry = found;
+                    return true;
+                }
+                entry = null!;
+                return false;
+            }
+
+            lock (_gate)
+            {
+                if (_byStreamId.TryGetValue(streamId, out var found) &&
+                    found.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+                    preAdmission.TryCompleteAndRetain(exception))
+                {
+                    entry = found;
+                    return true;
+                }
+                entry = null!;
+                return false;
             }
         }
 
@@ -777,6 +869,8 @@ internal sealed class StreamManager
         private const int ClosedMask = int.MinValue;
         private const int CountMask = int.MaxValue;
         private int _state;
+        private int _detached;
+        private int _receiveTerminalPublished;
         // Lazily shares the distinct drain/detach completions without growing common entries.
         private DispatcherEntryCompletions? _completions;
 
@@ -793,7 +887,8 @@ internal sealed class StreamManager
 
         public bool IsDetached => Volatile.Read(ref _detached) != 0;
 
-        private int _detached;
+        internal bool TryPublishReceiveTerminal()
+            => Interlocked.CompareExchange(ref _receiveTerminalPublished, 1, 0) == 0;
 
         internal bool TryAcquire()
         {
