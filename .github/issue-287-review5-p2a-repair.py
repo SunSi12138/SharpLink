@@ -6,4 +6,10 @@ text = text.replace('=> new(true, timestamp);', '=> new(timestamp);')
 text = text.replace(
     '''        return new(\n            true,\n            SharpLinkTime.AddDuration(timestampNow, timeBudget, timestampFrequency));''',
     '''        return new RpcDeadline(\n            timeBudget == TimeSpan.Zero\n                ? timestampNow\n                : SharpLinkTime.AddDuration(timestampNow, timeBudget, timestampFrequency));''')
+text = text.replace(
+    '''        TimeSpan? selectedTimeout = methodHasTimeout\n            ? methodTimeout\n            : allowDefaultTimeout\n                ? _requestTimeout\n                : null;\n\n        var ambientCall = SharpLinkCallContext.Current;''',
+    '''        var selectedTimeout = methodTimeout;\n        if (selectedTimeout is null && (includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)\n            selectedTimeout = _requestTimeoutValue;\n\n        var ambientCall = SharpLinkCallContext.Current;''')
+text = text.replace(
+    '''        var timeProvider = _runtimeContext.TimeProvider;\n        var deadline = selectedTimeout is { } timeout\n            ? RpcDeadline.Create(timeout, timeProvider)\n            : default;''',
+    '''        var deadline = selectedTimeout is { } timeout\n            ? RpcDeadline.Create(timeout, deadlineAnchor, timeProvider.TimestampFrequency)\n            : default;''')
 path.write_text(text)
