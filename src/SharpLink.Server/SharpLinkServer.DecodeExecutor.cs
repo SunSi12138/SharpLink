@@ -5,7 +5,6 @@ internal sealed partial class SharpLinkServer
     private const int MaxPersistentDecodeWorkers = 4;
     private const int MinimumPersistentDecodeQueueCapacity = 32;
     private ServerDecodeExecutor? _decodeExecutor;
-    private CancellationTokenRegistration _decodeExecutorStopRegistration;
 
     private void StartDecodeExecutor()
     {
@@ -23,7 +22,7 @@ internal sealed partial class SharpLinkServer
             checked(workerCount * 8));
         var executor = new ServerDecodeExecutor(workerCount, queueCapacity);
         Volatile.Write(ref _decodeExecutor, executor);
-        _decodeExecutorStopRegistration = _forceStopCts.Token.UnsafeRegister(
+        _ = _forceStopCts.Token.UnsafeRegister(
             static state => ((ServerDecodeExecutor)state!).StopAccepting(),
             executor);
         TrackFrameworkTask(executor.Completion, "DecodeExecutor");
