@@ -115,8 +115,22 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         ISharpLinkGeneratedAssemblyManifest manifest)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ArgumentNullException.ThrowIfNull(manifest);
+        ValidateGeneratedManifestCompatibility(manifest);
         ValidateManifestScopedCodecTargets(manifest);
         return RpcGeneratedManifestRegistration.Create(manifest, Codecs);
+    }
+
+    private static void ValidateGeneratedManifestCompatibility(ISharpLinkGeneratedAssemblyManifest manifest)
+    {
+        if (manifest.ApiVersion == SharpLinkGeneratedManifestVersions.Api &&
+  manifest.ProtocolVersion == SharpLinkGeneratedManifestVersions.Protocol)
+        {
+  return;
+        }
+        throw new InvalidOperationException(
+  $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
+  $"API={manifest.ApiVersion}, Protocol={manifest.ProtocolVersion}, Generator={manifest.GeneratorVersion}.");
     }
 
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedCodecSnapshot()
@@ -139,11 +153,13 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (!_manifestRegistrations.Add(registration))
                 return;
-            if (registration.Manifest.ManifestScopedCodecTargets.Count == 0)
-                return;
-            if (!_manifestCodecProviders.TryAdd(
-                    registration.Manifest.OwnerAssembly,
-                    new RpcManifestCodecProvider(registration, Codecs)))
+            var provider = RpcGeneratedCodecResolver.GetProvider(registration);
+  if (ReferenceEquals(provider, registration.BaseProvider))
+      return;
+  if (!_manifestCodecProviders.TryAdd(
+          registration.Manifest.OwnerAssembly,
+          provider))
+
             {
                 _manifestRegistrations.Remove(registration);
                 throw new InvalidOperationException(
@@ -188,8 +204,9 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         lock (_registrationGate)
         {
             _manifestRegistrations.Remove(registration);
-            if (registration.Manifest.ManifestScopedCodecTargets.Count != 0)
-                _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
+            if (registration.HasManifestScopedCodecs)
+      _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
+
         }
         registration.Dispose();
     }

@@ -31,6 +31,43 @@ public class RpcManifestCodecProviderTests
             "the routed unmanaged Point Codec must remain absent from the context-global provider");
     }
 
+    [Test]
+    public void NoRouteTemporaryBindingShouldMatchStaticContextCodecPrecedence()
+    {
+        var explicitCodec = new ExplicitNoRouteCodec();
+        var ownerAssembly = typeof(RpcManifestCodecProviderTests).Assembly;
+        using var context = new SharpLinkRuntimeContextBuilder()
+  .AddCodec(explicitCodec)
+  .Build(includeGeneratedAssemblyCatalog: false);
+        using var registration = context.PrepareGeneratedManifest(new NoRouteManifest(ownerAssembly));
+
+        var staticProvider = RpcGeneratedCodecResolver.GetProvider(context, ownerAssembly);
+        var dynamicCandidateProvider = RpcGeneratedCodecResolver.GetProvider(registration);
+
+        Ensure(ReferenceEquals(staticProvider.GetCodec<NoRouteValue>(), explicitCodec),
+  "static no-route Contract binding must honor the explicit context Codec");
+        Ensure(ReferenceEquals(dynamicCandidateProvider.GetCodec<NoRouteValue>(), explicitCodec),
+  "dynamic candidate binding must use the same no-route precedence as static binding");
+    }
+
+    [Test]
+    public void RuntimeContextBuildShouldRejectPreviousGeneratedManifestApi()
+    {
+        try
+        {
+  using var _ = new SharpLinkRuntimeContextBuilder().Build(
+      [new PreviousApiManifest(typeof(RpcManifestCodecProviderTests).Assembly)]);
+        }
+        catch (InvalidOperationException exception)
+        {
+  Ensure(exception.Message.Contains("incompatible", StringComparison.OrdinalIgnoreCase),
+      "direct RuntimeContext construction must fail at the generated-manifest compatibility boundary");
+  return;
+        }
+
+        throw new Exception("Expected a previous generated manifest API to be rejected by RuntimeContext construction.");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -38,6 +75,7 @@ public class RpcManifestCodecProviderTests
     }
 
     private readonly record struct Point(int X, int Y);
+    private readonly record struct NoRouteValue(int Value);
 
     private sealed class Envelope
     {
@@ -136,6 +174,53 @@ public class RpcManifestCodecProviderTests
                throw new ArgumentNullException(nameof(adapterScope));
 
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<Point>;
+    }
+
+    private sealed class ExplicitNoRouteCodec : IRpcCodec<NoRouteValue>
+    {
+        public void Serialize(in NoRouteValue value, IBufferWriter<byte> buffer) { }
+        public NoRouteValue Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class GeneratedNoRouteCodec : IRpcCodec<NoRouteValue>
+    {
+        public void Serialize(in NoRouteValue value, IBufferWriter<byte> buffer) { }
+        public NoRouteValue Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class NoRouteManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        internal NoRouteManifest(Assembly ownerAssembly)
+        {
+  OwnerAssembly = ownerAssembly;
+  Codecs =
+  [
+      new NativeFactory<NoRouteValue>(static _ => new GeneratedNoRouteCodec(), "no-route-generated")
+  ];
+        }
+
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "no-route-test";
+        public Assembly OwnerAssembly { get; }
+        public string CompileTimeDescriptor => "no-route-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class PreviousApiManifest(Assembly ownerAssembly) : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api - 1;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "previous-api-test";
+        public Assembly OwnerAssembly { get; } = ownerAssembly;
+        public string CompileTimeDescriptor => "previous-api-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<string> Dependencies => [];
     }
 
     private sealed class NestedRouteManifest : ISharpLinkGeneratedAssemblyManifest

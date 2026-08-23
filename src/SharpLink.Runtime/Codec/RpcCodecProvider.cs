@@ -272,6 +272,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
 internal sealed class RpcGeneratedManifestRegistration : IDisposable
 {
     private readonly IRpcCodecAdapterScope[] _scopes;
+    private IRpcCodecProvider? _contractCodecProvider;
     private int _disposed;
 
     private RpcGeneratedManifestRegistration(
@@ -297,6 +298,22 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Codecs { get; }
 
     internal IRpcCodecProvider BaseProvider { get; }
+
+    internal bool HasManifestScopedCodecs => Manifest.ManifestScopedCodecTargets.Count != 0;
+
+    internal IRpcCodecProvider ContractCodecProvider
+    {
+        get
+        {
+  if (!HasManifestScopedCodecs)
+      return BaseProvider;
+  var existing = Volatile.Read(ref _contractCodecProvider);
+  if (existing is not null)
+      return existing;
+  var created = new RpcManifestCodecProvider(this, BaseProvider);
+  return Interlocked.CompareExchange(ref _contractCodecProvider, created, null) ?? created;
+        }
+    }
 
     internal static RpcGeneratedManifestRegistration Create(
         ISharpLinkGeneratedAssemblyManifest manifest,

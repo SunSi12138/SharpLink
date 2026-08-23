@@ -48,6 +48,42 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task NativeRouteOnDtoShouldBeWireBreakWhenWireFormatIdIsUnchanged()
+    {
+        const string contract = """
+public sealed class Payload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IDtoRouteContract : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Echo(Payload value, CancellationToken cancellationToken);
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.dto-kind/v1";
+    public override string WireFormatId => "sharplink-native/v1";
+}
+""";
+        const string registration =
+  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.dto-kind/v1", "sharplink-native/v1")]";
+        var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
+        var routedSource = AddAssemblyAttributes(
+  BuildRouteSource(contract),
+  registration,
+  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+
+        var baseline = RunContractGenerator(baselineSource);
+        var compared = RunContractGenerator(routedSource, baseline.Json);
+        Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+  $"changing a direct payload from native DTO to routed adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
     private static System.Text.Json.Nodes.JsonObject GetFirstRequestValue(string json)
     {
         var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();

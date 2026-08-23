@@ -301,6 +301,92 @@ public sealed class UnmanagedAdapter : TestRouteAdapterBase
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ManagedRouteShouldNotCaptureNativeDtoWithExplicitThirdPartyMember()
+    {
+        var thirdParty = CreateMetadataReference(
+  "ThirdParty.ExplicitNested",
+  "namespace Vendor { public sealed class ExternalGraph { public string Name { get; set; } = string.Empty; } }");
+        var source = AddAssemblyAttributes(BuildRouteSource("""
+public sealed class Envelope
+{
+    public Vendor.ExternalGraph Graph { get; set; } = new();
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IExplicitNestedContract : SharpLink.Sdk.IService
+{
+    ValueTask<Envelope> Echo(Envelope value, CancellationToken cancellationToken);
+}
+
+public sealed class ExplicitAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "explicit.nested/v1";
+    public override string WireFormatId => "explicit-nested-wire/v1";
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.managed.outer/v1";
+    public override string WireFormatId => "route-managed-outer-wire/v1";
+}
+"""),
+  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), "explicit.nested/v1", "explicit-nested-wire/v1")]",
+  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))]",
+  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.managed.outer/v1", "route-managed-outer-wire/v1")]",
+  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
+
+        var diagnostics = RunGenerator(source, thirdParty);
+        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id is "SHARPLINK009" or "SHARPLINK010"),
+  "an explicit nested adapter must make the native DTO graph resolvable");
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source, thirdParty));
+        Ensure(generated.Contains("CreateCodec<global::Vendor.ExternalGraph>()", StringComparison.Ordinal),
+  "the nested explicit adapter must be selected");
+        Ensure(!generated.Contains("CreateCodec<global::Envelope>()", StringComparison.Ordinal),
+  "the Managed route must not capture the outer DTO once its explicit nested dependency is resolvable");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ContractRouteShouldNotClaimStandaloneRpcSerializableCodec()
+    {
+        var source = AddAssemblyAttributes(BuildRouteSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class StandalonePayload
+{
+    public int Value { get; set; }
+}
+
+public sealed class ContractPayload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IStandaloneIsolationContract : SharpLink.Sdk.IService
+{
+    ValueTask<ContractPayload> Echo(ContractPayload value, CancellationToken cancellationToken);
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.native.contract-only/v1";
+    public override string WireFormatId => "route-native-contract-only-wire/v1";
+}
+"""),
+  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.native.contract-only/v1", "route-native-contract-only-wire/v1")]",
+  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("CreateCodec<global::ContractPayload>()", StringComparison.Ordinal),
+  "the Native route must still apply to the Contract payload root");
+        Ensure(!generated.Contains("CreateCodec<global::StandalonePayload>()", StringComparison.Ordinal),
+  "a standalone RpcSerializable codec must remain on normal generated-codec resolution");
+        Ensure(generated.Contains("typeof(global::StandalonePayload)", StringComparison.Ordinal),
+  "the standalone RpcSerializable codec must still be emitted");
+        return Task.CompletedTask;
+    }
+
     private static string BuildRouteSource(string contract)
         => BuildSource(contract) + """
 

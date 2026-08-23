@@ -16,9 +16,16 @@ public static class RpcGeneratedCodecResolver
         ArgumentNullException.ThrowIfNull(runtimeContext);
         ArgumentNullException.ThrowIfNull(ownerAssembly);
         return runtimeContext is SharpLinkRuntimeContext sharpLinkContext
-            ? sharpLinkContext.GetManifestCodecProvider(ownerAssembly)
-            : runtimeContext.Codecs;
+  ? sharpLinkContext.GetManifestCodecProvider(ownerAssembly)
+  : runtimeContext.Codecs;
     }
+
+    internal static IRpcCodecProvider GetProvider(RpcGeneratedManifestRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        return registration.ContractCodecProvider;
+    }
+
 }
 
 internal sealed class RpcManifestCodecProvider : IRpcCodecProvider

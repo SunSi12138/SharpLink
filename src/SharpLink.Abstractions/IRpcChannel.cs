@@ -236,7 +236,8 @@ public interface IRpcClientStreamSink
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
         CancellationToken cancellationToken = default)
-        => SendClientStreamAsync(requestId, streamId, stream, cancellationToken);
+        => Task.FromException(new NotSupportedException(
+  "This client stream sink does not support construction-time-bound item Codecs."));
 }
 
 /// <summary>Zero-allocation stream writer used by methods without client streams.</summary>

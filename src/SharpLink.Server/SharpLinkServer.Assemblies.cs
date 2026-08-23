@@ -620,8 +620,9 @@ internal sealed partial class SharpLinkServer
                 }
                 var stub = contract.Contract.StubFactory();
                 var stubCodecs = ReferenceEquals(contract.Manifest.OwnerAssembly, incoming.OwnerAssembly)
-                    ? new RpcManifestCodecProvider(module.CodecRegistration, module.CodecRegistration.BaseProvider)
-                    : RpcGeneratedCodecResolver.GetProvider(_runtimeContext, contract.Manifest.OwnerAssembly);
+          ? RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration)
+          : RpcGeneratedCodecResolver.GetProvider(_runtimeContext, contract.Manifest.OwnerAssembly);
+
                 stub.BindCodecProvider(stubCodecs);
                 var definition = new ServiceRegistrationDefinition(
                     service.ContractType,
