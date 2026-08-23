@@ -45,8 +45,8 @@ jobs:
       - name: Verify Generated Assemblies Do Not Reference Runtime
         run: ./eng/verify-generated-assembly-dependencies.sh
 
-      - name: Diagnose Client Unit Hang
-        run: timeout 90s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --maximum-parallel-tests 1 --treenode-filter "/*/SharpLink.UnitTests.Client/*/*"
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
