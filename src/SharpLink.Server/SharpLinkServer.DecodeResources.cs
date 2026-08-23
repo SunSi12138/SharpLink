@@ -49,6 +49,15 @@ internal sealed partial class SharpLinkServer
             $"{message} ({reason}).");
     }
 
+    private static SharpLinkException CreateDecodeQueueResourceExhaustion()
+    {
+        const string reason = "server_decode_queue";
+        SharpLinkTelemetry.RecordResourceExhausted("server", reason);
+        return SharpLinkResourceExhaustion.CreateWire(
+            reason,
+            $"Server persistent decode queue is exhausted ({reason}).");
+    }
+
     private static SharpLinkException CreateRetainedCompressedResourceExhaustion()
     {
         const string reason = SharpLinkResourceExhaustion.ServerRetainedCompressedBytes;
