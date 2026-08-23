@@ -61,7 +61,8 @@ internal readonly struct RpcDeadline
             return false;
         var now = timeProvider.GetTimestamp();
         return Timestamp <= now ||
-               Timestamp <= SharpLinkTime.AddDuration(now, delay, timeProvider.TimestampFrequency);
+               Timestamp <= SharpLinkTime.AddElapsedDuration(
+                   now, delay, timeProvider.TimestampFrequency);
     }
 
     internal TimeSpan GetRemaining(TimeProvider timeProvider)
