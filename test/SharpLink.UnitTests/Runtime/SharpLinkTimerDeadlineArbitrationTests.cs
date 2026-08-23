@@ -42,6 +42,20 @@ public class SharpLinkTimerDeadlineArbitrationTests
     }
 
     [Test]
+    public async Task DeadlineAwareDelayShouldLetDeadlineWinAnExactBoundaryTie()
+    {
+        var provider = new ManualTimeProvider();
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+        var delay = SharpLinkTimer.DelayAsync(
+            TimeSpan.FromSeconds(5), deadline, provider, CancellationToken.None).AsTask();
+
+        provider.Advance(TimeSpan.FromSeconds(5));
+
+        Ensure(!await delay,
+            "a blocking delay that reaches the exact deadline must not start another attempt");
+    }
+
+    [Test]
     public async Task TaskWaitShouldPreserveCallerCancellationBeforeDeadline()
     {
         var provider = new ManualTimeProvider();
