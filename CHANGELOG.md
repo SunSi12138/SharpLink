@@ -45,6 +45,7 @@
 
 ### Breaking
 
+- `SharpLinkCallOptions` is removed from generated/service business signatures and from the generated `IRpcChannel` ABI. Per-call timeout now comes from method `[Timeout]` or the Client timeout policy, caller cancellation remains the method `CancellationToken`, and caller-selected metadata uses the narrow `GetWithMetadata<TContract>(SharpLinkMetadata)` proxy capability. No generic compatibility options bag is retained; regenerate all contracts/proxies/stubs and see [`doc/migration.md`](doc/migration.md).
 - Protocol v2 minor 4 is the SharpLink 2.0 wire baseline for RPC lifetime propagation. Request frames carry remaining `TimeBudget` instead of an absolute Unix-millisecond deadline, and 2.0 rejects peers below minor 4 during handshake so legacy bytes cannot be misinterpreted. Pre-2.0 process interoperability is not a 2.0 compatibility requirement.
 - `IRpcSession`, `IStreamManager`, raw stream dispatcher interfaces, public
   `PooledAsyncStreamDispatcher<T>`, public `RpcSession`, public `StreamManager`, and public

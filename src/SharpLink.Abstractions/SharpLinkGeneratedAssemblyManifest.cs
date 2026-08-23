@@ -10,7 +10,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
 {
     /// <summary>Creates a manifest locator.</summary>
     /// <param name="manifestType">A generated manifest type with a public parameterless constructor.</param>
-    public SharpLinkGeneratedAssemblyManifestAttribute(
+    internal SharpLinkGeneratedAssemblyManifestAttribute(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
         Type manifestType)
     {
@@ -22,7 +22,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
     /// <param name="apiVersion">The generated server API version.</param>
     /// <param name="protocolVersion">The generated wire protocol version.</param>
     /// <param name="generatorVersion">The source-generator version.</param>
-    public SharpLinkGeneratedAssemblyManifestAttribute(
+    internal SharpLinkGeneratedAssemblyManifestAttribute(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
         Type manifestType,
         int apiVersion,

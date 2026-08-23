@@ -38,26 +38,131 @@ internal sealed partial class RpcSession
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(codec);
 
-        await foreach (var item in stream
-                           .WithCancellation(cancellationToken)
-                           .ConfigureAwait(false))
+        var callContext = SharpLinkCallContext.Current;
+        var deadline = callContext?.LocalRpcDeadline ?? default;
+        var deadlineTimeProvider = callContext?.DeadlineTimeProvider;
+        using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
+        var deadlineWon = false;
+        try
         {
-            if (!payloadNullable && default(T) is null && item is null)
+            while (true)
             {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.Internal,
-                    "A non-nullable RPC stream response was null.");
+                ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+                var moveNext = enumerator.MoveNextAsync();
+                bool hasNext;
+                if (!deadline.HasValue || deadlineTimeProvider is null || moveNext.IsCompletedSuccessfully)
+                {
+                    hasNext = await moveNext.ConfigureAwait(false);
+                }
+                else
+                {
+                    var moveNextTask = moveNext.AsTask();
+                    if (!await SharpLinkTimer.WaitAsync(
+                            moveNextTask,
+                            deadline,
+                            deadlineTimeProvider,
+                            lifetimeCancellation.Token).ConfigureAwait(false))
+                    {
+                        deadlineWon = true;
+                        lifetimeCancellation.Cancel();
+                        _ = ObserveAbandonedGeneratedMoveNextAsync(moveNextTask);
+                        throw CreateGeneratedStreamDeadlineExceededException();
+                    }
+                    hasNext = await moveNextTask.ConfigureAwait(false);
+                }
+
+                ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+                if (!hasNext)
+                    break;
+
+                var item = enumerator.Current;
+                if (!payloadNullable && default(T) is null && item is null)
+                {
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.Internal,
+                        "A non-nullable RPC stream response was null.");
+                }
+
+                var send = SendGeneratedStreamChunkAsync(
+                    requestId,
+                    streamId,
+                    item,
+                    codec,
+                    lifetimeCancellation.Token);
+                if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
+                {
+                    await send.ConfigureAwait(false);
+                }
+                else
+                {
+                    var sendTask = send.AsTask();
+                    if (!await SharpLinkTimer.WaitAsync(
+                            sendTask,
+                            deadline,
+                            deadlineTimeProvider,
+                            lifetimeCancellation.Token).ConfigureAwait(false))
+                    {
+                        deadlineWon = true;
+                        lifetimeCancellation.Cancel();
+                        _ = ObserveAbandonedGeneratedSendAsync(sendTask);
+                        throw CreateGeneratedStreamDeadlineExceededException();
+                    }
+                    await sendTask.ConfigureAwait(false);
+                }
             }
 
-            await SendGeneratedStreamChunkAsync(
-                requestId,
-                streamId,
-                item,
-                codec,
-                cancellationToken).ConfigureAwait(false);
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+            SendStreamCompleteAsync(requestId, streamId);
         }
+        finally
+        {
+            lifetimeCancellation.Cancel();
+            try
+            {
+                var dispose = enumerator.DisposeAsync();
+                if (deadlineWon && !dispose.IsCompletedSuccessfully)
+                    _ = ObserveAbandonedGeneratedDisposeAsync(dispose);
+                else
+                    await dispose.ConfigureAwait(false);
+            }
+            catch when (deadlineWon)
+            {
+                // The monotonic deadline is already terminal; a user enumerator that ignores
+                // cancellation cannot delay the RPC while its disposal completes.
+            }
+        }
+    }
 
-        this.SendStreamCompleteAsync(requestId, streamId);
+    private static void ThrowIfGeneratedStreamDeadlineExpired(
+        RpcDeadline deadline,
+        TimeProvider? timeProvider)
+    {
+        if (timeProvider is not null && deadline.IsExpired(timeProvider))
+            throw CreateGeneratedStreamDeadlineExceededException();
+    }
+
+    private static SharpLinkException CreateGeneratedStreamDeadlineExceededException()
+        => new(
+            SharpLinkErrorCode.DeadlineExceeded,
+            "RPC deadline exceeded during server stream production.");
+
+    private static async Task ObserveAbandonedGeneratedMoveNextAsync(Task<bool> task)
+    {
+        try { _ = await task.ConfigureAwait(false); }
+        catch { }
+    }
+
+    private static async Task ObserveAbandonedGeneratedSendAsync(Task task)
+    {
+        try { await task.ConfigureAwait(false); }
+        catch { }
+    }
+
+    private static async Task ObserveAbandonedGeneratedDisposeAsync(ValueTask dispose)
+    {
+        try { await dispose.ConfigureAwait(false); }
+        catch { }
     }
 
     // Keep the generated-server path concrete and codec-bound. Exact-size codecs retain the

@@ -113,7 +113,8 @@ internal sealed partial class SharpLinkClient
             _started = _client._runtimeContext.TimeProvider.GetTimestamp();
             try
             {
-                var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                var result = await AwaitInvocationWithinFrozenDeadlineAsync(
+                    InvokeNextAsync(0, _context)).ConfigureAwait(false);
                 ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
@@ -135,7 +136,8 @@ internal sealed partial class SharpLinkClient
             _started = _client._runtimeContext.TimeProvider.GetTimestamp();
             try
             {
-                var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                var result = await AwaitInvocationWithinFrozenDeadlineAsync(
+                    InvokeNextAsync(0, _context)).ConfigureAwait(false);
                 ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
@@ -163,7 +165,8 @@ internal sealed partial class SharpLinkClient
             _started = _client._runtimeContext.TimeProvider.GetTimestamp();
             try
             {
-                var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                var result = await AwaitInvocationWithinFrozenDeadlineAsync(
+                    InvokeNextAsync(0, _context)).ConfigureAwait(false);
                 ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
@@ -177,6 +180,32 @@ internal sealed partial class SharpLinkClient
             {
                 MarkTerminalElapsed(_context);
             }
+        }
+
+        private async ValueTask<SharpLinkClientInvocationResult> AwaitInvocationWithinFrozenDeadlineAsync(
+            ValueTask<SharpLinkClientInvocationResult> invocation)
+        {
+            if (!_control.Deadline.HasValue || invocation.IsCompletedSuccessfully)
+                return await invocation.ConfigureAwait(false);
+
+            var invocationTask = invocation.AsTask();
+            if (!await SharpLinkTimer.WaitAsync(
+                    invocationTask,
+                    _control.Deadline,
+                    _client._runtimeContext.TimeProvider,
+                    CancellationToken.None).ConfigureAwait(false))
+            {
+                _ = ObserveAbandonedInvocationAsync(invocationTask);
+                throw CreateDeadlineExceededException();
+            }
+            return await invocationTask.ConfigureAwait(false);
+        }
+
+        private static async Task ObserveAbandonedInvocationAsync(
+            Task<SharpLinkClientInvocationResult> invocationTask)
+        {
+            try { _ = await invocationTask.ConfigureAwait(false); }
+            catch { }
         }
 
         private ValueTask<SharpLinkClientInvocationResult> InvokeNextAsync(
@@ -742,8 +771,9 @@ internal sealed partial class SharpLinkClient
                 throw new InvalidOperationException("An intercepted RPC stream can only be enumerated once.");
 
             ThrowIfDeadlineExpired();
-            var stream = (await invocation.ConfigureAwait(false)).GetValue<IAsyncEnumerable<T>>();
+            var invocationResult = await AwaitInvocationWithinDeadlineAsync(invocation).ConfigureAwait(false);
             ThrowIfDeadlineExpired();
+            var stream = invocationResult.GetValue<IAsyncEnumerable<T>>();
 
             using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 invocationCancellation, cancellationToken);
@@ -774,9 +804,9 @@ internal sealed partial class SharpLinkClient
                         hasNext = await moveNextTask.ConfigureAwait(false);
                     }
 
+                    ThrowIfDeadlineExpired();
                     if (!hasNext)
                         yield break;
-                    ThrowIfDeadlineExpired();
                     var item = enumerator.Current;
                     if (!responseNullable && default(T) is null && item is null)
                         throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
@@ -800,6 +830,32 @@ internal sealed partial class SharpLinkClient
                     // a short-circuited local enumerator that may ignore cancellation.
                 }
             }
+        }
+
+        private async ValueTask<SharpLinkClientInvocationResult> AwaitInvocationWithinDeadlineAsync(
+            ValueTask<SharpLinkClientInvocationResult> pendingInvocation)
+        {
+            if (!deadline.HasValue || pendingInvocation.IsCompletedSuccessfully)
+                return await pendingInvocation.ConfigureAwait(false);
+
+            var invocationTask = pendingInvocation.AsTask();
+            if (!await SharpLinkTimer.WaitAsync(
+                    invocationTask,
+                    deadline,
+                    timeProvider,
+                    CancellationToken.None).ConfigureAwait(false))
+            {
+                _ = ObserveAbandonedInvocationAsync(invocationTask);
+                throw CreateDeadlineExceededException();
+            }
+            return await invocationTask.ConfigureAwait(false);
+        }
+
+        private static async Task ObserveAbandonedInvocationAsync(
+            Task<SharpLinkClientInvocationResult> task)
+        {
+            try { _ = await task.ConfigureAwait(false); }
+            catch { }
         }
 
         private static async Task ObserveAbandonedMoveNextAsync(Task<bool> task)

@@ -30,6 +30,17 @@ Runtime.
 
 Generated ABI 与网络 minor 是独立版本轴。SharpLink 2.0 以 Protocol v2 minor 4 作为 TimeBudget wire baseline，不再提供 absolute-deadline fallback。该重构只进入 2.0，因此发布门禁只验证 2.0 Client/Server 互操作；pre-2.0 跨版本互操作不属于 2.0 的兼容性承诺。低于 minor 4 的握手会被拒绝，避免旧 absolute-deadline 字节被误解释为 TimeBudget。
 
+## `SharpLinkCallOptions` 迁移
+
+2.0 不保留 `SharpLinkCallOptions` 或兼容 options bag。旧调用点按能力迁移：
+
+- `SharpLinkCallOptions.Metadata` → `client.GetWithMetadata<TContract>(metadata)`，用于调用方为单次/一组显式 invocation 选择 metadata；横切 metadata policy 仍可使用 Client interceptor。
+- `SharpLinkCallOptions.Timeout` → 契约方法 `[Timeout]`，或 Client 的 `UseRequestTimeout` / `DisableRequestTimeout` fallback policy。timeout 不再是业务方法伪参数。
+- `SharpLinkCallOptions.CancellationToken` → 业务方法原有 `CancellationToken` 参数；没有 token 的 RPC 必须明确审计 `[NonCancellable]`。
+- `WaitForReady` 不再有每调用兼容开关；连接/readiness 使用 Client readiness API 和拓扑策略表达。
+
+因此生成的业务签名和 `IRpcChannel` ABI 都不再接收 `SharpLinkCallOptions`。迁移时应删除旧 options 参数并重新生成全部 API 4 proxy/stub，而不是创建新的通用调用控制对象。
+
 ## Runtime engine API boundary
 
 `IRpcSession`、`IStreamManager`、raw stream dispatcher interfaces、`PooledAsyncStreamDispatcher<T>`、
