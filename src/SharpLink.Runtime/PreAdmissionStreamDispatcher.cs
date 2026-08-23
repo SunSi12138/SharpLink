@@ -789,12 +789,13 @@ internal sealed class PreAdmissionStreamDispatcher(
             }
 
             completionStarted = true;
+            var completionLeaseOwnedByHelper = completionLeaseAcquired;
+            completionLeaseAcquired = false;
             CompleteAttachedDispatcher(
                 dispatcher,
                 completionState,
-                completionLeaseAcquired,
+                completionLeaseOwnedByHelper,
                 _completion);
-            completionLeaseAcquired = false;
             barrier.TrySetResult();
         }
         catch (Exception exception)
