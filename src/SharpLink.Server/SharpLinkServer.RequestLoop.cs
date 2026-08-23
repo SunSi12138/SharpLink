@@ -236,6 +236,10 @@ internal sealed partial class SharpLinkServer
                 {
                     Interlocked.Increment(ref _rejectedOneWayCalls);
                     LogOnewayRpcResourceExhausted(_logger, "server_unavailable");
+                    DrainRejectedOneWayStreams(
+                        connection.Session,
+                        requestId,
+                        ResolveRawRequestClientStreamCount(payload));
                     return;
                 }
 
