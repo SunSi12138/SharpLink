@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Threading;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
 
