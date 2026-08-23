@@ -49,6 +49,18 @@ internal sealed class ServerResourceGovernor
     internal ServerResourceGovernor(
         int maxConcurrentDecodes,
         long maxRetainedCompressedBytes,
+        long maxDecodedBytesInFlight)
+        : this(
+            maxConcurrentDecodes,
+            maxRetainedCompressedBytes,
+            maxDecodedBytesInFlight,
+            SharpLinkFlowControlOptions.DefaultMaxPreAdmissionStreamBytesPerServer)
+    {
+    }
+
+    internal ServerResourceGovernor(
+        int maxConcurrentDecodes,
+        long maxRetainedCompressedBytes,
         long maxDecodedBytesInFlight,
         long maxPreAdmissionStreamBytes)
     {
@@ -97,16 +109,20 @@ internal sealed class ServerResourceGovernor
         }
     }
 
+    internal bool TryReservePreAdmissionStreamBytes(long retainedBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
+        return TryAddBounded(
+            ref _preAdmissionStreamBytes,
+            retainedBytes,
+            _maxPreAdmissionStreamBytes);
+    }
+
     internal bool TryAcquirePreAdmissionStreamBytes(
         long retainedBytes,
         out ServerPreAdmissionStreamBytesPermit? permit)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
-
-        if (!TryAddBounded(
-                ref _preAdmissionStreamBytes,
-                retainedBytes,
-                _maxPreAdmissionStreamBytes))
+        if (!TryReservePreAdmissionStreamBytes(retainedBytes))
         {
             permit = null;
             return false;
