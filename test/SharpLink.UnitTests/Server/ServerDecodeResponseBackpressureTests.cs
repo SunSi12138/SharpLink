@@ -1,6 +1,5 @@
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
-using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Reflection;
 
@@ -53,9 +52,11 @@ public class ServerDecodeResponseBackpressureTests
         var admission = server.TryReserveCall(connection, out var requestPermit);
         Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && requestPermit is not null,
             "request permit acquired");
-        Ensure(requestPermit.TryAcquireDecodePermit(128, out var decodePermit) && decodePermit is not null,
+        var permit = requestPermit ?? throw new Exception("request permit was not returned");
+        Ensure(permit.TryAcquireDecodePermit(128, out var decodePermit) && decodePermit is not null,
             "decode permit acquired");
-        Ensure(decodePermit.TryReserveDecodedBytes(256), "decoded-byte budget acquired");
+        var decode = decodePermit ?? throw new Exception("decode permit was not returned");
+        Ensure(decode.TryReserveDecodedBytes(256), "decoded-byte budget acquired");
         Ensure(server.ActiveDecodeCountForDiagnostics == 1 &&
                server.RetainedCompressedBytesForDiagnostics == 128 &&
                server.DecodedBytesInFlightForDiagnostics == 256,
@@ -73,12 +74,12 @@ public class ServerDecodeResponseBackpressureTests
             71L,
             callCancellations,
             connection,
-            requestPermit
+            permit
         ])!;
         Ensure(!responseRelease.IsCompleted && server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
             "pending response must retain call capacity");
 
-        requestPermit.ReleaseDecodeResources();
+        permit.ReleaseDecodeResources();
 
         Ensure(!responseRelease.IsCompleted,
             "decode sub-ownership release must not complete the pending response");
