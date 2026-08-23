@@ -23,7 +23,7 @@ public sealed class AdmissionPartitionOwnershipTests
             queueLimit: 0,
             TimeProvider.System);
         var context = new SharpLinkAdmissionContext(
-            1, 2, RpcMethodKind.Unary, "issue-305-test", null, null, null);
+            1, 2, RpcMethodKind.Unary, "issue-305-test", null, null);
 
         var ownerOptions = new SharpLinkAdmissionControlOptions();
         ownerOptions.Global.UseConcurrency(1);
@@ -81,7 +81,7 @@ public sealed class AdmissionPartitionOwnershipTests
             queueLimit: 0,
             time);
         var context = new SharpLinkAdmissionContext(
-            1, 2, RpcMethodKind.Unary, "issue-305-partial-rollback", null, null, null);
+            1, 2, RpcMethodKind.Unary, "issue-305-partial-rollback", null, null);
 
         var ownerOptions = new SharpLinkAdmissionControlOptions();
         ownerOptions.Global.UseConcurrency(1);
