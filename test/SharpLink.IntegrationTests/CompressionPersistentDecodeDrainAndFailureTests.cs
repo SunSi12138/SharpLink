@@ -38,8 +38,9 @@ public class CompressionPersistentDecodeDrainAndFailureTests
                 .AsTask();
             await WaitUntilAsync(
                 () => harness.DecodeQueueDepth >= 1 &&
-                      harness.ActiveDecodes == workerCount + 1,
-                "decode queued before graceful drain");
+                      harness.DecodeQueueReservations >= 1 &&
+                      harness.ActiveDecodes == workerCount,
+                "decode queued before graceful drain without queued decode credit");
 
             stopTask = harness.BeginStopServer(TimeSpan.FromSeconds(5));
             await WaitUntilAsync(
@@ -131,7 +132,8 @@ public class CompressionPersistentDecodeDrainAndFailureTests
                   harness.ActiveDecodes == 0 &&
                   harness.RetainedCompressedBytes == 0 &&
                   harness.DecodedBytesInFlight == 0 &&
-                  harness.DecodeQueueDepth == 0,
+                  harness.DecodeQueueDepth == 0 &&
+                  harness.DecodeQueueReservations == 0,
             $"{scenario} resource release");
     }
 
@@ -284,6 +286,8 @@ public class CompressionPersistentDecodeDrainAndFailureTests
             ReadDiagnosticProperty<long>("DecodedBytesInFlightForDiagnostics");
         internal int DecodeWorkerCount => ReadDiagnosticProperty<int>("DecodeWorkerCountForDiagnostics");
         internal int DecodeQueueDepth => ReadDiagnosticProperty<int>("DecodeQueueDepthForDiagnostics");
+        internal int DecodeQueueReservations =>
+            ReadDiagnosticProperty<int>("DecodeQueueReservationsForDiagnostics");
         internal int DecodeStartedWorkCount =>
             ReadDiagnosticProperty<int>("DecodeStartedWorkCountForDiagnostics");
         internal bool DecodeAccepting => ReadDiagnosticProperty<bool>("DecodeAcceptingForDiagnostics");
