@@ -1,3 +1,5 @@
+using System.Threading;
+
 namespace SharpLink.UnitTests.Runtime;
 
 public class SharpLinkTimerDeadlineArbitrationTests
