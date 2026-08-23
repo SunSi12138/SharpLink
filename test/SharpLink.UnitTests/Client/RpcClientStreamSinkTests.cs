@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Collections.Generic;
+using System.Threading;
 using SharpLink.Abstractions;
 
 namespace SharpLink.UnitTests.Client;
@@ -11,11 +13,11 @@ public class RpcClientStreamSinkTests
         IRpcClientStreamSink sink = new LegacyOnlySink();
         try
         {
-  await sink.SendClientStreamAsync(1, 1, Empty(), new IntCodec());
+            await sink.SendClientStreamAsync(1, 1, Empty(), new IntCodec());
         }
         catch (NotSupportedException)
         {
-  return;
+            return;
         }
 
         throw new Exception("Expected the default bound-codec overload to fail explicitly.");

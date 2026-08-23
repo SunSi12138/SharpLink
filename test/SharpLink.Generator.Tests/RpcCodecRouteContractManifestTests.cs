@@ -70,7 +70,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 }
 """;
         const string registration =
-  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.dto - kind / v1", "sharplink - native / v1")]";
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.dto-kind/v1\", \"sharplink-native/v1\")]";
         var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
         var routedSource = AddAssemblyAttributes(
   BuildRouteSource(contract),
