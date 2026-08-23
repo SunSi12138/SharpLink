@@ -18,6 +18,8 @@ public class DynamicAdmissionGenerationTests
         Ensure(held.IsAcquired, "test must occupy the captured generation before the request");
         AdmissionProgram? captured = null;
         var hookCount = 0;
+        var captureCompleted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         try
         {
@@ -28,12 +30,14 @@ public class DynamicAdmissionGenerationTests
                     return;
                 captured = observed;
                 server.PublishAdmissionProgramForTests(null);
+                captureCompleted.TrySetResult();
             };
 
             var service = harness.ClientA.Get<ITestService>();
             if (oneWay)
             {
                 await service.NotifyAsync("captured-enabled");
+                await captureCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 SharpLinkServer.AfterAdmissionCaptureForTests = null;
                 Ensure(await service.AddAsync(20, 22) == 42,
                     "the new disabled publication must be usable by the next request");
