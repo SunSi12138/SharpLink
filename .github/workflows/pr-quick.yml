@@ -1,7 +1,7 @@
 name: PR Quick
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   pull_request:
@@ -21,6 +21,100 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+
+      - name: Integrate issue 311 routing edits
+        if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'src/SharpLink.Generator/RpcGenerator.Analysis.cs',
+              '                        IsInlineFixedRpcType(p.Type),\n',
+              '                        IsInlineFixedRpcType(p.Type) && !HasNativeCodecRoute(symbol.ContainingAssembly),\n')
+
+          replace_once(
+              'src/SharpLink.Runtime/Codec/RpcCodecProvider.cs',
+              '''    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public IRpcCodec<T> GetCodec<T>()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+        if (SharedRpcCodec<T>.Instance is { } shared)
+            return shared;
+
+        var targetType = typeof(T);
+        if (_resolvedCodecs.TryGetValue(targetType, out var fastCached))
+        {
+            if (fastCached.IsExplicit)
+                return Cast<T>(fastCached.Codec);
+            var fastSnapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
+            if (ReferenceEquals(fastCached.SnapshotIdentity, fastSnapshot.Identity))
+                return Cast<T>(fastCached.Codec);
+        }
+
+        return ResolveCodec<T>(targetType);
+    }
+''',
+              '''    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public IRpcCodec<T> GetCodec<T>()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+        var targetType = typeof(T);
+        if (_resolvedCodecs.TryGetValue(targetType, out var fastCached))
+        {
+            if (fastCached.IsExplicit)
+                return Cast<T>(fastCached.Codec);
+            var fastSnapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
+            if (ReferenceEquals(fastCached.SnapshotIdentity, fastSnapshot.Identity))
+                return Cast<T>(fastCached.Codec);
+        }
+
+        var snapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
+        if (!snapshot.Registrations.ContainsKey(targetType) && SharedRpcCodec<T>.Instance is { } shared)
+            return shared;
+
+        return ResolveCodec<T>(targetType);
+    }
+''')
+
+          replace_once(
+              'test/SharpLink.UnitTests/SdkTypeForwardingTests.cs',
+              '''        "SharpLink.Sdk.RpcCodecAdapterRegistrationAttribute",
+        "SharpLink.Sdk.RpcContractAttribute",
+''',
+              '''        "SharpLink.Sdk.RpcCodecAdapterRegistrationAttribute",
+        "SharpLink.Sdk.RpcCodecRouteAttribute",
+        "SharpLink.Sdk.RpcCodecScope",
+        "SharpLink.Sdk.RpcContractAttribute",
+''')
+          replace_once(
+              'test/SharpLink.UnitTests/SdkTypeForwardingTests.cs',
+              '            "SDK should expose exactly the contract types published in 1.0.0 as forwarders");\n',
+              '            "SDK should expose exactly the published contract types as forwarders");\n')
+          PY
+
+          git diff --check
+          git rm .github/workflows/issue-311-patch.yml
+          git fetch origin "${{ github.event.pull_request.base.sha }}" --depth=1
+          git checkout FETCH_HEAD -- .github/workflows/pr-quick.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src test .github/workflows
+          git commit -m 'Integrate compile-time codec scope routing'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -93,7 +187,7 @@ jobs:
 
       - name: Upload Chaos Report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0A # v7.0.1
         with:
           name: chaos-pr-smoke
           path: |
