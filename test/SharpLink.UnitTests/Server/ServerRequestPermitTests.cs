@@ -117,27 +117,29 @@ public class ServerRequestPermitTests
             var reservedPermit = permit!;
             var alias = reservedPermit;
 
-            firstDispose = Task.Run(reservedPermit.Dispose);
+            var firstDisposeTask = Task.Run(reservedPermit.Dispose);
+            firstDispose = firstDisposeTask;
             Ensure(releaseClaimed.Wait(TimeSpan.FromSeconds(1)),
                 "the first disposer must claim release before the race probe continues");
             Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
                 "capacity must remain occupied while the release winner is paused before ReleaseCall");
 
             var secondReturned = 0;
-            secondDispose = Task.Run(() =>
+            var secondDisposeTask = Task.Run(() =>
             {
                 alias.Dispose();
                 Volatile.Write(ref secondReturned, 1);
             });
+            secondDispose = secondDisposeTask;
             Ensure(secondObservedReleasing.Wait(TimeSpan.FromSeconds(1)),
                 "the second disposer must observe the in-progress Releasing state");
-            Ensure(Volatile.Read(ref secondReturned) == 0 && !secondDispose.IsCompleted,
+            Ensure(Volatile.Read(ref secondReturned) == 0 && !secondDisposeTask.IsCompleted,
                 "a concurrent alias must not return from Dispose while backing capacity is still owned");
             Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
                 "the second disposer must not release or hide backing capacity owned by the winner");
 
             allowRelease.Set();
-            await Task.WhenAll(firstDispose, secondDispose).WaitAsync(TimeSpan.FromSeconds(1));
+            await Task.WhenAll(firstDisposeTask, secondDisposeTask).WaitAsync(TimeSpan.FromSeconds(1));
             Ensure(Volatile.Read(ref secondReturned) == 1,
                 "the waiting disposer must return after terminal Disposed is published");
             Ensure(server.ActiveCallCountForDiagnostics == 0 && connection.ActiveCalls == 0,
