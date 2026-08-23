@@ -6,7 +6,7 @@
 
 [![PR Quick](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml)
 [![Nightly Regression](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml)
-[![License: MIT](https://img.shields.io/badge/MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 一个面向 .NET 的高性能 RPC 框架（当前主目标框架为 `net10.0`），支持：
 
@@ -29,7 +29,7 @@
 - `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
 - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
-- `SharpLink.Generator`：契约/服务分析器和代码生成
+- `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成
 - `SharpLink.Serializer.SharpPack`：精确依赖 SharpPack `[1.1.0]` 的 Codec Adapter（`memorypack-binary/v1`）
 
 示例（`demo/`）：
@@ -91,7 +91,7 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 
 - RPC 契约接口必须标记 `[RpcContract]`
 - RPC 服务实现必须标记 `[RpcService]`
-- RPC 契约接口必须继承 `IService`
+- 契约接口必须继承 `IService`
 - 契约及其 containing type 必须 public；公开 nested contract 受支持并获得确定性唯一生成类型名
 - RPC route 必须是普通 instance method；`ref/out/in`、by-ref return、static method 与 abstract property/indexer/event 会在编译期报告错误
 - Contract 所在程序集生成 Descriptor、Proxy、contract-based Stub 和 Codec；Service 所在程序集生成 Activator、生命周期与显式依赖
