@@ -44,11 +44,6 @@ internal sealed partial class SharpLinkClient
             metadata is { Count: > 0 } ? metadata : null);
     }
 
-    private ValueTask DelayForRetryOrAdmissionAsync(
-        TimeSpan delay,
-        CancellationToken cancellationToken)
-        => DelayForRetryOrAdmissionAsync(delay, default, cancellationToken);
-
     private async ValueTask DelayForRetryOrAdmissionAsync(
         TimeSpan delay,
         RpcDeadline deadline,
@@ -76,9 +71,6 @@ internal sealed partial class SharpLinkClient
             throw CreateConnectionClosedException("Client has stopped.");
         }
     }
-
-    private bool WouldReachDeadline(RpcDeadline deadline, TimeSpan delay)
-        => deadline.WouldExpireBeforeOrAt(delay, _runtimeContext.TimeProvider);
 
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
