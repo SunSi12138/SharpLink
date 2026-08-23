@@ -144,7 +144,11 @@ public partial class RpcGenerator
             return true;
         }
 
-        private void AddAdapterModel(ITypeSymbol type, string typeName, AdapterRegistration adapter)
+        private void AddAdapterModel(
+            ITypeSymbol type,
+            string typeName,
+            AdapterRegistration adapter,
+            bool manifestScoped)
         {
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
@@ -160,6 +164,7 @@ public partial class RpcGenerator
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
                 adapter.WireFormatId,
+                manifestScoped,
                 GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
         }
