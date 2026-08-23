@@ -16,7 +16,7 @@ public class CompressionPersistentDecodeReviewTests
             serverProvider,
             maxConcurrentCalls: 64,
             maxConcurrentDecodes: 1,
-            maxDecodedBytes: 4L * 1024 * 1024);
+            maxDecodedBytes: 128L * 1024 * 1024);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single persistent decode worker started");
         var service = harness.Client.Get<IPersistentDecodeReviewService>();
         using var cancellation = new CancellationTokenSource();
@@ -191,6 +191,8 @@ public class CompressionPersistentDecodeReviewTests
         }
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
         {
+            Ensure(exception.Message.Contains("server_decode_queue", StringComparison.Ordinal),
+                $"{scenario} must preserve the persistent decode queue exhaustion reason");
         }
     }
 
