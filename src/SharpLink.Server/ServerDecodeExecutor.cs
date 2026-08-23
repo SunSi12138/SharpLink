@@ -54,8 +54,10 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(workItem);
         if (Volatile.Read(ref _completionRequested) != 0)
         {
-            return ValueTask.FromException(
-                new InvalidOperationException("The server decode executor is no longer accepting work."));
+            return cancellationToken.IsCancellationRequested
+                ? ValueTask.FromCanceled(cancellationToken)
+                : ValueTask.FromException(
+                    new InvalidOperationException("The server decode executor is no longer accepting work."));
         }
 
         return EnqueueCoreAsync(workItem, cancellationToken);
@@ -88,7 +90,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
             published = true;
             await workItem.Completion.ConfigureAwait(false);
         }
-        catch
+        catch (Exception exception)
         {
             if (!published)
             {
@@ -97,6 +99,8 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 if (remaining < 0)
                     throw new InvalidOperationException("Server decode queue depth accounting underflowed.");
             }
+            if (exception is ChannelClosedException && cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException(cancellationToken);
             throw;
         }
     }
