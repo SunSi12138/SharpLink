@@ -93,6 +93,8 @@ internal sealed class ServerRuntimeComposition
 
     internal AdmissionProgram? AdmissionProgram { get; }
 
+    internal SharpLinkAdmissionController? AdmissionController => AdmissionProgram?.Controller;
+
     internal ServerConnectionAdmission ConnectionAdmission { get; }
 
     internal ServerShutdownPlan ShutdownPlan { get; }
