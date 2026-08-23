@@ -100,6 +100,33 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+        /// <summary>
+        /// Acquires decode concurrency by transferring an already-accounted retained compressed
+        /// owner into this request. This is used when admission or the decode executor must keep the
+        /// compressed frame alive before provider execution begins.
+        /// </summary>
+        internal bool TryAcquireDecodePermit(
+            ServerRetainedCompressedPermit retainedPermit,
+            out ServerDecodePermit? decodePermit)
+        {
+            ArgumentNullException.ThrowIfNull(retainedPermit);
+
+            lock (_resourceGate)
+            {
+                if (Volatile.Read(ref _state) != Reserved || _decodePermit is not null)
+                {
+                    decodePermit = null;
+                    return false;
+                }
+
+                if (!_server.ResourceGovernor.TryAcquireDecode(retainedPermit, out decodePermit))
+                    return false;
+
+                _decodePermit = decodePermit;
+                return true;
+            }
+        }
+
         internal void Activate()
         {
             lock (_resourceGate)
