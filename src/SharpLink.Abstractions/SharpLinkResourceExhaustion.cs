@@ -12,6 +12,9 @@ internal static class SharpLinkResourceExhaustion
     private const char AdmissionOtherWireCode = '\u0007';
     private const char PendingRequestCapacityWireCode = '\u0008';
     private const char SendQueueCapacityWireCode = '\u0009';
+    private const char ServerDecodeConcurrencyWireCode = '\u000A';
+    private const char ServerRetainedCompressedBytesWireCode = '\u000B';
+    private const char ServerDecodedBytesWireCode = '\u000C';
     private static readonly string[] s_knownReasons =
     [
         ServerCallCapacity,
@@ -22,7 +25,10 @@ internal static class SharpLinkResourceExhaustion
         AdmissionPartitionCapacity,
         AdmissionOther,
         PendingRequestCapacity,
-        SendQueueCapacity
+        SendQueueCapacity,
+        ServerDecodeConcurrency,
+        ServerRetainedCompressedBytes,
+        ServerDecodedBytes
     ];
 
     internal const string Unspecified = "unspecified";
@@ -35,6 +41,9 @@ internal static class SharpLinkResourceExhaustion
     internal const string AdmissionOther = "admission_other";
     internal const string PendingRequestCapacity = "pending_request_capacity";
     internal const string SendQueueCapacity = "send_queue_capacity";
+    internal const string ServerDecodeConcurrency = "server_decode_concurrency";
+    internal const string ServerRetainedCompressedBytes = "server_retained_compressed_bytes";
+    internal const string ServerDecodedBytes = "server_decoded_bytes";
 
     internal static SharpLinkException Create(string reason, string message)
     {
@@ -80,6 +89,9 @@ internal static class SharpLinkResourceExhaustion
             AdmissionOther => AdmissionOtherWireCode,
             PendingRequestCapacity => PendingRequestCapacityWireCode,
             SendQueueCapacity => SendQueueCapacityWireCode,
+            ServerDecodeConcurrency => ServerDecodeConcurrencyWireCode,
+            ServerRetainedCompressedBytes => ServerRetainedCompressedBytesWireCode,
+            ServerDecodedBytes => ServerDecodedBytesWireCode,
             _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "A known resource exhaustion reason is required.")
         };
 
@@ -96,6 +108,9 @@ internal static class SharpLinkResourceExhaustion
             AdmissionOtherWireCode => AdmissionOther,
             PendingRequestCapacityWireCode => PendingRequestCapacity,
             SendQueueCapacityWireCode => SendQueueCapacity,
+            ServerDecodeConcurrencyWireCode => ServerDecodeConcurrency,
+            ServerRetainedCompressedBytesWireCode => ServerRetainedCompressedBytes,
+            ServerDecodedBytesWireCode => ServerDecodedBytes,
             _ => Unspecified
         };
         return reason != Unspecified;
