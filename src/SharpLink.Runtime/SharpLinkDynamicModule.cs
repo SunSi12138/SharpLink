@@ -73,27 +73,46 @@ internal static class SharpLinkAssemblyManifestLoader
                         generatorVersion: "<unavailable: legacy API 3 locator>"),
                     assembly);
             }
-            if (locator.ConstructorArguments.Count != 4 ||
+            if (locator.ConstructorArguments.Count == 4 &&
+                locator.ConstructorArguments[0].Value is Type &&
+                locator.ConstructorArguments[1].Value is int legacyApiVersion &&
+                locator.ConstructorArguments[2].Value is int legacyProtocolVersion &&
+                locator.ConstructorArguments[3].Value is string legacyGeneratorVersion)
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    SharpLinkGeneratedManifestCompatibility.FormatVersionMismatch(
+                        legacyApiVersion,
+                        legacyProtocolVersion,
+                        legacyGeneratorVersion,
+                        actualAbiIdentity: "<missing: pre-current ABI locator>"),
+                    assembly);
+            }
+            if (locator.ConstructorArguments.Count != 5 ||
                 locator.ConstructorArguments[0].Value is not Type manifestType ||
                 locator.ConstructorArguments[1].Value is not int apiVersion ||
                 locator.ConstructorArguments[2].Value is not int protocolVersion ||
                 locator.ConstructorArguments[3].Value is not string generatorVersion ||
-                string.IsNullOrWhiteSpace(generatorVersion))
+                string.IsNullOrWhiteSpace(generatorVersion) ||
+                locator.ConstructorArguments[4].Value is not string abiIdentity ||
+                string.IsNullOrWhiteSpace(abiIdentity))
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
-                    "The SharpLink manifest locator is not a valid self-describing locator.",
+                    "The SharpLink manifest locator is not a valid current self-describing locator.",
                     assembly);
             }
             if (apiVersion != SharpLinkGeneratedManifestVersions.Api ||
-                protocolVersion != SharpLinkGeneratedManifestVersions.Protocol)
+                protocolVersion != SharpLinkGeneratedManifestVersions.Protocol ||
+                !string.Equals(abiIdentity, SharpLinkGeneratedManifestVersions.AbiIdentity, StringComparison.Ordinal))
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
                     SharpLinkGeneratedManifestCompatibility.FormatVersionMismatch(
                         apiVersion,
                         protocolVersion,
-                        generatorVersion),
+                        generatorVersion,
+                        abiIdentity),
                     assembly);
             }
             if (!ReferenceEquals(manifestType.Assembly, assembly))

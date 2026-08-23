@@ -333,7 +333,7 @@ var client = SharpClientBuilder.Create()
 
 正式 NuGet 包中，`SharpLink.Sdk` 会携带 `SharpLink.Generator` Analyzer。通过 NuGet 使用时只需引用 SDK，无需再手工添加 Generator DLL 或 Analyzer 项目引用。
 
-从 2.0 起，`SharpLink.Sdk` 只传递引入 `SharpLink.Abstractions`。纯契约项目不需要 Runtime；Client、Server 或 Hosting 应用应显式引用自身对应的应用包。1.1.x 生成程序集使用 Generated API 3，不能在 2.0 进程内加载，升级时必须清理 `bin/obj` 并重新构建全部契约、服务和插件程序集。此变化不修改 Protocol v2，分别使用本进程匹配生成程序集的 1.1.x 与 2.0 进程仍可跨网络互操作。完整步骤见 [`doc/migration.md`](doc/migration.md)。
+从 2.0 起，`SharpLink.Sdk` 只传递引入 `SharpLink.Abstractions`。纯契约项目不需要 Runtime；Client、Server 或 Hosting 应用应显式引用自身对应的应用包。1.1.x 生成程序集使用 Generated API 3，不能在 2.0 进程内加载，升级时必须清理 `bin/obj` 并重新构建全部契约、服务和插件程序集。2.0 同时把 Protocol v2 的 RPC lifetime baseline 提升到 minor 4，并以剩余 `TimeBudget` 取代旧 absolute deadline；pre-2.0 peer 不属于 2.0 的互操作承诺。完整步骤见 [`doc/migration.md`](doc/migration.md)。
 
 ## Host 模式
 

@@ -35,6 +35,25 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
         GeneratorVersion = generatorVersion ?? throw new ArgumentNullException(nameof(generatorVersion));
     }
 
+
+    /// <summary>Creates a self-describing manifest locator with an exact generated ABI identity.</summary>
+    /// <param name="manifestType">A generated manifest type with a public parameterless constructor.</param>
+    /// <param name="apiVersion">The generated API version.</param>
+    /// <param name="protocolVersion">The generated wire protocol version.</param>
+    /// <param name="generatorVersion">The source-generator version.</param>
+    /// <param name="abiIdentity">The exact generated ABI identity within the API version.</param>
+    public SharpLinkGeneratedAssemblyManifestAttribute(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+        Type manifestType,
+        int apiVersion,
+        int protocolVersion,
+        string generatorVersion,
+        string abiIdentity)
+        : this(manifestType, apiVersion, protocolVersion, generatorVersion)
+    {
+        AbiIdentity = abiIdentity ?? throw new ArgumentNullException(nameof(abiIdentity));
+    }
+
     /// <summary>Gets the generated manifest implementation type.</summary>
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     public Type ManifestType { get; }
@@ -47,6 +66,9 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
 
     /// <summary>Gets the declared Generator version, or <see langword="null"/> for a legacy locator.</summary>
     public string? GeneratorVersion { get; }
+
+    /// <summary>Gets the exact generated ABI identity, or <see langword="null"/> for an older locator.</summary>
+    public string? AbiIdentity { get; }
 }
 
 /// <summary>Describes one generated RPC method for compatibility and conflict validation.</summary>
@@ -121,6 +143,9 @@ public static class SharpLinkGeneratedManifestVersions
     /// numbers are not compatibility boundaries; regenerate all generated artifacts with the 2.0 SDK.
     /// </summary>
     public const int Api = 4;
+
+    /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
+    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

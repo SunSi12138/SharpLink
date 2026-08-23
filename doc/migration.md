@@ -4,7 +4,7 @@ SharpLink 2.0 将进程内 Generated ABI 从已发布的 1.1.1/API 3 原子升�
 
 ## Generated ABI（API 4）与重新生成
 
-2.0 Generator 只生成 API 4，2.0 Runtime 也只接受 `Generated API = 4`、`Protocol = 2`。已发布的 1.1.1 生成程序集是 API 3，升级到 2.0 时会在 materialize Manifest 或发布任何运行时资源前明确拒绝 API 3，并要求重新生成。开发分支曾使用过的中间 ABI 编号不属于受支持输入，也不作为发布兼容性资产。版本校验只发生在 assembly load / registration / startup 边界，不进入任何调用热路径。
+2.0 Generator 只生成 API 4，2.0 Runtime 只接受 `Generated API = 4`、`Protocol = 2`，并要求 locator 携带当前 `SharpLinkGeneratedManifestVersions.AbiIdentity`。已发布的 1.1.1 生成程序集是 API 3，升级到 2.0 时会在 materialize Manifest 或发布任何运行时资源前明确拒绝 API 3，并要求重新生成。开发分支曾使用过的中间 ABI 编号不属于受支持输入，也不作为发布兼容性资产；如果旧开发 artifact 曾复用整数 API 4，但它没有当前 ABI identity，同样会在 materialize 前拒绝，避免同一整数误识别两种不兼容 binary shape。版本与 identity 校验只发生在 assembly load / registration / startup 边界，不进入任何调用热路径。
 
 升级必须同时完成：
 
@@ -22,11 +22,11 @@ rebuild this assembly with the SharpLink SDK version that matches the current
 Runtime.
 ```
 
-`Assembly`、`LoadContext`（dynamic）、`Expected/Actual Generated ABI`、`Expected/Actual Protocol`
-与 `GeneratorVersion` 字段在所有入口一致。修复方式始终是重新生成：删除旧输出，用当前
+`Assembly`、`LoadContext`（dynamic）、`Expected/Actual Generated ABI`、`Expected/Actual Protocol`、
+`Expected/Actual ABI identity` 与 `GeneratorVersion` 字段在所有入口一致。修复方式始终是重新生成：删除旧输出，用当前
 2.0 SDK 重新构建，而不是回退包版本或寻找兼容开关。
 
-自动生成代码的用户不需要手写 Bridge。手写生成基础设施的高级用户需要同步采用 API 4：程序集 locator 使用包含 Manifest 类型、`apiVersion: 4`、`protocolVersion: 2` 和 Generator version 的自描述构造函数；`IRpcStub` 接收 `IRpcGeneratedServerBridge`，响应写入 `IBufferWriter<byte>`；`SharpLinkGeneratedContractDescriptor.StubFactory` 接收 `IRpcCodecProvider`；生成的 DTO Codec 实现 `IRpcCodec<T>` 与 `IRpcSizedCodec<T>`；自定义 Codec 绑定使用 `RpcCodecAttribute`/`RpcCodecImplementationAttribute` 并带 schema identity。
+自动生成代码的用户不需要手写 Bridge。手写生成基础设施的高级用户需要同步采用 API 4：程序集 locator 使用包含 Manifest 类型、`apiVersion: 4`、`protocolVersion: 2`、Generator version 和 `SharpLinkGeneratedManifestVersions.AbiIdentity` 的自描述构造函数；`IRpcStub` 接收 `IRpcGeneratedServerBridge`，响应写入 `IBufferWriter<byte>`；`SharpLinkGeneratedContractDescriptor.StubFactory` 接收 `IRpcCodecProvider`；生成的 DTO Codec 实现 `IRpcCodec<T>` 与 `IRpcSizedCodec<T>`；自定义 Codec 绑定使用 `RpcCodecAttribute`/`RpcCodecImplementationAttribute` 并带 schema identity。
 
 Generated ABI 与网络 minor 是独立版本轴。SharpLink 2.0 以 Protocol v2 minor 4 作为 TimeBudget wire baseline，不再提供 absolute-deadline fallback。该重构只进入 2.0，因此发布门禁只验证 2.0 Client/Server 互操作；pre-2.0 跨版本互操作不属于 2.0 的兼容性承诺。低于 minor 4 的握手会被拒绝，避免旧 absolute-deadline 字节被误解释为 TimeBudget。
 

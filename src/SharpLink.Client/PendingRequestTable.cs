@@ -360,10 +360,10 @@ internal sealed class PendingRequestTable : IDisposable
             return true;
         }
 
-        if (!TryTakeMatchingCall(id, out var call))
+        if (!TryTakeMatchingCall(id, out var call, out var deadlineExpired))
             return false;
 
-        var reason = call!.Deadline.IsExpired(_timeProvider)
+        var reason = deadlineExpired
             ? PendingCallCompletionReason.DeadlineExceeded
             : PendingCallCompletionReason.Response;
         CompleteTakenCall(call, reason, exception: null, ref payload);
@@ -378,12 +378,12 @@ internal sealed class PendingRequestTable : IDisposable
         PendingCallCompletionReason reason,
         Exception? exception = null)
     {
-        if (!TryTakeMatchingCall(id, out var call))
+        if (!TryTakeMatchingCall(id, out var call, out var deadlineExpired))
             return false;
 
         if ((reason is PendingCallCompletionReason.RemoteError or
              PendingCallCompletionReason.RemoteStreamComplete) &&
-            call!.Deadline.IsExpired(_timeProvider))
+            deadlineExpired)
         {
             reason = PendingCallCompletionReason.DeadlineExceeded;
             exception = null;
@@ -392,6 +392,45 @@ internal sealed class PendingRequestTable : IDisposable
         var emptyPayload = ReadOnlySequence<byte>.Empty;
         CompleteTakenCall(call!, reason, exception, ref emptyPayload);
         return true;
+    }
+
+    public bool TryAcceptStreamData(long id)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return false;
+
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref slots[index]);
+        if (current is null || current.Id != id ||
+            current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
+        {
+            return false;
+        }
+
+        PendingCall? expiredCall = null;
+        lock (current.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id ||
+                current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
+            {
+                return false;
+            }
+
+            if (!current.Deadline.IsExpired(_timeProvider))
+                return true;
+
+            var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+            if (!ReferenceEquals(exchanged, current))
+                return false;
+            current.WaitUntilRegistered();
+            expiredCall = current;
+        }
+
+        var emptyPayload = ReadOnlySequence<byte>.Empty;
+        CompleteTakenCall(
+            expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+        return false;
     }
 
     public bool Contains(long id)
@@ -681,12 +720,16 @@ internal sealed class PendingRequestTable : IDisposable
             TryComplete(call.Id, PendingCallCompletionReason.ConnectionClosed);
     }
 
-    private bool TryTakeMatchingCall(long id, out PendingCall? call)
+    private bool TryTakeMatchingCall(
+        long id,
+        out PendingCall? call,
+        out bool deadlineExpired)
     {
         var slots = Volatile.Read(ref _slots);
         if (slots is null)
         {
             call = null;
+            deadlineExpired = false;
             return false;
         }
 
@@ -697,6 +740,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (current is null || current.Id != id)
             {
                 call = null;
+                deadlineExpired = false;
                 return false;
             }
 
@@ -704,6 +748,12 @@ internal sealed class PendingRequestTable : IDisposable
             {
                 if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
                     continue;
+
+                // Sample the authoritative monotonic boundary while owning the same
+                // completion gate that claims/removes the terminal slot. A response that
+                // wins before the boundary remains a response even if completion work is
+                // descheduled until after the boundary; a response claiming after it loses.
+                deadlineExpired = current.Deadline.IsExpired(_timeProvider);
 
                 var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
                 if (!ReferenceEquals(exchanged, current))

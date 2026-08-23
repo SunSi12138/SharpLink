@@ -476,9 +476,7 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             2,
-            RpcDeadline.Create(
-                DateTimeOffset.UtcNow.AddSeconds(30),
-                Stopwatch.GetTimestamp() + SDeadlineOffset),
+            RpcDeadline.FromTimestamp(Stopwatch.GetTimestamp() + SDeadlineOffset),
             TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
@@ -491,9 +489,7 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             3,
-            RpcDeadline.Create(
-                DateTimeOffset.UtcNow.AddSeconds(30),
-                Stopwatch.GetTimestamp() + SDeadlineOffset),
+            RpcDeadline.FromTimestamp(Stopwatch.GetTimestamp() + SDeadlineOffset),
             TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
@@ -521,7 +517,7 @@ public class ServerCallCancellationStateBenchmarks
         var requestId = ++_nextRequestId;
         var state = ServerCallCancellationState.Rent(
             requestId,
-            RpcDeadline.Create(DateTimeOffset.MaxValue, long.MaxValue),
+            RpcDeadline.FromTimestamp(long.MaxValue),
             TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,

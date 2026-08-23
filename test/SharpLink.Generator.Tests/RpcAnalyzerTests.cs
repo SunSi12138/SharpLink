@@ -55,8 +55,9 @@ public interface IAbi4Service : SharpLink.Sdk.IService
                manifest.Contains("public int ProtocolVersion => 2;", StringComparison.Ordinal),
             "the Generator must own literal API 4 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
-               manifest.Contains(", 4, 2,", StringComparison.Ordinal),
-            "the manifest locator must describe compatibility before materialization");
+               manifest.Contains(", 4, 2,", StringComparison.Ordinal) &&
+               manifest.Contains("sharplink-2.0-api4-rpcchannel-metadata-v1", StringComparison.Ordinal),
+            "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
         Ensure(stub.Contains("IRpcGeneratedServerBridge bridge", StringComparison.Ordinal),
@@ -3396,6 +3397,12 @@ namespace SharpLink.Abstractions
             int apiVersion,
             int protocolVersion,
             string generatorVersion) { }
+        public SharpLinkGeneratedAssemblyManifestAttribute(
+            Type manifestType,
+            int apiVersion,
+            int protocolVersion,
+            string generatorVersion,
+            string abiIdentity) { }
     }
 
     public static class SharpLinkGeneratedAssemblyCatalog
@@ -3415,7 +3422,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-metadata-v1")]
 
 namespace SharpLink.Generated
 {

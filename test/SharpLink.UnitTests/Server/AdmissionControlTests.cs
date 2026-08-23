@@ -499,9 +499,7 @@ public sealed class AdmissionControlTests
             "connection",
             authenticationContext: null,
             metadata: null);
-        var deadline = RpcDeadline.Create(
-            DateTimeOffset.UtcNow.AddMilliseconds(50),
-            TimeProvider.System);
+        var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(50), TimeProvider.System);
 
         var rejected = await controller.AcquireAsync(
             deadlineContext,
@@ -528,9 +526,7 @@ public sealed class AdmissionControlTests
         await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
         var first = await controller.AcquireAsync(
             CreateContext(), 1, allowQueue: true, CancellationToken.None);
-        var deadline = RpcDeadline.Create(
-            provider.GetUtcNow().AddSeconds(5),
-            provider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
         var pending = controller.AcquireAsync(
             CreateContext(),
             retainedBytes: 64,

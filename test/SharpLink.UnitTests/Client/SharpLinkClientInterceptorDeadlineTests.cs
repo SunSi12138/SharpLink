@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Buffers.Binary;
 using SharpLink.Client;
 using SharpLink.Sdk;
@@ -39,6 +40,52 @@ public class SharpLinkClientInterceptorDeadlineTests
         Ensure(!await transport.Connection.TryWaitForSentPacket(
                 ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(25)),
             "a short-circuit path must not emit a request");
+    }
+
+
+    [Test]
+    public async Task ShortCircuitStreamPendingMoveNextShouldBeInterruptedAtFrozenDeadline()
+    {
+        var clock = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(clock);
+                builder.AddInterceptor(new BlockingStreamShortCircuitInterceptor());
+            });
+
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 2873,
+            Kind: RpcMethodKind.ServerStreaming,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(5));
+        var stream = channel.InvokeServerStreamingAsync(
+            method,
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default);
+        await using var enumerator = stream.GetAsyncEnumerator();
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        await Task.Yield();
+        Ensure(!moveNext.IsCompleted, "the short-circuited local MoveNext should initially be pending");
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var failure = await CaptureSharpLinkException(moveNext);
+
+        Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "the frozen deadline must interrupt an in-flight local MoveNext");
+        Ensure(!await transport.Connection.TryWaitForSentPacket(
+                ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(25)),
+            "a local short-circuited stream must not emit a network request");
     }
 
     [Test]
@@ -90,6 +137,22 @@ public class SharpLinkClientInterceptorDeadlineTests
         catch (SharpLinkException exception)
         {
             return exception;
+        }
+    }
+
+
+    private sealed class BlockingStreamShortCircuitInterceptor : ISharpLinkClientInterceptor
+    {
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+            => ValueTask.FromResult(new SharpLinkClientInvocationResult(BlockForever()));
+
+        private static async IAsyncEnumerable<int> BlockForever(
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
         }
     }
 

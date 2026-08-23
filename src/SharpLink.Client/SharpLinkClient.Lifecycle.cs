@@ -522,9 +522,13 @@ internal sealed partial class SharpLinkClient
                                 DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
                                 break;
                             case ProtocolV2FrameType.StreamData:
-                                var dispatchTask = DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
-                                if (!dispatchTask.IsCompletedSuccessfully)
-                                    await dispatchTask;
+                                var streamRequestId = unchecked((long)header.RequestId);
+                                if (connection.PendingCalls.TryAcceptStreamData(streamRequestId))
+                                {
+                                    var dispatchTask = DispatchStreamChunkAsync(session, streamRequestId, payload);
+                                    if (!dispatchTask.IsCompletedSuccessfully)
+                                        await dispatchTask;
+                                }
                                 break;
                             case ProtocolV2FrameType.StreamComplete:
                                 DispatchStreamComplete(

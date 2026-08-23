@@ -31,6 +31,39 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
                         IRpcByteBufferWriter? decodedOwner = null;
+                        if (header.Type == ProtocolV2FrameType.StreamData)
+                        {
+                            var streamRequestId = unchecked((long)header.RequestId);
+                            var acceptStreamData = true;
+                            if (requestCancellationMap.TryCapture(
+                                    streamRequestId,
+                                    static (requestId, state) => state.CaptureLease(requestId),
+                                    out var streamCallLease))
+                            {
+                                if (!streamCallLease.TryAcquire())
+                                {
+                                    // An owning call state existed but its generation is already
+                                    // retiring. Do not let a stale chunk escape into StreamManager.
+                                    acceptStreamData = false;
+                                }
+                                else
+                                {
+                                    try
+                                    {
+                                        acceptStreamData = streamCallLease.State.TryAcceptStreamData();
+                                    }
+                                    finally
+                                    {
+                                        streamCallLease.ReleaseUse();
+                                    }
+                                }
+                            }
+
+                            // No call state yet means this is pre-admission buffering. Once the
+                            // request owns a state, every chunk (compressed or not) is gated here.
+                            if (!acceptStreamData)
+                                continue;
+                        }
                         try
                         {
                             if (header.Type == ProtocolV2FrameType.StreamData &&
@@ -173,7 +206,8 @@ internal sealed partial class SharpLinkServer
                                     }
                                     break;
                                 case ProtocolV2FrameType.StreamData:
-                                    await DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
+                                    await DispatchStreamChunkAsync(
+                                        session, unchecked((long)header.RequestId), payload);
                                     break;
                                 case ProtocolV2FrameType.StreamComplete:
                                     DispatchStreamComplete(

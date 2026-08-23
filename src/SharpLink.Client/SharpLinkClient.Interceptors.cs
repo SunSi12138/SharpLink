@@ -44,13 +44,14 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkMetadata? metadata,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
         var state = new ServerStreamingInterceptorState<TRequest, TResponse>(
-            this, method, request, requestCodec, responseCodec, interceptors, metadata, cancellationToken);
+            this, method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
         return new InterceptedAsyncEnumerable<TResponse>(
-            state.InvokeAsync(), method.ResponseNullable, state.Deadline, _runtimeContext.TimeProvider);
+            state.InvokeAsync(), method.ResponseNullable, state.Deadline,
+            _runtimeContext.TimeProvider, state.InvocationCancellation);
     }
 
     private IAsyncEnumerable<TResponse> InvokeDuplexStreamingIntercepted<TRequest, TResponse, TStreams>(
@@ -60,14 +61,15 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkMetadata? metadata,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
         var state = new DuplexStreamingInterceptorState<TRequest, TResponse, TStreams>(
-            this, method, request, requestCodec, responseCodec, streams, interceptors, metadata, cancellationToken);
+            this, method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
         return new InterceptedAsyncEnumerable<TResponse>(
-            state.InvokeAsync(), method.ResponseNullable, state.Deadline, _runtimeContext.TimeProvider);
+            state.InvokeAsync(), method.ResponseNullable, state.Deadline,
+            _runtimeContext.TimeProvider, state.InvocationCancellation);
     }
 
     private abstract class ClientInterceptorState
@@ -84,11 +86,12 @@ internal sealed partial class SharpLinkClient
             object? request,
             ISharpLinkClientInterceptor[] interceptors,
             SharpLinkMetadata? metadata,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            ResolvedCallControl? resolvedControl = null)
         {
             _client = client;
             _interceptors = interceptors;
-            _control = client.ResolveCallControl(
+            _control = resolvedControl ?? client.ResolveCallControl(
                 metadata,
                 method.Kind == RpcMethodKind.Unary,
                 method.HasMethodTimeout,
@@ -100,6 +103,7 @@ internal sealed partial class SharpLinkClient
         protected SharpLinkClient Client => _client;
         protected SharpLinkClientInvocationContext Context => _context;
         internal RpcDeadline Deadline => _control.Deadline;
+        internal CancellationToken InvocationCancellation => _context.CancellationToken;
 
         public ValueTask<SharpLinkClientInvocationResult> InvokeAsync()
             => RunChainAsync();
@@ -626,9 +630,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkMetadata? metadata,
+            ResolvedCallControl control,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, metadata, cancellationToken)
+            : base(client, method, request, interceptors, control.Metadata, cancellationToken, control)
         {
             _method = method;
             _request = request;
@@ -682,9 +686,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkMetadata? metadata,
+            ResolvedCallControl control,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, metadata, cancellationToken)
+            : base(client, method, request, interceptors, control.Metadata, cancellationToken, control)
         {
             _method = method;
             _request = request;
@@ -726,7 +730,8 @@ internal sealed partial class SharpLinkClient
         ValueTask<SharpLinkClientInvocationResult> invocation,
         bool responseNullable,
         RpcDeadline deadline,
-        TimeProvider timeProvider) : IAsyncEnumerable<T>
+        TimeProvider timeProvider,
+        CancellationToken invocationCancellation) : IAsyncEnumerable<T>
     {
         private int _enumerated;
 
@@ -739,18 +744,74 @@ internal sealed partial class SharpLinkClient
             ThrowIfDeadlineExpired();
             var stream = (await invocation.ConfigureAwait(false)).GetValue<IAsyncEnumerable<T>>();
             ThrowIfDeadlineExpired();
-            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
-            while (true)
+
+            using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                invocationCancellation, cancellationToken);
+            var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
+            var deadlineWon = false;
+            try
             {
-                ThrowIfDeadlineExpired();
-                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
-                    yield break;
-                ThrowIfDeadlineExpired();
-                var item = enumerator.Current;
-                if (!responseNullable && default(T) is null && item is null)
-                    throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
-                yield return item;
+                while (true)
+                {
+                    ThrowIfDeadlineExpired();
+                    var moveNext = enumerator.MoveNextAsync();
+                    bool hasNext;
+                    if (!deadline.HasValue || moveNext.IsCompletedSuccessfully)
+                    {
+                        hasNext = await moveNext.ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var moveNextTask = moveNext.AsTask();
+                        if (!await SharpLinkTimer.WaitAsync(
+                                moveNextTask, deadline, timeProvider, lifetimeCancellation.Token).ConfigureAwait(false))
+                        {
+                            deadlineWon = true;
+                            lifetimeCancellation.Cancel();
+                            _ = ObserveAbandonedMoveNextAsync(moveNextTask);
+                            throw CreateDeadlineExceededException();
+                        }
+                        hasNext = await moveNextTask.ConfigureAwait(false);
+                    }
+
+                    if (!hasNext)
+                        yield break;
+                    ThrowIfDeadlineExpired();
+                    var item = enumerator.Current;
+                    if (!responseNullable && default(T) is null && item is null)
+                        throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
+                    yield return item;
+                }
             }
+            finally
+            {
+                lifetimeCancellation.Cancel();
+                try
+                {
+                    var dispose = enumerator.DisposeAsync();
+                    if (deadlineWon && !dispose.IsCompletedSuccessfully)
+                        _ = ObserveAbandonedDisposeAsync(dispose);
+                    else
+                        await dispose.ConfigureAwait(false);
+                }
+                catch when (deadlineWon)
+                {
+                    // The deadline is already the terminal result. Disposal is best-effort for
+                    // a short-circuited local enumerator that may ignore cancellation.
+                }
+            }
+        }
+
+        private static async Task ObserveAbandonedMoveNextAsync(Task<bool> task)
+        {
+            try { _ = await task.ConfigureAwait(false); }
+            catch { }
+        }
+
+        private static async Task ObserveAbandonedDisposeAsync(ValueTask dispose)
+        {
+            try { await dispose.ConfigureAwait(false); }
+            catch { }
         }
 
         private void ThrowIfDeadlineExpired()

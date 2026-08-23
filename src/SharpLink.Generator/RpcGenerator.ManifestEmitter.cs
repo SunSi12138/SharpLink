@@ -2,6 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
+    private const string GeneratedAbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -31,7 +32,7 @@ public partial class RpcGenerator
         sb.AppendLine("using SharpLink.Abstractions;");
         sb.AppendLine("using SharpLink.Sdk;");
         sb.AppendLine();
-        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 4, 2, \"{EscapeString(ExecutingGeneratorVersion)}\")]");
+        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 4, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();

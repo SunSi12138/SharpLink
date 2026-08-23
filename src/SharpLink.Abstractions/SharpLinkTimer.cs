@@ -194,7 +194,7 @@ internal static class SharpLinkTimer
             timeProvider.TimestampFrequency);
         return await WaitAsync(
             semaphore,
-            RpcDeadline.Create(DateTimeOffset.MaxValue, deadline),
+            RpcDeadline.FromTimestamp(deadline),
             timeProvider,
             cancellationToken).ConfigureAwait(false);
     }

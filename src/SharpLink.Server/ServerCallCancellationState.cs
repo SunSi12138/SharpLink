@@ -232,6 +232,21 @@ internal sealed class ServerCallCancellationState : IDisposable
         return true;
     }
 
+    public bool TryAcceptStreamData()
+    {
+        if (Reason != ServerCallCancellationReason.None)
+            return false;
+
+        if (Deadline.IsExpired(_timeProvider ?? throw new InvalidOperationException(
+                "Server call state has no time provider.")))
+        {
+            TryCancel(ServerCallCancellationReason.DeadlineExceeded);
+            return false;
+        }
+
+        return Reason == ServerCallCancellationReason.None;
+    }
+
     public bool TryClaimResponse()
     {
         if (Reason != ServerCallCancellationReason.None)

@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkClient
     // and admission delays are awaited in cancellable slices rather than rejected by the timer.
     private static readonly TimeSpan MaximumRetryOrAdmissionDelay = TimeSpan.FromMilliseconds(int.MaxValue);
 
-    private ResolvedCallControl ResolveCallControl(
+    internal ResolvedCallControl ResolveCallControl(
         SharpLinkMetadata? metadata,
         bool includeClientDefault,
         bool hasMethodTimeout,
@@ -80,16 +80,10 @@ internal sealed partial class SharpLinkClient
 
 
 
-    private static DateTimeOffset AddTimeout(DateTimeOffset now, TimeSpan timeout)
-    {
-        var maximum = DateTimeOffset.MaxValue - now;
-        return timeout >= maximum ? DateTimeOffset.MaxValue : now.Add(timeout);
-    }
-
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
 
-    private readonly record struct ResolvedCallControl(
+    internal readonly record struct ResolvedCallControl(
         RpcDeadline Deadline,
         SharpLinkMetadata? Metadata);
 }

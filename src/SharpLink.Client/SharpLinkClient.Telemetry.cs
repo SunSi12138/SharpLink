@@ -115,16 +115,14 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkMetadata? metadata,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
         var stream = interceptors.Length != 0
             ? InvokeServerStreamingIntercepted(
-                method, request, requestCodec, responseCodec, interceptors, metadata, cancellationToken)
+                method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
             : InvokeServerStreamingCore(
-                method, request, requestCodec, responseCodec,
-                ResolveCallControl(metadata, false, method.HasMethodTimeout, method.MethodTimeout),
-                cancellationToken);
+                method, request, requestCodec, responseCodec, control, cancellationToken);
         return ObserveStream(method, stream);
     }
 
@@ -135,17 +133,15 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkMetadata? metadata,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
         var stream = interceptors.Length != 0
             ? InvokeDuplexStreamingIntercepted(
-                method, request, requestCodec, responseCodec, streams, interceptors, metadata, cancellationToken)
+                method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
             : InvokeDuplexStreamingCore(
-                method, request, requestCodec, responseCodec, streams,
-                ResolveCallControl(metadata, false, method.HasMethodTimeout, method.MethodTimeout),
-                cancellationToken);
+                method, request, requestCodec, responseCodec, streams, control, cancellationToken);
         return ObserveStream(method, stream);
     }
 

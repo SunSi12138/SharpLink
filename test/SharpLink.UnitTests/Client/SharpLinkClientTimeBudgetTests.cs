@@ -1,5 +1,8 @@
 using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.Reflection;
 using SharpLink.Client;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.UnitTests.Runtime;
 
@@ -83,6 +86,105 @@ public class SharpLinkClientTimeBudgetTests
         Ensure(await invocation == 0, "inherited-budget response");
     }
 
+    [Test]
+    public async Task TimedClientStreamShouldNotStartProducerUntilRequestSurvivesEmission()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(timeProvider);
+                builder.UseRpcSessionFlush(1024 * 1024, TimeSpan.FromSeconds(10));
+            });
+        await client.ConnectAsync();
+
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 288,
+            Kind: RpcMethodKind.ClientStreaming,
+            HasResponsePayload: true,
+            HasClientStreams: true,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(5),
+            ClientStreamCount: 1);
+        var probe = new ProducerProbe();
+        var streams = new ProbeClientStreams(probe);
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var invocation = channel.InvokeClientStreamingAsync(
+            method,
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            in streams,
+            metadata: null,
+            cancellationToken: default).AsTask();
+
+        // Advance past the monotonic boundary without running the pending-call timer. The explicit
+        // flush then makes the send pump arbitrate expiry at the real emission boundary.
+        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
+
+        var failure = await CaptureSharpLinkExceptionAsync(invocation);
+        Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "an initial client-stream Request that expires in the send queue must fail locally");
+        Ensure(!probe.Started,
+            "the client-stream producer must not start until its owning Request survives emission");
+        Ensure(!await transport.Connection.TryWaitForSentPacket(ProtocolV2FrameType.StreamData, TimeSpan.FromMilliseconds(50)),
+            "no orphan StreamData may be emitted after the owning Request is dropped");
+    }
+
+    [Test]
+    public async Task DynamicModuleServerStreamShouldFreezeDeadlineAtProxyInvocation()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseTimeProvider(timeProvider));
+
+        using var moduleContext = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(timeProvider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest();
+        using var registration = moduleContext.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(SharpLinkClientTimeBudgetTests).Assembly,
+            manifest,
+            registration);
+        var channel = new SharpLinkModuleRpcChannel(client, module);
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 289,
+            Kind: RpcMethodKind.ServerStreaming,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(5));
+        var request = default(RpcEmptyRequest);
+
+        var stream = channel.InvokeServerStreamingAsync(
+            method,
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            client.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default);
+
+        // The dynamic wrapper may defer module-lease acquisition to enumeration, but it must not
+        // defer the logical RPC lifetime. Delay after the proxy call therefore consumes timeout.
+        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
+        await using var enumerator = stream.GetAsyncEnumerator();
+        var failure = await CaptureSharpLinkExceptionAsync(enumerator.MoveNextAsync().AsTask());
+        Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "dynamic streaming must use the deadline frozen when the proxy method was invoked");
+        Ensure(!await transport.Connection.TryWaitForSentPacket(ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(50)),
+            "an already-expired dynamic stream must not begin a network request at enumeration time");
+    }
+
     private static RpcMethodDescriptor MethodWithTimeout(TimeSpan timeout)
         => new(
             ContractId: 1,
@@ -96,6 +198,59 @@ public class SharpLinkClientTimeBudgetTests
     private static TimeSpan ReadTimeBudget(TestSentFrame sent)
         => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
             sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
+
+    private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
+    {
+        var connections = (ClientConnection[])(typeof(SharpLinkClient).GetField(
+                "_readyConnections",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client) ?? throw new Exception("cannot find ready connection selection snapshot"));
+        Ensure(connections.Length == 1, "expected exactly one ready connection");
+        return connections[0];
+    }
+
+    private static async Task<SharpLinkException> CaptureSharpLinkExceptionAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+        }
+        catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+        throw new Exception("expected SharpLinkException");
+    }
+
+    private sealed class ProducerProbe
+    {
+        internal bool Started;
+    }
+
+    private readonly struct ProbeClientStreams(ProducerProbe probe) : IRpcClientStreamWriter
+    {
+        public ValueTask WriteAsync(
+            IRpcClientStreamSink sink,
+            long requestId,
+            CancellationToken cancellationToken)
+        {
+            probe.Started = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class EmptyManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(SharpLinkClientTimeBudgetTests).Assembly;
+        public string CompileTimeDescriptor => "test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<string> Dependencies => [];
+    }
 
     private static void Ensure(bool condition, string message)
     {

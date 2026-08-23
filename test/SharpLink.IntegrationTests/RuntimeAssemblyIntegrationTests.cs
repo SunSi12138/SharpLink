@@ -2276,6 +2276,13 @@ public sealed class RuntimeAssemblyIntegrationTests
         public TContract Get<TContract>() where TContract : IService
             => default!;
 
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+
+
+            => throw new NotSupportedException();
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public bool IsDynamicAssemblyRegistered(Assembly assembly)
@@ -2353,6 +2360,13 @@ public sealed class RuntimeAssemblyIntegrationTests
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
 
         public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
+
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+
+
+            => throw new NotSupportedException();
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => throw new NotSupportedException();

@@ -278,7 +278,6 @@ internal sealed class ServerConnectionState
                 calls.Add(new ServerCallDiagnosticSnapshot(
                     callLease.RequestId,
                     call.Reason.ToString(),
-                    call.Deadline.UtcDeadline,
                     call.Deadline.Timestamp));
             }
             finally

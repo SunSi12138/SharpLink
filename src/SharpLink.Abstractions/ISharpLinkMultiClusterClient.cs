@@ -21,9 +21,7 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     TContract Get<TContract>() where TContract : IService;
 
     /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>
-    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-        => throw new NotSupportedException(
-            "This ISharpLinkMultiClusterClient implementation does not support caller-selected metadata.");
+    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
 
     /// <summary>Gets the lifecycle state of one configured cluster slot.</summary>
     SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster);

@@ -19,12 +19,14 @@ public partial class RpcGenerator
             foreach (var attribute in assembly.GetAttributes())
             {
                 if (attribute.AttributeClass?.ToDisplayString() != GeneratedAssemblyManifestAttributeMetadataName ||
-                    attribute.ConstructorArguments.Length != 4 ||
+                    attribute.ConstructorArguments.Length != 5 ||
                     attribute.ConstructorArguments[0].Value is not INamedTypeSymbol manifestType ||
                     attribute.ConstructorArguments[1].Value is not 4 ||
                     attribute.ConstructorArguments[2].Value is not 2 ||
                     attribute.ConstructorArguments[3].Value is not string generatorVersion ||
                     string.IsNullOrWhiteSpace(generatorVersion) ||
+                    attribute.ConstructorArguments[4].Value is not string abiIdentity ||
+                    !string.Equals(abiIdentity, GeneratedAbiIdentity, StringComparison.Ordinal) ||
                     !SymbolEqualityComparer.Default.Equals(manifestType.ContainingAssembly, assembly))
                 {
                     continue;
