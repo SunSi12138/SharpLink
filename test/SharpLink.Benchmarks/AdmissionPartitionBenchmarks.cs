@@ -36,7 +36,8 @@ public class AdmissionPartitionReleaseBenchmarks
         for (var index = 0; index < Partitions; index++)
         {
             _key = $"partition-{index}";
-            _pool.TryAcquire(_context)!.Dispose();
+            var entry = _pool.TryAcquire(_context)!;
+            _pool.Release(entry);
         }
         _key = "partition-0";
     }
@@ -47,8 +48,8 @@ public class AdmissionPartitionReleaseBenchmarks
     [Benchmark]
     public void AcquireReleaseRecentlyIdle()
     {
-        var lease = _pool.TryAcquire(_context)!;
-        lease.Dispose();
+        var entry = _pool.TryAcquire(_context)!;
+        _pool.Release(entry);
     }
 
     private sealed class FrozenTimeProvider : TimeProvider

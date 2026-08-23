@@ -21,7 +21,7 @@ public sealed class AdmissionPartitionPoolTests
             key = $"partition-{index}";
             var lease = pool.TryAcquire(context);
             Ensure(lease is not null, $"partition {index} should be admitted");
-            lease!.Dispose();
+            pool.Release(lease!);
         }
 
         Ensure(pool.Count == 1024, "all recently idle partitions should remain resident");
@@ -31,7 +31,7 @@ public sealed class AdmissionPartitionPoolTests
         key = "partition-0";
         var reacquired = pool.TryAcquire(context);
         Ensure(reacquired is not null, "existing partition should be reacquired");
-        reacquired!.Dispose();
+        pool.Release(reacquired!);
 
         Ensure(pool.ReclaimScanCount == 0,
             "normal release before the earliest idle deadline must not start a reclaim scan");
@@ -50,7 +50,7 @@ public sealed class AdmissionPartitionPoolTests
 
         var first = pool.TryAcquire(context);
         Ensure(first is not null, "first partition should be admitted");
-        first!.Dispose();
+        pool.Release(first!);
 
         time.Advance(timeout - TimeSpan.FromTicks(1));
         key = "second";
@@ -66,7 +66,7 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(pool.Count == 1, "reclaimed capacity should be reused by the new key");
         Ensure(pool.ReclaimScanCount == 1 && pool.ReclaimEntriesVisited == 1,
             "exact timeout should trigger one bounded reconciliation scan");
-        second!.Dispose();
+        pool.Release(second!);
     }
 
     [Test]
@@ -80,7 +80,7 @@ public sealed class AdmissionPartitionPoolTests
 
         var first = pool.TryAcquire(context)!;
         var runtime = first.Runtime;
-        first.Dispose();
+        pool.Release(first);
 
         time.Advance(timeout);
         var active = pool.TryAcquire(context)!;
@@ -92,8 +92,8 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(pool.Count == 2, "the active reacquired entry must survive stale-hint reconciliation");
         Ensure(pool.ReclaimScanCount == 1, "stale due hint should cause one reconciliation scan");
 
-        second!.Dispose();
-        active.Dispose();
+        pool.Release(second!);
+        pool.Release(active);
     }
 
     [Test]
@@ -106,9 +106,9 @@ public sealed class AdmissionPartitionPoolTests
         using var pool = CreatePool(() => key, maxPartitions: 1, idleTimeout: timeout, time: time);
         var context = CreateContext();
 
-        pool.TryAcquire(context)!.Dispose();
+        pool.Release(pool.TryAcquire(context)!);
         time.Advance(halfTimeout);
-        pool.TryAcquire(context)!.Dispose();
+        pool.Release(pool.TryAcquire(context)!);
 
         time.Advance(halfTimeout);
         key = "b";
@@ -127,7 +127,7 @@ public sealed class AdmissionPartitionPoolTests
         var replacement = pool.TryAcquire(context);
         Ensure(replacement is not null, "the re-idled entry should be reclaimable at its own deadline");
         Ensure(pool.ReclaimScanCount == 2, "the refreshed deadline should trigger the next scan");
-        replacement!.Dispose();
+        pool.Release(replacement!);
     }
 
     [Test]
@@ -145,7 +145,7 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(pool.Count == 1, "active partition should remain resident at capacity");
         Ensure(pool.ReclaimScanCount == 0, "no idle hint means no capacity reclaim scan is needed");
 
-        active.Dispose();
+        pool.Release(active);
         Ensure(pool.TryAcquire(context) is null,
             "recently idle partition must not be evicted before IdleTimeout");
         Ensure(pool.Count == 1, "recently idle partition should remain resident at capacity");
@@ -165,7 +165,7 @@ public sealed class AdmissionPartitionPoolTests
         for (var index = 0; index < 128; index++)
         {
             key = $"partition-{index}";
-            pool.TryAcquire(context)!.Dispose();
+            pool.Release(pool.TryAcquire(context)!);
         }
 
         time.Advance(TimeSpan.FromTicks(1000));
@@ -175,7 +175,7 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(pool.Count == 1, "one reconciliation should detach every expired idle entry");
         Ensure(pool.ReclaimScanCount == 1 && pool.ReclaimEntriesVisited == 128,
             "large jump should require one full scan, not repeated per-release scans");
-        replacement!.Dispose();
+        pool.Release(replacement!);
     }
 
     [Test]
@@ -198,9 +198,7 @@ public sealed class AdmissionPartitionPoolTests
                 Ensure(lease is not null, $"worker {worker} should acquire the shared partition");
                 if ((iteration & 31) == 0)
                     Thread.Yield();
-                lease!.Dispose();
-                if ((iteration & 127) == 0)
-                    lease.Dispose();
+                pool.Release(lease!);
             }
         });
 
@@ -211,7 +209,7 @@ public sealed class AdmissionPartitionPoolTests
             "after all concurrent leases release, the shared entry must be idle and reclaimable");
         Ensure(pool.Count == 1,
             "successful replacement proves reference accounting did not underflow or leak active references");
-        replacement!.Dispose();
+        pool.Release(replacement!);
     }
 
     [Test]
@@ -238,7 +236,7 @@ public sealed class AdmissionPartitionPoolTests
                 Ensure(lease is not null, $"partition {index} should remain acquirable");
                 if ((iteration & 63) == 0)
                     Thread.Yield();
-                lease!.Dispose();
+                pool.Release(lease!);
             }
         });
 
@@ -248,7 +246,7 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(replacement is not null, "expired multi-key entries should release capacity after concurrency");
         Ensure(pool.Count == 1,
             "one reconciliation should detach every expired idle entry without leaked references");
-        replacement!.Dispose();
+        pool.Release(replacement!);
     }
 
     [Test]
@@ -293,12 +291,12 @@ public sealed class AdmissionPartitionPoolTests
                 maxPartitions: 2,
                 idleTimeout: timeout,
                 time: time);
-            pool.TryAcquire(CreateContext("expired"))!.Dispose();
+            pool.Release(pool.TryAcquire(CreateContext("expired"))!);
             var active = pool.TryAcquire(CreateContext("active"))!;
             time.Advance(timeout);
 
             using var start = new ManualResetEventSlim(false);
-            AdmissionPartitionLease? replacement = null;
+            AdmissionPartitionEntry? replacement = null;
             var reclaim = Task.Run(() =>
             {
                 start.Wait();
@@ -312,13 +310,13 @@ public sealed class AdmissionPartitionPoolTests
             var release = Task.Run(() =>
             {
                 start.Wait();
-                active.Dispose();
-                active.Dispose();
+                pool.Release(active);
             });
 
             start.Set();
             Task.WaitAll(reclaim, dispose, release);
-            replacement?.Dispose();
+            if (replacement is not null)
+                pool.Release(replacement);
             pool.Dispose();
 
             Ensure(pool.Count == 0,
@@ -341,7 +339,7 @@ public sealed class AdmissionPartitionPoolTests
             .ToArray();
 
         for (var operation = 0; operation < churnOperations; operation++)
-            pool.TryAcquire(contexts[operation % maxPartitions])!.Dispose();
+            pool.Release(pool.TryAcquire(contexts[operation % maxPartitions])!);
 
         Ensure(pool.Count == maxPartitions,
             "100k idle/reacquire churn operations must not grow resident entries beyond MaxPartitions");
@@ -362,8 +360,7 @@ public sealed class AdmissionPartitionPoolTests
         var lease = pool.TryAcquire(CreateContext())!;
 
         pool.Dispose();
-        lease.Dispose();
-        lease.Dispose();
+        pool.Release(lease);
 
         Ensure(pool.Count == 0, "disposed pool should remain empty after late lease release");
         Ensure(pool.ReclaimScanCount == 0 && pool.ReclaimEntriesVisited == 0,
