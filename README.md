@@ -244,6 +244,23 @@ var server = SharpLinkServerBuilder.Create()
 
 压缩在连接握手后按每个方向自动应用，不存在 per-call 强制开关；需要控制是否尝试压缩时，应在对应 Client/Server Runtime Context 配置 Provider 或调整 payload/收益阈值。
 
+## 连接接入资源边界
+
+服务端默认对 accept 后、Ready 前的资源建立独立硬边界：最多同时保留 1024 个 live accepted connection，并最多允许 64 个连接同时处于 TLS / Protocol v2 / application authentication handshake。handshake slot 覆盖完整的 pre-auth 阶段，并在连接 Ready 时立即释放；connection slot 一直持有到 terminal cleanup。超过任一边界时连接立即关闭，不排队，也不会进入更多握手工作。
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseTcp(5000)
+    .UseConnectionAdmission(options =>
+    {
+        options.MaxConcurrentConnections = 1024;
+        options.MaxConcurrentHandshakes = 64;
+    })
+    .Build();
+```
+
+`MaxConcurrentHandshakes` 的默认值为固定 64；如果只把 `MaxConcurrentConnections` 配到 64 以下且没有显式设置 handshake 上限，默认会自动 clamp 到更低的 connection bound。显式 `MaxConcurrentHandshakes = 0` 是保留的 opt-out：它关闭独立 handshake 上限，让握手并发只受 `MaxConcurrentConnections` 约束。启动日志会输出最终生效的 `max_connections` / `max_handshakes`。迁移与滚动重连注意事项见 [`doc/migration.md`](doc/migration.md)，完整接入说明见 [`doc/admission-control.md`](doc/admission-control.md)。
+
 ## 主动接入控制
 
 服务端可在创建 Service、DI Scope、Codec 调用状态和执行 Interceptor 之前启用累计 admission 规则。默认完全关闭；启用后依次取得 `Global → Contract → Method → Partition` 中所有已配置的 permit，现有每连接和进程硬并发上限仍作为最后安全边界：
@@ -567,6 +584,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 日志：`UseLoggerFactory(...)`
 - 心跳：`UseHeartbeat(...)`
 - 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
+- 连接资源边界：`UseConnectionAdmission(...)`；默认 `1024` live connections / `64` concurrent handshakes，显式 handshake `0` 关闭独立上限
 - 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
 - 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
 - 服务注册与生命周期：`[RpcService]`、`EnableService` / `ExcludeService` / `ReplaceService`、`UseServiceProvider(...)` 与 `SharpLinkServiceLifetime`
