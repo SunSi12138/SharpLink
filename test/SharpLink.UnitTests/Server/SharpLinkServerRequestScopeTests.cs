@@ -128,7 +128,7 @@ public class SharpLinkServerRequestScopeTests
         for (var i = 0; i < requestCount; i++)
         {
             using (harness.BeginRequestScope(1_000L + i))
-                harness.DispatchOneWay(1_000L + i);
+                await harness.DispatchOneWay(1_000L + i);
         }
 
         var snapshot = loggerFactory.Snapshot();
