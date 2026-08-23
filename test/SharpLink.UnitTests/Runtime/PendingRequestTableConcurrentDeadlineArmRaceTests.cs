@@ -20,7 +20,7 @@ public class PendingRequestTableConcurrentDeadlineArmRaceTests
             NoopOwner.Instance,
             timeProvider);
 
-        var laterDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(10), timeProvider);
+        var laterDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), timeProvider);
         var laterRegistration = Task.Run(() =>
         {
             var operation = table.Rent(
@@ -35,7 +35,7 @@ public class PendingRequestTableConcurrentDeadlineArmRaceTests
         Ensure(timeProvider.BlockedChangeEntered.Wait(CoordinationTimeout),
             "the first registration should reach its deterministic timer-arm gate");
 
-        var earlierDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
+        var earlierDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
         var earlier = table.Rent(
             Int32Codec.Instance,
             PendingCallKind.Unary,
