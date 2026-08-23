@@ -3,9 +3,18 @@ name: Codec Padding Security Evidence
 on:
   pull_request:
     paths:
-      - 'src/SharpLink.Runtime/Codec/StructCodec.cs'
-      - 'test/SharpLink.Benchmarks/UnsafeBlitPaddingBenchmarks.cs'
+      - 'src/SharpLink.Runtime/Codec/**'
+      - 'src/SharpLink.Runtime/SharpLink.Runtime.csproj'
+      - 'test/SharpLink.Benchmarks/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
       - 'doc/unsafe-blit-padding-security.md'
+      - 'doc/codec-compatibility.md'
+      - 'doc/contracts-and-codecs.md'
+      - 'doc/security.md'
+      - 'doc/index.md'
+      - 'doc/evidence/unsafe-blit-padding-*.json'
       - '.github/workflows/codec-padding-security.yml'
   workflow_dispatch:
 
@@ -29,7 +38,8 @@ jobs:
     timeout-minutes: 45
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      SHARPLINK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       SHARPLINK_PADDING_EVIDENCE_OUTPUT: ${{ github.workspace }}/artifacts/codec-padding/${{ matrix.tag }}/padding-evidence.json
 
     steps:
@@ -44,7 +54,14 @@ jobs:
       - name: Record runtime environment
         run: dotnet --info
 
-      - name: Reproduce padding disclosure and benchmark canonicalization
+      - name: Assert padding disclosure behavior
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          --
+          --unsafe-blit-padding-evidence
+
+      - name: Benchmark padding canonicalization
         run: >-
           dotnet run -c Release
           --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
@@ -61,4 +78,4 @@ jobs:
             artifacts/codec-padding/${{ matrix.tag }}/padding-evidence.json
             BenchmarkDotNet.Artifacts/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
