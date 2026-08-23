@@ -49,7 +49,7 @@ The `Codec Padding Security Evidence` workflow runs the actual internal `UnsafeB
 - Windows x64 / CoreCLR / .NET 10;
 - macOS ARM64 / CoreCLR / .NET 10.
 
-Each job constructs two logically equal values over backing storage poisoned with different bytes, assigns the same logical fields, serializes through the production codec, and asserts that every differing wire byte is exactly a known padding byte.
+Each job first invokes the dedicated `--unsafe-blit-padding-evidence` CLI mode. That process constructs two logically equal values over backing storage poisoned with different bytes, assigns the same logical fields, serializes through the production codec, and asserts that every differing wire byte is exactly a known padding byte. Any failed assertion escapes the CLI process and produces a non-zero `dotnet run` exit before BenchmarkDotNet starts. BenchmarkDotNet is used only for performance measurements and is not the security assertion gate.
 
 Fixtures cover more than the original `ByteInt32` and `Int64Byte` controls:
 
@@ -67,7 +67,11 @@ The explicit-layout fixture is important: **requiring `LayoutKind.Explicit` alon
 
 The workflow also asserts that zeroing only the known padding offsets makes the two poisoned wires identical and records whether the ordinary managed-construction control happens to contain zero at those offsets on each tested runtime. That control is evidence, not a contractual assertion about all .NET executions.
 
-Evidence snapshot `32627839187` at head `50996b10f3d365c3c8b64cc458018ed5e1ab1563` passed on all three platforms. For every fixture, observed poisoned-wire differences exactly matched the expected padding offsets; the representative ordinary managed-construction controls observed zero at all known padding offsets; and zeroing only those padding bytes made the poisoned wires identical. The packed control produced no differing bytes.
+Evidence snapshot `32627839187` passed on all three platforms. The original workflow metadata identified source head `50996b10f3d365c3c8b64cc458018ed5e1ab1563`, while the default `pull_request` checkout actually executed synthetic merge commit `0524ff554034d2ba7605533ba093142a1f83c244` against base `75bc3815454329233fe19de029c33b1c340721d3`. That historical provenance mismatch is recorded explicitly rather than hidden. The workflow now records the actual checked-out `github.sha` separately from the PR source-head SHA.
+
+A permanent machine-readable copy of the reviewed snapshot is checked in at [`evidence/unsafe-blit-padding-32627839187.json`](evidence/unsafe-blit-padding-32627839187.json). It retains the three poison reports, the BenchmarkDotNet mean/error/stddev/ratio summaries, artifact IDs and SHA-256 digests, and the recovered checkout/base provenance so the evidence remains inspectable after Actions artifacts expire.
+
+For every fixture in that snapshot, observed poisoned-wire differences exactly matched the expected padding offsets; the representative ordinary managed-construction controls observed zero at all known padding offsets; and zeroing only those padding bytes made the poisoned wires identical. The packed control produced no differing bytes.
 
 ## Candidate mitigations
 
@@ -117,7 +121,7 @@ Compatibility cost: source/runtime behavior change for existing unmanaged payloa
 
 `UnsafeBlitPaddingBenchmarks` compares the current production `UnsafeBlitCodec<T>` hot path with a representative post-blit padding-clear candidate for `ByteInt32`, `ByteInt64`, `Int64Byte`, and `NestedPadding`.
 
-The benchmark uses BenchmarkDotNet `ShortRun` jobs and records allocation data. Each CI job uploads both the machine-readable padding report and BenchmarkDotNet artifacts. Final review should use the same-run raw/canonicalized ratios rather than compare absolute nanosecond values across different hosted runners.
+The benchmark uses BenchmarkDotNet `ShortRun` jobs and records allocation data. Each CI job uploads both the machine-readable padding report and BenchmarkDotNet artifacts; the reviewed `32627839187` summary is additionally retained in-repo at [`evidence/unsafe-blit-padding-32627839187.json`](evidence/unsafe-blit-padding-32627839187.json). Final review should use the same-run raw/canonicalized ratios rather than compare absolute nanosecond values across different hosted runners.
 
 Evidence snapshot `32627839187` produced the following same-run results (raw -> canonicalized; ratio):
 
