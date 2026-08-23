@@ -56,6 +56,12 @@ internal static class SharpLinkTimer
                 if (deadline.IsExpired(timeProvider))
                     return false;
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                if (deadline.IsExpired(timeProvider))
+                    return false;
+                throw;
+            }
         }
     }
 
@@ -160,6 +166,22 @@ internal static class SharpLinkTimer
                 }
                 if (deadline.IsExpired(timeProvider))
                     return false;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                if (!deadline.IsExpired(timeProvider))
+                    throw;
+
+                waitCancellation.Cancel();
+                try
+                {
+                    await waitTask.ConfigureAwait(false);
+                    semaphore.Release();
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                return false;
             }
         }
     }
