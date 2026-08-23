@@ -136,15 +136,32 @@ internal sealed partial class SharpLinkServer
                                             break;
                                         }
 
+                                        var admissionProgramUse = CaptureAdmissionProgram(
+                                            requestId,
+                                            out var admissionProgram);
                                         if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
                                         {
                                             DispatchOneWayRpc(
-                                                connection, requestId, header.Flags, payload, requestCancellationMap, ct);
+                                                connection,
+                                                requestId,
+                                                header.Flags,
+                                                payload,
+                                                requestCancellationMap,
+                                                ct,
+                                                admissionProgram,
+                                                admissionProgramUse);
                                             break;
                                         }
 
                                         var dispatchTask = DispatchRpcAsync(
-                                            connection, requestId, header.Flags, payload, requestCancellationMap, ct);
+                                            connection,
+                                            requestId,
+                                            header.Flags,
+                                            payload,
+                                            requestCancellationMap,
+                                            ct,
+                                            admissionProgram,
+                                            admissionProgramUse);
                                         if (!dispatchTask.IsCompletedSuccessfully)
                                             ObserveUserCall(dispatchTask, requestId);
                                         break;
