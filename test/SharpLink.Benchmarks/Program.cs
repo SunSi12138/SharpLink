@@ -165,6 +165,18 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--handshake-default-evidence", StringComparison.Ordinal))
+        {
+            await HandshakeDefaultEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--handshake-threat-evidence", StringComparison.Ordinal))
+        {
+            await HandshakeThreatEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--connection-admission-evidence", StringComparison.Ordinal))
         {
             await ConnectionAdmissionEvidenceRunner.RunAsync(args[1..]);

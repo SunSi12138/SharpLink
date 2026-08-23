@@ -1,9 +1,10 @@
 namespace SharpLink.Runtime;
 
 /// <summary>
-/// Temporarily owns client-stream frames while the request is waiting for server admission.
-/// It remains the StreamManager entry after the generated dispatcher attaches so ordering and
-/// completion are preserved without a second request-level stream registry.
+/// Temporarily owns client-stream frames before the generated typed dispatcher is registered.
+/// Admission-queued calls use the admission byte budget; intercepted active calls promote that
+/// reservation to active-call retention. During typed attachment, live frames remain on this
+/// non-blocking ordered queue while one shared handoff count preserves the 4096-element bound.
 /// </summary>
 internal sealed class PreAdmissionStreamDispatcher(
     SharpLinkBufferWriterPool buffers,
@@ -13,8 +14,14 @@ internal sealed class PreAdmissionStreamDispatcher(
     Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null)
     : IStreamConsumptionAwareDispatcher, IStreamDispatchLease
 {
+    private const int MaxBufferedElements = 4096;
+    private static readonly Action<int> NoopReleaseBytes = static _ => { };
+    private static Action<long, ushort, bool>? s_bufferedItemObserverForTests;
+
     private readonly Lock _gate = new();
     private readonly Queue<BufferedItem> _items = [];
+    private RetentionPolicy _retentionPolicy = new(reserveBytes, releaseBytes, capacityExceeded);
+    private Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? _decodeCompressed = decodeCompressed;
     private IStreamDispatcher? _dispatcher;
     private IStreamDispatcher? _attachingDispatcher;
     private Action<long, ushort, int>? _bytesConsumed;
@@ -26,8 +33,15 @@ internal sealed class PreAdmissionStreamDispatcher(
     private IStreamDispatchLease? _failedDispatchLease;
     private TaskCompletionSource? _attachmentBarrier;
     private int _configurationVersion;
+    private int _replayedDuringAttach;
     private bool _drainRequested;
     private bool _drainForwarded;
+
+    internal static Action<long, ushort, bool>? BufferedItemObserverForTests
+    {
+        get => Volatile.Read(ref s_bufferedItemObserverForTests);
+        set => Volatile.Write(ref s_bufferedItemObserverForTests, value);
+    }
 
     internal bool IsAttached
     {
@@ -43,146 +57,299 @@ internal sealed class PreAdmissionStreamDispatcher(
 
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
     {
-        IStreamDispatcher? attached;
-        lock (_gate)
-            attached = _dispatcher;
-        if (attached is not null)
-            return DispatchAttached(attached, payload, encodedByteCount);
+        var retainedBytes = Math.Max(1, checked((int)payload.Length));
 
-        var retainedBytes = checked((int)payload.Length);
-        if (retainedBytes == 0)
-            retainedBytes = 1;
-        if (!reserveBytes(retainedBytes))
+        while (true)
         {
-            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
-            capacityExceeded();
-            return ValueTask.CompletedTask;
-        }
-
-        IRpcByteBufferWriter owner;
-        try
-        {
-            owner = buffers.Rent(retainedBytes);
-            foreach (var segment in payload)
-                owner.Write(segment.Span);
-        }
-        catch
-        {
-            releaseBytes(retainedBytes);
-            throw;
-        }
-
-        lock (_gate)
-        {
-            if (_dispatcher is null && !_completed)
+            RetentionPolicy policy;
+            IStreamDispatcher? attached;
+            bool completed;
+            lock (_gate)
             {
-                _items.Enqueue(new BufferedItem(owner, retainedBytes, encodedByteCount));
+                policy = _retentionPolicy;
+                attached = _dispatcher;
+                completed = _completed;
+            }
+            if (attached is not null)
+                return DispatchAttached(attached, payload, encodedByteCount);
+            if (completed)
+            {
+                _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
                 return ValueTask.CompletedTask;
             }
-            attached = _dispatcher;
-        }
 
-        buffers.Return(owner);
-        releaseBytes(retainedBytes);
-        if (attached is null)
-        {
-            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
-            return ValueTask.CompletedTask;
+            if (!policy.ReserveBytes(retainedBytes))
+            {
+                var retry = false;
+                lock (_gate)
+                {
+                    retry = !ReferenceEquals(policy, _retentionPolicy);
+                    attached = _dispatcher;
+                    completed = _completed;
+                }
+                if (retry)
+                    continue;
+                if (attached is not null)
+                    return DispatchAttached(attached, payload, encodedByteCount);
+
+                _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+                if (!completed)
+                    policy.CapacityExceeded();
+                return ValueTask.CompletedTask;
+            }
+
+            IRpcByteBufferWriter owner;
+            try
+            {
+                owner = buffers.Rent(retainedBytes);
+                foreach (var segment in payload)
+                    owner.Write(segment.Span);
+            }
+            catch
+            {
+                policy.ReleaseBytes(retainedBytes);
+                throw;
+            }
+
+            var retryPolicy = false;
+            var buffered = false;
+            var elementCapacityExceeded = false;
+            lock (_gate)
+            {
+                retryPolicy = !ReferenceEquals(policy, _retentionPolicy);
+                if (!retryPolicy && _dispatcher is null && !_completed)
+                {
+                    if (_items.Count + _replayedDuringAttach >= MaxBufferedElements)
+                    {
+                        elementCapacityExceeded = true;
+                        _completed = true;
+                        _completion = CreateElementCapacityException();
+                    }
+                    else
+                    {
+                        _items.Enqueue(new BufferedItem(
+                            owner,
+                            retainedBytes,
+                            encodedByteCount,
+                            policy.ReleaseBytes));
+                        buffered = true;
+                    }
+                }
+                attached = _dispatcher;
+            }
+
+            if (retryPolicy)
+            {
+                buffers.Return(owner);
+                policy.ReleaseBytes(retainedBytes);
+                continue;
+            }
+
+            if (buffered)
+            {
+                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(
+                    _requestId,
+                    _streamId,
+                    false);
+                return ValueTask.CompletedTask;
+            }
+
+            buffers.Return(owner);
+            policy.ReleaseBytes(retainedBytes);
+            if (elementCapacityExceeded)
+            {
+                _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+                policy.CapacityExceeded();
+                return ValueTask.CompletedTask;
+            }
+            if (attached is null)
+            {
+                _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+                return ValueTask.CompletedTask;
+            }
+            return DispatchAttached(attached, payload, encodedByteCount);
         }
-        return DispatchAttached(attached, payload, encodedByteCount);
     }
 
     internal ValueTask DispatchCompressedAsync(
         ReadOnlySequence<byte> wirePayload,
         int originalByteCount)
     {
-        var decoder = decodeCompressed ?? throw new InvalidOperationException(
-            "The pre-admission stream has no compressed-frame decoder.");
-        IStreamDispatcher? attached;
-        lock (_gate)
-            attached = _dispatcher;
-        if (attached is not null)
-        {
-            return attached is DiscardingStreamDispatcher
-                ? DispatchAttached(attached, wirePayload, originalByteCount)
-                : DecodeAndDispatch(attached, wirePayload, originalByteCount, decoder);
-        }
-
         var retainedBytes = checked((int)wirePayload.Length);
-        if (!reserveBytes(retainedBytes))
-        {
-            _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
-            capacityExceeded();
-            return ValueTask.CompletedTask;
-        }
 
-        IRpcByteBufferWriter owner;
-        try
+        while (true)
         {
-            owner = buffers.Rent(retainedBytes);
-            foreach (var segment in wirePayload)
-                owner.Write(segment.Span);
-        }
-        catch
-        {
-            releaseBytes(retainedBytes);
-            throw;
-        }
-
-        lock (_gate)
-        {
-            if (_dispatcher is null && !_completed)
+            RetentionPolicy policy;
+            Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decoder;
+            IStreamDispatcher? attached;
+            bool completed;
+            lock (_gate)
             {
-                _items.Enqueue(new BufferedItem(
-                    owner,
-                    retainedBytes,
-                    originalByteCount,
-                    IsCompressed: true));
-                return ValueTask.CompletedTask;
+                policy = _retentionPolicy;
+                decoder = _decodeCompressed;
+                attached = _dispatcher;
+                completed = _completed;
             }
-            attached = _dispatcher;
-        }
-
-        ValueTask dispatch;
-        try
-        {
-            if (attached is null)
+            decoder = decoder ?? throw new InvalidOperationException(
+                "The pre-admission stream has no compressed-frame decoder.");
+            if (attached is not null)
+            {
+                return attached is DiscardingStreamDispatcher
+                    ? DispatchAttached(attached, wirePayload, originalByteCount)
+                    : DecodeAndDispatch(attached, wirePayload, originalByteCount, decoder);
+            }
+            if (completed)
             {
                 _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
-                buffers.Return(owner);
-                releaseBytes(retainedBytes);
                 return ValueTask.CompletedTask;
             }
-            dispatch = attached is DiscardingStreamDispatcher
-                ? DispatchAttached(
-                    attached,
-                    new ReadOnlySequence<byte>(owner.WrittenMemory),
-                    originalByteCount)
-                : DecodeAndDispatch(
-                    attached,
-                    new ReadOnlySequence<byte>(owner.WrittenMemory),
-                    originalByteCount,
-                    decoder);
+
+            if (!policy.ReserveBytes(retainedBytes))
+            {
+                var retry = false;
+                lock (_gate)
+                {
+                    retry = !ReferenceEquals(policy, _retentionPolicy);
+                    decoder = _decodeCompressed;
+                    attached = _dispatcher;
+                    completed = _completed;
+                }
+                if (retry)
+                    continue;
+                if (attached is not null)
+                {
+                    decoder = decoder ?? throw new InvalidOperationException(
+                        "The pre-admission stream has no compressed-frame decoder.");
+                    return attached is DiscardingStreamDispatcher
+                        ? DispatchAttached(attached, wirePayload, originalByteCount)
+                        : DecodeAndDispatch(attached, wirePayload, originalByteCount, decoder);
+                }
+
+                _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
+                if (!completed)
+                    policy.CapacityExceeded();
+                return ValueTask.CompletedTask;
+            }
+
+            IRpcByteBufferWriter owner;
+            try
+            {
+                owner = buffers.Rent(retainedBytes);
+                foreach (var segment in wirePayload)
+                    owner.Write(segment.Span);
+            }
+            catch
+            {
+                policy.ReleaseBytes(retainedBytes);
+                throw;
+            }
+
+            var retryPolicy = false;
+            var buffered = false;
+            var elementCapacityExceeded = false;
+            lock (_gate)
+            {
+                retryPolicy = !ReferenceEquals(policy, _retentionPolicy);
+                if (!retryPolicy && _dispatcher is null && !_completed)
+                {
+                    if (_items.Count + _replayedDuringAttach >= MaxBufferedElements)
+                    {
+                        elementCapacityExceeded = true;
+                        _completed = true;
+                        _completion = CreateElementCapacityException();
+                    }
+                    else
+                    {
+                        _items.Enqueue(new BufferedItem(
+                            owner,
+                            retainedBytes,
+                            originalByteCount,
+                            policy.ReleaseBytes,
+                            IsCompressed: true));
+                        buffered = true;
+                    }
+                }
+                attached = _dispatcher;
+                decoder = _decodeCompressed;
+            }
+
+            if (retryPolicy)
+            {
+                buffers.Return(owner);
+                policy.ReleaseBytes(retainedBytes);
+                continue;
+            }
+
+            if (buffered)
+            {
+                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(
+                    _requestId,
+                    _streamId,
+                    true);
+                return ValueTask.CompletedTask;
+            }
+
+            if (elementCapacityExceeded)
+            {
+                buffers.Return(owner);
+                policy.ReleaseBytes(retainedBytes);
+                _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
+                policy.CapacityExceeded();
+                return ValueTask.CompletedTask;
+            }
+
+            ValueTask dispatch;
+            try
+            {
+                if (attached is null)
+                {
+                    _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
+                    buffers.Return(owner);
+                    policy.ReleaseBytes(retainedBytes);
+                    return ValueTask.CompletedTask;
+                }
+                decoder = decoder ?? throw new InvalidOperationException(
+                    "The pre-admission stream has no compressed-frame decoder.");
+                dispatch = attached is DiscardingStreamDispatcher
+                    ? DispatchAttached(
+                        attached,
+                        new ReadOnlySequence<byte>(owner.WrittenMemory),
+                        originalByteCount)
+                    : DecodeAndDispatch(
+                        attached,
+                        new ReadOnlySequence<byte>(owner.WrittenMemory),
+                        originalByteCount,
+                        decoder);
+            }
+            catch
+            {
+                buffers.Return(owner);
+                policy.ReleaseBytes(retainedBytes);
+                throw;
+            }
+            if (dispatch.IsCompletedSuccessfully)
+            {
+                buffers.Return(owner);
+                policy.ReleaseBytes(retainedBytes);
+                return ValueTask.CompletedTask;
+            }
+            return AwaitRetainedCompressedDispatchAsync(
+                dispatch,
+                owner,
+                retainedBytes,
+                policy.ReleaseBytes);
         }
-        catch
-        {
-            buffers.Return(owner);
-            releaseBytes(retainedBytes);
-            throw;
-        }
-        if (dispatch.IsCompletedSuccessfully)
-        {
-            buffers.Return(owner);
-            releaseBytes(retainedBytes);
-            return ValueTask.CompletedTask;
-        }
-        return AwaitRetainedCompressedDispatchAsync(
-            dispatch, owner, retainedBytes);
     }
 
     internal bool TryBeginAttach(IStreamDispatcher dispatcher, out bool alreadyCompleted)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
+        if (dispatcher is PreAdmissionStreamDispatcher promotion)
+        {
+            PromoteFrom(promotion);
+            alreadyCompleted = false;
+            return true;
+        }
         lock (_gate)
         {
             if (_dispatcher is not null || _attachingDispatcher is not null)
@@ -193,6 +360,7 @@ internal sealed class PreAdmissionStreamDispatcher(
             _attachingDispatcher = dispatcher;
             _attachmentBarrier = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            _replayedDuringAttach = 0;
             alreadyCompleted = _completed;
             return true;
         }
@@ -200,6 +368,9 @@ internal sealed class PreAdmissionStreamDispatcher(
 
     internal void FinishAttach(IStreamDispatcher dispatcher)
     {
+        if (dispatcher is PreAdmissionStreamDispatcher)
+            return;
+
         TaskCompletionSource barrier;
         lock (_gate)
         {
@@ -292,6 +463,109 @@ internal sealed class PreAdmissionStreamDispatcher(
         TryForwardDrain();
     }
 
+    private void PromoteFrom(PreAdmissionStreamDispatcher replacement)
+    {
+        while (true)
+        {
+            RetentionPolicy currentPolicy;
+            RetentionPolicy replacementPolicy;
+            BufferedItem[] buffered;
+            lock (_gate)
+            {
+                currentPolicy = _retentionPolicy;
+                replacementPolicy = replacement._retentionPolicy;
+                buffered = [.. _items];
+            }
+
+            if (currentPolicy == replacementPolicy)
+            {
+                lock (_gate)
+                {
+                    if (!ReferenceEquals(currentPolicy, _retentionPolicy))
+                        continue;
+                    _decodeCompressed = replacement._decodeCompressed;
+                }
+                return;
+            }
+
+            var reservedCount = 0;
+            for (; reservedCount < buffered.Length; reservedCount++)
+            {
+                if (!replacementPolicy.ReserveBytes(buffered[reservedCount].RetainedBytes))
+                    break;
+            }
+            var reservationSucceeded = reservedCount == buffered.Length;
+            if (!reservationSucceeded)
+            {
+                for (var index = 0; index < reservedCount; index++)
+                    replacementPolicy.ReleaseBytes(buffered[index].RetainedBytes);
+            }
+
+            var retry = false;
+            BufferedItem[] rejected = [];
+            lock (_gate)
+            {
+                if (!ReferenceEquals(currentPolicy, _retentionPolicy) ||
+                    _items.Count != buffered.Length)
+                {
+                    retry = true;
+                }
+                else if (!reservationSucceeded)
+                {
+                    _retentionPolicy = replacementPolicy;
+                    _decodeCompressed = replacement._decodeCompressed;
+                    rejected = [.. _items];
+                    _items.Clear();
+                    _completed = true;
+                    _completion = CreateRetentionPromotionCapacityException();
+                }
+                else
+                {
+                    _retentionPolicy = replacementPolicy;
+                    _decodeCompressed = replacement._decodeCompressed;
+                    if (buffered.Length != 0)
+                    {
+                        _items.Clear();
+                        for (var index = 0; index < buffered.Length; index++)
+                        {
+                            _items.Enqueue(buffered[index] with
+                            {
+                                ReleaseBytes = replacementPolicy.ReleaseBytes
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (retry)
+            {
+                if (reservationSucceeded)
+                {
+                    for (var index = 0; index < buffered.Length; index++)
+                        replacementPolicy.ReleaseBytes(buffered[index].RetainedBytes);
+                }
+                continue;
+            }
+
+            if (!reservationSucceeded)
+            {
+                // Promotion runs while StreamManager holds its registration lock. Marking this
+                // wrapper terminal directly avoids re-entering StreamManager through the active
+                // policy's capacity callback while still ensuring typed attachment observes
+                // ResourceExhausted. Existing queued owners/accounting are released immediately.
+                ReleaseBufferedItems(rejected);
+                return;
+            }
+
+            // The active policy now owns the retained-byte accounting. Settle the old admission
+            // reservation only after that ownership transfer is published, so there is never a
+            // window where the same pooled owners are charged to neither budget.
+            for (var index = 0; index < buffered.Length; index++)
+                buffered[index].ReleaseBytes(buffered[index].RetainedBytes);
+            return;
+        }
+    }
+
     private async Task ReplayBufferedItemsAsync(
         IStreamDispatcher dispatcher,
         TaskCompletionSource barrier)
@@ -312,6 +586,7 @@ internal sealed class PreAdmissionStreamDispatcher(
                                 "The generated stream dispatcher lost its attachment claim during replay.");
                         _attachingDispatcher = null;
                         _dispatcher = dispatcher;
+                        _replayedDuringAttach = 0;
                         completed = _completed;
                         if (!completed)
                             barrier.TrySetResult();
@@ -319,6 +594,7 @@ internal sealed class PreAdmissionStreamDispatcher(
                             break;
                         return;
                     }
+                    _replayedDuringAttach++;
                 }
                 try
                 {
@@ -328,7 +604,7 @@ internal sealed class PreAdmissionStreamDispatcher(
                             dispatcher,
                             bufferedPayload,
                             item.EncodedByteCount,
-                            decodeCompressed ?? throw new InvalidOperationException(
+                            _decodeCompressed ?? throw new InvalidOperationException(
                                 "The pre-admission stream has no compressed-frame decoder."))
                         : DispatchAttached(dispatcher, bufferedPayload, item.EncodedByteCount);
                     await dispatch.ConfigureAwait(false);
@@ -336,7 +612,7 @@ internal sealed class PreAdmissionStreamDispatcher(
                 finally
                 {
                     buffers.Return(item.Owner);
-                    releaseBytes(item.RetainedBytes);
+                    item.ReleaseBytes(item.RetainedBytes);
                 }
             }
 
@@ -370,6 +646,7 @@ internal sealed class PreAdmissionStreamDispatcher(
         {
             remaining = [.. _items];
             _items.Clear();
+            _replayedDuringAttach = 0;
             _failedDispatchLease = dispatcher as IStreamDispatchLease;
             if (ReferenceEquals(_attachingDispatcher, dispatcher))
                 _attachingDispatcher = null;
@@ -455,7 +732,8 @@ internal sealed class PreAdmissionStreamDispatcher(
     private async ValueTask AwaitRetainedCompressedDispatchAsync(
         ValueTask dispatch,
         IRpcByteBufferWriter owner,
-        int retainedBytes)
+        int retainedBytes,
+        Action<int> releaseRetainedBytes)
     {
         try
         {
@@ -464,7 +742,7 @@ internal sealed class PreAdmissionStreamDispatcher(
         finally
         {
             buffers.Return(owner);
-            releaseBytes(retainedBytes);
+            releaseRetainedBytes(retainedBytes);
         }
     }
 
@@ -514,20 +792,36 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
     }
 
+    private static SharpLinkException CreateElementCapacityException()
+        => new(
+            SharpLinkErrorCode.ResourceExhausted,
+            $"Stream receive buffer exceeded {MaxBufferedElements} elements.");
+
+    private static SharpLinkException CreateRetentionPromotionCapacityException()
+        => new(
+            SharpLinkErrorCode.ResourceExhausted,
+            "Deferred stream retention exceeded the active byte budget during admission promotion.");
+
     private void ReleaseBufferedItems(IEnumerable<BufferedItem> items)
     {
         foreach (var item in items)
         {
             buffers.Return(item.Owner);
-            releaseBytes(item.RetainedBytes);
+            item.ReleaseBytes(item.RetainedBytes);
             _bytesConsumed?.Invoke(_requestId, _streamId, item.EncodedByteCount);
         }
     }
+
+    private sealed record RetentionPolicy(
+        Func<int, bool> ReserveBytes,
+        Action<int> ReleaseBytes,
+        Action CapacityExceeded);
 
     private readonly record struct BufferedItem(
         IRpcByteBufferWriter Owner,
         int RetainedBytes,
         int EncodedByteCount,
+        Action<int> ReleaseBytes,
         bool IsCompressed = false);
 }
 
