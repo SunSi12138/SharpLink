@@ -29,25 +29,39 @@ public class ClientStreamingResultStressTests
 
                 Console.WriteLine($"CLIENT_STREAM_REPRO iteration={iteration} phase=invoke");
                 var first = InvokeClientStreamingAsync(harness.Service);
-                await AwaitPhaseAsync(b.Entered, iteration, "server interceptor entry");
+                await AwaitPhaseAsync(
+                    b.Entered,
+                    iteration,
+                    "server interceptor entry",
+                    log);
                 if (first.IsCompleted)
-                    throw new Exception($"iteration {iteration}: invocation completed before gated next");
+                {
+                    throw new Exception(
+                        $"iteration {iteration}: invocation completed before gated next; " +
+                        $"interceptors={FormatInterceptorLog(log)}");
+                }
 
                 harness.Server.ReplaceInterceptors([x, y, z]);
                 b.Release();
 
                 Console.WriteLine($"CLIENT_STREAM_REPRO iteration={iteration} phase=result");
-                var result = await AwaitPhaseAsync(first, iteration, "client-streaming result");
+                var result = await AwaitPhaseAsync(
+                    first,
+                    iteration,
+                    "client-streaming result",
+                    log);
                 if (result != 10)
                 {
                     throw new Exception(
-                        $"iteration {iteration}: client-streaming result expected 10, actual {result}");
+                        $"iteration {iteration}: client-streaming result expected 10, actual {result}; " +
+                        $"interceptors={FormatInterceptorLog(log)}");
                 }
 
                 await AwaitPhaseAsync(
                     Task.WhenAll(a.Completed, b.Completed, c.Completed),
                     iteration,
-                    "server interceptor unwind");
+                    "server interceptor unwind",
+                    log);
                 Console.WriteLine($"CLIENT_STREAM_REPRO iteration={iteration} phase=passed");
             }
             finally
@@ -56,12 +70,17 @@ public class ClientStreamingResultStressTests
                 await AwaitPhaseAsync(
                     harness.DisposeAsync().AsTask(),
                     iteration,
-                    "harness disposal");
+                    "harness disposal",
+                    log);
             }
         }
     }
 
-    private static async Task<T> AwaitPhaseAsync<T>(Task<T> task, int iteration, string phase)
+    private static async Task<T> AwaitPhaseAsync<T>(
+        Task<T> task,
+        int iteration,
+        string phase,
+        ConcurrentQueue<string>? log = null)
     {
         try
         {
@@ -69,11 +88,18 @@ public class ClientStreamingResultStressTests
         }
         catch (TimeoutException exception)
         {
-            throw new TimeoutException($"iteration {iteration}: timed out during {phase}", exception);
+            throw new TimeoutException(
+                $"iteration {iteration}: timed out during {phase}; " +
+                $"interceptors={FormatInterceptorLog(log)}",
+                exception);
         }
     }
 
-    private static async Task AwaitPhaseAsync(Task task, int iteration, string phase)
+    private static async Task AwaitPhaseAsync(
+        Task task,
+        int iteration,
+        string phase,
+        ConcurrentQueue<string>? log = null)
     {
         try
         {
@@ -81,9 +107,17 @@ public class ClientStreamingResultStressTests
         }
         catch (TimeoutException exception)
         {
-            throw new TimeoutException($"iteration {iteration}: timed out during {phase}", exception);
+            throw new TimeoutException(
+                $"iteration {iteration}: timed out during {phase}; " +
+                $"interceptors={FormatInterceptorLog(log)}",
+                exception);
         }
     }
+
+    private static string FormatInterceptorLog(ConcurrentQueue<string>? log)
+        => log is null || log.IsEmpty
+            ? "<empty>"
+            : string.Join(" -> ", log.ToArray());
 
     private static async Task<int> InvokeClientStreamingAsync(IInterceptorTestService service)
         => await service.SumStreamAsync(SingleValue(), CancellationToken.None);
