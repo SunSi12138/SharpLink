@@ -2,10 +2,6 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    // This duration is accepted by Task.Delay on every supported runtime. Longer public retry
-    // and admission delays are awaited in cancellable slices rather than rejected by the timer.
-    private static readonly TimeSpan MaximumRetryOrAdmissionDelay = TimeSpan.FromMilliseconds(int.MaxValue);
-
     internal ResolvedCallControl ResolveCallControl(
         SharpLinkMetadata? metadata,
         bool includeClientDefault,
@@ -48,7 +44,15 @@ internal sealed partial class SharpLinkClient
             metadata is { Count: > 0 } ? metadata : null);
     }
 
-    private async ValueTask DelayForRetryOrAdmissionAsync(TimeSpan delay, CancellationToken cancellationToken)
+    private ValueTask DelayForRetryOrAdmissionAsync(
+        TimeSpan delay,
+        CancellationToken cancellationToken)
+        => DelayForRetryOrAdmissionAsync(delay, default, cancellationToken);
+
+    private async ValueTask DelayForRetryOrAdmissionAsync(
+        TimeSpan delay,
+        RpcDeadline deadline,
+        CancellationToken cancellationToken)
     {
         if (_shutdownCts.IsCancellationRequested)
             throw CreateConnectionClosedException("Client has stopped.");
@@ -57,18 +61,14 @@ internal sealed partial class SharpLinkClient
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
         try
         {
-            while (delay > MaximumRetryOrAdmissionDelay)
-            {
-                await SharpLinkTimer.DelayAsync(
-                    MaximumRetryOrAdmissionDelay,
+            if (!await SharpLinkTimer.DelayAsync(
+                    delay,
+                    deadline,
                     _runtimeContext.TimeProvider,
-                    linkedCancellation.Token).ConfigureAwait(false);
-                delay -= MaximumRetryOrAdmissionDelay;
+                    linkedCancellation.Token).ConfigureAwait(false))
+            {
+                throw CreateDeadlineExceededException();
             }
-            await SharpLinkTimer.DelayAsync(
-                delay,
-                _runtimeContext.TimeProvider,
-                linkedCancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (
             _shutdownCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
