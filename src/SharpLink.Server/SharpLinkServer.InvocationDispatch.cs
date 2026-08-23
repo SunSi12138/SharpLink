@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
-        ServerRetainedCompressedPermit? retainedCompressedPermit = null)
+        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
     {
         var session = connection.Session;
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
@@ -120,11 +120,7 @@ internal sealed partial class SharpLinkServer
             }
             if (!admissionTask.IsCompletedSuccessfully)
             {
-                if (!TryCopyAdmissionPayload(
-                        payload,
-                        flags,
-                        out var retainedPayload,
-                        out var queuedRetainedPermit))
+                if (!TryCopyAdmissionPayload(payload, flags, out var queuedRetainedPayload))
                 {
                     admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                     return RejectQueuedAdmissionForRetainedBudgetAsync(
@@ -143,14 +139,13 @@ internal sealed partial class SharpLinkServer
                     admittedCallState);
                 return AwaitRpcAdmissionAsync(
                     admissionTask,
-                    retainedPayload!,
+                    queuedRetainedPayload!,
                     connection,
                     requestId,
                     flags,
                     requestCancellationMap,
                     serverLoopToken,
-                    admittedCallState,
-                    queuedRetainedPermit);
+                    admittedCallState);
             }
 
             var decision = admissionTask.Result;
@@ -208,12 +203,13 @@ internal sealed partial class SharpLinkServer
             {
                 if (!TryPrepareCompressedRequestDecode(
                         requestOwner,
-                        retainedCompressedPermit,
+                        retainedAdmissionPayload?.RetainedPermit,
                         flags,
                         payload,
                         out var decodePermit,
                         out var resourceRejection))
                 {
+                    retainedAdmissionPayload?.Dispose();
                     var rejection = resourceRejection ?? throw new InvalidOperationException(
                         "Compressed request decode resource rejection is missing its error.");
                     CompleteFailedRequestStreams(session, requestId, rejection);
@@ -234,6 +230,7 @@ internal sealed partial class SharpLinkServer
                     payload,
                     admittedCallState?.InvocationToken ?? serverLoopToken,
                     out decodedRequestOwner);
+                retainedAdmissionPayload?.Dispose();
                 decodePermit!.CompleteDecode();
                 request = ReadRequestEnvelope(session, payload, flags);
             }
@@ -241,6 +238,7 @@ internal sealed partial class SharpLinkServer
         catch (SharpLinkException exception) when (
             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
         {
+            retainedAdmissionPayload?.Dispose();
             CompleteFailedRequestStreams(session, requestId, exception);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId, exception, connection.ConnectionToken);
@@ -254,6 +252,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (OperationCanceledException exception)
         {
+            retainedAdmissionPayload?.Dispose();
             CompleteFailedRequestStreams(session, requestId, exception);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId,
@@ -269,6 +268,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
+            retainedAdmissionPayload?.Dispose();
             session.ReturnDecodedPayload(decodedRequestOwner);
             CompleteFailedRequestStreams(session, requestId, exception);
             ReleaseDispatchResources(
@@ -764,14 +764,7 @@ internal sealed partial class SharpLinkServer
             {
                 await session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    MapServiceException(
-                        e,
-                        callContext,
-                        session,
-                        stub,
-                        methodId,
-                        requestId,
-                        cancellationToken),
+                    MapServerCancellationException(callState, callState.Deadline),
                     connection.ConnectionToken).ConfigureAwait(false);
             }
             else
