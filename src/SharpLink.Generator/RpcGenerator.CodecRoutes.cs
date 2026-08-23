@@ -7,6 +7,13 @@ public partial class RpcGenerator
     private const int RpcCodecScopeNative = 1 << 2;
     private const int RpcCodecScopeAll = RpcCodecScopeManaged | RpcCodecScopeUnmanaged | RpcCodecScopeNative;
 
+    private static bool HasGeneratedAssemblyManifest(IAssemblySymbol assembly)
+        => assembly.GetAttributes().Any(static attribute =>
+            string.Equals(
+                attribute.AttributeClass?.ToDisplayString(),
+                GeneratedAssemblyManifestAttributeMetadataName,
+                StringComparison.Ordinal));
+
     private static bool HasNativeCodecRoute(IAssemblySymbol assembly)
     {
         foreach (var attribute in assembly.GetAttributes())
