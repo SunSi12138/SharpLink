@@ -65,6 +65,8 @@ The explicit-layout fixture is important: **requiring `LayoutKind.Explicit` alon
 
 The workflow also asserts that zeroing only the known padding offsets makes the two poisoned wires identical and that the ordinary default-initialized control has zero padding.
 
+Evidence snapshot `32627839187` at head `50996b10f3d365c3c8b64cc458018ed5e1ab1563` passed on all three platforms. For every fixture, observed poisoned-wire differences exactly matched the expected padding offsets; all ordinary default-initialized controls had zero padding; and zeroing only those padding bytes made the poisoned wires identical. The packed control produced no differing bytes.
+
 ## Candidate mitigations
 
 ### 1. Post-blit zero/canonicalize known padding
@@ -102,6 +104,16 @@ Compatibility cost: breaks existing DTOs and still requires a reliable managed-l
 `UnsafeBlitPaddingBenchmarks` compares the current production `UnsafeBlitCodec<T>` hot path with a representative post-blit padding-clear candidate for `ByteInt32`, `ByteInt64`, `Int64Byte`, and `NestedPadding`.
 
 The benchmark uses BenchmarkDotNet `ShortRun` jobs and records allocation data. Each CI job uploads both the machine-readable padding report and BenchmarkDotNet artifacts. Final review should use the same-run raw/canonicalized ratios rather than compare absolute nanosecond values across different hosted runners.
+
+Evidence snapshot `32627839187` produced the following same-run results (raw -> canonicalized; ratio):
+
+| Runtime | `ByteInt32` | `ByteInt64` | `Int64Byte` | `NestedPadding` |
+| --- | --- | --- | --- | --- |
+| Linux x64, .NET 10.0.11 | 7.169 -> 7.560 ns; **1.05x** | 5.880 -> 7.957 ns; **1.35x** | 5.814 -> 8.096 ns; **1.39x** | 6.178 -> 11.298 ns; **1.83x** |
+| Windows x64, .NET 10.0.11 | 6.829 -> 9.019 ns; **1.32x** | 6.867 -> 9.275 ns; **1.35x** | 7.040 -> 8.759 ns; **1.24x** | 7.014 -> 11.554 ns; **1.65x** |
+| macOS ARM64, .NET 10.0.11 | 4.278 -> 5.137 ns; **1.20x** | 4.268 -> 5.113 ns; **1.20x** | 4.126 -> 5.294 ns; **1.28x** | 4.482 -> 7.441 ns; **1.66x** |
+
+No benchmark variant allocated managed memory. The hosted-runner `ShortRun` configuration has only three measured iterations and some individual confidence intervals are wide, so the figures are directional rather than a release-grade microbenchmark budget. The consistent result across all three environments is that clearing already-known padding is not free; nested/multiple padding ranges are the most expensive case in this sample.
 
 Because the candidate assumes an already-known padding map, any measured regression is the minimum steady-state cost of this mitigation shape. A production generic implementation would also carry layout-discovery, caching, NativeAOT/trimming, and maintenance complexity.
 
