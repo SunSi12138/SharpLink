@@ -241,6 +241,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
                 .UseAdmissionControl(options =>
                 {
                     options.Global.UseConcurrency(1);
+                    options.QueueOneWayCalls = true;
                     options.MaxQueuedCalls = 2;
                     options.MaxQueuedBytes = 64 * 1024;
                     options.MaxQueueDelay = TimeSpan.FromSeconds(10);
