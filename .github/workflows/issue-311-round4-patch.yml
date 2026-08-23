@@ -47,7 +47,7 @@ jobs:
           replace_once(
               route_tests,
               '  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.native.contract - only / v1", "route - native - contract - only - wire / v1")]",',
-              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.native.contract-only/v1\\", \\"route-native-contract-only-wire/v1\\')]",')
+              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.native.contract-only/v1\\", \\"route-native-contract-only-wire/v1\\")]",')
 
           client = Path('test/SharpLink.UnitTests/Client/RpcClientStreamSinkTests.cs')
           text = client.read_text()
