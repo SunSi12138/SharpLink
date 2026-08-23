@@ -440,7 +440,7 @@ internal sealed class PendingRequestTable : IDisposable
         var index = (int)(id & _indexMask);
         var current = Volatile.Read(ref slots[index]);
         if (current is null || current.Id != id ||
-            current.Kind is not (PendingCallKind.OneWay or
+            current.Kind is not (PendingCallKind.OneWayClientStreaming or
                                  PendingCallKind.ClientStreaming or
                                  PendingCallKind.DuplexStreaming))
         {
