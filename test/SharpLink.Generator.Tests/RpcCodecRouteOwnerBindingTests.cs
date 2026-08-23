@@ -33,8 +33,10 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "generated proxies must bind the Contract owner's Codec provider at construction");
         Ensure(generated.Contains("public void BindCodecProvider(IRpcCodecProvider codecs)", StringComparison.Ordinal),
             "generated stubs must accept a construction-time owner Codec provider");
-        Ensure(generated.Contains("RpcCodecBoundAsyncEnumerable", StringComparison.Ordinal),
-            "generated client streams must carry the owner-bound item Codec");
+        Ensure(generated.Contains("_values, __codec_values, cancellationToken", StringComparison.Ordinal),
+            "generated client streams must pass the owner-bound item Codec directly to the sink");
+        Ensure(!generated.Contains("RpcCodecBoundAsyncEnumerable", StringComparison.Ordinal),
+            "client stream routing must not rely on a runtime wrapper/type predicate");
         Ensure(generated.Contains("SendBoundStreamChunkAsync", StringComparison.Ordinal),
             "generated server streams must send with the owner-bound item Codec");
         Ensure(!generated.Contains("session.RuntimeContext.Codecs.GetCodec", StringComparison.Ordinal),
