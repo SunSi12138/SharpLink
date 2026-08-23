@@ -3,6 +3,7 @@ namespace SharpLink.Abstractions;
 internal static class SharpLinkTimer
 {
     internal static readonly TimeSpan MaximumDelay = TimeSpan.FromMilliseconds(int.MaxValue);
+    private static readonly Task Never = Task.Delay(Timeout.InfiniteTimeSpan);
 
     internal static ValueTask DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
         => DelayAsync(delay, TimeProvider.System, cancellationToken);
@@ -42,10 +43,11 @@ internal static class SharpLinkTimer
             var slice = delay > MaximumDelay ? MaximumDelay : delay;
             if (deadline.WouldExpireBeforeOrAt(slice, timeProvider))
             {
-                // A retry/admission delay that reaches the frozen deadline can never
-                // produce another attempt. Reject it immediately instead of arming a
-                // doomed delay or waiting for a timer callback to establish the result.
-                return false;
+                // A delay that reaches the boundary cannot win a tie with the call deadline.
+                // Wait only for the deadline/caller-cancellation contender rather than arming
+                // a same-time delay whose callback ordering would otherwise decide the result.
+                return await WaitAsync(
+                    Never, deadline, timeProvider, cancellationToken).ConfigureAwait(false);
             }
 
             using var delayCancellation =
