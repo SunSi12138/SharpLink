@@ -201,9 +201,9 @@ internal sealed record GeneratedCodecModel(
     string? AdapterType,
     string? AdapterId,
     string WireFormatId,
-    bool IsManifestScoped,
     ImmutableArray<string> AssemblyDependencies,
-    Location? Location);
+    Location? Location,
+    bool IsManifestScoped = false);
 
 internal enum DtoDiagnosticKind
 {
