@@ -1270,14 +1270,16 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
-    public async Task PreAdmissionStreamSpoolShouldRejectWhenRetainedBytesOverflow()
+    public async Task PreAdmissionStreamSpoolShouldRejectWhenStreamBudgetOverflows()
     {
-        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
-            builder.UseAdmissionControl(options =>
+        await using var harness = await TestHarness.CreateAsync(
+            serverRuntimeConfigure: options =>
+                options.FlowControl.MaxPreAdmissionStreamBytesPerServer = 128,
+            serverConfigure: builder => builder.UseAdmissionControl(options =>
             {
                 options.Global.UseConcurrency(1);
                 options.MaxQueuedCalls = 1;
-                options.MaxQueuedBytes = 128;
+                options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(2);
             }));
         var service = harness.Client.Get<ITestService>();
@@ -1286,11 +1288,11 @@ public class IntegrationBehaviorTests
         var oversized = service.UploadAsync(ToAsyncEnumerable(
             Enumerable.Range(1, 100), CancellationToken.None)).AsTask();
 
-        // The initial request fits, then the pre-admission stream frames consume the
-        // remaining retained-byte budget and terminate the call without service execution.
+        // The initial request fits, then pre-admission stream frames exhaust the
+        // independent server stream-buffer budget without consuming admission queue bytes.
         await EnsureThrowsSharpLinkFast(
             oversized,
-            "pre-admission stream retained bytes",
+            "pre-admission stream budget",
             SharpLinkErrorCode.ResourceExhausted);
         Ensure(TestService.ActiveUploads == 0, "overflowed stream service did not execute");
         Ensure(await active == 11, "spool overflow permit owner");
