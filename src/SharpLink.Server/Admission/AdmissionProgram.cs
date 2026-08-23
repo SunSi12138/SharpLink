@@ -6,6 +6,7 @@ namespace SharpLink.Server;
 /// </summary>
 internal sealed class AdmissionProgram
 {
+    private static readonly ConditionalWeakTable<SharpLinkAdmissionController, AdmissionProgram> ProgramsByController = new();
     private static long s_nextGenerationId;
 
     private readonly SharpLinkAdmissionController _controller;
@@ -16,6 +17,7 @@ internal sealed class AdmissionProgram
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         GenerationId = Interlocked.Increment(ref s_nextGenerationId);
+        ProgramsByController.Add(controller, this);
     }
 
     internal long GenerationId { get; }
@@ -27,6 +29,14 @@ internal sealed class AdmissionProgram
     internal int ActiveUses => Volatile.Read(ref _activeUses);
 
     internal int DuplicateReleaseAttempts => Volatile.Read(ref _duplicateReleaseAttempts);
+
+    internal static AdmissionProgram FromController(SharpLinkAdmissionController controller)
+    {
+        ArgumentNullException.ThrowIfNull(controller);
+        return ProgramsByController.TryGetValue(controller, out var program)
+            ? program
+            : throw new InvalidOperationException("Admission controller has no published program generation.");
+    }
 
     internal AdmissionProgramUse AcquireUse()
     {
