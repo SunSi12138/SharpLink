@@ -9,4 +9,7 @@ text = text.replace(
 text = text.replace(
     '''        TimeSpan? selectedTimeout = methodHasTimeout\n            ? methodTimeout\n            : allowDefaultTimeout\n                ? _requestTimeout\n                : null;\n\n        var ambientCall = SharpLinkCallContext.Current;''',
     '''        var selectedTimeout = methodTimeout;\n        if (selectedTimeout is null && (includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)\n            selectedTimeout = _requestTimeoutValue;\n\n        var ambientCall = SharpLinkCallContext.Current;''')
+text = text.replace(
+    '''replace_once(\n    "src/SharpLink.Client/SharpLinkClient.Lifecycle.cs",\n    """                            if (header.Type == ProtocolV2FrameType.StreamData)\n                            {\n                                var streamId = RpcSession.ReadCompressedStreamId(payload);''',
+    '''replace_once(\n    "src/SharpLink.Client/SharpLinkClient.Lifecycle.cs",\n    """                        else if (header.Type == ProtocolV2FrameType.StreamData)\n                        {\n                            var streamId = RpcSession.ReadCompressedStreamId(payload);''')
 path.write_text(text)
