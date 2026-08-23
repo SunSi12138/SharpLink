@@ -26,11 +26,6 @@ internal sealed partial class SharpLinkServer
     internal long RetainedCompressedBytesForDiagnostics => ResourceGovernor.RetainedCompressedBytes;
 
     internal long DecodedBytesInFlightForDiagnostics => ResourceGovernor.DecodedBytesInFlight;
-
-    internal bool TryAcquireDecodeResources(
-        long retainedCompressedBytes,
-        out ServerDecodePermit? permit)
-        => ResourceGovernor.TryAcquireDecode(retainedCompressedBytes, out permit);
 }
 
 /// <summary>
