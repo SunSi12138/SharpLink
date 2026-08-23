@@ -45,7 +45,7 @@ public class InboundStreamAbandonmentTests
         Ensure(manager.DroppedStreamFrames == 0,
             "the abandoned stream must remain routed rather than become an unknown stream");
 
-        manager.CompleteStream(requestId, streamId, exception: null);
+        manager.CompletePeerStream(requestId, streamId, exception: null);
 
         Ensure(manager.ActiveStreamCount == 0, "peer terminal should retire the abandoned route");
         Ensure(counters.Completed == 1, "peer terminal should publish receive completion exactly once");
@@ -98,7 +98,7 @@ public class InboundStreamAbandonmentTests
         Ensure(manager.DroppedStreamFrames == 0,
             "typed-attached abandonment should not turn later frames into unknown-stream drops");
 
-        manager.CompleteStream(requestId, streamId, exception: null);
+        manager.CompletePeerStream(requestId, streamId, exception: null);
 
         Ensure(manager.ActiveStreamCount == 0, "peer terminal should retire the drain route");
         Ensure(counters.Completed == 1, "peer terminal should publish receive completion exactly once");
@@ -134,7 +134,7 @@ public class InboundStreamAbandonmentTests
         Ensure(counters.Accepted == encodedBytes && counters.Consumed == 0,
             "typed buffered item should hold receive credit before peer terminal");
 
-        manager.CompleteStream(requestId, streamId, exception: null);
+        manager.CompletePeerStream(requestId, streamId, exception: null);
 
         Ensure(manager.ActiveStreamCount == 1,
             "peer terminal must retain a OneWay route until local invocation completion");
@@ -177,7 +177,7 @@ public class InboundStreamAbandonmentTests
             streamId,
             new ReadOnlySequence<byte>(payload));
 
-        manager.CompleteStream(requestId, streamId, exception: null);
+        manager.CompletePeerStream(requestId, streamId, exception: null);
         Ensure(manager.ActiveStreamCount == 1 && counters.Completed == 1,
             "peer terminal must publish flow terminal but retain a pre-attach OneWay route");
         Ensure(counters.Consumed == 0,
@@ -243,7 +243,7 @@ public class InboundStreamAbandonmentTests
 
         var typed = PooledAsyncStreamDispatcher<int>.Rent(default, SCodecs);
         manager.Register(requestId, streamId, typed);
-        manager.CompleteStream(requestId, streamId, exception: null);
+        manager.CompletePeerStream(requestId, streamId, exception: null);
 
         Ensure(manager.ActiveStreamCount == 1,
             "promoted OneWay retention must keep the typed route after peer terminal");
@@ -253,6 +253,59 @@ public class InboundStreamAbandonmentTests
         manager.AbandonExistingRequestStreams(requestId, 1);
         Ensure(counters.Consumed == encodedBytes && manager.ActiveStreamCount == 0,
             "local completion must dispose the promoted typed buffer and retire the route");
+    }
+
+    [Test]
+    public async Task LocalCompletionShouldNotRetireAbandonedRouteBeforePeerTerminal()
+    {
+        const long requestId = 30406;
+        const ushort streamId = 1;
+        var counters = new Counters();
+        var manager = CreateManager(counters);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            requestId,
+            1,
+            buffers,
+            static _ => true,
+            static _ => { },
+            static () => { },
+            retainUntilLocalCompletion: true);
+
+        await manager.DispatchChunkAsync(
+            requestId,
+            streamId,
+            new ReadOnlySequence<byte>(new byte[] { 1, 2, 3, 4 }));
+        Ensure(counters.Accepted == 4 && counters.Consumed == 0,
+            "deferred bytes should remain outstanding before local completion");
+
+        manager.CompleteStream(
+            requestId,
+            streamId,
+            new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "local retention failure"));
+        Ensure(manager.ActiveStreamCount == 1,
+            "local completion state must not be mistaken for peer StreamComplete");
+
+        manager.AbandonExistingRequestStreams(requestId, 1);
+        Ensure(manager.ActiveStreamCount == 1,
+            "local abandonment after a local completion must still retain the drain route");
+        Ensure(counters.Consumed == 4,
+            "local abandonment should release deferred bytes even after local completion");
+
+        await manager.DispatchChunkAsync(
+            requestId,
+            streamId,
+            new ReadOnlySequence<byte>(new byte[] { 5, 6, 7 }));
+        Ensure(counters.Accepted == 7 && counters.Consumed == 7,
+            "the route must continue discarding and returning credit until peer terminal");
+        Ensure(manager.DroppedStreamFrames == 0,
+            "local completion must not turn later peer frames into unknown-stream drops");
+
+        manager.CompletePeerStream(requestId, streamId, exception: null);
+        Ensure(manager.ActiveStreamCount == 0,
+            "only the actual peer terminal should retire the locally completed abandoned route");
+        Ensure(counters.Completed == 1,
+            "receive terminal publication should remain idempotent across local and peer terminal states");
     }
 
     private static byte[] SerializeInt(int value)

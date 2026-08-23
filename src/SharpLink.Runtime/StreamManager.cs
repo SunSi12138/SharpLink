@@ -252,6 +252,45 @@ internal sealed class StreamManager
     }
 
     /// <summary>
+    /// Records an actual peer StreamComplete independently from local completion/error state.
+    /// A retained OneWay route may stay registered after this point so local abandonment can
+    /// dispose its typed child, while receive-flow terminal state is published immediately.
+    /// </summary>
+    internal void CompletePeerStream(long requestId, ushort streamId, Exception? exception)
+    {
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+            !requestDispatchers.TryMarkPeerTerminal(streamId))
+        {
+            return;
+        }
+
+        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var retainedEntry))
+        {
+            PublishReceiveTerminal(requestId, streamId, retainedEntry);
+            return;
+        }
+
+        if (requestDispatchers.TryRemove(streamId, out var entry))
+        {
+            var dispatcher = entry.Dispatcher;
+            SharpLinkTelemetry.AddActiveStreams(-1);
+            Interlocked.Decrement(ref _activeStreamCount);
+            try
+            {
+                dispatcher.Complete(exception);
+                PublishReceiveTerminal(requestId, streamId, entry);
+            }
+            finally
+            {
+                entry.Detach();
+                RemoveEmptyRequest(requestId, requestDispatchers);
+            }
+        }
+    }
+
+    /// <summary>
     /// Closes a locally terminated receive stream and waits for dispatches that acquired the
     /// entry before it was closed. The final receive-credit flush therefore precedes a caller's
     /// Cancel frame without blocking the normal no-dispatch completion path.
@@ -425,12 +464,12 @@ internal sealed class StreamManager
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
         if (dispatchersByRequestId is null ||
             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
-            !requestDispatchers.TryAbandonInboundRoute(streamId, out var alreadyCompleted))
+            !requestDispatchers.TryAbandonInboundRoute(streamId, out var peerTerminalReceived))
         {
             return false;
         }
 
-        if (alreadyCompleted)
+        if (peerTerminalReceived)
             Unregister(requestId, streamId);
         return true;
     }
@@ -631,9 +670,9 @@ internal sealed class StreamManager
             }
         }
 
-        public bool TryAbandonInboundRoute(ushort streamId, out bool alreadyCompleted)
+        public bool TryAbandonInboundRoute(ushort streamId, out bool peerTerminalReceived)
         {
-            alreadyCompleted = false;
+            peerTerminalReceived = false;
             if (streamId == 0)
             {
                 var entry = Volatile.Read(ref _defaultDispatcher);
@@ -644,7 +683,8 @@ internal sealed class StreamManager
                 }
                 try
                 {
-                    preAdmission.Abandon(out alreadyCompleted);
+                    preAdmission.Abandon(out _);
+                    peerTerminalReceived = entry.PeerTerminalReceived;
                     return true;
                 }
                 finally
@@ -668,7 +708,44 @@ internal sealed class StreamManager
             }
             try
             {
-                acquiredPreAdmission.Abandon(out alreadyCompleted);
+                acquiredPreAdmission.Abandon(out _);
+                peerTerminalReceived = acquiredEntry.PeerTerminalReceived;
+                return true;
+            }
+            finally
+            {
+                acquiredEntry.Release();
+            }
+        }
+
+        public bool TryMarkPeerTerminal(ushort streamId)
+        {
+            if (streamId == 0)
+            {
+                var entry = Volatile.Read(ref _defaultDispatcher);
+                if (entry is null || !entry.TryAcquire())
+                    return false;
+                try
+                {
+                    entry.MarkPeerTerminalReceived();
+                    return true;
+                }
+                finally
+                {
+                    entry.Release();
+                }
+            }
+
+            DispatcherEntry? acquiredEntry;
+            lock (_gate)
+            {
+                if (!_byStreamId.TryGetValue(streamId, out var entry) || !entry.TryAcquire())
+                    return false;
+                acquiredEntry = entry;
+            }
+            try
+            {
+                acquiredEntry.MarkPeerTerminalReceived();
                 return true;
             }
             finally
@@ -871,6 +948,7 @@ internal sealed class StreamManager
         private int _state;
         private int _detached;
         private int _receiveTerminalPublished;
+        private int _peerTerminalReceived;
         // Lazily shares the distinct drain/detach completions without growing common entries.
         private DispatcherEntryCompletions? _completions;
 
@@ -886,6 +964,11 @@ internal sealed class StreamManager
         public bool HasActiveDispatches => (Volatile.Read(ref _state) & CountMask) != 0;
 
         public bool IsDetached => Volatile.Read(ref _detached) != 0;
+
+        internal bool PeerTerminalReceived => Volatile.Read(ref _peerTerminalReceived) != 0;
+
+        internal void MarkPeerTerminalReceived()
+            => Volatile.Write(ref _peerTerminalReceived, 1);
 
         internal bool TryPublishReceiveTerminal()
             => Interlocked.CompareExchange(ref _receiveTerminalPublished, 1, 0) == 0;
