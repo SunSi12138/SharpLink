@@ -614,16 +614,18 @@ public class SharpLinkClientRetryTests
             await Task.Yield();
             Ensure(!invocation.IsCompleted,
                 "a future deadline must remain a contender rather than completing the retry wait early");
-            Ensure(admission.AcquireCount == 1 && admission.ReportCount == 1,
-                "the bounded retry wait must not acquire a second attempt before its deadline");
+            Ensure(!await transport.Connection.TryWaitForSentPacket(
+                ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)),
+                "retry backoff must not publish a second request before its deadline");
 
             provider.Advance(TimeSpan.FromSeconds(5));
             var failure = await EnsureThrows<SharpLinkException>(invocation);
 
             Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
                 "the frozen deadline must terminate the retry wait at its boundary");
-            Ensure(admission.AcquireCount == 1 && admission.ReportCount == 1,
-                "deadline completion must not acquire or report a second attempt");
+            Ensure(!await transport.Connection.TryWaitForSentPacket(
+                ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)),
+                "deadline completion must not publish a second request");
             Ensure(client.ActiveClientCallCount == 0,
                 "deadline completion must release the complete logical invocation");
         }
