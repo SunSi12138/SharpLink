@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Server connection admission now defaults to an independent 64-concurrent pre-auth handshake bound (TLS → Protocol v2 → application authentication), clamped by a lower `MaxConcurrentConnections`. Explicit `MaxConcurrentHandshakes = 0` remains the opt-out that restores the previous follow-the-connection-bound behavior; the live-connection default remains 1,024 and Protocol v2/wire behavior is unchanged.
+
 - The send pump now wakes through one reusable zero-allocation signal (a claim-token `IValueTaskSource`) instead of racing two channel reads with `Task.WhenAny`. The dual-read wake-up created two `AsTask` wrappers, a `WhenAny` promise, and continuation closures on every pump wake; the signal-based wake allocates nothing per wake and keeps the dual-queue protocol-progress isolation intact.
 
 
