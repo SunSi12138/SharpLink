@@ -18,9 +18,9 @@ internal sealed partial class SharpLinkClient
         // Method policy overrides the client-wide fallback. These are policy-selection layers,
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
         // the client-wide value even on call shapes that do not otherwise use the client default.
-        TimeSpan? selectedTimeout = methodHasTimeout
+        TimeSpan? selectedTimeout = hasMethodTimeout
             ? methodTimeout
-            : allowDefaultTimeout
+            : includeClientDefault
                 ? _requestTimeout
                 : null;
 
@@ -77,11 +77,8 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-
     private bool WouldReachDeadline(RpcDeadline deadline, TimeSpan delay)
         => deadline.WouldExpireBeforeOrAt(delay, _runtimeContext.TimeProvider);
-
-
 
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
