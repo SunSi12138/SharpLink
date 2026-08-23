@@ -81,6 +81,12 @@ public interface ISharpLinkGeneratedAssemblyManifest
     /// <summary>Gets generated Codec factories owned by this assembly.</summary>
     IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
 
+    /// <summary>
+    /// Gets generated Codec targets selected by an assembly-level route. These targets are
+    /// resolved only for artifacts owned by this manifest and are not published as context-global bindings.
+    /// </summary>
+    IReadOnlyList<Type> ManifestScopedCodecTargets => Array.Empty<Type>();
+
     /// <summary>Gets the identities of generated assemblies that this manifest depends on.</summary>
     IReadOnlyList<string> Dependencies { get; }
 }
