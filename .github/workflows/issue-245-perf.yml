@@ -5,6 +5,9 @@ on:
     branches:
       - tmp/issue-245-perf-baseline
       - tmp/issue-245-perf-candidate
+  pull_request:
+    branches:
+      - dev
 
 jobs:
   benchmark:
