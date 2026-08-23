@@ -124,7 +124,7 @@ public interface ISharpLinkGeneratedAssemblyManifest
     /// <summary>Gets contract-owned proxy and stub descriptors.</summary>
     IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; }
 
-    /// <summary>Gets service-owned generated activator descriptors.</summary>
+    /// <summary>Gets service-owned activator descriptors.</summary>
     IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; }
 
     /// <summary>Gets generated Codec factories owned by this assembly.</summary>
@@ -145,7 +145,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 4;
 
     /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
-    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1-server-deadline-v2";
+    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

@@ -350,7 +350,6 @@ public partial class RpcGenerator
                 streamId++;
             }
 
-            sb.AppendLine("                bridge.ThrowIfDeadlineExceeded();");
             var callArgs = string.Join(", ", method.Parameters.Select(p => p.IsStream ? $"stream_{p.Name}" : $"arg_{p.Name}"));
             var callLine = $"impl.{EscapeIdentifier(method.Name)}({callArgs})";
 
