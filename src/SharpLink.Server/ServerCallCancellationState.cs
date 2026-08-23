@@ -67,6 +67,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private AdmissionLease? _admissionLease;
     private SharpLinkBufferWriterPool? _payloadPool;
     private IRpcByteBufferWriter? _payloadOwner;
+    private ServerDecodedBytesPermit? _decodedBytesPermit;
     private TimeProvider? _timeProvider;
 
     private ServerCallCancellationState()
@@ -84,6 +85,8 @@ internal sealed class ServerCallCancellationState : IDisposable
         => (ServerCallCancellationReason)Volatile.Read(ref _reason);
 
     public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);
+
+    internal bool HasPayloadOwnerForDiagnostics => Volatile.Read(ref _payloadOwner) is not null;
 
     public static ServerCallCancellationState Rent(
         long requestId,
@@ -125,6 +128,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._admissionLease = null;
         state._payloadPool = null;
         state._payloadOwner = null;
+        state._decodedBytesPermit = null;
         state._disposeRequested = false;
         state._externalUsers = 0;
         state._serverStoppingRegistration = default;
@@ -179,6 +183,18 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (Interlocked.CompareExchange(ref _payloadOwner, owner, null) is not null)
             throw new InvalidOperationException("A retained payload owner is already attached to this call.");
         _payloadPool = pool;
+    }
+
+    internal void AttachDecodedBytesPermit(ServerDecodedBytesPermit decodedBytesPermit)
+    {
+        ArgumentNullException.ThrowIfNull(decodedBytesPermit);
+        if (Volatile.Read(ref _payloadOwner) is null)
+        {
+            throw new InvalidOperationException(
+                "Decoded-byte ownership cannot outlive a call without its physical decoded payload owner.");
+        }
+        if (Interlocked.CompareExchange(ref _decodedBytesPermit, decodedBytesPermit, null) is not null)
+            throw new InvalidOperationException("Decoded-byte ownership is already attached to this call.");
     }
 
     internal ServerCallCancellationLease CaptureLease(long requestId)
@@ -300,9 +316,20 @@ internal sealed class ServerCallCancellationState : IDisposable
         Interlocked.Exchange(ref _admissionLease, null)?.Dispose();
         var payloadOwner = Interlocked.Exchange(ref _payloadOwner, null);
         var payloadPool = Interlocked.Exchange(ref _payloadPool, null);
+        var decodedBytesPermit = Interlocked.Exchange(ref _decodedBytesPermit, null);
         if (payloadOwner is not null)
+        {
             (payloadPool ?? throw new InvalidOperationException("A retained payload has no owning pool."))
                 .Return(payloadOwner);
+            decodedBytesPermit?.Dispose();
+        }
+        else if (decodedBytesPermit is not null)
+        {
+            // This should be unreachable because decoded-byte ownership is attached only after the
+            // corresponding physical owner. Release conservatively rather than leak accounting if
+            // an invariant violation reaches teardown.
+            decodedBytesPermit.Dispose();
+        }
         _invocationCancellation = null;
         _connectionClosedRegistration = default;
         _serverStoppingRegistration = default;
