@@ -31,7 +31,7 @@ jobs:
           replace_once(
               route_tests,
               '  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), "explicit.nested/v1", "explicit-nested-wire/v1")]",',
-              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), \\"explicit.nested/v1\\", \\"explicit-nested-wire/v1\\')]",')
+              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), \\"explicit.nested/v1\\", \\"explicit-nested-wire/v1\\")]",')
 
           registration_name = 'RpcCodecAdapter' + 'Registration'
           replace_once(
@@ -42,7 +42,7 @@ jobs:
           replace_once(
               route_tests,
               '  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.managed.outer/v1", "route-managed-outer-wire/v1")]",',
-              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.managed.outer/v1\\", \\"route-managed-outer-wire/v1\\')]",')
+              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.managed.outer/v1\\", \\"route-managed-outer-wire/v1\\")]",')
           replace_once(
               route_tests,
               '  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");',
@@ -51,7 +51,7 @@ jobs:
           replace_once(
               route_tests,
               '  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.native.contract - only / v1", "route - native - contract - only - wire / v1")]",',
-              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.native.contract-only/v1\\", \\"route-native-contract-only-wire/v1\\')]",')
+              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.native.contract-only/v1\\", \\"route-native-contract-only-wire/v1\\")]",')
           replace_once(
               route_tests,
               '  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");',
