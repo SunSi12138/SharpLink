@@ -1,0 +1,55 @@
+name: Issue 250 Handshake Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - '.github/workflows/issue-250-handshake-evidence.yml'
+      - 'src/SharpLink.Server/**'
+      - 'src/SharpLink.Runtime/**'
+      - 'test/SharpLink.Benchmarks/HandshakeDefaultEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+
+permissions:
+  contents: read
+
+jobs:
+  handshake-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-250
+          dotnet --info > artifacts/issue-250/dotnet-info.txt
+          uname -a > artifacts/issue-250/uname.txt
+          lscpu > artifacts/issue-250/cpu.txt
+
+      - name: Run candidate matrix
+        run: >-
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          -c Release --
+          --handshake-default-evidence
+          artifacts/issue-250/handshake-default-evidence.json
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-250-handshake-evidence-${{ github.event.pull_request.head.sha }}
+          path: artifacts/issue-250
+          if-no-files-found: error
+          retention-days: 30
