@@ -55,7 +55,7 @@ internal sealed partial class SharpLinkServer
                                 }
                             }
                             if (header.Type == ProtocolV2FrameType.Request &&
-                                _admissionController is not null)
+                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0)
                             {
                                 session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
