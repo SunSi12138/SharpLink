@@ -26,6 +26,12 @@ public class CompressionPersistentDecodeFairnessTests
 
         var a2 = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
         var a3 = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
+        await WaitUntilAsync(
+            () => harness.DecodeQueueDepth == 2 &&
+                  harness.DecodeQueueReservations == 2 &&
+                  harness.DecodeScheduledConnectionCount == 1,
+            "connection A backlog entered its scheduler queue before B publication");
+
         var b1 = serviceB.MeasureAsync(payloadB, CancellationToken.None).AsTask();
         await WaitUntilAsync(
             () => harness.DecodeQueueDepth == 3 &&
