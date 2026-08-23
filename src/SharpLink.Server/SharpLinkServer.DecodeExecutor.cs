@@ -76,6 +76,9 @@ internal sealed partial class SharpLinkServer
     internal int DecodeQueueReservationsForDiagnostics
         => Volatile.Read(ref _decodeExecutor)?.QueueReservations ?? 0;
 
+    internal int DecodeScheduledConnectionCountForDiagnostics
+        => Volatile.Read(ref _decodeExecutor)?.ScheduledConnectionCount ?? 0;
+
     internal int DecodeSkippedBeforeStartForDiagnostics
         => Volatile.Read(ref _decodeExecutor)?.SkippedBeforeStart ?? 0;
 
