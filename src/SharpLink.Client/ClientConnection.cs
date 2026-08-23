@@ -126,18 +126,30 @@ internal sealed class ClientConnection :
 
     public void EndUntrackedCall() => ReleaseActiveCall();
 
-    public async Task SendClientStreamAsync<T>(
+    public Task SendClientStreamAsync<T>(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
         CancellationToken cancellationToken = default)
+        => SendClientStreamAsync(
+            requestId,
+            streamId,
+            stream,
+            Session.RuntimeContext.Codecs.GetCodec<T>(),
+            cancellationToken);
+
+    public async Task SendClientStreamAsync<T>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        IRpcCodec<T> codec,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(codec);
         if (!PendingCalls.Contains(requestId))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
-        var codec = stream is RpcCodecBoundAsyncEnumerable<T> bound
-            ? bound.Codec
-            : Session.RuntimeContext.Codecs.GetCodec<T>();
         try
         {
             await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -355,9 +367,9 @@ internal struct LateResponseLogLimiter
                 return false;
             }
 
-            var newNext = timestamp > long.MaxValue - IntervalTimestampTicks
+            var newNext = timestamp > long.MaxValue - LateResponseLogLimiter.IntervalTimestampTicks
                 ? long.MaxValue
-                : timestamp + IntervalTimestampTicks;
+                : timestamp + LateResponseLogLimiter.IntervalTimestampTicks;
             if (Interlocked.CompareExchange(ref _nextLogTimestamp, newNext, next) != next)
                 continue;
 
