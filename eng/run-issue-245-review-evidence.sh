@@ -70,13 +70,17 @@ run_one() {
     "$EVIDENCE_DIR/${label}-${round}.json"
 }
 
-# Alternate ordering to reduce runner drift bias.
+# Five rounds per side, with ABBA-style ordering to reduce runner drift bias.
 run_one "$BASE_DIR" baseline 1 "$BASE_SHA"
 run_one "$CANDIDATE_DIR" candidate 1 "$CANDIDATE_SHA"
 run_one "$CANDIDATE_DIR" candidate 2 "$CANDIDATE_SHA"
 run_one "$BASE_DIR" baseline 2 "$BASE_SHA"
 run_one "$BASE_DIR" baseline 3 "$BASE_SHA"
 run_one "$CANDIDATE_DIR" candidate 3 "$CANDIDATE_SHA"
+run_one "$CANDIDATE_DIR" candidate 4 "$CANDIDATE_SHA"
+run_one "$BASE_DIR" baseline 4 "$BASE_SHA"
+run_one "$BASE_DIR" baseline 5 "$BASE_SHA"
+run_one "$CANDIDATE_DIR" candidate 5 "$CANDIDATE_SHA"
 
 python3 - "$EVIDENCE_DIR" <<'PY'
 import json
@@ -100,7 +104,7 @@ lines = [
     "Baseline: `c89a79bf6a3acdc24dd0f3289dbbcbe84b1ab186`  ",
     "Candidate A2: `c9142d35eb5e6326bf7681b64bfb55e3d9cfec88`",
     "",
-    "Each cell is the median of 3 alternating runs in the same GitHub Actions job.",
+    "Each cell is the median of 5 alternating runs in the same GitHub Actions job.",
     "",
     "| Kind | Partitions | C | Baseline QPS | A2 QPS | QPS delta | Baseline P99 us | A2 P99 us | P99 delta | A2 scans | A2 visited |",
     "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
@@ -109,7 +113,7 @@ failures = []
 for key in sorted(grouped):
     kind, partitions, concurrency = key
     sides = grouped[key]
-    if len(sides["baseline"]) != 3 or len(sides["candidate"]) != 3:
+    if len(sides["baseline"]) != 5 or len(sides["candidate"]) != 5:
         raise SystemExit(
             f"missing runs for {key}: {len(sides['baseline'])}/{len(sides['candidate'])}")
     bq = statistics.median(x["throughputPerSecond"] for x in sides["baseline"])
@@ -132,7 +136,7 @@ for key in sorted(grouped):
 lines.extend([
     "",
     "Gate: end-to-end partitioned unary throughput must not regress >3%; P99 must not regress >3%.",
-    "Pool rows are attribution/contention evidence; expired-churn rows intentionally exercise the rare reconciliation path.",
+    "Pool rows cover active peers, recently-idle, and expired-churn contention; candidate scan counters make rare reconciliation frequency explicit.",
 ])
 summary = "\n".join(lines) + "\n"
 (root / "summary.md").write_text(summary)
