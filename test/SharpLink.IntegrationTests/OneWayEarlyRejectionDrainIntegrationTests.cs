@@ -33,6 +33,45 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             "a unary request on the same connection should succeed after the rejected client stream drains to peer terminal");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task UnknownOneWayMethodShapeShouldTerminateInsteadOfStallingOversizedStream()
+    {
+        OneWayInboundDrainService.Reset();
+        await using var harness = await Harness.CreateAsync(options =>
+        {
+            options.FlowControl.StreamReceiveWindowBytes = 128;
+            options.FlowControl.ConnectionReceiveWindowBytes = 128;
+        });
+        var service = harness.Client.Get<IOneWayInboundDrainService>();
+
+        using (harness.HideOneWayInboundDrainMethodShape())
+        {
+            var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
+            var failure = await CaptureFailureAsync(send);
+
+            Ensure(failure is not null,
+                "an unresolved OneWay method shape should terminate the connection instead of completing successfully");
+            Ensure(failure is not TimeoutException,
+                "an unresolved OneWay method shape must not leave oversized client-stream data stalled behind receive flow control");
+            Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
+                "an unresolved OneWay method must not invoke the service method");
+        }
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task operation)
+    {
+        try
+        {
+            await operation.WaitAsync(PhaseTimeout);
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private static async IAsyncEnumerable<byte[]> ManyPayloads(
         int count,
         int size,
@@ -129,6 +168,27 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             return new RestoreServicesScope(server, current);
         }
 
+        public IDisposable HideOneWayInboundDrainMethodShape()
+        {
+            var server = (SharpLinkServer)Server;
+            var current = (FrozenDictionary<long, ServiceRegistration>)(
+                ServicesField.GetValue(server)
+                ?? throw new InvalidOperationException("server service registry is unavailable"));
+            var target = current.Single(static pair =>
+                pair.Value.ContractType == typeof(IOneWayInboundDrainService));
+
+            var replacement = ServiceRegistration.CreateSingleton(
+                target.Value.ContractType,
+                new UnknownMethodShapeStub(target.Value.Stub.InterfaceHash),
+                new OneWayInboundDrainService(),
+                ownsService: false);
+            var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            updated[target.Key] = replacement;
+            ServicesField.SetValue(server, updated.ToFrozenDictionary());
+            Thread.MemoryBarrier();
+            return new RestoreServicesScope(server, current);
+        }
+
         public async ValueTask DisposeAsync()
         {
             await Client.DisposeAsync();
@@ -136,6 +196,63 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             await Server.DisposeAsync();
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             _serverCts.Dispose();
+        }
+
+        private sealed class UnknownMethodShapeStub(long interfaceHash) : IRpcStub
+        {
+            public long InterfaceHash { get; } = interfaceHash;
+
+            public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+            {
+                _ = methodHash;
+                descriptor = default;
+                return false;
+            }
+
+            public bool SupportsCancellation(long methodHash)
+            {
+                _ = methodHash;
+                return false;
+            }
+
+            public ValueTask InvokeNoReturnAsync(
+                object service,
+                IRpcGeneratedServerBridge bridge,
+                long methodHash,
+                long requestId,
+                ReadOnlySequence<byte> args)
+                => throw UnexpectedInvocation();
+
+            public ValueTask InvokeNoReturnCancellableAsync(
+                object service,
+                IRpcGeneratedServerBridge bridge,
+                long methodHash,
+                long requestId,
+                ReadOnlySequence<byte> args,
+                CancellationToken cancellationToken)
+                => throw UnexpectedInvocation();
+
+            public ValueTask InvokeAsync(
+                object service,
+                IRpcGeneratedServerBridge bridge,
+                long methodHash,
+                long requestId,
+                ReadOnlySequence<byte> args,
+                IBufferWriter<byte> output)
+                => throw UnexpectedInvocation();
+
+            public ValueTask InvokeCancellableAsync(
+                object service,
+                IRpcGeneratedServerBridge bridge,
+                long methodHash,
+                long requestId,
+                ReadOnlySequence<byte> args,
+                IBufferWriter<byte> output,
+                CancellationToken cancellationToken)
+                => throw UnexpectedInvocation();
+
+            private static InvalidOperationException UnexpectedInvocation()
+                => new("unresolved method-shape stub must never be invoked");
         }
 
         private sealed class RestoreServicesScope(

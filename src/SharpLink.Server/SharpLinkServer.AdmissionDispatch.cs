@@ -29,8 +29,20 @@ internal sealed partial class SharpLinkServer
 
         // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
         // client streams still needs a receive route so the peer can finish sending and recover
-        // its receive credit even though no user invocation will run.
-        var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+        // its receive credit even though no user invocation will run. If the method shape cannot
+        // be resolved on the immediate path, terminate the connection rather than guess a stream
+        // count; an admission-resume path already owns the exact reserved stream count and can
+        // safely drain those routes instead.
+        if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var descriptor))
+        {
+            if (admittedCallState is not null)
+            {
+                DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
+                ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
+                return ValueTask.CompletedTask;
+            }
+            return TerminateUnresolvableOneWayRequest(session, requestId);
+        }
         if (IsDeadlineExceeded(request.RpcDeadline))
         {
             DrainRejectedOneWayStreams(
@@ -460,7 +472,7 @@ internal sealed partial class SharpLinkServer
     {
         session.NotifyDisconnected(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
-            $"OneWay request {requestId} could not resolve its service registration; closing the connection because its client-stream shape is unknown."));
+            $"OneWay request {requestId} could not resolve its service or method registration; closing the connection because its client-stream shape is unknown."));
         return ValueTask.CompletedTask;
     }
 
