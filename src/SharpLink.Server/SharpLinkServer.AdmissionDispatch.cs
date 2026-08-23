@@ -199,6 +199,16 @@ internal sealed partial class SharpLinkServer
             request.Deadline, request.Metadata, invokeToken);
         try
         {
+            // #299 deliberately excludes OneWay from generic pre-invocation reservation. Install
+            // the same promoted route here, before interceptors can short-circuit, and retain it
+            // until local OneWay completion so typed-input abandonment has a stable owner.
+            ReservePreInvocationRequestStreams(
+                session,
+                descriptor.ClientStreamCount,
+                requestId,
+                invokeToken,
+                retainUntilLocalCompletion: true);
+
             using var callContextScope = SharpLinkCallContext.Push(callContext);
             var invokeTask = InvokeServiceAsync(
                 serviceInfo,
@@ -218,6 +228,7 @@ internal sealed partial class SharpLinkServer
                     } interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
                 TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken);
+                DrainCompletedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
                 ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
                 return;
             }
@@ -236,6 +247,7 @@ internal sealed partial class SharpLinkServer
                     session,
                     serviceInfo.Stub,
                     request.MethodHash,
+                    descriptor.ClientStreamCount,
                     invokeToken)),
                 requestId);
         }
@@ -261,6 +273,7 @@ internal sealed partial class SharpLinkServer
         RpcSession session,
         IRpcStub stub,
         long methodId,
+        int clientStreamCount,
         CancellationToken cancellationToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
@@ -284,6 +297,7 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
+            DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
             ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
         }
     }

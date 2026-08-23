@@ -50,7 +50,8 @@ internal sealed partial class SharpLinkServer
         RpcSession session,
         int clientStreamCount,
         long requestId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool retainUntilLocalCompletion = false)
     {
         if (clientStreamCount == 0)
             return;
@@ -75,7 +76,7 @@ internal sealed partial class SharpLinkServer
         {
             // Negotiated receive credit already bounds bytes retained while the interceptor is
             // suspended. If admission already owns the route, this registration only promotes
-            // that wrapper out of queue-byte accounting.
+            // that wrapper out of queue-byte accounting and may add OneWay local retention.
             streamManager.ReservePreAdmissionStreams(
                 requestId,
                 clientStreamCount,
@@ -83,7 +84,8 @@ internal sealed partial class SharpLinkServer
                 static _ => true,
                 static _ => { },
                 static () => { },
-                decodeCompressed);
+                decodeCompressed,
+                retainUntilLocalCompletion);
             return;
         }
 
@@ -112,7 +114,8 @@ internal sealed partial class SharpLinkServer
                         new SharpLinkException(
                             SharpLinkErrorCode.ResourceExhausted,
                             $"Deferred client-stream retention exceeded the {maxRetainedBytes}-byte limit without negotiated flow control.")),
-                    decodeCompressed));
+                    decodeCompressed,
+                    retainUntilLocalCompletion));
         }
     }
 
@@ -123,6 +126,15 @@ internal sealed partial class SharpLinkServer
     {
         if (clientStreamCount != 0)
             session.StreamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
+    }
+
+    private static void DrainCompletedOneWayStreams(
+        RpcSession session,
+        long requestId,
+        int clientStreamCount)
+    {
+        if (clientStreamCount != 0)
+            session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
     }
 
     private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
