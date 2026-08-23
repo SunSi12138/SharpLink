@@ -1,4 +1,5 @@
 using System.Threading;
+using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
@@ -57,5 +58,11 @@ public class ServerCallTerminalClaimTests
         {
             state.Dispose();
         }
+    }
+
+    private static void Ensure(bool condition, string message)
+    {
+        if (!condition)
+            throw new InvalidOperationException(message);
     }
 }
