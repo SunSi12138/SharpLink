@@ -18,7 +18,7 @@ public sealed class AdmissionPartitionPoolTests
             key = $"partition-{index}";
             var lease = pool.TryAcquire(context);
             Ensure(lease is not null, $"partition {index} should be admitted");
-            lease.Dispose();
+            lease!.Dispose();
         }
 
         Ensure(pool.Count == 1024, "all recently idle partitions should remain resident");
@@ -28,7 +28,7 @@ public sealed class AdmissionPartitionPoolTests
         key = "partition-0";
         var reacquired = pool.TryAcquire(context);
         Ensure(reacquired is not null, "existing partition should be reacquired");
-        reacquired.Dispose();
+        reacquired!.Dispose();
 
         Ensure(pool.ReclaimScanCount == 0,
             "normal release before the earliest idle deadline must not start a reclaim scan");
@@ -47,7 +47,7 @@ public sealed class AdmissionPartitionPoolTests
 
         var first = pool.TryAcquire(context);
         Ensure(first is not null, "first partition should be admitted");
-        first.Dispose();
+        first!.Dispose();
 
         time.Advance(timeout - TimeSpan.FromTicks(1));
         key = "second";
@@ -62,7 +62,7 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(pool.Count == 1, "reclaimed capacity should be reused by the new key");
         Ensure(pool.ReclaimScanCount == 1 && pool.ReclaimEntriesVisited == 1,
             "exact timeout should trigger one bounded reconciliation scan");
-        second.Dispose();
+        second!.Dispose();
     }
 
     [Test]
@@ -88,7 +88,7 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(pool.Count == 2, "the active reacquired entry must survive stale-hint reconciliation");
         Ensure(pool.ReclaimScanCount == 1, "stale due hint should cause one reconciliation scan");
 
-        second.Dispose();
+        second!.Dispose();
         active.Dispose();
     }
 
@@ -123,7 +123,7 @@ public sealed class AdmissionPartitionPoolTests
         var replacement = pool.TryAcquire(context);
         Ensure(replacement is not null, "the re-idled entry should be reclaimable at its own deadline");
         Ensure(pool.ReclaimScanCount == 2, "the refreshed deadline should trigger the next scan");
-        replacement.Dispose();
+        replacement!.Dispose();
     }
 
     [Test]
@@ -169,7 +169,7 @@ public sealed class AdmissionPartitionPoolTests
         Ensure(pool.Count == 1, "one reconciliation should detach every expired idle entry");
         Ensure(pool.ReclaimScanCount == 1 && pool.ReclaimEntriesVisited == 128,
             "large jump should require one full scan, not repeated per-release scans");
-        replacement.Dispose();
+        replacement!.Dispose();
     }
 
     [Test]
@@ -201,7 +201,11 @@ public sealed class AdmissionPartitionPoolTests
             IdleTimeout = idleTimeout ?? TimeSpan.FromMinutes(5)
         };
         options.UseConcurrency(1);
-        return new AdmissionPartitionPool(_ => selector(), options, queueLimit: 0, time ?? new ManualTimeProvider());
+        return new AdmissionPartitionPool(
+            _ => selector(),
+            options,
+            queueLimit: 0,
+            time ?? new ManualTimeProvider());
     }
 
     private static SharpLinkAdmissionContext CreateContext()
