@@ -549,8 +549,11 @@ internal sealed class PreAdmissionStreamDispatcher(
 
             if (!reservationSucceeded)
             {
+                // Promotion runs while StreamManager holds its registration lock. Marking this
+                // wrapper terminal directly avoids re-entering StreamManager through the active
+                // policy's capacity callback while still ensuring typed attachment observes
+                // ResourceExhausted. Existing queued owners/accounting are released immediately.
                 ReleaseBufferedItems(rejected);
-                replacementPolicy.CapacityExceeded();
                 return;
             }
 
