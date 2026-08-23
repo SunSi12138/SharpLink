@@ -34,9 +34,9 @@ jobs:
           xz -t /tmp/issue-287-review4.patch.xz
           xz -dc /tmp/issue-287-review4.patch.xz > /tmp/issue-287-review4.patch
           echo '0b749e52cf22e80bee51bafe03be3f733ab13a25980b46e98c39341a6d9e5425  /tmp/issue-287-review4.patch' | sha256sum -c -
-          git apply --check /tmp/issue-287-review4.patch
-          git apply /tmp/issue-287-review4.patch
+          git apply --3way /tmp/issue-287-review4.patch
           git diff --check
+          ! git grep -n -E '^(<<<<<<<|=======|>>>>>>>)' -- src test doc README.md CHANGELOG.md
           ! git grep -n -E 'UtcDeadline|RpcDeadline\.Create\(DateTimeOffset|AddTimeout\(' -- src test
           grep -F 'public const int Api = 4;' src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs
           grep -F 'public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";' src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs
