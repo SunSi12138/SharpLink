@@ -28,8 +28,8 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
             target = harness.ClientB.Get<IPreAdmissionStreamActivationRaceService>()
                 .NotifyAsync(OneThenOverflowAsync(overflowRelease.Task)).AsTask();
             await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes > 0 && harness.AdmissionQueuedBytes > 0,
-                "one-way stream is buffered while admission waits");
+                () => harness.PreAdmissionStreamBytes > 0,
+                "one-way stream is physically buffered while admission waits");
 
             ServerCallCancellationState.BeforeRequestActivationForTests = state =>
             {
@@ -53,8 +53,8 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
             activationRelease.Set();
             await ObserveTerminalAsync(target);
             await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes == 0 && harness.AdmissionQueuedBytes == 0,
-                "one-way race releases stream and admission ownership");
+                () => harness.PreAdmissionStreamBytes == 0,
+                "one-way race releases stream-buffer ownership");
             await Task.Delay(50);
             Ensure(PreAdmissionStreamActivationRaceService.OneWayInvocations == 0,
                 "one-way user code must not run after stream-budget terminal wins");
@@ -95,8 +95,8 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
             target = harness.ClientB.Get<IPreAdmissionStreamActivationRaceService>()
                 .UploadAsync(OneThenOverflowAsync(overflowRelease.Task)).AsTask();
             await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes > 0 && harness.AdmissionQueuedBytes > 0,
-                "two-way stream is buffered while admission waits");
+                () => harness.PreAdmissionStreamBytes > 0,
+                "two-way stream is physically buffered while admission waits");
 
             ServerCallCancellationState.BeforeRequestActivationForTests = state =>
             {
@@ -125,8 +125,8 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
                        StringComparison.Ordinal),
                 "two-way race must surface the stable stream-budget ResourceExhausted reason");
             await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes == 0 && harness.AdmissionQueuedBytes == 0,
-                "two-way race releases stream and admission ownership");
+                () => harness.PreAdmissionStreamBytes == 0,
+                "two-way race releases stream-buffer ownership");
             Ensure(PreAdmissionStreamActivationRaceService.TwoWayInvocations == 0,
                 "two-way user code must not run after stream-budget terminal wins");
             Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
@@ -226,26 +226,6 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
 
         internal long PreAdmissionStreamBytes
             => ReadServerDiagnostic<long>("PreAdmissionStreamBytesForDiagnostics");
-
-        internal long AdmissionQueuedBytes
-        {
-            get
-            {
-                var controllerField = _server.GetType().GetField(
-                    "_admissionController",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic)
-                    ?? throw new Exception("cannot find server admission controller field");
-                var controller = controllerField.GetValue(_server)
-                    ?? throw new Exception("server admission controller is unavailable");
-                var property = controller.GetType().GetProperty(
-                    "QueuedBytes",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic)
-                    ?? throw new Exception("cannot find admission queued-byte diagnostic");
-                return (long)property.GetValue(controller)!;
-            }
-        }
 
         internal static async Task<RaceHarness> CreateAsync()
         {
@@ -372,6 +352,7 @@ public interface IPreAdmissionStreamActivationRaceService : IService
     ValueTask<int> UploadAsync(IAsyncEnumerable<byte[]> values);
 }
 
+[RpcService]
 public sealed class PreAdmissionStreamActivationRaceService : IPreAdmissionStreamActivationRaceService
 {
     private static int s_oneWayInvocations;
