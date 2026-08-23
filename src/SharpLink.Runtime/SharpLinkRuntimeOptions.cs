@@ -33,6 +33,15 @@ public sealed class SharpLinkFlowControlOptions
     /// <summary>The hard maximum active calls across one server instance.</summary>
     public const int MaximumConcurrentCallsPerServer = 1024 * 1024;
 
+    /// <summary>The default maximum concurrent compression decodes across one server instance.</summary>
+    public const int DefaultMaxConcurrentDecodesPerServer = 32;
+
+    /// <summary>The default server-wide retained compressed-byte budget: 64 MiB.</summary>
+    public const long DefaultMaxRetainedCompressedBytesPerServer = 64L * 1024 * 1024;
+
+    /// <summary>The default server-wide decoded-byte in-flight budget: 64 MiB.</summary>
+    public const long DefaultMaxDecodedBytesInFlightPerServer = 64L * 1024 * 1024;
+
     /// <summary>Gets or sets the maximum queued outbound bytes.</summary>
     public int MaxSendQueueBytes
     {
@@ -80,6 +89,24 @@ public sealed class SharpLinkFlowControlOptions
     /// </remarks>
     public int MaxConcurrentCallsPerServer { get; set; } = DefaultMaxConcurrentCallsPerServer;
 
+    /// <summary>
+    /// Gets or sets the hard maximum number of provider decompressions that may execute concurrently
+    /// across one server instance.
+    /// </summary>
+    public int MaxConcurrentDecodesPerServer { get; set; } = DefaultMaxConcurrentDecodesPerServer;
+
+    /// <summary>
+    /// Gets or sets the server-wide byte budget for compressed request payloads retained beyond the
+    /// reader-loop frame lifetime while waiting for or executing deferred decode.
+    /// </summary>
+    public long MaxRetainedCompressedBytesPerServer { get; set; } = DefaultMaxRetainedCompressedBytesPerServer;
+
+    /// <summary>
+    /// Gets or sets the server-wide byte budget for decoded request payload storage that remains
+    /// owned by admitted requests.
+    /// </summary>
+    public long MaxDecodedBytesInFlightPerServer { get; set; } = DefaultMaxDecodedBytesInFlightPerServer;
+
     /// <summary>Validates all flow-control limits.</summary>
     public void Validate()
     {
@@ -99,6 +126,14 @@ public sealed class SharpLinkFlowControlOptions
                 nameof(MaxConcurrentCallsPerServer),
                 $"MaxConcurrentCallsPerServer must be between 1 and {MaximumConcurrentCallsPerServer}.");
         }
+        if (MaxConcurrentDecodesPerServer is < 1 or > MaximumConcurrentCallsPerServer)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxConcurrentDecodesPerServer),
+                $"MaxConcurrentDecodesPerServer must be between 1 and {MaximumConcurrentCallsPerServer}.");
+        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxRetainedCompressedBytesPerServer);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxDecodedBytesInFlightPerServer);
         if (ConnectionReceiveWindowBytes < StreamReceiveWindowBytes)
             throw new ArgumentException("ConnectionReceiveWindowBytes cannot be smaller than StreamReceiveWindowBytes.");
     }
@@ -112,7 +147,10 @@ public sealed class SharpLinkFlowControlOptions
             StreamReceiveWindowBytes = StreamReceiveWindowBytes,
             ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes,
             MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection,
-            MaxConcurrentCallsPerServer = MaxConcurrentCallsPerServer
+            MaxConcurrentCallsPerServer = MaxConcurrentCallsPerServer,
+            MaxConcurrentDecodesPerServer = MaxConcurrentDecodesPerServer,
+            MaxRetainedCompressedBytesPerServer = MaxRetainedCompressedBytesPerServer,
+            MaxDecodedBytesInFlightPerServer = MaxDecodedBytesInFlightPerServer
         };
         clone._maxSendQueueBytes = _maxSendQueueBytes;
         clone._maxSendQueueBytesConfigured = _maxSendQueueBytesConfigured;
@@ -130,6 +168,9 @@ public sealed class SharpLinkFlowControlOptions
         destination.ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes;
         destination.MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection;
         destination.MaxConcurrentCallsPerServer = MaxConcurrentCallsPerServer;
+        destination.MaxConcurrentDecodesPerServer = MaxConcurrentDecodesPerServer;
+        destination.MaxRetainedCompressedBytesPerServer = MaxRetainedCompressedBytesPerServer;
+        destination.MaxDecodedBytesInFlightPerServer = MaxDecodedBytesInFlightPerServer;
     }
 }
 
