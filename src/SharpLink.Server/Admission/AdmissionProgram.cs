@@ -11,9 +11,12 @@ internal sealed class AdmissionProgram
         AdmissionProgram> ProgramsByController = new();
     private static long s_nextGenerationId;
 
-    private readonly SharpLinkAdmissionController _controller;
+    private readonly SharpLinkAdmissionController? _controller;
     private int _activeUses;
     private int _duplicateReleaseAttempts;
+
+    private AdmissionProgram(long sentinelGenerationId)
+        => GenerationId = sentinelGenerationId;
 
     internal AdmissionProgram(SharpLinkAdmissionController controller)
     {
@@ -22,11 +25,18 @@ internal sealed class AdmissionProgram
         ProgramsByController.Add(controller, this);
     }
 
+    internal static AdmissionProgram Uninitialized { get; } = new(long.MinValue);
+
+    internal static AdmissionProgram Disabled { get; } = new(0);
+
     internal long GenerationId { get; }
 
-    internal SharpLinkAdmissionController Controller => _controller;
+    internal bool IsEnabled => _controller is not null;
 
-    internal bool QueueOneWayCalls => _controller.QueueOneWayCalls;
+    internal SharpLinkAdmissionController Controller
+        => _controller ?? throw new InvalidOperationException("Disabled admission has no controller.");
+
+    internal bool QueueOneWayCalls => Controller.QueueOneWayCalls;
 
     internal int ActiveUses => Volatile.Read(ref _activeUses);
 
@@ -42,6 +52,8 @@ internal sealed class AdmissionProgram
 
     internal AdmissionProgramUse AcquireUse()
     {
+        if (!IsEnabled)
+            throw new InvalidOperationException("Disabled admission does not acquire generation uses.");
         Interlocked.Increment(ref _activeUses);
         return new AdmissionProgramUse(this);
     }
