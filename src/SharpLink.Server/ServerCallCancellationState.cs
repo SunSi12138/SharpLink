@@ -10,6 +10,7 @@ internal enum ServerCallCancellationReason : byte
     ServerStopping,
     ConnectionClosed,
     AdmissionResourceExhausted,
+    PreAdmissionStreamResourceExhausted,
     Completed
 }
 
