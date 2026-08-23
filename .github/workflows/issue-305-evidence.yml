@@ -39,6 +39,13 @@ jobs:
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
+      - name: Verify server test filter
+        shell: bash
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            --configuration Release --no-restore -- \
+            --treenode-filter '/*/SharpLink.UnitTests.Server/*/*'
+
       - name: Baseline partition benchmarks
         shell: bash
         run: |
@@ -65,7 +72,7 @@ jobs:
         run: |
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
             --configuration Release --no-restore -- \
-            --filter-namespace SharpLink.UnitTests.Server
+            --treenode-filter '/*/SharpLink.UnitTests.Server/*/*'
 
       - name: Candidate A partition benchmarks
         shell: bash
@@ -102,7 +109,7 @@ jobs:
         run: |
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
             --configuration Release --no-restore -- \
-            --filter-namespace SharpLink.UnitTests.Server
+            --treenode-filter '/*/SharpLink.UnitTests.Server/*/*'
 
       - name: Candidate A2 partition benchmarks
         shell: bash
