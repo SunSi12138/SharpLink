@@ -285,12 +285,16 @@ public class InboundStreamAbandonmentTests
             new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "local retention failure"));
         Ensure(manager.ActiveStreamCount == 1,
             "local completion state must not be mistaken for peer StreamComplete");
+        Ensure(counters.Completed == 0,
+            "local completion on a retained drain route must defer receive terminal to peer StreamComplete");
 
         manager.AbandonExistingRequestStreams(requestId, 1);
         Ensure(manager.ActiveStreamCount == 1,
             "local abandonment after a local completion must still retain the drain route");
         Ensure(counters.Consumed == 4,
             "local abandonment should release deferred bytes even after local completion");
+        Ensure(counters.Completed == 0,
+            "abandonment must not publish receive terminal before the peer terminal arrives");
 
         await manager.DispatchChunkAsync(
             requestId,
