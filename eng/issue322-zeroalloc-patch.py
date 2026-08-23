@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def replace_once(path: str, old: str, new: str) -> None:
@@ -8,6 +9,15 @@ def replace_once(path: str, old: str, new: str) -> None:
     if count != 1:
         raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:100]!r}")
     target.write_text(text.replace(old, new, 1))
+
+
+def regex_once(path: str, pattern: str, replacement: str) -> None:
+    target = Path(path)
+    text = target.read_text()
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S | re.M)
+    if count != 1:
+        raise SystemExit(f"{path}: expected one regex replacement, found {count}: {pattern[:100]!r}")
+    target.write_text(updated)
 
 
 Path("src/SharpLink.Server/Admission/AdmissionProgram.cs").write_text("""namespace SharpLink.Server;
@@ -82,27 +92,9 @@ internal sealed class AdmissionProgram
 }
 """)
 
-replace_once(
+regex_once(
     "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",
-    """    private AdmissionProgramUse? CaptureAdmissionProgram(
-        long requestId,
-        out AdmissionProgram? program)
-    {
-        var publication = ReadAdmissionPublication();
-        program = publication.IsEnabled ? publication : null;
-        var use = program?.AcquireUse();
-        try
-        {
-            Volatile.Read(ref s_afterAdmissionCaptureForTests)?.Invoke(this, requestId, program);
-            return use;
-        }
-        catch
-        {
-            use?.Dispose();
-            throw;
-        }
-    }
-""",
+    r"    private AdmissionProgramUse\? CaptureAdmissionProgram\(.*?\n    \}\n\n(?=    private AdmissionProgram ReadAdmissionPublication)",
     """    private AdmissionProgram? CaptureAdmissionProgram(long requestId)
     {
         var publication = ReadAdmissionPublication();
@@ -119,23 +111,20 @@ replace_once(
             throw;
         }
     }
+
 """)
 
-replace_once(
+regex_once(
     "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs",
-    """                                        var admissionProgramUse = CaptureAdmissionProgram(
-                                            requestId,
-                                            out var admissionProgram);
-""",
-    """                                        var admissionProgram = CaptureAdmissionProgram(requestId);
-""")
+    r"                                        var admissionProgramUse = CaptureAdmissionProgram\(\s*requestId,\s*out var admissionProgram\);",
+    "                                        var admissionProgram = CaptureAdmissionProgram(requestId);")
 request_loop = Path("src/SharpLink.Server/SharpLinkServer.RequestLoop.cs")
 text = request_loop.read_text()
-old = """                                                admissionProgram,
-                                                admissionProgramUse);"""
-if text.count(old) != 2:
-    raise SystemExit(f"RequestLoop: expected two captured dispatch arguments, found {text.count(old)}")
-request_loop.write_text(text.replace(old, """                                                admissionProgram);"""))
+pattern = r"(?m)^(\s*)admissionProgram,\n\1admissionProgramUse\);$"
+text, count = re.subn(pattern, r"\1admissionProgram);", text)
+if count != 2:
+    raise SystemExit(f"RequestLoop: expected two captured dispatch argument removals, found {count}")
+request_loop.write_text(text)
 
 replace_once(
     "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
@@ -170,15 +159,6 @@ replace_once(
 """)
 replace_once(
     "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
-    """                admissionProgram,
-                admissionProgramUse: null,
-                callState,
-""",
-    """                admissionProgram,
-                callState,
-""")
-replace_once(
-    "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
     """        finally
         {
             admissionProgramUse?.Dispose();
@@ -192,10 +172,11 @@ replace_once(
 """)
 admission_dispatch = Path("src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs")
 text = admission_dispatch.read_text()
-extra = "                admissionProgramUse: null,\n"
-if text.count(extra) != 1:
-    raise SystemExit(f"AdmissionDispatch: expected one remaining named use argument, found {text.count(extra)}")
-admission_dispatch.write_text(text.replace(extra, "", 1))
+use_arg = r"(?m)^\s*admissionProgramUse: null,\n"
+text, count = re.subn(use_arg, "", text)
+if count != 2:
+    raise SystemExit(f"AdmissionDispatch: expected two resumed-use named arguments, found {count}")
+admission_dispatch.write_text(text)
 
 replace_once(
     "src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs",
