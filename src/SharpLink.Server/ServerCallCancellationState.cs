@@ -214,6 +214,13 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
 
+        if (reason != ServerCallCancellationReason.DeadlineExceeded &&
+            Deadline.IsExpired(_timeProvider ?? throw new InvalidOperationException(
+                "Server call state has no time provider.")))
+        {
+            reason = ServerCallCancellationReason.DeadlineExceeded;
+        }
+
         if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
             (int)ServerCallCancellationReason.None)
         {
