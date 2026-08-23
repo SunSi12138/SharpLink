@@ -30,6 +30,31 @@ internal sealed partial class SharpLinkServer
         return callState;
     }
 
+    private ServerCallCancellationState EnsurePreDecodeCallState(
+        ServerConnectionState connection,
+        ServerCallCancellationState? callState,
+        long requestId,
+        RpcDeadline deadline,
+        CancellationToken serverLoopToken,
+        CancellationToken moduleDrainingToken,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap)
+    {
+        if (callState is not null)
+            return callState;
+
+        callState = ServerCallCancellationState.Rent(
+            requestId,
+            deadline,
+            _runtimeContext.TimeProvider,
+            serverLoopToken,
+            _forceStopCts.Token,
+            moduleDrainingToken,
+            supportsCooperativeCancellation: true);
+        requestCancellationMap.Set(requestId, callState);
+        connection.DeadlineScheduler.Register(callState);
+        return callState;
+    }
+
     private ServerCallCancellationState EnsureTrackedCallState(
         ServerConnectionState connection,
         ServerCallCancellationState? callState,
