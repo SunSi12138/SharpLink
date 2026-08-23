@@ -63,6 +63,7 @@ public class PendingRequestTableTests
         using var manager = CreateTable(1, timeProvider: timeProvider);
         var occupied = manager.Rent<int>(out _);
         var deadline = RpcDeadline.FromTimestamp(timeProvider.GetTimestamp() - 1);
+        var timestampReadsBeforeWait = timeProvider.TimestampReadCount;
 
         var failure = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
@@ -70,8 +71,11 @@ public class PendingRequestTableTests
             CancellationToken.None).AsTask());
 
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "the injected UTC source must make an already-expired capacity deadline fail immediately");
-        Ensure(timeProvider.UtcReadCount == 1, "the capacity wait must read the injected time source once");
+            "the injected monotonic source must make an already-expired capacity deadline fail immediately");
+        Ensure(timeProvider.TimestampReadCount > timestampReadsBeforeWait,
+            "the capacity wait must read the injected monotonic time source");
+        Ensure(timeProvider.UtcReadCount == 0,
+            "capacity deadline arbitration must not consult wall-clock UTC time");
         manager.FailAllPendingRequests(new IOException("test cleanup"));
         await EnsureThrows<IOException>(occupied.AsValueTask(), "test cleanup");
     }
@@ -1015,6 +1019,7 @@ public class PendingRequestTableTests
 
         internal int DisposeCount { get; private set; }
         internal int UtcReadCount { get; private set; }
+        internal int TimestampReadCount { get; private set; }
 
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
 
@@ -1024,7 +1029,11 @@ public class PendingRequestTableTests
             return _utcNow ?? TimeProvider.System.GetUtcNow();
         }
 
-        public override long GetTimestamp() => TimeProvider.System.GetTimestamp();
+        public override long GetTimestamp()
+        {
+            TimestampReadCount++;
+            return TimeProvider.System.GetTimestamp();
+        }
 
         public void Dispose() => DisposeCount++;
     }
