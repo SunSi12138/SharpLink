@@ -11,7 +11,7 @@ permissions:
 jobs:
   evidence:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
@@ -29,7 +29,9 @@ jobs:
       - name: Record environment
         shell: bash
         run: |
-          mkdir -p artifacts/issue-305/baseline artifacts/issue-305/candidate
+          mkdir -p artifacts/issue-305/baseline \
+            artifacts/issue-305/candidate-a \
+            artifacts/issue-305/candidate-a2
           git rev-parse HEAD | tee artifacts/issue-305/baseline/git-sha.txt
           dotnet --info | tee artifacts/issue-305/baseline/dotnet-info.txt
           lscpu | tee artifacts/issue-305/baseline/cpu.txt
@@ -44,6 +46,41 @@ jobs:
             --filter '*AdmissionPartitionReleaseBenchmarks*' '*AdmissionPartitionControllerBenchmarks*' '*AdmissionPartitionRpcBenchmarks*' \
             --artifacts artifacts/issue-305/baseline/bdn
 
+      - name: Apply Candidate A in workspace
+        shell: bash
+        run: |
+          python3 .github/scripts/issue-305-apply-a.py
+          python3 .github/scripts/issue-305-adapt-tests.py
+          git add -N test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs
+          git diff -- src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            test/SharpLink.Benchmarks/AdmissionPartitionBenchmarks.cs \
+            test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs \
+            test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs \
+            > artifacts/issue-305/candidate-a/candidate.patch
+
+      - name: Candidate A correctness
+        shell: bash
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            --configuration Release --no-restore -- \
+            --filter-namespace SharpLink.UnitTests.Server
+
+      - name: Candidate A partition benchmarks
+        shell: bash
+        run: |
+          dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+            --filter '*AdmissionPartitionReleaseBenchmarks*' '*AdmissionPartitionControllerBenchmarks*' '*AdmissionPartitionRpcBenchmarks*' \
+            --artifacts artifacts/issue-305/candidate-a/bdn
+
+      - name: Reset Candidate A workspace
+        shell: bash
+        run: |
+          git restore --source=HEAD -- \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            test/SharpLink.Benchmarks/AdmissionPartitionBenchmarks.cs \
+            test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs
+          rm -f test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs
+
       - name: Apply Candidate A2 in workspace
         shell: bash
         run: |
@@ -54,20 +91,21 @@ jobs:
             test/SharpLink.Benchmarks/AdmissionPartitionBenchmarks.cs \
             test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs \
             test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs \
-            > artifacts/issue-305/candidate/candidate.patch
+            > artifacts/issue-305/candidate-a2/candidate.patch
 
-      - name: Candidate correctness
+      - name: Candidate A2 correctness
         shell: bash
         run: |
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
-            --configuration Release --no-restore
+            --configuration Release --no-restore -- \
+            --filter-namespace SharpLink.UnitTests.Server
 
-      - name: Candidate partition benchmarks
+      - name: Candidate A2 partition benchmarks
         shell: bash
         run: |
           dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
             --filter '*AdmissionPartitionReleaseBenchmarks*' '*AdmissionPartitionControllerBenchmarks*' '*AdmissionPartitionRpcBenchmarks*' \
-            --artifacts artifacts/issue-305/candidate/bdn
+            --artifacts artifacts/issue-305/candidate-a2/bdn
 
       - name: Upload evidence
         if: always()
