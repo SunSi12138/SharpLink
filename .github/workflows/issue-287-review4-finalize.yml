@@ -1,28 +1,30 @@
 name: Issue 287 review finalize
 
 on:
-  push:
+  pull_request:
     branches:
-      - issue-287-call-control-cleanup
+      - dev
 
 permissions:
   contents: write
 
 jobs:
   materialize:
-    if: ${{ github.actor != 'github-actions[bot]' }}
+    if: ${{ github.event.pull_request.head.ref == 'issue-287-call-control-cleanup' && github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: issue-287-call-control-cleanup
           fetch-depth: 0
       - name: Guard branch head
         shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           remote_head="$(git ls-remote origin refs/heads/issue-287-call-control-cleanup | cut -f1)"
-          test "$remote_head" = "$GITHUB_SHA"
+          test "$remote_head" = "$EXPECTED_HEAD"
       - name: Apply reviewed source patch
         shell: bash
         run: |
@@ -42,6 +44,8 @@ jobs:
           grep -F 'TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;' src/SharpLink.Abstractions/ISharpLinkMultiClusterClient.cs
       - name: Commit real source
         shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           git rm .github/issue-287-review4.patch.xz.b64
@@ -51,5 +55,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'fix: address final issue 287 review'
           remote_head="$(git ls-remote origin refs/heads/issue-287-call-control-cleanup | cut -f1)"
-          test "$remote_head" = "$GITHUB_SHA"
+          test "$remote_head" = "$EXPECTED_HEAD"
           git push origin HEAD:issue-287-call-control-cleanup
