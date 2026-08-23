@@ -214,18 +214,50 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
 
-        if (reason != ServerCallCancellationReason.DeadlineExceeded &&
-            Deadline.IsExpired(_timeProvider ?? throw new InvalidOperationException(
-                "Server call state has no time provider.")))
+        return TryClaimTerminal(reason);
+    }
+
+    public bool TryAcceptStreamData()
+        => TryClaimStreamProgress();
+
+    public bool TryClaimResponse()
+        => TryClaimTerminal(ServerCallCancellationReason.Completed);
+
+    private bool TryClaimStreamProgress()
+    {
+        if (Reason != ServerCallCancellationReason.None)
+            return false;
+
+        var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+            "Server call state has no time provider.");
+        if (Deadline.IsExpired(timeProvider))
         {
-            reason = ServerCallCancellationReason.DeadlineExceeded;
+            _ = TryClaimTerminal(ServerCallCancellationReason.DeadlineExceeded);
+            return false;
         }
+
+        return Reason == ServerCallCancellationReason.None;
+    }
+
+    private bool TryClaimTerminal(ServerCallCancellationReason proposedReason)
+    {
+        if (proposedReason == ServerCallCancellationReason.None)
+            throw new ArgumentOutOfRangeException(nameof(proposedReason));
+
+        var reason = proposedReason;
+        var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+            "Server call state has no time provider.");
+        if (reason != ServerCallCancellationReason.DeadlineExceeded && Deadline.IsExpired(timeProvider))
+            reason = ServerCallCancellationReason.DeadlineExceeded;
 
         if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
             (int)ServerCallCancellationReason.None)
         {
             return false;
         }
+
+        if (reason == ServerCallCancellationReason.Completed)
+            return true;
 
         try
         {
@@ -237,40 +269,6 @@ internal sealed class ServerCallCancellationState : IDisposable
             // timer callback or server shutdown path. Cancellation remains observable.
         }
         return true;
-    }
-
-    public bool TryAcceptStreamData()
-    {
-        if (Reason != ServerCallCancellationReason.None)
-            return false;
-
-        if (Deadline.IsExpired(_timeProvider ?? throw new InvalidOperationException(
-                "Server call state has no time provider.")))
-        {
-            TryCancel(ServerCallCancellationReason.DeadlineExceeded);
-            return false;
-        }
-
-        return Reason == ServerCallCancellationReason.None;
-    }
-
-    public bool TryClaimResponse()
-    {
-        if (Reason != ServerCallCancellationReason.None)
-            return false;
-
-        if (Deadline.IsExpired(_timeProvider ?? throw new InvalidOperationException(
-                "Server call state has no time provider.")))
-        {
-            TryCancel(ServerCallCancellationReason.DeadlineExceeded);
-            return false;
-        }
-
-        return Interlocked.CompareExchange(
-                   ref _reason,
-                   (int)ServerCallCancellationReason.Completed,
-                   (int)ServerCallCancellationReason.None) ==
-               (int)ServerCallCancellationReason.None;
     }
 
     public bool TryRecordAbandoned()
