@@ -1,21 +1,20 @@
-name: Issue 311 Patch
+name: Issue 311 Integration Patch
 
 on:
-  push:
-    branches:
-      - fix/311-codec-scope-routing
+  pull_request:
+    types: [opened, reopened]
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: fix/311-codec-scope-routing
+          ref: ${{ github.event.pull_request.head.ref }}
       - name: Apply focused source edits
         shell: bash
         run: |
@@ -30,77 +29,10 @@ jobs:
                   raise SystemExit(f"{path}: expected exactly one match, got {count}")
               p.write_text(text.replace(old, new, 1))
 
-          dto = 'src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs'
-          replace_once(dto,
-              '    private sealed class DtoAnalysisState\n',
-              '    private sealed partial class DtoAnalysisState\n')
-          replace_once(dto,
-              '            CollectAdapterRegistrations();\n            CollectAssemblyBindings();\n',
-              '            CollectAdapterRegistrations();\n            CollectAssemblyBindings();\n            CollectAssemblyRoutes();\n')
-          replace_once(dto,
-              '''                if (_compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly ||
-                    !_allowedAssemblyNames.Contains(assembly.Identity.Name))
-''',
-              '''                if (_compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly ||
-                    !_allowedAssemblyNames.Contains(assembly.Identity.Name) ||
-                    HasGeneratedAssemblyManifest(assembly))
-''')
-          replace_once(dto,
-              '''            if (TrySelectAdapter(type, out var adapter))
-            {
-                if (adapter is not null)
-                {
-                    _models[typeName] = new GeneratedCodecModel(
-                        typeName,
-                        GetCodecName(typeName),
-                        GetSchemaId(typeName, adapter.WireFormatId),
-                        GeneratedCodecKind.Adapter,
-                        type.IsReferenceType,
-                        ImmutableArray<GeneratedMemberModel>.Empty,
-                        ImmutableArray<string>.Empty,
-                        null,
-                        null,
-                        null,
-                        GetTypeName(adapter.AdapterType),
-                        adapter.AdapterId,
-                        adapter.WireFormatId,
-                        GetAssemblyDependencies([type]),
-                        type.Locations.FirstOrDefault());
-                }
-                return;
-            }
-''',
-              '''            if (TrySelectAdapter(type, out var adapter))
-            {
-                if (adapter is not null)
-                    AddAdapterModel(type, typeName, adapter);
-                return;
-            }
-            if (TrySelectRouteAdapter(type, out var routedAdapter))
-            {
-                if (routedAdapter is not null)
-                    AddAdapterModel(type, typeName, routedAdapter);
-                return;
-            }
-''')
-
           analysis = 'src/SharpLink.Generator/RpcGenerator.Analysis.cs'
           replace_once(analysis,
               '                        IsInlineFixedRpcType(p.Type),\n',
               '                        IsInlineFixedRpcType(p.Type) && !HasNativeCodecRoute(symbol.ContainingAssembly),\n')
-
-          routes = 'src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs'
-          replace_once(routes,
-              '    private static bool HasNativeCodecRoute(IAssemblySymbol assembly)\n',
-              '''    private static bool HasGeneratedAssemblyManifest(IAssemblySymbol assembly)
-        => assembly.GetAttributes().Any(static attribute =>
-            string.Equals(
-                attribute.AttributeClass?.ToDisplayString(),
-                GeneratedAssemblyManifestAttributeMetadataName,
-                StringComparison.Ordinal));
-
-    private static bool HasNativeCodecRoute(IAssemblySymbol assembly)
-''')
 
           provider = 'src/SharpLink.Runtime/Codec/RpcCodecProvider.cs'
           replace_once(provider,
@@ -163,7 +95,7 @@ jobs:
               '            "SDK should expose exactly the published contract types as forwarders");\n')
           PY
           git diff --check
-      - name: Commit focused edits and remove temporary workflow
+      - name: Commit integration edits and remove temporary workflow
         shell: bash
         run: |
           git rm .github/workflows/issue-311-patch.yml
@@ -171,4 +103,4 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add src test
           git commit -m 'Integrate compile-time codec scope routing'
-          git push origin HEAD:fix/311-codec-scope-routing
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
