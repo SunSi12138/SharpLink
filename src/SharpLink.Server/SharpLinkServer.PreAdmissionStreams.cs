@@ -2,6 +2,8 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+    private const int UnresolvedClientStreamCount = -1;
+
     private IRpcByteBufferWriter CopyAdmissionPayload(ReadOnlySequence<byte> payload)
     {
         var owner = _runtimeContext.Buffers.Rent(checked((int)payload.Length));
@@ -124,6 +126,12 @@ internal sealed partial class SharpLinkServer
         long requestId,
         int clientStreamCount)
     {
+        if (clientStreamCount == UnresolvedClientStreamCount)
+        {
+            _ = TerminateUnresolvableOneWayRequest(session, requestId);
+            return;
+        }
+
         if (clientStreamCount != 0)
             session.StreamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
     }
@@ -145,7 +153,7 @@ internal sealed partial class SharpLinkServer
             !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
             !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
         {
-            return 0;
+            return UnresolvedClientStreamCount;
         }
 
         return descriptor.ClientStreamCount;
