@@ -4,6 +4,9 @@ internal sealed partial class SharpLinkServer
 {
     private const int MaxPersistentDecodeWorkers = 4;
     private const int MinimumPersistentDecodeQueueCapacity = 32;
+    // Phase 0 has current-D performance evidence at 1 MiB. Smaller cutovers remain hypotheses until
+    // real RequestLoop control-plane measurements are collected in this slice.
+    private const int InitialPersistentDecodeThresholdBytes = 1024 * 1024;
     private ServerDecodeExecutor? _decodeExecutor;
 
     private void StartDecodeExecutor()
@@ -26,6 +29,26 @@ internal sealed partial class SharpLinkServer
             static state => ((ServerDecodeExecutor)state!).StopAccepting(),
             executor);
         TrackFrameworkTask(executor.Completion, "DecodeExecutor");
+    }
+
+    private bool ShouldUsePersistentDecode(
+        ProtocolV2FrameFlags flags,
+        ServiceRegistration serviceInfo,
+        ServerRequestEnvelope request,
+        ReadOnlySequence<byte> payload)
+    {
+        if ((flags & ProtocolV2FrameFlags.Compressed) == 0 ||
+            (flags & ProtocolV2FrameFlags.Cancellable) == 0 ||
+            Volatile.Read(ref _decodeExecutor) is null ||
+            !serviceInfo.Stub.SupportsCancellation(request.MethodHash))
+        {
+            return false;
+        }
+
+        return RpcSession.ReadCompressedDecodedPayloadLength(
+            ProtocolV2FrameType.Request,
+            flags,
+            payload) >= InitialPersistentDecodeThresholdBytes;
     }
 
     private ServerDecodeExecutor DecodeExecutor
