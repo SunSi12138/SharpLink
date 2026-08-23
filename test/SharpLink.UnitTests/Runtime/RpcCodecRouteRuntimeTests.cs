@@ -128,13 +128,19 @@ public class RpcCodecRouteRuntimeTests
         public IReadOnlyList<string> Dependencies => [];
     }
 
-    private sealed class DefaultManifest(Assembly ownerAssembly) : ISharpLinkGeneratedAssemblyManifest
+    private sealed class DefaultManifest : ISharpLinkGeneratedAssemblyManifest
     {
+        public DefaultManifest(Assembly ownerAssembly)
+        {
+            OwnerAssembly = ownerAssembly;
+            CompileTimeDescriptor = $"route-default-{ownerAssembly.GetName().Name}";
+        }
+
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "route-test";
-        public Assembly OwnerAssembly { get; } = ownerAssembly;
-        public string CompileTimeDescriptor => $"route-default-{ownerAssembly.GetName().Name}";
+        public Assembly OwnerAssembly { get; }
+        public string CompileTimeDescriptor { get; }
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
