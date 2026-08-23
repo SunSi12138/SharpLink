@@ -44,6 +44,7 @@ jobs:
           <Project Sdk="Microsoft.NET.Sdk">
             <PropertyGroup>
               <OutputType>Exe</OutputType>
+              <AssemblyName>SharpLink.Benchmarks</AssemblyName>
               <TargetFramework>net10.0</TargetFramework>
               <Nullable>enable</Nullable>
               <ImplicitUsings>enable</ImplicitUsings>
@@ -205,7 +206,7 @@ jobs:
             local label="$2"
             local order="$3"
             echo "=== $label order=$order ===" | tee -a artifacts/issue-305-review/contention.log
-            "$binary/Issue305ReviewHarness" "$label" "$order" \
+            "$binary/SharpLink.Benchmarks" "$label" "$order" \
               | tee -a artifacts/issue-305-review/contention.log
           }
           run_sample /tmp/issue305-baseline baseline-r1 32,128
