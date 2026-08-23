@@ -145,7 +145,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 4;
 
     /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
-    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";
+    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-deadline-v2";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;
