@@ -117,7 +117,11 @@ public class ServerRequestPermitTests
             var reservedPermit = permit!;
             var alias = reservedPermit;
 
-            var firstDisposeTask = Task.Run(reservedPermit.Dispose);
+            var firstDisposeTask = Task.Factory.StartNew(
+                reservedPermit.Dispose,
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
             firstDispose = firstDisposeTask;
             Ensure(releaseClaimed.Wait(TimeSpan.FromSeconds(1)),
                 "the first disposer must claim release before the race probe continues");
@@ -125,11 +129,15 @@ public class ServerRequestPermitTests
                 "capacity must remain occupied while the release winner is paused before ReleaseCall");
 
             var secondReturned = 0;
-            var secondDisposeTask = Task.Run(() =>
-            {
-                alias.Dispose();
-                Volatile.Write(ref secondReturned, 1);
-            });
+            var secondDisposeTask = Task.Factory.StartNew(
+                () =>
+                {
+                    alias.Dispose();
+                    Volatile.Write(ref secondReturned, 1);
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
             secondDispose = secondDisposeTask;
             Ensure(secondObservedReleasing.Wait(TimeSpan.FromSeconds(1)),
                 "the second disposer must observe the in-progress Releasing state");
