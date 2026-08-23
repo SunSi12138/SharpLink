@@ -16,11 +16,12 @@ public class CompressionPersistentDecodeFairLifecycleTests
 
         var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
         var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
-        var a1 = serviceA.MeasureAsync(CreateLargePayload(0x61), CancellationToken.None).AsTask();
+        using var cancellation = new CancellationTokenSource();
+        var a1 = serviceA.MeasureAsync(CreateLargePayload(0x61), cancellation.Token).AsTask();
         await provider.WaitForStartedCountAsync(1);
 
-        var a2 = serviceA.MeasureAsync(CreateLargePayload(0x62), CancellationToken.None).AsTask();
-        var b1 = serviceB.MeasureAsync(CreateLargePayload(0x63), CancellationToken.None).AsTask();
+        var a2 = serviceA.MeasureAsync(CreateLargePayload(0x62), cancellation.Token).AsTask();
+        var b1 = serviceB.MeasureAsync(CreateLargePayload(0x63), cancellation.Token).AsTask();
         await WaitUntilAsync(
             () => harness.DecodeQueueDepth == 2 &&
                   harness.DecodeQueueReservations == 2 &&
@@ -58,11 +59,12 @@ public class CompressionPersistentDecodeFairLifecycleTests
 
         var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
         var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
-        var a1 = serviceA.MeasureAsync(CreateLargePayload(0x71), CancellationToken.None).AsTask();
+        using var cancellation = new CancellationTokenSource();
+        var a1 = serviceA.MeasureAsync(CreateLargePayload(0x71), cancellation.Token).AsTask();
         await provider.WaitForStartedCountAsync(1);
 
-        var a2 = serviceA.MeasureAsync(CreateLargePayload(0x72), CancellationToken.None).AsTask();
-        var b1 = serviceB.MeasureAsync(CreateLargePayload(0x73), CancellationToken.None).AsTask();
+        var a2 = serviceA.MeasureAsync(CreateLargePayload(0x72), cancellation.Token).AsTask();
+        var b1 = serviceB.MeasureAsync(CreateLargePayload(0x73), cancellation.Token).AsTask();
         await WaitUntilAsync(
             () => harness.DecodeQueueDepth == 2 &&
                   harness.DecodeQueueReservations == 2 &&
