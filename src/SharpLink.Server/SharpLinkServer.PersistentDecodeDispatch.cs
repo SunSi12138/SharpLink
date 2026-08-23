@@ -137,6 +137,7 @@ internal sealed partial class SharpLinkServer
             });
 
             var decodeTask = DecodeExecutor.EnqueueReservedAsync(
+                connection,
                 reservedQueuePermit,
                 workItem,
                 callState.InvocationToken);
