@@ -24,8 +24,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -120,21 +118,4 @@ jobs:
             artifacts/chaos/pr-smoke.json
             artifacts/chaos/pr-smoke.dmp
             artifacts/chaos/pr-smoke.dmp.crashreport.json
-          if-no-files-found: warn
-
-      - name: Issue 305 formal c1 single-partition gate
-        if: github.event.pull_request.number == 309
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          cp .github/scripts/issue-305-c1-evidence.sh /tmp/issue-305-c1-evidence.sh
-          bash /tmp/issue-305-c1-evidence.sh
-
-      - name: Upload Issue 305 c1 evidence
-        if: always() && github.event.pull_request.number == 309
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: issue-305-c1-evidence
-          path: artifacts/issue-305-c1
           if-no-files-found: warn
