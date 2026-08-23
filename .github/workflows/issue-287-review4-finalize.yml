@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
 
-# Contents-API trigger; this workflow self-deletes after materialization.
 jobs:
   materialize:
     if: ${{ github.actor != 'github-actions[bot]' }}
@@ -41,11 +40,11 @@ jobs:
           grep -F 'public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";' src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs
           grep -F 'TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;' src/SharpLink.Abstractions/ISharpLinkClient.cs
           grep -F 'TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;' src/SharpLink.Abstractions/ISharpLinkMultiClusterClient.cs
-      - name: Commit real source and remove finalizer
+      - name: Commit real source
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/issue-287-review4.patch.xz.b64 .github/workflows/issue-287-review4-finalize.yml
+          git rm .github/issue-287-review4.patch.xz.b64
           git add -A
           git diff --cached --check
           git config user.name 'github-actions[bot]'
