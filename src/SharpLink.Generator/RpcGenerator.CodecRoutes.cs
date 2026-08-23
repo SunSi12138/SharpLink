@@ -55,6 +55,7 @@ public partial class RpcGenerator
     {
         private readonly Dictionary<int, ITypeSymbol> _assemblyRoutes = [];
         private readonly HashSet<int> _conflictingRouteScopes = [];
+        private readonly HashSet<ITypeSymbol> _manifestScopedSelections = new(SymbolEqualityComparer.Default);
         private HashSet<ITypeSymbol>? _routeEligibleTypes;
 
         private void CollectAssemblyRoutes()
@@ -141,14 +142,11 @@ public partial class RpcGenerator
                 return true;
             }
 
+            _manifestScopedSelections.Add(type);
             return true;
         }
 
-        private void AddAdapterModel(
-            ITypeSymbol type,
-            string typeName,
-            AdapterRegistration adapter,
-            bool manifestScoped)
+        private void AddAdapterModel(ITypeSymbol type, string typeName, AdapterRegistration adapter)
         {
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
@@ -164,9 +162,9 @@ public partial class RpcGenerator
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
                 adapter.WireFormatId,
-                manifestScoped,
                 GetAssemblyDependencies([type]),
-                type.Locations.FirstOrDefault());
+                type.Locations.FirstOrDefault(),
+                IsManifestScoped: _manifestScopedSelections.Remove(type));
         }
 
         private bool IsRouteEligible(ITypeSymbol type)
