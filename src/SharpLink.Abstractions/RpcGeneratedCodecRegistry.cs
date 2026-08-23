@@ -18,12 +18,6 @@ public interface IRpcGeneratedCodecFactory
     /// <summary>Gets the adapter instance, or null for native Codecs.</summary>
     IRpcCodecAdapter? Adapter { get; }
 
-    /// <summary>
-    /// Gets whether this factory is selected by an assembly-level route and must only be
-    /// resolved through artifacts owned by the same generated manifest.
-    /// </summary>
-    bool IsManifestScoped => false;
-
     /// <summary>Creates a Codec whose dependencies are resolved from the target Context.</summary>
     /// <param name="provider">The target Context Codec provider.</param>
     /// <param name="adapterScope">The context-owned adapter scope, or <see langword="null"/> for native codecs.</param>
