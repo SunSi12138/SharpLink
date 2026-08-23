@@ -36,6 +36,7 @@ internal sealed partial class SharpLinkServer
             _logger,
             _connectionAdmission.MaxConnections,
             _connectionAdmission.MaxHandshakes);
+        StartDecodeExecutor();
         TrackFrameworkTask(
             RunHeartbeatCheckLoopAsync(_forceStopCts.Token),
             "HeartbeatCheckLoop");

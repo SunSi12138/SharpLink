@@ -123,7 +123,10 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     private readonly SharpLinkBufferWriterPool _pool;
     private readonly IRpcByteBufferWriter _owner;
     private readonly ServerRetainedCompressedPermit? _retainedPermit;
-    private int _disposed;
+    private readonly Lock _lifetimeGate = new();
+    private int _activeUses;
+    private bool _disposeRequested;
+    private bool _released;
 
     internal ServerRetainedAdmissionPayload(
         SharpLinkBufferWriterPool pool,
@@ -139,18 +142,79 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            return new ReadOnlySequence<byte>(_owner.WrittenMemory);
+            lock (_lifetimeGate)
+            {
+                ObjectDisposedException.ThrowIf(_released, this);
+                return new ReadOnlySequence<byte>(_owner.WrittenMemory);
+            }
         }
     }
 
-    internal ServerRetainedCompressedPermit? RetainedPermit => _retainedPermit;
+    internal ServerRetainedCompressedPermit? RetainedPermit
+    {
+        get
+        {
+            lock (_lifetimeGate)
+            {
+                ObjectDisposedException.ThrowIf(_released, this);
+                return _retainedPermit;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pins the physical retained buffer across an asynchronous consumer. Dispose may be requested
+    /// while a use is active; the buffer is returned only after the final use releases it.
+    /// </summary>
+    internal void AcquireUse()
+    {
+        lock (_lifetimeGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposeRequested || _released, this);
+            _activeUses++;
+        }
+    }
+
+    internal void ReleaseUse()
+    {
+        var release = false;
+        lock (_lifetimeGate)
+        {
+            if (--_activeUses < 0)
+            {
+                _activeUses++;
+                throw new InvalidOperationException("Retained admission payload use count underflowed.");
+            }
+            if (_disposeRequested && _activeUses == 0 && !_released)
+            {
+                _released = true;
+                release = true;
+            }
+        }
+        if (release)
+            ReleaseCore();
+    }
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+        var release = false;
+        lock (_lifetimeGate)
+        {
+            if (_disposeRequested)
+                return;
+            _disposeRequested = true;
+            if (_activeUses == 0 && !_released)
+            {
+                _released = true;
+                release = true;
+            }
+        }
+        if (release)
+            ReleaseCore();
+    }
 
+    private void ReleaseCore()
+    {
         try
         {
             // The physical retained buffer is returned before its accounting permit is
