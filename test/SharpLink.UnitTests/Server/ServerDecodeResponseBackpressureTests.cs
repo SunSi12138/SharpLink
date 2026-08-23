@@ -100,6 +100,119 @@ public class ServerDecodeResponseBackpressureTests
         await input.Writer.CompleteAsync();
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task DecodedByteAccountingShouldFollowDeferredPayloadOwnerReturn()
+    {
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableAutomaticServiceRegistration()
+            .UseRuntime(options =>
+            {
+                options.FlowControl.MaxConcurrentCallsPerConnection = 1;
+                options.FlowControl.MaxConcurrentCallsPerServer = 1;
+                options.FlowControl.MaxConcurrentDecodesPerServer = 1;
+                options.FlowControl.MaxRetainedCompressedBytesPerServer = 1024;
+                options.FlowControl.MaxDecodedBytesInFlightPerServer = 1024;
+            })
+            .UseTransport(new IdleListener())
+            .Build();
+        var runtimeContext = (SharpLinkRuntimeContext)(
+            typeof(SharpLinkServer).GetField(
+                "_runtimeContext",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(server)!);
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "decoded-byte-external-lease",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ServerOptions(runtimeContext));
+        var callCancellations = new StripedLongMap<ServerCallCancellationState>(runtimeContext.Concurrency);
+        var connection = new ServerConnectionState(
+            session,
+            new RpcSessionGeneratedServerBridge(session),
+            callCancellations,
+            CancellationToken.None,
+            runtimeContext.TimeProvider,
+            maxConcurrentCalls: 1);
+        Ensure(connection.MarkReady(null), "connection ready");
+        typeof(SharpLinkServer).GetField(
+                "_state",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(server, 2); // Running
+
+        var admission = server.TryReserveCall(connection, out var requestPermit);
+        Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && requestPermit is not null,
+            "request permit acquired");
+        var permit = requestPermit ?? throw new Exception("request permit was not returned");
+        Ensure(permit.TryAcquireDecodePermit(0, out var decodePermit) && decodePermit is not null,
+            "decode permit acquired");
+        var decode = decodePermit ?? throw new Exception("decode permit was not returned");
+        Ensure(decode.TryReserveDecodedBytes(256), "decoded-byte budget acquired");
+        decode.CompleteDecode();
+        permit.Activate();
+        Ensure(server.ActiveDecodeCountForDiagnostics == 0 &&
+               server.DecodedBytesInFlightForDiagnostics == 256,
+            "decoded-byte ownership survives decode completion");
+
+        var payloadOwner = runtimeContext.Buffers.Rent(256);
+        payloadOwner.GetSpan(256)[..256].Fill(0x2A);
+        payloadOwner.Advance(256);
+        var callState = ServerCallCancellationState.Rent(
+            72,
+            default,
+            runtimeContext.TimeProvider,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        callState.AttachPayloadOwner(runtimeContext.Buffers, payloadOwner);
+        callCancellations.Set(72, callState);
+        var externalLease = callState.CaptureLease(72);
+        Ensure(externalLease.TryAcquire(), "external call-state lease acquired");
+        var externalUseOwned = true;
+
+        try
+        {
+            var releaseDispatch = typeof(SharpLinkServer).GetMethod(
+                "ReleaseDispatchResources",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new Exception("cannot find dispatch resource release helper");
+            releaseDispatch.Invoke(server,
+            [
+                callState,
+                72L,
+                callCancellations,
+                connection,
+                permit
+            ]);
+
+            Ensure(server.ActiveCallCountForDiagnostics == 0 && connection.ActiveCalls == 0,
+                "dispatch teardown releases call capacity even while the call-state lease is retained");
+            Ensure(callState.HasPayloadOwnerForDiagnostics,
+                "external call-state lease must keep the physical decoded payload owner alive");
+            Ensure(server.DecodedBytesInFlightForDiagnostics == 256,
+                "decoded-byte accounting must remain charged while the physical owner is retained");
+
+            externalLease.ReleaseUse();
+            externalUseOwned = false;
+
+            Ensure(server.DecodedBytesInFlightForDiagnostics == 0,
+                "returning the physical decoded payload must release its decoded-byte accounting");
+        }
+        finally
+        {
+            if (externalUseOwned)
+                externalLease.ReleaseUse();
+            permit.Dispose();
+            callState.Dispose();
+        }
+
+        await connection.CloseAsync();
+        await input.Writer.CompleteAsync();
+    }
+
     private static void Ensure(bool condition, string scenario)
     {
         if (!condition)
