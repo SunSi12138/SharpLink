@@ -1,0 +1,52 @@
+name: Issue 311 regression repair
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          def replace_once(path, old, new):
+              target = Path(path)
+              text = target.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected one match for {old!r}, found {text.count(old)}')
+              target.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'test/SharpLink.Generator.Tests/RpcCodecRouteContractManifestTests.cs',
+              '  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.dto - kind / v1", "sharplink - native / v1")]";',
+              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.dto-kind/v1\\", \\"sharplink-native/v1\\")]";')
+
+          replace_once(
+              'test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs',
+              '  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), "explicit.nested/v1", "explicit-nested-wire/v1")]",\n  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))]",\n  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.managed.outer/v1", "route-managed-outer-wire/v1")]",\n  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");',
+              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), \\"explicit.nested/v1\\", \\"explicit-nested-wire/v1\\")]",\n            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))]",\n            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.managed.outer/v1\\", \\"route-managed-outer-wire/v1\\")]",\n            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");')
+
+          replace_once(
+              'test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs',
+              '  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.native.contract - only / v1", "route - native - contract - only - wire / v1")]",\n  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");',
+              '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\"route.native.contract-only/v1\\", \\"route-native-contract-only-wire/v1\\")]",\n            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");')
+
+          client = Path('test/SharpLink.UnitTests/Client/RpcClientStreamSinkTests.cs')
+          text = client.read_text()
+          if 'using System.Collections.Generic;' not in text:
+              text = text.replace('using System.Buffers;\n', 'using System.Buffers;\nusing System.Collections.Generic;\nusing System.Threading;\n', 1)
+          client.write_text(text)
+
+          subprocess.run([
+              'dotnet', 'format', 'Sharplink.slnx', 'whitespace', '--include',
+              'test/SharpLink.Generator.Tests/RpcCodecRouteContractManifestTests.cs',
+              'test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs',
+              'test/SharpLink.UnitTests/Client/RpcClientStreamSinkTests.cs',
+          ], check=True)
+          PY
