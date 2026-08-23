@@ -59,12 +59,17 @@ internal sealed class AdmissionProgram
 
     internal void ReleaseUse()
     {
-        if (Interlocked.Decrement(ref _activeUses) >= 0)
-            return;
+        while (true)
+        {
+            var activeUses = Volatile.Read(ref _activeUses);
+            if (activeUses <= 0)
+            {
+                Interlocked.Increment(ref _duplicateReleaseAttempts);
+                throw new InvalidOperationException("Admission program use count underflowed.");
+            }
 
-        // Restore accounting before surfacing an ownership bug so diagnostics stay stable.
-        Interlocked.Increment(ref _activeUses);
-        Interlocked.Increment(ref _duplicateReleaseAttempts);
-        throw new InvalidOperationException("Admission program use count underflowed.");
+            if (Interlocked.CompareExchange(ref _activeUses, activeUses - 1, activeUses) == activeUses)
+                return;
+        }
     }
 }
