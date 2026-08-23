@@ -40,13 +40,10 @@ public class PreAdmissionStreamBudgetIntegrationTests
             var rejectedB = uploadBService.UploadBytesAsync(
                 SingleItemAsync(CreateItem(0x42))).AsTask();
             var failure = await CaptureFailureAsync(rejectedB);
-            Ensure(failure is SharpLinkException
-                {
-                    Code: SharpLinkErrorCode.ResourceExhausted
-                } exhausted &&
-                exhausted.Message.Contains(
-                    "server_pre_admission_stream_bytes",
-                    StringComparison.Ordinal),
+            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted } exhausted &&
+                   exhausted.Message.Contains(
+                       "server_pre_admission_stream_bytes",
+                       StringComparison.Ordinal),
                 "second connection must receive the stable stream-budget ResourceExhausted reason");
 
             await WaitUntilAsync(
