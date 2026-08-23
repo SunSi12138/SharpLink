@@ -1,4 +1,4 @@
-name: Issue 287 temporary workbench
+name: Issue 287 materialize cleanup
 
 on:
   pull_request:
@@ -6,135 +6,38 @@ on:
       - dev
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  prototype:
+  materialize:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'issue-287-call-control-cleanup'
     runs-on: ubuntu-latest
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: issue-287-call-control-cleanup
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.x
-      - name: Apply prototype patch
+      - name: Apply final issue patch
+        run: bash .github/issue-287-apply-current.sh
+      - name: Materialize source and remove temporary tooling
+        shell: bash
         run: |
-          python3 .github/issue-287-patch.py
-          python3 .github/issue-287-generator.py
-          python3 .github/issue-287-tests.py
-          python3 .github/issue-287-review-tests.py
-          python3 .github/issue-287-followup.py
-          python3 .github/issue-287-generator-tests.py
-          python3 .github/issue-287-syntax-fix.py
-          python3 .github/issue-287-inherited-budget.py
-          python3 .github/issue-287-server-handshake-test.py
-          python3 .github/issue-287-docs.py
-          python3 .github/issue-287-review-round2.py
-          python3 .github/issue-287-review-round2-followup.py
-          python3 .github/issue-287-review-round2-compile-fixes.py
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/SharpLink.Client/SharpLinkClient.RpcChannel.cs')
-          text = p.read_text().replace(
-              'DateTimeOffset? deadline = null,',
-              'RpcDeadline deadline = default,')
-          p.write_text(text)
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          p = Path('src/SharpLink.Client/SharpLinkClient.Interceptors.cs')
-          p.write_text(p.read_text().replace('context.Options', 'context.Metadata'))
+          git rm -f .github/issue-287-*
+          git rm -f .github/workflows/issue-287-*.yml
+          git add -A
 
-          p = Path('src/SharpLink.Generator/RpcGenerator.Analysis.cs')
-          text = p.read_text().replace('                m.Parameters.Count(IsCallOptionsParameter) > 1 ||\n', '')
-          p.write_text(text)
+          git diff --cached --check
+          test -z "$(git ls-files '.github/issue-287-*')"
+          test -z "$(git ls-files '.github/workflows/issue-287-*.yml')"
 
-          p = Path('src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs')
-          text = p.read_text().replace(
-              'if (IsCancellationTokenParameter(parameter) || IsCallOptionsParameter(parameter))',
-              'if (IsCancellationTokenParameter(parameter))')
-          p.write_text(text)
-          PY
-          cat \
-            .github/issue-287-review-round3.part0 \
-            .github/issue-287-review-round3.part1 \
-            .github/issue-287-review-round3.part2 \
-            .github/issue-287-review-round3.part3 \
-            > /tmp/issue-287-review-round3.patch.xz
-          xz -t /tmp/issue-287-review-round3.patch.xz
-          xz -dc /tmp/issue-287-review-round3.patch.xz | git apply -
-          python3 .github/issue-287-review-round3-fix.py
-          git diff --stat
-          git diff --check
-          echo '=== removed source concepts ==='
-          git grep -n -E 'SharpLinkCallOptions|IsCallOptions|HasCallOptions' src && exit 1 || true
-          echo '=== removed dead WaitForReady compatibility ==='
-          git grep -n 'WaitForReady' -- src/SharpLink.Client && exit 1 || true
-          echo '=== legacy wire compatibility gates ==='
-          git grep -n -E 'TimeBudgetMinorVersion|ToUnixTimeMilliseconds|FromUnixTimeMilliseconds' -- src/SharpLink.Client src/SharpLink.Server src/SharpLink.Abstractions/ProtocolV2.cs && exit 1 || true
-          echo '=== stale active docs ==='
-          git grep -n 'SharpLinkCallOptions' -- README.md doc && exit 1 || true
-          git grep -n 'API 6' -- doc/migration.md doc/getting-started.md doc/troubleshooting.md doc/architecture.md doc/index.md && exit 1 || true
-          bash -n eng/verify-protocol-v2-cross-version.sh
-          git grep -n '1.1.1' -- eng/verify-protocol-v2-cross-version.sh && exit 1 || true
-          python3 - <<'PY'
-          from pathlib import Path
-          abstractions = Path('src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs').read_text()
-          generator = Path('src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs').read_text()
-          assert 'public const int Api = 4;' in abstractions
-          assert 'public int ApiVersion => 4;' in generator
-          changelog = Path('CHANGELOG.md').read_text()
-          unreleased = changelog.split('## [1.1.1]', 1)[0]
-          stale = [
-              'all four SharpLink 1.1.1/2.0 Protocol v2 process pairs',
-              'separate 1.1.1 and 2.0 processes interoperate',
-              'Protocol v2 wire format, contract/schema identity, and call-path performance are unchanged',
-              'pre-release 2.0-dev API 4 artifacts are likewise rejected',
-          ]
-          for phrase in stale:
-              assert phrase not in unreleased, phrase
-          migration = Path('doc/migration.md').read_text()
-          for phrase in [
-              '1.1.x Client 与 2.0 Server、2.0 Client 与 1.1.x Server 仍可通过 Protocol v2 互操作',
-              '迁移到 2.0 不改变 wire frame 或 capability negotiation',
-          ]:
-              assert phrase not in migration, phrase
-          assert '1.1.1/API 3' in migration and 'API 4' in migration
-          PY
-      - name: Capture applied worktree
-        run: |
-          git add -N .
-          git diff --binary > issue-287-applied.patch
-          tar -czf issue-287-applied-tree.tar.gz \
-            src test eng doc README.md CHANGELOG.md \
-            .github/workflows/release-gate.yml
-      - uses: actions/upload-artifact@v4
-        with:
-          name: issue-287-applied-patch
-          path: issue-287-applied.patch
-          if-no-files-found: error
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: issue-287-applied-tree
-          path: issue-287-applied-tree.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-      - name: Restore
-        run: dotnet restore Sharplink.slnx
-      - name: Build solution
-        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-      - name: Unit tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-build -c Release
-      - name: Generator tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --no-build -c Release
-      - name: Integration tests
-        run: >-
-          dotnet run -c Release --no-build
-          --project test/SharpLink.IntegrationTests
-          --
-          --maximum-parallel-tests 1
-          --timeout 120s
+          echo '=== final staged summary ==='
+          git diff --cached --stat
+          git status --short
+
+          git commit -m "api: materialize call-control cleanup"
+          git push origin HEAD:issue-287-call-control-cleanup
