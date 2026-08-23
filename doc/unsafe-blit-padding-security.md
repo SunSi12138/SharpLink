@@ -38,7 +38,7 @@ The confidentiality risk is clearest when callers construct or receive a struct 
 - pooled/native buffers reused for struct-shaped storage;
 - any unsafe helper that writes fields but intentionally does not clear the whole representation.
 
-In those cases, the raw blit can move padding across an RPC/process/network boundary. Repeated serialization can therefore expose a small number of source-storage bytes per value. This is a **real but conditional information-disclosure primitive**, not merely a canonicalization concern.
+In those cases, the raw blit can move padding across an RPC/process/network boundary. The disclosure volume is bounded by the padding/hole bytes present inside the serialized `Unsafe.SizeOf<T>()` representation, not by a fixed small count. Natural alignment gaps are typically small, but an explicit-layout type can reserve a much larger `Size` with sparse logical fields and therefore transmit a correspondingly large hole. Repeated serialization can expose those source-storage bytes per value. This is a **real but conditional information-disclosure primitive**, not merely a canonicalization concern.
 
 The tested ordinary managed-construction controls did not expose non-zero padding, while unsafe/native/uninitialized provenance demonstrably can. The latter therefore carries materially higher confidentiality risk. The former observation should not be elevated into a guarantee that padding is always zero.
 
@@ -64,7 +64,7 @@ Fixtures cover more than the original `ByteInt32` and `Int64Byte` controls:
 | `ExplicitGap` | explicit layout with an intentional hole | 1-3 |
 | `PackedByteInt32` | `Pack=1` no-padding control | none |
 
-The explicit-layout fixture is important: **requiring `LayoutKind.Explicit` alone does not remove disclosure risk** because explicit layouts can still contain holes.
+The explicit-layout fixture is important: **requiring `LayoutKind.Explicit` alone does not remove disclosure risk** because explicit layouts can still contain holes. The included fixture demonstrates the mechanism with a 3-byte hole; explicit layouts are not limited to that size and can contain materially larger holes.
 
 The workflow also asserts that zeroing only the known padding offsets makes the two poisoned wires identical and records whether the ordinary managed-construction control happens to contain zero at those offsets on each tested runtime. That control is evidence, not a contractual assertion about all .NET executions.
 
