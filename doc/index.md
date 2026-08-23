@@ -8,7 +8,7 @@
 2. [契约与序列化](contracts-and-codecs.md)：五类 RPC、DTO 规则、原生 Codec、SharpPack 与 Adapter。
 3. [调用、流式与取消](calls-and-streaming.md)：deadline、metadata、背压、OneWay 和取消契约。
 4. [传输与部署](transports.md)：TCP/TLS、UDS、NamedPipe、AnonymousPipe、SharedMemory 与 NativeAOT。
-5. [安全](security.md)：认证、授权、TLS、错误信息边界以及原始结构体序列化的机密性边界。
+5. [安全](security.md)：认证、授权、TLS、原始结构体序列化边界和错误信息边界。
 6. [服务发现与韧性](resilience.md)：连接池、静态/动态端点、负载均衡、Retry、Circuit Breaker。
 7. [服务端接入控制](admission-control.md)：并发、速率、排队和分区限制。
 8. [Hosting 与服务生命周期](hosting-and-services.md)：Generic Host、DI、健康检查、排空与动态模块。
