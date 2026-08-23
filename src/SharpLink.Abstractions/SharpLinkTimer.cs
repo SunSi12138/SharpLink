@@ -21,6 +21,51 @@ internal static class SharpLinkTimer
         await Task.Delay(delay, timeProvider, cancellationToken).ConfigureAwait(false);
     }
 
+    internal static async ValueTask<bool> DelayAsync(
+        TimeSpan delay,
+        RpcDeadline deadline,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentOutOfRangeException.ThrowIfLessThan(delay, TimeSpan.Zero);
+        if (!deadline.HasValue)
+        {
+            await DelayAsync(delay, timeProvider, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        if (deadline.IsExpired(timeProvider))
+            return false;
+
+        while (delay > TimeSpan.Zero)
+        {
+            var slice = delay > MaximumDelay ? MaximumDelay : delay;
+            using var delayCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var delayTask = Task.Delay(slice, timeProvider, delayCancellation.Token);
+            try
+            {
+                if (!await WaitAsync(
+                        delayTask, deadline, timeProvider, cancellationToken).ConfigureAwait(false))
+                {
+                    delayCancellation.Cancel();
+                    try { await delayTask.ConfigureAwait(false); }
+                    catch (OperationCanceledException) { }
+                    return false;
+                }
+            }
+            catch
+            {
+                delayCancellation.Cancel();
+                try { await delayTask.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+                throw;
+            }
+            delay -= slice;
+        }
+        return true;
+    }
+
     internal static async ValueTask<bool> WaitAsync(
         Task task,
         RpcDeadline deadline,
