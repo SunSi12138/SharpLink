@@ -125,6 +125,71 @@ public class ServerDecodeExecutorTests
     }
 
     [Test]
+    public async Task StopAcceptingShouldRejectBlockedWriterAndDrainPublishedWork()
+    {
+        await using var executor = new ServerDecodeExecutor(workerCount: 1, queueCapacity: 1);
+        var firstStarted = NewSignal();
+        var releaseFirst = NewSignal();
+        var secondExecutions = 0;
+        var thirdExecutions = 0;
+
+        var first = executor.EnqueueAsync(
+            new ServerDecodeWorkItem(async _ =>
+            {
+                firstStarted.TrySetResult();
+                await releaseFirst.Task.ConfigureAwait(false);
+            }),
+            CancellationToken.None).AsTask();
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var second = executor.EnqueueAsync(
+            new ServerDecodeWorkItem(_ =>
+            {
+                Interlocked.Increment(ref secondExecutions);
+                return ValueTask.CompletedTask;
+            }),
+            CancellationToken.None).AsTask();
+        await WaitUntilAsync(() => executor.QueueDepth == 1, "second decode was not queued");
+
+        var third = executor.EnqueueAsync(
+            new ServerDecodeWorkItem(_ =>
+            {
+                Interlocked.Increment(ref thirdExecutions);
+                return ValueTask.CompletedTask;
+            }),
+            CancellationToken.None).AsTask();
+        await WaitUntilAsync(
+            () => executor.QueueDepth == 2 && !third.IsCompleted,
+            "third decode did not block behind the full bounded queue");
+
+        executor.StopAccepting();
+        Ensure(!executor.IsAccepting, "StopAccepting must publish the drain boundary synchronously");
+        await EnsureFailsAsync<ServerDecodeExecutorClosedException>(
+            third,
+            "blocked writer crossing the drain boundary");
+        Ensure(executor.QueueDepth == 1,
+            "blocked writer rejected by StopAccepting must roll back pending-depth ownership");
+        Ensure(thirdExecutions == 0,
+            "work rejected before publication must never execute provider code");
+
+        var rejected = executor.EnqueueAsync(
+            new ServerDecodeWorkItem(_ => ValueTask.CompletedTask),
+            CancellationToken.None).AsTask();
+        await EnsureFailsAsync<ServerDecodeExecutorClosedException>(
+            rejected,
+            "post-drain enqueue");
+
+        releaseFirst.TrySetResult();
+        await first.WaitAsync(TimeSpan.FromSeconds(2));
+        await second.WaitAsync(TimeSpan.FromSeconds(2));
+        await executor.CompleteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(secondExecutions == 1, "work published before drain must execute exactly once");
+        Ensure(thirdExecutions == 0, "unpublished drain-race work must remain skipped");
+        Ensure(executor.QueueDepth == 0, "drained executor queue depth");
+    }
+
+    [Test]
     public async Task CompleteShouldStopPublicationAndDrainAlreadyPublishedWork()
     {
         await using var executor = new ServerDecodeExecutor(workerCount: 1, queueCapacity: 1);

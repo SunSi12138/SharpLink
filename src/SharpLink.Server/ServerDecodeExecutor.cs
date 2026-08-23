@@ -52,6 +52,8 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     /// </summary>
     internal int StartedWorkItems => Volatile.Read(ref _startedWorkItems);
 
+    internal bool IsAccepting => Volatile.Read(ref _completionRequested) == 0;
+
     internal Task Completion => _completion;
 
     internal ValueTask EnqueueAsync(
@@ -63,8 +65,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         {
             return cancellationToken.IsCancellationRequested
                 ? ValueTask.FromCanceled(cancellationToken)
-                : ValueTask.FromException(
-                    new InvalidOperationException("The server decode executor is no longer accepting work."));
+                : ValueTask.FromException(new ServerDecodeExecutorClosedException());
         }
 
         return EnqueueCoreAsync(workItem, cancellationToken);
@@ -105,9 +106,14 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 var remaining = Interlocked.Decrement(ref _queueDepth);
                 if (remaining < 0)
                     throw new InvalidOperationException("Server decode queue depth accounting underflowed.");
+
+                if (exception is ChannelClosedException)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        throw new OperationCanceledException(cancellationToken);
+                    throw new ServerDecodeExecutorClosedException(exception);
+                }
             }
-            if (exception is ChannelClosedException && cancellationToken.IsCancellationRequested)
-                throw new OperationCanceledException(cancellationToken);
             throw;
         }
     }
@@ -132,6 +138,23 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
             Interlocked.Increment(ref _startedWorkItems);
             await workItem.RunAsync().ConfigureAwait(false);
         }
+    }
+}
+
+/// <summary>
+/// Signals that decode publication lost the executor Stop/Drain race before provider execution.
+/// This is a normal server-lifecycle boundary, not a worker/provider failure.
+/// </summary>
+internal sealed class ServerDecodeExecutorClosedException : InvalidOperationException
+{
+    internal ServerDecodeExecutorClosedException()
+        : base("The server decode executor is no longer accepting work.")
+    {
+    }
+
+    internal ServerDecodeExecutorClosedException(Exception innerException)
+        : base("The server decode executor is no longer accepting work.", innerException)
+    {
     }
 }
 

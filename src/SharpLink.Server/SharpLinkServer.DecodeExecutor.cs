@@ -25,6 +25,11 @@ internal sealed partial class SharpLinkServer
             checked(workerCount * 8));
         var executor = new ServerDecodeExecutor(workerCount, queueCapacity);
         Volatile.Write(ref _decodeExecutor, executor);
+        // Stop publication at the server's acceptance/drain boundary, before force cancellation.
+        // The force-stop registration remains as an idempotent safety net for failure cleanup.
+        _ = _acceptCts.Token.UnsafeRegister(
+            static state => ((ServerDecodeExecutor)state!).StopAccepting(),
+            executor);
         _ = _forceStopCts.Token.UnsafeRegister(
             static state => ((ServerDecodeExecutor)state!).StopAccepting(),
             executor);
@@ -66,4 +71,7 @@ internal sealed partial class SharpLinkServer
 
     internal int DecodeStartedWorkCountForDiagnostics
         => Volatile.Read(ref _decodeExecutor)?.StartedWorkItems ?? 0;
+
+    internal bool DecodeAcceptingForDiagnostics
+        => Volatile.Read(ref _decodeExecutor)?.IsAccepting ?? false;
 }

@@ -145,6 +145,31 @@ internal sealed partial class SharpLinkServer
             decodePermit.CompleteDecode();
             request = ReadRequestEnvelope(session, result.Payload, flags);
         }
+        catch (ServerDecodeExecutorClosedException)
+        {
+            // Stop/Drain can close publication after this request owns retained/decode budgets but
+            // before a worker owns the physical payload. Return physical owners first, then release
+            // their accounting through the normal Reserved teardown path.
+            ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            session.ReturnDecodedPayload(result.Owner);
+            result.Owner = null;
+            var exception = new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "Server is draining.");
+            CompleteFailedRequestStreams(session, requestId, exception);
+            var responseSend = session.SendRpcErrorWithBackpressureAsync(
+                requestId,
+                exception,
+                connection.ConnectionToken);
+            await ReleaseDispatchResourcesAfterResponseAsync(
+                responseSend,
+                callState,
+                requestId,
+                requestCancellationMap,
+                connection,
+                requestOwner).ConfigureAwait(false);
+            return;
+        }
         catch (SharpLinkException exception) when (
             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
         {
