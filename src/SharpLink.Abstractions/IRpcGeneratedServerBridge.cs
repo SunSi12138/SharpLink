@@ -5,6 +5,21 @@ namespace SharpLink.Abstractions;
 /// </summary>
 public interface IRpcGeneratedServerBridge
 {
+    /// <summary>Throws when the current server call deadline has expired before business invocation.</summary>
+    void ThrowIfDeadlineExceeded()
+    {
+        var context = SharpLinkCallContext.Current;
+        var timeProvider = context?.DeadlineTimeProvider;
+        if (context is not null &&
+            timeProvider is not null &&
+            context.LocalRpcDeadline.IsExpired(timeProvider))
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "RPC deadline exceeded before service invocation.");
+        }
+    }
+
     /// <summary>Creates and atomically registers one typed inbound request stream.</summary>
     IAsyncEnumerable<T> CreateInboundStream<T>(
         long requestId,
