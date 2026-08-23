@@ -54,6 +54,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private static int s_retainedCount;
 
     private readonly Lock _lifetimeGate = new();
+    private readonly Lock _terminalGate = new();
     private CancellationTokenSource? _invocationCancellation;
     private CancellationTokenRegistration _serverStoppingRegistration;
     private CancellationTokenRegistration _connectionClosedRegistration;
@@ -212,6 +213,18 @@ internal sealed class ServerCallCancellationState : IDisposable
         }
     }
 
+    internal bool TryActivateRequest(SharpLinkServer.ServerRequestPermit requestPermit)
+    {
+        ArgumentNullException.ThrowIfNull(requestPermit);
+        lock (_terminalGate)
+        {
+            if (Reason != ServerCallCancellationReason.None)
+                return false;
+            requestPermit.Activate();
+            return true;
+        }
+    }
+
     public void ReleaseUse()
     {
         var shouldDispose = false;
@@ -230,10 +243,13 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
 
-        if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
-            (int)ServerCallCancellationReason.None)
+        lock (_terminalGate)
         {
-            return false;
+            if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
+                (int)ServerCallCancellationReason.None)
+            {
+                return false;
+            }
         }
 
         try
