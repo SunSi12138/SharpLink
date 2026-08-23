@@ -289,6 +289,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             var registrationsByContract = new Dictionary<long, ServiceRegistration>(definitions.Count);
             foreach (var pair in definitions)
             {
+                pair.Value.Stub.BindCodecProvider(
+                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, pair.Value.ContractType.Assembly));
                 var registration = pair.Value.Build(serviceProvider);
                 registrations.Add(registration);
                 registrationsByContract.Add(pair.Key, registration);
