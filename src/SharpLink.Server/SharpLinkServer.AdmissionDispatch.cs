@@ -173,6 +173,17 @@ internal sealed partial class SharpLinkServer
             throw;
         }
 
+        if (IsDeadlineExceeded(request.RpcDeadline))
+        {
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            admittedCallState?.TryCancel(ServerCallCancellationReason.DeadlineExceeded);
+            DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+            ReleaseOneWayDispatchResources(
+                admittedCallState, requestId, requestCancellationMap, connection);
+            return;
+        }
+
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
             serviceInfo.Stub.SupportsCancellation(request.MethodHash);

@@ -2,6 +2,30 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+    private static bool TryAcceptInboundStreamProgress(
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        long requestId)
+    {
+        if (!requestCancellationMap.TryCapture(
+                requestId,
+                static (id, state) => state.CaptureLease(id),
+                out var callLease))
+        {
+            // No owning state yet: preserve pre-admission buffering.
+            return true;
+        }
+        if (!callLease.TryAcquire())
+            return false;
+        try
+        {
+            return callLease.State.TryAcceptStreamData();
+        }
+        finally
+        {
+            callLease.ReleaseUse();
+        }
+    }
+
     private async Task ProcessRequestLoop(ServerConnectionState connection)
     {
         var session = connection.Session;
@@ -31,37 +55,11 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
                         IRpcByteBufferWriter? decodedOwner = null;
-                        if (header.Type == ProtocolV2FrameType.StreamData)
+                        if (header.Type is ProtocolV2FrameType.StreamData or
+                            ProtocolV2FrameType.StreamComplete)
                         {
                             var streamRequestId = unchecked((long)header.RequestId);
-                            var acceptStreamData = true;
-                            if (requestCancellationMap.TryCapture(
-                                    streamRequestId,
-                                    static (requestId, state) => state.CaptureLease(requestId),
-                                    out var streamCallLease))
-                            {
-                                if (!streamCallLease.TryAcquire())
-                                {
-                                    // An owning call state existed but its generation is already
-                                    // retiring. Do not let a stale chunk escape into StreamManager.
-                                    acceptStreamData = false;
-                                }
-                                else
-                                {
-                                    try
-                                    {
-                                        acceptStreamData = streamCallLease.State.TryAcceptStreamData();
-                                    }
-                                    finally
-                                    {
-                                        streamCallLease.ReleaseUse();
-                                    }
-                                }
-                            }
-
-                            // No call state yet means this is pre-admission buffering. Once the
-                            // request owns a state, every chunk (compressed or not) is gated here.
-                            if (!acceptStreamData)
+                            if (!TryAcceptInboundStreamProgress(requestCancellationMap, streamRequestId))
                                 continue;
                         }
                         try
@@ -123,6 +121,8 @@ internal sealed partial class SharpLinkServer
                             }
                             else if (header.Type == ProtocolV2FrameType.StreamData)
                             {
+                                if (!TryAcceptInboundStreamProgress(requestCancellationMap, failedRequestId))
+                                    continue;
                                 session.StreamManager.CompleteStream(
                                     failedRequestId,
                                     RpcSession.ReadCompressedStreamId(payload),
@@ -130,6 +130,14 @@ internal sealed partial class SharpLinkServer
                             }
                             continue;
                         }
+                        if (header.Type is ProtocolV2FrameType.StreamData or
+                            ProtocolV2FrameType.StreamComplete)
+                        {
+                            var streamRequestId = unchecked((long)header.RequestId);
+                            if (!TryAcceptInboundStreamProgress(requestCancellationMap, streamRequestId))
+                                continue;
+                        }
+
                         // 3. 处理完整的消息 (这里不需要 await 阻塞网络读取，最好由 Task.Run 处理业务)
                         // 注意：messagePayload 在 Advance 之后就会失效，如果需要异步处理，必须 Copy
                         try

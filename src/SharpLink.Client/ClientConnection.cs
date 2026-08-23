@@ -170,6 +170,10 @@ internal sealed class ClientConnection :
         {
             await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
+                if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.DeadlineExceeded,
+                        "RPC deadline exceeded during client stream production.");
                 await Session.SendStreamChunkAsync(
                     requestId,
                     streamId,
@@ -177,6 +181,10 @@ internal sealed class ClientConnection :
                     cancellationToken).ConfigureAwait(false);
             }
 
+            if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.DeadlineExceeded,
+                    "RPC deadline exceeded before client stream completion.");
             Session.SendStreamCompleteAsync(requestId, streamId);
         }
         catch (Exception exception)

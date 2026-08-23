@@ -26,6 +26,19 @@ internal readonly struct RpcDeadline
                 : SharpLinkTime.AddDuration(timestampNow, timeBudget, timeProvider.TimestampFrequency));
     }
 
+    internal static RpcDeadline Create(
+        TimeSpan timeBudget,
+        long timestampNow,
+        long timestampFrequency)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(timeBudget, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timestampFrequency, 0);
+        return new RpcDeadline(
+            timeBudget == TimeSpan.Zero
+                ? timestampNow
+                : SharpLinkTime.AddDuration(timestampNow, timeBudget, timestampFrequency));
+    }
+
     internal static RpcDeadline FromTimestamp(long timestamp)
         => new(timestamp);
 

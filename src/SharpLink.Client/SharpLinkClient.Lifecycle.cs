@@ -471,6 +471,11 @@ internal sealed partial class SharpLinkClient
                     session.MarkActive();
                     session.EnsureInboundFrameAllowed(header.Type);
                     IRpcByteBufferWriter? decodedOwner = null;
+                    if (header.Type == ProtocolV2FrameType.StreamData &&
+                        !connection.PendingCalls.TryAcceptStreamData(unchecked((long)header.RequestId)))
+                    {
+                        continue;
+                    }
                     try
                     {
                         payload = session.DecodeInboundPayload(
@@ -482,9 +487,11 @@ internal sealed partial class SharpLinkClient
                         var requestId = unchecked((long)header.RequestId);
                         if (header.Type == ProtocolV2FrameType.Response)
                             connection.PendingCalls.DispatchError(requestId, exception);
-                        else if (header.Type == ProtocolV2FrameType.StreamData)
-                        {
-                            var streamId = RpcSession.ReadCompressedStreamId(payload);
+                            if (header.Type == ProtocolV2FrameType.StreamData)
+                            {
+                                if (!connection.PendingCalls.TryAcceptStreamData(requestId))
+                                    continue;
+                                var streamId = RpcSession.ReadCompressedStreamId(payload);
                             if (streamId == 0)
                             {
                                 connection.PendingCalls.TryComplete(

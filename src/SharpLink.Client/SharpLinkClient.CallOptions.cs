@@ -18,10 +18,14 @@ internal sealed partial class SharpLinkClient
         // Method policy overrides the client-wide fallback. These are policy-selection layers,
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
         // the client-wide value even on call shapes that do not otherwise use the client default.
-        var selectedTimeout = methodTimeout;
-        if (selectedTimeout is null && (includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)
-            selectedTimeout = _requestTimeoutValue;
+        TimeSpan? selectedTimeout = methodHasTimeout
+            ? methodTimeout
+            : allowDefaultTimeout
+                ? _requestTimeout
+                : null;
 
+        var timeProvider = _runtimeContext.TimeProvider;
+        var deadlineAnchor = timeProvider.GetTimestamp();
         var ambientCall = SharpLinkCallContext.Current;
         if (ambientCall is not null &&
             ambientCall.LocalRpcDeadline.HasValue &&
@@ -34,9 +38,8 @@ internal sealed partial class SharpLinkClient
                 selectedTimeout = inheritedRemaining;
         }
 
-        var timeProvider = _runtimeContext.TimeProvider;
         var deadline = selectedTimeout is { } timeout
-            ? RpcDeadline.Create(timeout, timeProvider)
+            ? RpcDeadline.Create(timeout, deadlineAnchor, timeProvider.TimestampFrequency)
             : default;
         if (deadline.IsExpired(timeProvider))
             throw CreateDeadlineExceededException();

@@ -381,9 +381,7 @@ internal sealed class PendingRequestTable : IDisposable
         if (!TryTakeMatchingCall(id, out var call, out var deadlineExpired))
             return false;
 
-        if ((reason is PendingCallCompletionReason.RemoteError or
-             PendingCallCompletionReason.RemoteStreamComplete) &&
-            deadlineExpired)
+        if (deadlineExpired && reason != PendingCallCompletionReason.DeadlineExceeded)
         {
             reason = PendingCallCompletionReason.DeadlineExceeded;
             exception = null;
@@ -433,6 +431,41 @@ internal sealed class PendingRequestTable : IDisposable
         return false;
     }
 
+    public bool TryAcceptProducerProgress(long id)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return false;
+
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref slots[index]);
+        if (current is null || current.Id != id ||
+            current.Kind is not (PendingCallKind.OneWay or
+                                 PendingCallKind.ClientStreaming or
+                                 PendingCallKind.DuplexStreaming))
+        {
+            return false;
+        }
+
+        PendingCall? expiredCall = null;
+        lock (current.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
+                return false;
+            if (!current.Deadline.IsExpired(_timeProvider))
+                return true;
+            if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
+                return false;
+            current.WaitUntilRegistered();
+            expiredCall = current;
+        }
+
+        var emptyPayload = ReadOnlySequence<byte>.Empty;
+        CompleteTakenCall(
+            expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+        return false;
+    }
+
     public bool Contains(long id)
     {
         var slots = Volatile.Read(ref _slots);
@@ -470,14 +503,16 @@ internal sealed class PendingRequestTable : IDisposable
 
         for (var index = 0; index < slots.Length; index++)
         {
-            if (!TryTakeCallAtIndex(index, out var call))
+            if (!TryTakeCallAtIndex(index, out var call, out var deadlineExpired))
                 continue;
 
             var payload = ReadOnlySequence<byte>.Empty;
             CompleteTakenCall(
                 call!,
-                PendingCallCompletionReason.ConnectionClosed,
-                exception,
+                deadlineExpired
+                    ? PendingCallCompletionReason.DeadlineExceeded
+                    : PendingCallCompletionReason.ConnectionClosed,
+                deadlineExpired ? null : exception,
                 ref payload);
         }
     }
@@ -766,7 +801,10 @@ internal sealed class PendingRequestTable : IDisposable
         }
     }
 
-    private bool TryTakeCallAtIndex(int index, out PendingCall? call)
+    private bool TryTakeCallAtIndex(
+        int index,
+        out PendingCall? call,
+        out bool deadlineExpired)
     {
         var slots = Volatile.Read(ref _slots)!;
         while (true)
@@ -775,6 +813,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (current is null)
             {
                 call = null;
+                deadlineExpired = false;
                 return false;
             }
 
@@ -783,6 +822,7 @@ internal sealed class PendingRequestTable : IDisposable
                 if (!ReferenceEquals(Volatile.Read(ref slots[index]), current))
                     continue;
 
+                deadlineExpired = current.Deadline.IsExpired(_timeProvider);
                 if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
                     continue;
 

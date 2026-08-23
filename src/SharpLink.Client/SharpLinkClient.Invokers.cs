@@ -889,7 +889,7 @@ internal sealed partial class SharpLinkClient
         catch (Exception exception)
         {
             var deadlineExceeded = exception is SharpLinkException
-                { Code: SharpLinkErrorCode.DeadlineExceeded };
+            { Code: SharpLinkErrorCode.DeadlineExceeded };
             connection.PendingCalls.TryComplete(
                 requestId,
                 deadlineExceeded
