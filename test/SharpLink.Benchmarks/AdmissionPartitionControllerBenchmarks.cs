@@ -19,7 +19,7 @@ public class AdmissionPartitionControllerBenchmarks
     public void Setup()
     {
         _context = new SharpLinkAdmissionContext(
-            1, 2, RpcMethodKind.Unary, "issue-305", null, null, null);
+            1, 2, RpcMethodKind.Unary, "issue-305", null, null);
         var options = new SharpLinkAdmissionControlOptions();
         options.UsePartition(
             _ => "hot",
