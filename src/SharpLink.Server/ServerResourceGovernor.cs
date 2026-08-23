@@ -211,13 +211,13 @@ internal sealed class ServerDecodePermit : IDisposable
     internal bool TryReserveDecodedBytes(long additionalBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(additionalBytes);
-        if (additionalBytes == 0)
-            return true;
 
         lock (_gate)
         {
             if (_disposed || _decodeCompleted)
                 return false;
+            if (additionalBytes == 0)
+                return true;
             if (!_governor.TryReserveDecodedBytes(additionalBytes))
                 return false;
             _decodedBytes += additionalBytes;
