@@ -487,11 +487,11 @@ internal sealed partial class SharpLinkClient
                         var requestId = unchecked((long)header.RequestId);
                         if (header.Type == ProtocolV2FrameType.Response)
                             connection.PendingCalls.DispatchError(requestId, exception);
-                            if (header.Type == ProtocolV2FrameType.StreamData)
-                            {
-                                if (!connection.PendingCalls.TryAcceptStreamData(requestId))
-                                    continue;
-                                var streamId = RpcSession.ReadCompressedStreamId(payload);
+                        else if (header.Type == ProtocolV2FrameType.StreamData)
+                        {
+                            if (!connection.PendingCalls.TryAcceptStreamData(requestId))
+                                continue;
+                            var streamId = RpcSession.ReadCompressedStreamId(payload);
                             if (streamId == 0)
                             {
                                 connection.PendingCalls.TryComplete(
