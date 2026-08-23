@@ -60,6 +60,33 @@ internal sealed class ServerResourceGovernor
 
     internal long DecodedBytesInFlight => Volatile.Read(ref _decodedBytesInFlight);
 
+    internal bool TryAcquireRetained(
+        long retainedCompressedBytes,
+        out ServerRetainedCompressedPermit? permit)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(retainedCompressedBytes);
+
+        if (!TryAddBounded(
+                ref _retainedCompressedBytes,
+                retainedCompressedBytes,
+                _maxRetainedCompressedBytes))
+        {
+            permit = null;
+            return false;
+        }
+
+        try
+        {
+            permit = new ServerRetainedCompressedPermit(this, retainedCompressedBytes);
+            return true;
+        }
+        catch
+        {
+            ReleaseRetained(retainedCompressedBytes);
+            throw;
+        }
+    }
+
     internal bool TryAcquireDecode(
         long retainedCompressedBytes,
         out ServerDecodePermit? permit)
@@ -94,17 +121,54 @@ internal sealed class ServerResourceGovernor
         }
     }
 
+    internal bool TryAcquireDecode(
+        ServerRetainedCompressedPermit retainedPermit,
+        out ServerDecodePermit? permit)
+    {
+        ArgumentNullException.ThrowIfNull(retainedPermit);
+
+        if (!TryIncrementBounded(ref _activeDecodes, _maxConcurrentDecodes))
+        {
+            permit = null;
+            return false;
+        }
+
+        if (!retainedPermit.TryTransferToDecode(this, out var retainedCompressedBytes))
+        {
+            ReleaseDecodeSlot();
+            permit = null;
+            return false;
+        }
+
+        try
+        {
+            permit = new ServerDecodePermit(this, retainedCompressedBytes);
+            return true;
+        }
+        catch
+        {
+            ReleaseDecodeAndRetained(retainedCompressedBytes);
+            throw;
+        }
+    }
+
     internal bool TryReserveDecodedBytes(long decodedBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(decodedBytes);
         return TryAddBounded(ref _decodedBytesInFlight, decodedBytes, _maxDecodedBytesInFlight);
     }
 
+    internal void ReleaseRetained(long retainedCompressedBytes)
+        => ReleaseBytes(
+            ref _retainedCompressedBytes,
+            retainedCompressedBytes,
+            "retained compressed bytes");
+
     internal void ReleaseDecodeAndRetained(long retainedCompressedBytes)
     {
         try
         {
-            ReleaseBytes(ref _retainedCompressedBytes, retainedCompressedBytes, "retained compressed bytes");
+            ReleaseRetained(retainedCompressedBytes);
         }
         finally
         {
@@ -165,6 +229,55 @@ internal sealed class ServerResourceGovernor
 
         Interlocked.Add(ref counter, amount);
         throw new InvalidOperationException($"Server {resourceName} accounting underflowed.");
+    }
+}
+
+/// <summary>
+/// Owns compressed request bytes that outlive the reader-loop frame before a call has acquired its
+/// decode credit. Ownership may move exactly once into a <see cref="ServerDecodePermit"/>.
+/// </summary>
+internal sealed class ServerRetainedCompressedPermit : IDisposable
+{
+    private const int Owned = 0;
+    private const int Transferred = 1;
+    private const int Disposed = 2;
+
+    private readonly ServerResourceGovernor _governor;
+    private readonly long _retainedCompressedBytes;
+    private int _state = Owned;
+
+    internal ServerRetainedCompressedPermit(
+        ServerResourceGovernor governor,
+        long retainedCompressedBytes)
+    {
+        _governor = governor;
+        _retainedCompressedBytes = retainedCompressedBytes;
+    }
+
+    internal long RetainedCompressedBytes => _retainedCompressedBytes;
+
+    internal bool TryTransferToDecode(
+        ServerResourceGovernor governor,
+        out long retainedCompressedBytes)
+    {
+        if (!ReferenceEquals(_governor, governor))
+            throw new InvalidOperationException("A retained-byte permit cannot move between resource governors.");
+
+        if (Interlocked.CompareExchange(ref _state, Transferred, Owned) != Owned)
+        {
+            retainedCompressedBytes = 0;
+            return false;
+        }
+
+        retainedCompressedBytes = _retainedCompressedBytes;
+        return true;
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.CompareExchange(ref _state, Disposed, Owned) != Owned)
+            return;
+        _governor.ReleaseRetained(_retainedCompressedBytes);
     }
 }
 
