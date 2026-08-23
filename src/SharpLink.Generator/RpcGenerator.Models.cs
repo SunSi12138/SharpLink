@@ -201,6 +201,7 @@ internal sealed record GeneratedCodecModel(
     string? AdapterType,
     string? AdapterId,
     string WireFormatId,
+    bool IsManifestScoped,
     ImmutableArray<string> AssemblyDependencies,
     Location? Location);
 
@@ -286,6 +287,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         {
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
+            hash = unchecked(hash * 31 + codec.IsManifestScoped.GetHashCode());
         }
         foreach (var diagnostic in obj.Diagnostics)
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.Detail));
@@ -309,6 +311,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
             !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
             !string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal) ||
+            left.IsManifestScoped != right.IsManifestScoped ||
             !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
             !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
             left.Members.Length != right.Members.Length)
