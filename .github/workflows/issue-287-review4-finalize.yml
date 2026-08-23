@@ -43,11 +43,8 @@ jobs:
 
           rollback = Path('test/SharpLink.RollbackPlugin/RollbackManifest.cs')
           text = rollback.read_text()
-          old = '''    SharpLinkGeneratedManifestVersions.Protocol,
-              "rollback-test")]'''
-          new = '''    SharpLinkGeneratedManifestVersions.Protocol,
-              "rollback-test",
-              SharpLinkGeneratedManifestVersions.AbiIdentity)]'''
+          old = 'SharpLinkGeneratedManifestVersions.Protocol,\n    "rollback-test")]'
+          new = 'SharpLinkGeneratedManifestVersions.Protocol,\n    "rollback-test",\n    SharpLinkGeneratedManifestVersions.AbiIdentity)]'
           if 'SharpLinkGeneratedManifestVersions.AbiIdentity)]' not in text:
               assert text.count(old) == 1, 'unexpected rollback locator shape'
               text = text.replace(old, new, 1)
@@ -59,30 +56,25 @@ jobs:
               'not a valid self-describing locator',
               'not a valid current self-describing locator')
 
-          old_sig = '''        string locatorGeneratorVersion = CurrentGeneratorVersion,
-              int manifestApiVersion = SharpLinkGeneratedManifestVersions.Api,'''
-          new_sig = '''        string locatorGeneratorVersion = CurrentGeneratorVersion,
-              string locatorAbiIdentity = SharpLinkGeneratedManifestVersions.AbiIdentity,
-              int manifestApiVersion = SharpLinkGeneratedManifestVersions.Api,'''
+          old_sig = 'string locatorGeneratorVersion = CurrentGeneratorVersion,\n        int manifestApiVersion = SharpLinkGeneratedManifestVersions.Api,'
+          new_sig = 'string locatorGeneratorVersion = CurrentGeneratorVersion,\n        string locatorAbiIdentity = SharpLinkGeneratedManifestVersions.AbiIdentity,\n        int manifestApiVersion = SharpLinkGeneratedManifestVersions.Api,'
           if 'string locatorAbiIdentity = SharpLinkGeneratedManifestVersions.AbiIdentity' not in text:
               assert text.count(old_sig) == 1, 'unexpected locator fixture signature'
               text = text.replace(old_sig, new_sig, 1)
 
-          old_ctor = '''                    [typeof(Type), typeof(int), typeof(int), typeof(string)]) ??
-                        throw new MissingMethodException(
-                            typeof(SharpLinkGeneratedAssemblyManifestAttribute).FullName,
-                            ".ctor(Type, Int32, Int32, String)");'''
-          new_ctor = '''                    [typeof(Type), typeof(int), typeof(int), typeof(string), typeof(string)]) ??
-                        throw new MissingMethodException(
-                            typeof(SharpLinkGeneratedAssemblyManifestAttribute).FullName,
-                            ".ctor(Type, Int32, Int32, String, String)");'''
-          if '.ctor(Type, Int32, Int32, String, String)' not in text:
-              assert text.count(old_ctor) == 1, 'unexpected locator constructor lookup'
-              text = text.replace(old_ctor, new_ctor, 1)
+          old_types = '[typeof(Type), typeof(int), typeof(int), typeof(string)]) ??'
+          new_types = '[typeof(Type), typeof(int), typeof(int), typeof(string), typeof(string)]) ??'
+          if new_types not in text:
+              assert text.count(old_types) == 1, 'unexpected locator constructor types'
+              text = text.replace(old_types, new_types, 1)
 
-          old_args = '''                    [manifestType, locatorApiVersion, locatorProtocolVersion, locatorGeneratorVersion]));'''
-          new_args = '''                    [manifestType, locatorApiVersion, locatorProtocolVersion, locatorGeneratorVersion, locatorAbiIdentity]));'''
-          if 'locatorGeneratorVersion, locatorAbiIdentity' not in text:
+          text = text.replace(
+              '.ctor(Type, Int32, Int32, String)',
+              '.ctor(Type, Int32, Int32, String, String)')
+
+          old_args = '[manifestType, locatorApiVersion, locatorProtocolVersion, locatorGeneratorVersion]));'
+          new_args = '[manifestType, locatorApiVersion, locatorProtocolVersion, locatorGeneratorVersion, locatorAbiIdentity]));'
+          if new_args not in text:
               assert text.count(old_args) == 1, 'unexpected locator constructor args'
               text = text.replace(old_args, new_args, 1)
 
