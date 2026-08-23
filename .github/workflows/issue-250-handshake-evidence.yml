@@ -10,6 +10,8 @@ on:
       - 'src/SharpLink.Runtime/**'
       - 'test/SharpLink.Benchmarks/HandshakeDefaultEvidenceRunner.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'README.md'
+      - 'CHANGELOG.md'
 
 permissions:
   contents: read
@@ -53,3 +55,63 @@ jobs:
           path: artifacts/issue-250
           if-no-files-found: error
           retention-days: 30
+
+  finalize-docs:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout head branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Finalize README and CHANGELOG
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          readme_path = Path('README.md')
+          readme = readme_path.read_text()
+          readme = readme.replace(
+              'https://img.shields.io/badge/MIT-yellow.svg',
+              'https://img.shields.io/badge/License-MIT-yellow.svg')
+          readme = readme.replace(
+              '- `SharpLink.Generator`：契约/服务分析器和代码生成',
+              '- `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成')
+          readme = readme.replace(
+              '- RPC 契约接口必须继承 `IService`',
+              '- 契约接口必须继承 `IService`')
+          readme_path.write_text(readme)
+
+          changelog_path = Path('CHANGELOG.md')
+          changelog = changelog_path.read_text()
+          bullet = (
+              '- Server connection admission now defaults to an independent 64-concurrent '
+              'pre-auth handshake bound (TLS → Protocol v2 → application authentication), '
+              'clamped by a lower `MaxConcurrentConnections`. Explicit '
+              '`MaxConcurrentHandshakes = 0` remains the opt-out that restores the previous '
+              'follow-the-connection-bound behavior; the live-connection default remains 1,024 '
+              'and Protocol v2/wire behavior is unchanged.\n'
+          )
+          if bullet not in changelog:
+              anchor = '## [Unreleased]\n\n### Changed\n\n'
+              if changelog.count(anchor) != 1:
+                  raise SystemExit('Unexpected Unreleased/Changed anchor')
+              changelog = changelog.replace(anchor, anchor + bullet + '\n', 1)
+          changelog_path.write_text(changelog)
+          PY
+
+      - name: Commit finalized docs
+        shell: bash
+        run: |
+          git add README.md CHANGELOG.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'docs: record secure handshake admission default'
+          git push origin HEAD:${{ github.head_ref }}
