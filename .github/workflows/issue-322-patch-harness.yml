@@ -24,25 +24,31 @@ jobs:
           from pathlib import Path
 
           path = Path('test/SharpLink.UnitTests/Server/SharpLinkServerInvocationTests.cs')
-          text = path.read_text()
-          old = '''                Connection.CallCancellations,
-                CancellationToken.None,
-                null,
-                (flags & ProtocolV2FrameFlags.Cancellable) != 0,
-                null
-          '''
-          new = '''                Connection.CallCancellations,
-                CancellationToken.None,
-                null,
-                null,
-                null,
-                (flags & ProtocolV2FrameFlags.Cancellable) != 0,
-                null
-          '''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f'expected exactly one DispatchRpcAsync argument block, found {count}')
-          path.write_text(text.replace(old, new))
+          lines = path.read_text().splitlines(keepends=True)
+          starts = [
+              i for i, line in enumerate(lines)
+              if 'return (ValueTask)DispatchMethod.Invoke(Server,' in line
+          ]
+          if len(starts) != 1:
+              raise SystemExit(f'expected one dispatch reflection call, found {len(starts)}')
+          start = starts[0]
+          end = next(
+              (i for i in range(start, min(start + 32, len(lines))) if '])!;' in lines[i]),
+              None)
+          if end is None:
+              raise SystemExit('dispatch reflection call terminator not found')
+          matches = [
+              i for i in range(start, end + 1)
+              if lines[i].strip() == 'CancellationToken.None,'
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f'expected one serverLoopToken argument, found {len(matches)}')
+          index = matches[0]
+          if lines[index + 1].strip() != 'null,':
+              raise SystemExit('expected existing admittedCallState null after serverLoopToken')
+          indent = lines[index + 1][:-len(lines[index + 1].lstrip())]
+          lines[index + 1:index + 1] = [f'{indent}null,\n', f'{indent}null,\n']
+          path.write_text(''.join(lines))
           PY
 
       - name: Commit patch and remove helper workflow
