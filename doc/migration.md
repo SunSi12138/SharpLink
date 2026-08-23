@@ -55,6 +55,24 @@ options 不会影响已经编译的 plan。多集群会用同一个 child plan �
 
 详见 [`runtime-phase-11-build-plan.md`](runtime-phase-11-build-plan.md)。
 
+## Server handshake admission 默认值
+
+Server 的 connection admission 仍然使用现有的 `MaxConcurrentConnections` / `MaxConcurrentHandshakes` 两层边界，但 `MaxConcurrentHandshakes` 的默认行为发生了安全收紧：默认 live connection 上限仍为 1024；默认独立 handshake 上限现在为 64。handshake slot 覆盖 TLS、Protocol v2 与应用认证，并在连接进入 Ready 时立即释放。
+
+如果应用只把 `MaxConcurrentConnections` 配到 64 以下而没有显式设置 handshake 上限，默认 handshake 上限会自动取更低的 connection bound。显式正值仍不能高于 connection bound。
+
+旧版 `MaxConcurrentHandshakes = 0` 的含义保留为显式 opt-out；需要恢复“没有独立 handshake 上限、只由 connection bound 限制”的旧行为时可写：
+
+```csharp
+serverBuilder.UseConnectionAdmission(options =>
+{
+    options.MaxConcurrentConnections = 1024;
+    options.MaxConcurrentHandshakes = 0;
+});
+```
+
+默认值变化不会修改 Protocol v2、TLS wire bytes、认证协议或成功连接生命周期。因为 over-limit handshake 仍采用现有的立即关闭语义，滚动发布或大规模同时重连超过默认安全边界时应错峰/重试；确有容量数据支持时，也可以显式提高正值，但不得高于 `MaxConcurrentConnections`。启动日志会输出最终生效的 `max_connections` / `max_handshakes`。
+
 ## Client readiness API
 
 `ISharpLinkClient` 新增 `GetReadinessSnapshot()` 和 `WaitForReadinessAsync(...)`。内置 Client 提供固定、静态与 resolver 拓扑的精确快照；`ConnectAsync` 仍只承担 connectivity，不会等待多 endpoint 收敛。已有第三方 `ISharpLinkClient` 实现无需重新编译即可继续加载：接口默认实现会明确抛出 `NotSupportedException`，不会伪造单 endpoint 数据。包装或代理实现如果希望支持 readiness，应转发这两个成员并保留调用方独立取消与终止状态语义。
