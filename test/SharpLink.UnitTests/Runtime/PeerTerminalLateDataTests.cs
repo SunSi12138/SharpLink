@@ -32,7 +32,7 @@ public class PeerTerminalLateDataTests
             "peer-first retained route should remain until local completion");
 
         var normalFailure = await CaptureSharpLinkFailureAsync(
-            manager.DispatchChunkAsync(
+            () => manager.DispatchChunkAsync(
                 requestId,
                 streamId,
                 new ReadOnlySequence<byte>(new byte[32])));
@@ -69,11 +69,12 @@ public class PeerTerminalLateDataTests
         manager.AssertAccountingInvariant();
     }
 
-    private static async Task<SharpLinkException?> CaptureSharpLinkFailureAsync(ValueTask operation)
+    private static async Task<SharpLinkException?> CaptureSharpLinkFailureAsync(
+        Func<ValueTask> operation)
     {
         try
         {
-            await operation;
+            await operation().ConfigureAwait(false);
             return null;
         }
         catch (SharpLinkException exception)
