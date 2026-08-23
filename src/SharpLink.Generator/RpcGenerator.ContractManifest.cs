@@ -672,25 +672,25 @@ public partial class RpcGenerator
   current.Codecs.Select(static codec => codec.Type), StringComparer.Ordinal);
         foreach (var oldDto in baseline.Dtos)
         {
-  if (currentDtoNames.Contains(oldDto.Name) || !currentCodecTypes.Contains(oldDto.Name))
-      continue;
-  diagnostics.Add(Change(
-      ContractCompatibilityKind.WireType,
-      current.Codecs.FirstOrDefault(codec => codec.Type == oldDto.Name)?.SourceLocation,
-      oldDto.Name,
-      "Codec selection changed from a SharpLink native DTO to a non-DTO Codec",
-      "restore the native DTO Codec or publish a new RPC payload type"));
+            if (currentDtoNames.Contains(oldDto.Name) || !currentCodecTypes.Contains(oldDto.Name))
+                continue;
+            diagnostics.Add(Change(
+                ContractCompatibilityKind.WireType,
+                current.Codecs.FirstOrDefault(codec => codec.Type == oldDto.Name)?.SourceLocation,
+                oldDto.Name,
+                "Codec selection changed from a SharpLink native DTO to a non-DTO Codec",
+                "restore the native DTO Codec or publish a new RPC payload type"));
         }
         foreach (var newDto in current.Dtos)
         {
-  if (baselineDtoNames.Contains(newDto.Name) || !baselineCodecTypes.Contains(newDto.Name))
-      continue;
-  diagnostics.Add(Change(
-      ContractCompatibilityKind.WireType,
-      newDto.SourceLocation,
-      newDto.Name,
-      "Codec selection changed from a non-DTO Codec to a SharpLink native DTO",
-      "restore the previous Codec selection or publish a new RPC payload type"));
+            if (baselineDtoNames.Contains(newDto.Name) || !baselineCodecTypes.Contains(newDto.Name))
+                continue;
+            diagnostics.Add(Change(
+                ContractCompatibilityKind.WireType,
+                newDto.SourceLocation,
+                newDto.Name,
+                "Codec selection changed from a non-DTO Codec to a SharpLink native DTO",
+                "restore the previous Codec selection or publish a new RPC payload type"));
         }
 
         var directlyDescribedCodecTypes = new HashSet<string>(

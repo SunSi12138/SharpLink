@@ -336,11 +336,11 @@ public sealed class RouteAdapter : TestRouteAdapterBase
   "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.managed.outer/v1", "route-managed-outer-wire/v1")]",
   "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
-        var diagnostics = RunGenerator(source, thirdParty);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id is "SHARPLINK009" or "SHARPLINK010"),
+    var diagnostics = RunGenerator(source, thirdParty);
+    Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id is "SHARPLINK009" or "SHARPLINK010"),
   "an explicit nested adapter must make the native DTO graph resolvable");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source, thirdParty));
-        Ensure(generated.Contains("CreateCodec<global::Vendor.ExternalGraph>()", StringComparison.Ordinal),
+    Ensure(generated.Contains("CreateCodec<global::Vendor.ExternalGraph>()", StringComparison.Ordinal),
   "the nested explicit adapter must be selected");
         Ensure(!generated.Contains("CreateCodec<global::Envelope>()", StringComparison.Ordinal),
   "the Managed route must not capture the outer DTO once its explicit nested dependency is resolvable");
@@ -374,7 +374,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
     public override string WireFormatId => "route-native-contract-only-wire/v1";
 }
 """),
-  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.native.contract-only/v1", "route-native-contract-only-wire/v1")]",
+  "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), "route.native.contract - only / v1", "route - native - contract - only - wire / v1")]",
   "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));

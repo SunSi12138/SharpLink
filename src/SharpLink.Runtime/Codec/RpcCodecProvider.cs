@@ -305,13 +305,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     {
         get
         {
-  if (!HasManifestScopedCodecs)
-      return BaseProvider;
-  var existing = Volatile.Read(ref _contractCodecProvider);
-  if (existing is not null)
-      return existing;
-  var created = new RpcManifestCodecProvider(this, BaseProvider);
-  return Interlocked.CompareExchange(ref _contractCodecProvider, created, null) ?? created;
+            if (!HasManifestScopedCodecs)
+                return BaseProvider;
+            var existing = Volatile.Read(ref _contractCodecProvider);
+            if (existing is not null)
+                return existing;
+            var created = new RpcManifestCodecProvider(this, BaseProvider);
+            return Interlocked.CompareExchange(ref _contractCodecProvider, created, null) ?? created;
         }
     }
 

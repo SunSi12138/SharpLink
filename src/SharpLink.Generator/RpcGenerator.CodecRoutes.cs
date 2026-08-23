@@ -119,11 +119,11 @@ public partial class RpcGenerator
 
         private bool TrySelectContractCodecOverride(ITypeSymbol type, out AdapterRegistration? selected)
         {
-  // Contract compilation has one deterministic precedence entrypoint:
-  // explicit per-type selection > assembly route > SharpLink default generation.
-  if (TrySelectAdapter(type, out selected))
-      return true;
-  return TrySelectRouteAdapter(type, out selected);
+            // Contract compilation has one deterministic precedence entrypoint:
+            // explicit per-type selection > assembly route > SharpLink default generation.
+            if (TrySelectAdapter(type, out selected))
+                return true;
+            return TrySelectRouteAdapter(type, out selected);
         }
 
         private bool TrySelectRouteAdapter(ITypeSymbol type, out AdapterRegistration? selected)
@@ -182,14 +182,14 @@ public partial class RpcGenerator
                 return false;
 
             if (_routeEligibleTypes is null)
-  {
-      var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-      CollectCurrentContractRouteRoots(_compilation.Assembly.GlobalNamespace, roots);
-      var eligible = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
-      foreach (var root in roots.Values)
-          CollectRouteEligibleTypes(root, eligible, 0);
-      _routeEligibleTypes = eligible;
-  }
+            {
+                var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+                CollectCurrentContractRouteRoots(_compilation.Assembly.GlobalNamespace, roots);
+                var eligible = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+                foreach (var root in roots.Values)
+                    CollectRouteEligibleTypes(root, eligible, 0);
+                _routeEligibleTypes = eligible;
+            }
 
 
             return _routeEligibleTypes.Contains(type);
@@ -199,20 +199,20 @@ public partial class RpcGenerator
   INamespaceSymbol namespaceSymbol,
   Dictionary<string, ITypeSymbol> roots)
         {
-  foreach (var type in namespaceSymbol.GetTypeMembers())
-      CollectCurrentContractRouteRoots(type, roots);
-  foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
-      CollectCurrentContractRouteRoots(nestedNamespace, roots);
+            foreach (var type in namespaceSymbol.GetTypeMembers())
+                CollectCurrentContractRouteRoots(type, roots);
+            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+                CollectCurrentContractRouteRoots(nestedNamespace, roots);
         }
 
         private void CollectCurrentContractRouteRoots(
   INamedTypeSymbol type,
   Dictionary<string, ITypeSymbol> roots)
         {
-  if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
-      CollectContractPayloadRoots(type, roots);
-  foreach (var nested in type.GetTypeMembers())
-      CollectCurrentContractRouteRoots(nested, roots);
+            if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
+                CollectContractPayloadRoots(type, roots);
+            foreach (var nested in type.GetTypeMembers())
+                CollectCurrentContractRouteRoots(nested, roots);
         }
 
         private void CollectRouteEligibleTypes(
@@ -249,21 +249,21 @@ public partial class RpcGenerator
 
         private int ClassifyCodecScope(ITypeSymbol type)
         {
-  if (IsNativeCodecType(type))
-      return RpcCodecScopeNative;
-  return type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
+            if (IsNativeCodecType(type))
+                return RpcCodecScopeNative;
+            return type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
         }
 
         private bool IsNativeCodecType(ITypeSymbol type)
         {
-  if (IsNonOverridableBuiltin(type))
-      return true;
-  if (TryGetCollection(type, out _, out _, out _, out _))
-      return CanGenerateNativeCollection(type, [], 0, type);
-  if (type.IsUnmanagedType || IsThirdPartyType(type))
-      return false;
+            if (IsNonOverridableBuiltin(type))
+                return true;
+            if (TryGetCollection(type, out _, out _, out _, out _))
+                return CanGenerateNativeCollection(type, [], 0, type);
+            if (type.IsUnmanagedType || IsThirdPartyType(type))
+                return false;
 
-  return CanGenerateNativeDto(type, [], 0, type);
+            return CanGenerateNativeDto(type, [], 0, type);
         }
 
         private bool CanGenerateNativeCollection(
@@ -272,20 +272,20 @@ public partial class RpcGenerator
   int depth,
   ITypeSymbol blockedRouteType)
         {
-  if (depth > MaximumDepth ||
-      stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)) ||
-      !TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
-  {
-      return false;
-  }
+            if (depth > MaximumDepth ||
+                stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)) ||
+                !TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
+            {
+                return false;
+            }
 
-  stack.Add(type);
-  var valid =
-      (elementType is null || CanResolveContractCodecDependency(elementType, stack, depth + 1, blockedRouteType)) &&
-      (keyType is null || CanResolveContractCodecDependency(keyType, stack, depth + 1, blockedRouteType)) &&
-      (valueType is null || CanResolveContractCodecDependency(valueType, stack, depth + 1, blockedRouteType));
-  stack.RemoveAt(stack.Count - 1);
-  return valid;
+            stack.Add(type);
+            var valid =
+                (elementType is null || CanResolveContractCodecDependency(elementType, stack, depth + 1, blockedRouteType)) &&
+                (keyType is null || CanResolveContractCodecDependency(keyType, stack, depth + 1, blockedRouteType)) &&
+                (valueType is null || CanResolveContractCodecDependency(valueType, stack, depth + 1, blockedRouteType));
+            stack.RemoveAt(stack.Count - 1);
+            return valid;
         }
 
         private bool CanGenerateNativeDto(
@@ -294,61 +294,61 @@ public partial class RpcGenerator
   int depth,
   ITypeSymbol blockedRouteType)
         {
-  if (depth > MaximumDepth ||
-      type is not INamedTypeSymbol named ||
-      named.IsRefLikeType ||
-      !IsAccessibleFromGeneratedCode(named) ||
-      named.TypeKind is not (TypeKind.Class or TypeKind.Struct) ||
-      named.IsAbstract ||
-      HasTypeParameter(named) ||
-      named.SpecialType == SpecialType.System_Object ||
-      named.TypeKind == TypeKind.Delegate ||
-      (named.TypeKind == TypeKind.Class && !named.IsSealed) ||
-      named.BaseType is { SpecialType: not SpecialType.System_Object and not SpecialType.System_ValueType } ||
-      stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)))
-  {
-      return false;
-  }
+            if (depth > MaximumDepth ||
+                type is not INamedTypeSymbol named ||
+                named.IsRefLikeType ||
+                !IsAccessibleFromGeneratedCode(named) ||
+                named.TypeKind is not (TypeKind.Class or TypeKind.Struct) ||
+                named.IsAbstract ||
+                HasTypeParameter(named) ||
+                named.SpecialType == SpecialType.System_Object ||
+                named.TypeKind == TypeKind.Delegate ||
+                (named.TypeKind == TypeKind.Class && !named.IsSealed) ||
+                named.BaseType is { SpecialType: not SpecialType.System_Object and not SpecialType.System_ValueType } ||
+                stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)))
+            {
+                return false;
+            }
 
-  var memberSymbols = GetSerializableMembers(named);
-  var memberIds = new HashSet<uint>();
-  var analyzedMembers = new List<AnalyzedMember>(memberSymbols.Count);
-  stack.Add(type);
-  foreach (var member in memberSymbols)
-  {
-      var memberType = GetMemberType(member);
-      var fieldId = GetMemberId(member, out var validId, out var hasExplicitId);
-      if (!validId || !memberIds.Add(fieldId))
-      {
-          stack.RemoveAt(stack.Count - 1);
-          return false;
-      }
+            var memberSymbols = GetSerializableMembers(named);
+            var memberIds = new HashSet<uint>();
+            var analyzedMembers = new List<AnalyzedMember>(memberSymbols.Count);
+            stack.Add(type);
+            foreach (var member in memberSymbols)
+            {
+                var memberType = GetMemberType(member);
+                var fieldId = GetMemberId(member, out var validId, out var hasExplicitId);
+                if (!validId || !memberIds.Add(fieldId))
+                {
+                    stack.RemoveAt(stack.Count - 1);
+                    return false;
+                }
 
-      var kind = GetMemberKind(memberType, out var fixedType, out var fixedSize);
-      if (kind == GeneratedMemberKind.Complex &&
-          !CanResolveContractCodecDependency(memberType, stack, depth + 1, blockedRouteType))
-      {
-          stack.RemoveAt(stack.Count - 1);
-          return false;
-      }
+                var kind = GetMemberKind(memberType, out var fixedType, out var fixedSize);
+                if (kind == GeneratedMemberKind.Complex &&
+                    !CanResolveContractCodecDependency(memberType, stack, depth + 1, blockedRouteType))
+                {
+                    stack.RemoveAt(stack.Count - 1);
+                    return false;
+                }
 
-      analyzedMembers.Add(new AnalyzedMember(
-          member,
-          memberType,
-          fieldId,
-          kind,
-          fixedType,
-          fixedSize,
-          IsRequired(member),
-          IsNullable(member, memberType),
-          IsNonNullableReference(member, memberType),
-          IsAssignable(member),
-          hasExplicitId,
-          GetEnumUnderlyingType(memberType)));
-  }
-  stack.RemoveAt(stack.Count - 1);
+                analyzedMembers.Add(new AnalyzedMember(
+                    member,
+                    memberType,
+                    fieldId,
+                    kind,
+                    fixedType,
+                    fixedSize,
+                    IsRequired(member),
+                    IsNullable(member, memberType),
+                    IsNonNullableReference(member, memberType),
+                    IsAssignable(member),
+                    hasExplicitId,
+                    GetEnumUnderlyingType(memberType)));
+            }
+            stack.RemoveAt(stack.Count - 1);
 
-  return TrySelectConstructor(named, analyzedMembers, out _);
+            return TrySelectConstructor(named, analyzedMembers, out _);
         }
 
         private bool CanResolveContractCodecDependency(
@@ -357,40 +357,40 @@ public partial class RpcGenerator
   int depth,
   ITypeSymbol blockedRouteType)
         {
-  if (depth > MaximumDepth ||
-      type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer)
-  {
-      return false;
-  }
+            if (depth > MaximumDepth ||
+                type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer)
+            {
+                return false;
+            }
 
-  // Explicit per-type bindings are part of the default Contract codec graph and therefore
-  // can make an outer generated DTO/collection a valid Native shell.
-  if (HasResolvableExplicitAdapter(type))
-      return true;
-  if (IsNonOverridableBuiltin(type) || type.IsUnmanagedType)
-      return true;
-  if (stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)))
-      return false;
+            // Explicit per-type bindings are part of the default Contract codec graph and therefore
+            // can make an outer generated DTO/collection a valid Native shell.
+            if (HasResolvableExplicitAdapter(type))
+                return true;
+            if (IsNonOverridableBuiltin(type) || type.IsUnmanagedType)
+                return true;
+            if (stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)))
+                return false;
 
-  if (TryGetCollection(type, out _, out _, out _, out _) &&
-      CanGenerateNativeCollection(type, stack, depth, blockedRouteType))
-  {
-      return true;
-  }
-  if (!IsThirdPartyType(type) &&
-      CanGenerateNativeDto(type, stack, depth, blockedRouteType))
-  {
-      return true;
-  }
+            if (TryGetCollection(type, out _, out _, out _, out _) &&
+                CanGenerateNativeCollection(type, stack, depth, blockedRouteType))
+            {
+                return true;
+            }
+            if (!IsThirdPartyType(type) &&
+                CanGenerateNativeDto(type, stack, depth, blockedRouteType))
+            {
+                return true;
+            }
 
-  // A nested non-Native dependency may itself be satisfied by the Contract route. Never
-  // use the root's own route to prove that the root is Native; that would be circular.
-  if (SymbolEqualityComparer.Default.Equals(type, blockedRouteType) || !IsRouteEligible(type))
-      return false;
-  var scope = type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
-  return !_conflictingRouteScopes.Contains(scope) &&
-         _assemblyRoutes.TryGetValue(scope, out var adapterType) &&
-         _adaptersByType.ContainsKey(adapterType);
+            // A nested non-Native dependency may itself be satisfied by the Contract route. Never
+            // use the root's own route to prove that the root is Native; that would be circular.
+            if (SymbolEqualityComparer.Default.Equals(type, blockedRouteType) || !IsRouteEligible(type))
+                return false;
+            var scope = type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
+            return !_conflictingRouteScopes.Contains(scope) &&
+                   _assemblyRoutes.TryGetValue(scope, out var adapterType) &&
+                   _adaptersByType.ContainsKey(adapterType);
         }
     }
 }

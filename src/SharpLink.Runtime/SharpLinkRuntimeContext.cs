@@ -126,7 +126,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         if (manifest.ApiVersion == SharpLinkGeneratedManifestVersions.Api &&
   manifest.ProtocolVersion == SharpLinkGeneratedManifestVersions.Protocol)
         {
-  return;
+            return;
         }
         throw new InvalidOperationException(
   $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
@@ -154,11 +154,11 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             if (!_manifestRegistrations.Add(registration))
                 return;
             var provider = RpcGeneratedCodecResolver.GetProvider(registration);
-  if (ReferenceEquals(provider, registration.BaseProvider))
-      return;
-  if (!_manifestCodecProviders.TryAdd(
-          registration.Manifest.OwnerAssembly,
-          provider))
+            if (ReferenceEquals(provider, registration.BaseProvider))
+                return;
+            if (!_manifestCodecProviders.TryAdd(
+                    registration.Manifest.OwnerAssembly,
+                    provider))
 
             {
                 _manifestRegistrations.Remove(registration);
@@ -205,7 +205,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         {
             _manifestRegistrations.Remove(registration);
             if (registration.HasManifestScopedCodecs)
-      _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
+                _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
 
         }
         registration.Dispose();
@@ -318,7 +318,7 @@ public sealed class SharpLinkRuntimeContextBuilder
     }
 
     /// <summary>Sets the optional fallback codec resolver for this context.</summary>
-    public SharpLinkRuntimeContextBuilder UseCodecResolver(Func<Type,IRpcCodec?>? resolver)
+    public SharpLinkRuntimeContextBuilder UseCodecResolver(Func<Type, IRpcCodec?>? resolver)
     {
         _resolver = resolver;
         return this;

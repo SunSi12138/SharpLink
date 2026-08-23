@@ -55,14 +55,14 @@ public class RpcManifestCodecProviderTests
     {
         try
         {
-  using var _ = new SharpLinkRuntimeContextBuilder().Build(
-      [new PreviousApiManifest(typeof(RpcManifestCodecProviderTests).Assembly)]);
+            using var _ = new SharpLinkRuntimeContextBuilder().Build(
+                [new PreviousApiManifest(typeof(RpcManifestCodecProviderTests).Assembly)]);
         }
         catch (InvalidOperationException exception)
         {
-  Ensure(exception.Message.Contains("incompatible", StringComparison.OrdinalIgnoreCase),
-      "direct RuntimeContext construction must fail at the generated-manifest compatibility boundary");
-  return;
+            Ensure(exception.Message.Contains("incompatible", StringComparison.OrdinalIgnoreCase),
+                "direct RuntimeContext construction must fail at the generated-manifest compatibility boundary");
+            return;
         }
 
         throw new Exception("Expected a previous generated manifest API to be rejected by RuntimeContext construction.");
@@ -192,11 +192,11 @@ public class RpcManifestCodecProviderTests
     {
         internal NoRouteManifest(Assembly ownerAssembly)
         {
-  OwnerAssembly = ownerAssembly;
-  Codecs =
-  [
-      new NativeFactory<NoRouteValue>(static _ => new GeneratedNoRouteCodec(), "no-route-generated")
-  ];
+            OwnerAssembly = ownerAssembly;
+            Codecs =
+            [
+                new NativeFactory<NoRouteValue>(static _ => new GeneratedNoRouteCodec(), "no-route-generated")
+            ];
         }
 
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
