@@ -6,7 +6,9 @@ namespace SharpLink.Server;
 /// </summary>
 internal sealed class AdmissionProgram
 {
-    private static readonly ConditionalWeakTable<SharpLinkAdmissionController, AdmissionProgram> ProgramsByController = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        SharpLinkAdmissionController,
+        AdmissionProgram> ProgramsByController = new();
     private static long s_nextGenerationId;
 
     private readonly SharpLinkAdmissionController _controller;
