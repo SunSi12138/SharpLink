@@ -15,6 +15,12 @@ internal sealed partial class SharpLinkServer
     internal ServerCallAdmissionResult TryReserveCall(
         ServerConnectionState connection,
         out ServerRequestPermit? permit)
+        => TryReserveCall(connection, testHooks: null, out permit);
+
+    internal ServerCallAdmissionResult TryReserveCall(
+        ServerConnectionState connection,
+        ServerRequestPermitTestHooks? testHooks,
+        out ServerRequestPermit? permit)
     {
         ArgumentNullException.ThrowIfNull(connection);
         var admission = TryAcquireCall(connection);
@@ -26,7 +32,7 @@ internal sealed partial class SharpLinkServer
 
         try
         {
-            permit = new ServerRequestPermit(this, connection);
+            permit = new ServerRequestPermit(this, connection, testHooks);
             return ServerCallAdmissionResult.Acquired;
         }
         catch
@@ -43,18 +49,22 @@ internal sealed partial class SharpLinkServer
         private const int Reserved = 0;
         private const int Activating = 1;
         private const int Active = 2;
-        private const int Disposed = 3;
+        private const int Releasing = 3;
+        private const int Disposed = 4;
 
         private readonly SharpLinkServer _server;
         private readonly ServerConnectionState _connection;
+        private readonly ServerRequestPermitTestHooks? _testHooks;
         private int _state = Reserved;
 
         internal ServerRequestPermit(
             SharpLinkServer server,
-            ServerConnectionState connection)
+            ServerConnectionState connection,
+            ServerRequestPermitTestHooks? testHooks)
         {
             _server = server;
             _connection = connection;
+            _testHooks = testHooks;
         }
 
         internal bool IsReserved => Volatile.Read(ref _state) == Reserved;
@@ -66,7 +76,7 @@ internal sealed partial class SharpLinkServer
             var observed = Interlocked.CompareExchange(ref _state, Activating, Reserved);
             if (observed != Reserved)
             {
-                if (observed == Disposed)
+                if (observed is Releasing or Disposed)
                     throw new ObjectDisposedException(nameof(ServerRequestPermit));
                 throw new InvalidOperationException("Only a reserved call permit can be activated.");
             }
@@ -86,18 +96,22 @@ internal sealed partial class SharpLinkServer
                 switch (observed)
                 {
                     case Reserved:
-                        if (Interlocked.CompareExchange(ref _state, Disposed, Reserved) != Reserved)
+                        if (Interlocked.CompareExchange(ref _state, Releasing, Reserved) != Reserved)
                             continue;
-                        _server.ReleaseCall(_connection);
+                        ReleaseBackingCapacity();
                         return;
                     case Activating:
                         spinner.SpinOnce();
                         continue;
                     case Active:
-                        if (Interlocked.CompareExchange(ref _state, Disposed, Active) != Active)
+                        if (Interlocked.CompareExchange(ref _state, Releasing, Active) != Active)
                             continue;
-                        _server.ReleaseCall(_connection);
+                        ReleaseBackingCapacity();
                         return;
+                    case Releasing:
+                        _testHooks?.DisposeObservedReleasing?.Invoke();
+                        spinner.SpinOnce();
+                        continue;
                     case Disposed:
                         return;
                     default:
@@ -105,5 +119,28 @@ internal sealed partial class SharpLinkServer
                 }
             }
         }
+
+        private void ReleaseBackingCapacity()
+        {
+            try
+            {
+                _testHooks?.ReleaseClaimed?.Invoke();
+                _server.ReleaseCall(_connection);
+            }
+            finally
+            {
+                // Normal completion publishes Disposed only after both backing
+                // capacity scopes have been released. The finally prevents an
+                // invariant exception from stranding aliases forever in Releasing.
+                Volatile.Write(ref _state, Disposed);
+            }
+        }
     }
+}
+
+internal sealed class ServerRequestPermitTestHooks
+{
+    internal Action? ReleaseClaimed { get; init; }
+
+    internal Action? DisposeObservedReleasing { get; init; }
 }
