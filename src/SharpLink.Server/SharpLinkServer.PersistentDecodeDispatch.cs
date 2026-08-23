@@ -88,13 +88,13 @@ internal sealed partial class SharpLinkServer
                     cancellationToken,
                     out var decodedOwner);
                 result.Owner = decodedOwner;
-                decodePermit!.CompleteDecode();
                 return ValueTask.CompletedTask;
             });
             var decodeTask = DecodeExecutor.EnqueueAsync(workItem, callState.InvocationToken);
             retainedUseOwned = false;
             return AwaitPersistentDecodeAndContinueAsync(
                 decodeTask,
+                decodePermit!,
                 retainedPayload,
                 result,
                 connection,
@@ -123,6 +123,7 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask AwaitPersistentDecodeAndContinueAsync(
         ValueTask decodeTask,
+        ServerDecodePermit decodePermit,
         ServerRetainedAdmissionPayload retainedPayload,
         PersistentDecodeResult result,
         ServerConnectionState connection,
@@ -140,8 +141,9 @@ internal sealed partial class SharpLinkServer
         try
         {
             await decodeTask.ConfigureAwait(false);
-            request = ReadRequestEnvelope(session, result.Payload, flags);
             ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            decodePermit.CompleteDecode();
+            request = ReadRequestEnvelope(session, result.Payload, flags);
         }
         catch (SharpLinkException exception) when (
             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
