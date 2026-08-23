@@ -42,7 +42,7 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
 
-        var failure = await CaptureSharpLinkExceptionAsync(invocation);
+        var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "a tracked Unary Request dropped at emission must complete its pending call immediately");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
