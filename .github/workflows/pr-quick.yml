@@ -116,3 +116,11 @@ jobs:
             artifacts/chaos/pr-smoke.dmp
             artifacts/chaos/pr-smoke.dmp.crashreport.json
           if-no-files-found: warn
+
+      - name: Upload integration source snapshot
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-source-snapshot
+          path: test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
+          if-no-files-found: error
