@@ -1,0 +1,45 @@
+name: Issue 311 assertion patch
+
+on:
+  push:
+    branches:
+      - fix/311-codec-scope-routing
+    paths:
+      - .github/workflows/issue-311-fix-generator-assertion.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/311-codec-scope-routing
+          fetch-depth: 0
+      - name: Update generator assertion
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs')
+          text = path.read_text()
+          replacements = {
+              '__SerializeResponse(pending.GetAwaiter().GetResult(), false, session, output)':
+                  '__SerializeResponse(pending.GetAwaiter().GetResult(), false, __responseCodec_',
+              'return __AwaitTaskResultAsync(pending, false, session, output);':
+                  'return __AwaitTaskResultAsync(pending, false, __responseCodec_',
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f'Expected exactly one occurrence of {old!r}, found {text.count(old)}')
+              text = text.replace(old, new)
+          path.write_text(text)
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs
+          git commit -m "Update Task generator assertions for bound codecs"
+          git push origin HEAD:fix/311-codec-scope-routing
