@@ -1,16 +1,14 @@
 name: Issue 322 Patch Harness
 
 on:
-  push:
-    branches:
-      - issue-322-admission-program-generation
+  pull_request:
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.head.ref == 'issue-322-admission-program-generation'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
