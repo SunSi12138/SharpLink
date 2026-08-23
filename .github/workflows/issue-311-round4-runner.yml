@@ -35,6 +35,32 @@ jobs:
           script = script.replace(
               'SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))',
               'SharpLink.Sdk.RpcCodecAdapter(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))')
+          original_helper = '''def replace_exact(path, old, new, count=1):
+    text = read(path)
+    actual = text.count(old)
+    if actual != count:
+        raise SystemExit(f"{path}: expected {count} exact matches, found {actual}")
+    write(path, text.replace(old, new, count))
+'''
+          tolerant_helper = '''def replace_exact(path, old, new, count=1):
+    text = read(path)
+    actual = text.count(old)
+    if actual == count:
+        write(path, text.replace(old, new, count))
+        return
+    parts = []
+    for line in old.splitlines():
+        stripped = line.strip()
+        parts.append(r"\\s*" + re.escape(stripped) + r"\\s*" if stripped else r"\\s*")
+    pattern = r"\\r?\\n".join(parts)
+    new_text, actual = re.subn(pattern, lambda _: new, text, count=count)
+    if actual != count:
+        raise SystemExit(f"{path}: expected {count} whitespace-tolerant matches, found {actual}")
+    write(path, new_text)
+'''
+          if original_helper not in script:
+              raise SystemExit('replace_exact helper shape changed')
+          script = script.replace(original_helper, tolerant_helper, 1)
           exec(compile(script, 'issue-311-round4-patch.py', 'exec'), {'__name__': '__main__'})
           PYRUN
       - name: Commit patch
