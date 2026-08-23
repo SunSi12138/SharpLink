@@ -115,7 +115,6 @@ internal sealed partial class SharpLinkClient
             {
                 var result = await AwaitInvocationWithinFrozenDeadlineAsync(
                     InvokeNextAsync(0, _context)).ConfigureAwait(false);
-                ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
                 return result;
@@ -138,7 +137,6 @@ internal sealed partial class SharpLinkClient
             {
                 var result = await AwaitInvocationWithinFrozenDeadlineAsync(
                     InvokeNextAsync(0, _context)).ConfigureAwait(false);
-                ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
                 return result.GetValue<TResult>();
@@ -167,7 +165,6 @@ internal sealed partial class SharpLinkClient
             {
                 var result = await AwaitInvocationWithinFrozenDeadlineAsync(
                     InvokeNextAsync(0, _context)).ConfigureAwait(false);
-                ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
             }
@@ -185,8 +182,14 @@ internal sealed partial class SharpLinkClient
         private async ValueTask<SharpLinkClientInvocationResult> AwaitInvocationWithinFrozenDeadlineAsync(
             ValueTask<SharpLinkClientInvocationResult> invocation)
         {
-            if (!_control.Deadline.HasValue || invocation.IsCompletedSuccessfully)
+            if (!_control.Deadline.HasValue)
                 return await invocation.ConfigureAwait(false);
+            if (invocation.IsCompletedSuccessfully)
+            {
+                var result = invocation.Result;
+                ThrowIfFrozenDeadlineExpired();
+                return result;
+            }
 
             var invocationTask = invocation.AsTask();
             if (!await SharpLinkTimer.WaitAsync(
@@ -770,9 +773,7 @@ internal sealed partial class SharpLinkClient
             if (Interlocked.Exchange(ref _enumerated, 1) != 0)
                 throw new InvalidOperationException("An intercepted RPC stream can only be enumerated once.");
 
-            ThrowIfDeadlineExpired();
             var invocationResult = await AwaitInvocationWithinDeadlineAsync(invocation).ConfigureAwait(false);
-            ThrowIfDeadlineExpired();
             var stream = invocationResult.GetValue<IAsyncEnumerable<T>>();
 
             using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -783,12 +784,16 @@ internal sealed partial class SharpLinkClient
             {
                 while (true)
                 {
-                    ThrowIfDeadlineExpired();
                     var moveNext = enumerator.MoveNextAsync();
                     bool hasNext;
-                    if (!deadline.HasValue || moveNext.IsCompletedSuccessfully)
+                    if (!deadline.HasValue)
                     {
                         hasNext = await moveNext.ConfigureAwait(false);
+                    }
+                    else if (moveNext.IsCompletedSuccessfully)
+                    {
+                        hasNext = moveNext.Result;
+                        ThrowIfDeadlineExpired();
                     }
                     else
                     {
@@ -804,7 +809,6 @@ internal sealed partial class SharpLinkClient
                         hasNext = await moveNextTask.ConfigureAwait(false);
                     }
 
-                    ThrowIfDeadlineExpired();
                     if (!hasNext)
                         yield break;
                     var item = enumerator.Current;
@@ -835,8 +839,14 @@ internal sealed partial class SharpLinkClient
         private async ValueTask<SharpLinkClientInvocationResult> AwaitInvocationWithinDeadlineAsync(
             ValueTask<SharpLinkClientInvocationResult> pendingInvocation)
         {
-            if (!deadline.HasValue || pendingInvocation.IsCompletedSuccessfully)
+            if (!deadline.HasValue)
                 return await pendingInvocation.ConfigureAwait(false);
+            if (pendingInvocation.IsCompletedSuccessfully)
+            {
+                var result = pendingInvocation.Result;
+                ThrowIfDeadlineExpired();
+                return result;
+            }
 
             var invocationTask = pendingInvocation.AsTask();
             if (!await SharpLinkTimer.WaitAsync(
