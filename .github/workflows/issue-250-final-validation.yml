@@ -1,5 +1,6 @@
 name: Issue 250 Final Validation
 
+# Temporary validation for issue #250; removed after the run completes.
 on:
   pull_request:
     branches:
