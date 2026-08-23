@@ -312,6 +312,56 @@ public class InboundStreamAbandonmentTests
             "receive terminal publication should remain idempotent across local and peer terminal states");
     }
 
+    [Test]
+    public async Task PeerTerminalDuringTypedReplayShouldPreserveLateCreditUntilAttachmentOwnerDisposes()
+    {
+        const long requestId = 30407;
+        const ushort streamId = 1;
+        var counters = new Counters();
+        var manager = CreateManager(counters);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            requestId,
+            1,
+            buffers,
+            static _ => true,
+            static _ => { },
+            static () => { },
+            retainUntilLocalCompletion: true);
+
+        var payload = SerializeInt(42);
+        var encodedBytes = payload.Length;
+        await manager.DispatchChunkAsync(
+            requestId,
+            streamId,
+            new ReadOnlySequence<byte>(payload));
+
+        var typed = new GatedConsumptionDispatcher();
+        manager.Register(requestId, streamId, typed);
+        await typed.DispatchStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Ensure(counters.Accepted == encodedBytes && counters.Consumed == 0,
+            "replay-owned typed input should still hold receive credit");
+
+        manager.CompletePeerStream(requestId, streamId, exception: null);
+        Ensure(manager.ActiveStreamCount == 1 && counters.Completed == 1,
+            "peer terminal should publish flow terminal while the replay owner still holds the child");
+
+        manager.AbandonExistingRequestStreams(requestId, 1);
+        Ensure(manager.ActiveStreamCount == 0,
+            "local completion after peer terminal should retire the parent route even while replay unwinds");
+        Ensure(counters.Consumed == 0,
+            "parent removal must not synthesize consumption before the attachment owner disposes the child");
+
+        typed.ReleaseReplay();
+        await typed.Disposed.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Ensure(counters.Consumed == encodedBytes,
+            "attachment-owner disposal must retain the bytes-consumed callback and return late credit");
+        Ensure(counters.Completed == 1,
+            "late child disposal must not publish a second receive terminal");
+    }
+
     private static byte[] SerializeInt(int value)
     {
         var writer = new ArrayBufferWriter<byte>();
@@ -337,5 +387,62 @@ public class InboundStreamAbandonmentTests
         internal int Accepted;
         internal int Consumed;
         internal int Completed;
+    }
+
+    private sealed class GatedConsumptionDispatcher : IStreamConsumptionAwareDispatcher, IAsyncDisposable
+    {
+        private readonly TaskCompletionSource _dispatchStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseReplay =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _disposed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Action<long, ushort, int>? _bytesConsumed;
+        private long _requestId;
+        private ushort _streamId;
+        private int _bufferedBytes;
+
+        internal Task DispatchStarted => _dispatchStarted.Task;
+        internal Task Disposed => _disposed.Task;
+
+        internal void ReleaseReplay() => _releaseReplay.TrySetResult();
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+            => DispatchAsync(payload, Math.Max(1, checked((int)payload.Length)));
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+        {
+            _ = payload;
+            Interlocked.Add(ref _bufferedBytes, encodedByteCount);
+            _dispatchStarted.TrySetResult();
+            return new ValueTask(_releaseReplay.Task);
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+        }
+
+        public void Complete(Exception? exception) => _ = exception;
+
+        public void SetBytesConsumedCallback(
+            Action<long, ushort, int>? callback,
+            long requestId,
+            ushort streamId)
+        {
+            Volatile.Write(ref _bytesConsumed, callback);
+            _requestId = requestId;
+            _streamId = streamId;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            var bufferedBytes = Interlocked.Exchange(ref _bufferedBytes, 0);
+            if (bufferedBytes != 0)
+                Volatile.Read(ref _bytesConsumed)?.Invoke(_requestId, _streamId, bufferedBytes);
+            _disposed.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
     }
 }
