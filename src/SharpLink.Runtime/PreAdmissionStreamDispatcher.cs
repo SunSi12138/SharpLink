@@ -12,6 +12,22 @@ internal sealed class PreAdmissionStreamDispatcher(
     Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null)
     : IStreamConsumptionAwareDispatcher, IStreamDispatchLease
 {
+    internal PreAdmissionStreamDispatcher(
+        SharpLinkBufferWriterPool buffers,
+        Func<int, bool> reserveBytes,
+        Action<int> releaseBytes,
+        Action capacityExceeded,
+        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null)
+        : this(
+            buffers,
+            retainedBytes => reserveBytes(retainedBytes)
+                ? new CallbackByteLease(releaseBytes, retainedBytes)
+                : null,
+            capacityExceeded,
+            decodeCompressed)
+    {
+    }
+
     private readonly Lock _gate = new();
     private readonly Queue<BufferedItem> _items = [];
     private IStreamDispatcher? _dispatcher;
@@ -533,6 +549,18 @@ internal sealed class PreAdmissionStreamDispatcher(
         IDisposable ByteLease,
         int EncodedByteCount,
         bool IsCompressed = false);
+
+    private sealed class CallbackByteLease(Action<int> releaseBytes, int retainedBytes) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            releaseBytes(retainedBytes);
+        }
+    }
 }
 
 internal readonly record struct PreAdmissionDecodedPayload(
