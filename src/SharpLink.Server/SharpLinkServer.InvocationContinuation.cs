@@ -59,7 +59,42 @@ internal sealed partial class SharpLinkServer
             return ValueTask.FromException(exception);
         }
 
-        requestOwner.Activate();
+        if (callState is not null)
+        {
+            // Cancellation and Reserved -> Active share one terminal gate. If cancellation wins
+            // before activation, no generated stub or user code may run even when provider decode
+            // completed successfully. Once activation wins, later cancellation keeps the existing
+            // cooperative/non-cooperative handler semantics below.
+            if (!callState.TryActivateRequest(requestOwner))
+            {
+                session.ReturnDecodedPayload(decodedRequestOwner);
+                decodedRequestOwner = null;
+                var exception = MapServerCancellationException(callState, request.RpcDeadline);
+                CompleteFailedRequestStreams(session, requestId, exception);
+                _ = TryClaimCallCompletion(callState);
+                var responseSend = callState.Reason == ServerCallCancellationReason.ModuleDraining
+                    ? TrySendModuleDrainError(
+                        callState,
+                        session,
+                        requestId,
+                        connection.ConnectionToken)
+                    : session.SendRpcErrorWithBackpressureAsync(
+                        requestId,
+                        exception,
+                        connection.ConnectionToken);
+                return ReleaseDispatchResourcesAfterResponseAsync(
+                    responseSend,
+                    callState,
+                    requestId,
+                    requestCancellationMap,
+                    connection,
+                    requestOwner);
+            }
+        }
+        else
+        {
+            requestOwner.Activate();
+        }
 
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
