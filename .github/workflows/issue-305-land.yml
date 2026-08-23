@@ -1,0 +1,54 @@
+name: Issue 305 Land A2
+
+on:
+  push:
+    branches:
+      - perf/issue-305-partition-lease
+
+permissions:
+  contents: write
+
+jobs:
+  land:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: perf/issue-305-partition-lease
+          fetch-depth: 0
+
+      - name: Apply validated A2 production diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/issue-305-apply.py
+          python3 .github/scripts/issue-305-adapt-tests.py
+          git mv test/SharpLink.Benchmarks/Issue305Benchmarks.cs \
+            test/SharpLink.Benchmarks/AdmissionPartitionControllerBenchmarks.cs
+
+          rm -f \
+            .github/scripts/issue-305-adapt-tests-a.py \
+            .github/scripts/issue-305-adapt-tests.py \
+            .github/scripts/issue-305-apply-a.py \
+            .github/scripts/issue-305-apply.py \
+            .github/workflows/issue-305-evidence.yml \
+            .github/workflows/issue-305-land.yml \
+            SharpLink.slnx
+
+          git diff --check
+          if grep -q 'AdmissionPartitionLease' src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs; then
+            echo 'AdmissionPartitionLease still present in production admission source' >&2
+            exit 1
+          fi
+
+      - name: Commit production diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'perf(admission): remove partition lease allocation'
+          git push origin HEAD:perf/issue-305-partition-lease
