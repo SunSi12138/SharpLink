@@ -59,6 +59,41 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         }
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task UnknownOneWayMethodShapeAfterCompressedDecodeFailureShouldTerminateBeforeStreamWindowStalls()
+    {
+        OneWayInboundDrainService.Reset();
+        var compression = new CorruptingCompressionProvider();
+        await using var harness = await Harness.CreateAsync(options =>
+        {
+            options.FlowControl.StreamReceiveWindowBytes = 128;
+            options.FlowControl.ConnectionReceiveWindowBytes = 128;
+            options.Compression.Providers.Add(compression);
+        });
+        var service = harness.Client.Get<IOneWayInboundDrainService>();
+
+        using (harness.HideOneWayInboundDrainMethodShape())
+        {
+            var requestPayload = Enumerable.Repeat((byte)0x67, 4096).ToArray();
+            var send = service.IgnoreCorruptiblePayloadAndStreamAsync(
+                requestPayload,
+                ManyPayloads(128, 32)).AsTask();
+            var failure = await CaptureFailureAsync(send);
+
+            Ensure(Volatile.Read(ref compression.CompressCount) > 0,
+                "the large OneWay request payload must use the negotiated compression provider");
+            Ensure(Volatile.Read(ref compression.DecompressCount) > 0,
+                "the server must reach compressed request decoding before applying the unresolved-shape policy");
+            Ensure(failure is not null,
+                "an unresolved raw OneWay shape after decode failure should terminate the connection");
+            Ensure(failure is not TimeoutException,
+                "decode failure with an unresolved raw OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
+            Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
+                "a corrupt compressed OneWay request with unresolved shape must not invoke the service method");
+        }
+    }
+
     private static async Task<Exception?> CaptureFailureAsync(Task operation)
     {
         try
@@ -90,6 +125,45 @@ public class OneWayEarlyRejectionDrainIntegrationTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class CorruptingCompressionProvider : ISharpLinkCompressionProvider
+    {
+        internal int CompressCount;
+        internal int DecompressCount;
+
+        public string WireProfile => "corrupt-oneway-request";
+
+        public SharpLinkCompressionResult Compress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (maxOutputBytes < 1)
+                throw new InvalidOperationException("test compression output budget is empty");
+
+            Interlocked.Increment(ref CompressCount);
+            var span = output.GetSpan(1);
+            span[0] = 0x7f;
+            output.Advance(1);
+            return new SharpLinkCompressionResult(checked((int)input.Length), 1);
+        }
+
+        public SharpLinkCompressionResult Decompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            _ = input;
+            _ = output;
+            _ = maxOutputBytes;
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref DecompressCount);
+            throw new InvalidDataException("intentional corrupt compressed request body");
+        }
     }
 
     private sealed class Harness : IAsyncDisposable
