@@ -135,14 +135,18 @@ internal sealed class ClientConnection :
         if (!PendingCalls.Contains(requestId))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
+        var codec = stream is RpcCodecBoundAsyncEnumerable<T> bound
+            ? bound.Codec
+            : Session.RuntimeContext.Codecs.GetCodec<T>();
         try
         {
             await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
-                await Session.SendStreamChunkAsync(
+                await Session.SendBoundStreamChunkAsync(
                     requestId,
                     streamId,
                     item,
+                    codec,
                     cancellationToken).ConfigureAwait(false);
             }
 
