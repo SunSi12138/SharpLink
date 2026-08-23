@@ -127,6 +127,32 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+        /// <summary>
+        /// Ends decode-only ownership without releasing call capacity. Failed or rejected requests
+        /// use this after their physical retained/decoded buffers have been returned so response
+        /// backpressure cannot pin the global decode/byte budgets.
+        /// </summary>
+        internal void ReleaseDecodeResources()
+        {
+            ServerDecodePermit? decodePermit;
+            lock (_resourceGate)
+            {
+                var current = Volatile.Read(ref _state);
+                if (current is Activating or Active)
+                {
+                    throw new InvalidOperationException(
+                        "Decode resources cannot be detached after call activation.");
+                }
+                if (current is Releasing or Disposed)
+                    return;
+
+                decodePermit = _decodePermit;
+                _decodePermit = null;
+            }
+
+            decodePermit?.Dispose();
+        }
+
         internal void Activate()
         {
             lock (_resourceGate)
@@ -207,7 +233,10 @@ internal sealed partial class SharpLinkServer
                 _testHooks?.ReleaseClaimed?.Invoke();
                 ServerDecodePermit? decodePermit;
                 lock (_resourceGate)
+                {
                     decodePermit = _decodePermit;
+                    _decodePermit = null;
+                }
 
                 try
                 {
