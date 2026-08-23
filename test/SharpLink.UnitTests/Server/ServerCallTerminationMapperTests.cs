@@ -40,6 +40,8 @@ public sealed class ServerCallTerminationMapperTests
     [Arguments((int)ServerCallCancellationReason.ServerStopping, "server_stopping")]
     [Arguments((int)ServerCallCancellationReason.ConnectionClosed, "connection_closed")]
     [Arguments((int)ServerCallCancellationReason.AdmissionResourceExhausted, "admission_resource_exhausted")]
+    [Arguments((int)ServerCallCancellationReason.PreAdmissionStreamResourceExhausted,
+        "pre_admission_stream_resource_exhausted")]
     [Arguments((int)ServerCallCancellationReason.Completed, "unknown")]
     [Arguments(byte.MaxValue, "unknown")]
     public async Task GetTerminationReasonTagShouldRemainLowCardinality(
@@ -93,6 +95,9 @@ public sealed class ServerCallTerminationMapperTests
     [Arguments((int)ServerCallCancellationReason.AdmissionResourceExhausted,
         (int)SharpLinkErrorCode.ResourceExhausted,
         "Admission queue retained-byte capacity was exhausted.")]
+    [Arguments((int)ServerCallCancellationReason.PreAdmissionStreamResourceExhausted,
+        (int)SharpLinkErrorCode.ResourceExhausted,
+        "\u000ePre-admission stream retained-byte capacity was exhausted.")]
     [Arguments((int)ServerCallCancellationReason.Completed, (int)SharpLinkErrorCode.Cancelled,
         "Request canceled.")]
     [Arguments(byte.MaxValue, (int)SharpLinkErrorCode.Cancelled, "Request canceled.")]
@@ -107,6 +112,17 @@ public sealed class ServerCallTerminationMapperTests
 
         await Assert.That(exception.Code).IsEqualTo((SharpLinkErrorCode)expectedCodeValue);
         await Assert.That(exception.Message).IsEqualTo(expectedMessage);
+    }
+
+    [Test]
+    public async Task PreAdmissionStreamExhaustionShouldKeepStableResourceReason()
+    {
+        var exception = ServerCallTerminationMapper.CreateServerCancellationException(
+            ServerCallCancellationReason.PreAdmissionStreamResourceExhausted,
+            deadlineExceeded: false);
+
+        await Assert.That(SharpLinkResourceExhaustion.GetReason(exception))
+            .IsEqualTo(SharpLinkResourceExhaustion.ServerPreAdmissionStreamBytes);
     }
 
     [Test]
