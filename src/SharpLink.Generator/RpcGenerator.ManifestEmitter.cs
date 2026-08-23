@@ -66,6 +66,7 @@ public partial class RpcGenerator
         AppendContractManifestArray(sb, contracts);
         AppendServiceManifestArray(sb, serviceModels);
         AppendCodecManifestArray(sb, codecs);
+        AppendManifestScopedCodecTargets(sb, codecs);
         sb.AppendLine("    private static readonly string[] __dependencies = new string[]");
         sb.AppendLine("    {");
         foreach (var dependency in dependencies)
@@ -74,10 +75,12 @@ public partial class RpcGenerator
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedContractDescriptor> __readOnlyContracts = Array.AsReadOnly(__contracts);");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedServiceDescriptor> __readOnlyServices = Array.AsReadOnly(__services);");
         sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyCodecs = Array.AsReadOnly(__codecs);");
+        sb.AppendLine("    private static readonly IReadOnlyList<Type> __readOnlyManifestScopedCodecTargets = Array.AsReadOnly(__manifestScopedCodecTargets);");
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");
+        sb.AppendLine("    public IReadOnlyList<Type> ManifestScopedCodecTargets => __readOnlyManifestScopedCodecTargets;");
         sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -153,6 +156,21 @@ public partial class RpcGenerator
         sb.AppendLine("    {");
         foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
             sb.AppendLine($"        new {codec.CodecName}.Factory(),");
+        sb.AppendLine("    };");
+    }
+
+    private static void AppendManifestScopedCodecTargets(
+        StringBuilder sb,
+        ImmutableArray<GeneratedCodecModel> codecs)
+    {
+        sb.AppendLine("    private static readonly Type[] __manifestScopedCodecTargets = new Type[]");
+        sb.AppendLine("    {");
+        foreach (var codec in codecs
+                     .Where(static codec => codec.IsManifestScoped)
+                     .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
+        {
+            sb.AppendLine($"        typeof({codec.TypeName}),");
+        }
         sb.AppendLine("    };");
     }
 
