@@ -9,6 +9,8 @@ internal sealed class StreamManager
     private readonly Action<long, ushort, int>? _acceptBytes;
     private readonly Action<long, ushort, int>? _bytesConsumed;
     private readonly Action<long, ushort>? _streamCompleted;
+    private readonly int _maxActiveStreams;
+    private readonly Action<Exception>? _activeStreamCapacityExceeded;
     private long _droppedStreamFrames;
     private int _activeStreamCount;
     private Termination? _termination;
@@ -30,12 +32,32 @@ internal sealed class StreamManager
         Action<long, ushort, int>? acceptBytes,
         Action<long, ushort, int>? bytesConsumed,
         Action<long, ushort>? streamCompleted)
+        : this(
+            concurrencyOptions,
+            acceptBytes,
+            bytesConsumed,
+            streamCompleted,
+            int.MaxValue,
+            activeStreamCapacityExceeded: null)
+    {
+    }
+
+    internal StreamManager(
+        RuntimeConcurrencyOptions concurrencyOptions,
+        Action<long, ushort, int>? acceptBytes,
+        Action<long, ushort, int>? bytesConsumed,
+        Action<long, ushort>? streamCompleted,
+        int maxActiveStreams,
+        Action<Exception>? activeStreamCapacityExceeded)
     {
         ArgumentNullException.ThrowIfNull(concurrencyOptions);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxActiveStreams);
         _concurrencyOptions = concurrencyOptions.CloneValidated();
         _acceptBytes = acceptBytes;
         _bytesConsumed = bytesConsumed;
         _streamCompleted = streamCompleted;
+        _maxActiveStreams = maxActiveStreams;
+        _activeStreamCapacityExceeded = activeStreamCapacityExceeded;
     }
 
     /// <inheritdoc />
@@ -69,8 +91,29 @@ internal sealed class StreamManager
                 Unregister(requestId, streamId);
             return;
         }
+
+        var activeStreamCount = Interlocked.Increment(ref _activeStreamCount);
+        if (activeStreamCount > _maxActiveStreams)
+        {
+            Interlocked.Decrement(ref _activeStreamCount);
+            var exception = new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                $"Active inbound stream routes exceeded the per-connection limit of {_maxActiveStreams}.");
+            try
+            {
+                dispatcher.Complete(exception);
+            }
+            finally
+            {
+                RemoveEmptyRequest(requestId, requestDispatchers);
+                _activeStreamCapacityExceeded?.Invoke(exception);
+            }
+            if (ignoreExisting)
+                return;
+            throw exception;
+        }
+
         SharpLinkTelemetry.AddActiveStreams(1);
-        Interlocked.Increment(ref _activeStreamCount);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
             consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
         if (!requestDispatchers.TryRegister(streamId, dispatcher))

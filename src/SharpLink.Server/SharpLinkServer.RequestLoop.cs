@@ -85,7 +85,7 @@ internal sealed partial class SharpLinkServer
                                     var errorSend = session.SendRpcErrorWithBackpressureAsync(
                                         failedRequestId, exception, connection.ConnectionToken);
                                     if (!errorSend.IsCompletedSuccessfully)
-                                        ObserveUserCall(errorSend, failedRequestId);
+                                        _ = ObserveDecodedRequestErrorSend(errorSend, failedRequestId);
                                 }
                             }
                             else if (header.Type == ProtocolV2FrameType.StreamData)
@@ -114,39 +114,13 @@ internal sealed partial class SharpLinkServer
                                 case ProtocolV2FrameType.Request:
                                     {
                                         var requestId = unchecked((long)header.RequestId);
-                                        using var requestScope = BeginRequestLogScope(_logger, requestId);
-                                        if (!TryAcceptRequest(connection, requestId))
-                                        {
-                                            if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
-                                            {
-                                                Interlocked.Increment(ref _rejectedOneWayCalls);
-                                                LogOnewayRpcResourceExhausted(_logger, "server_unavailable");
-                                            }
-                                            else
-                                            {
-                                                var errorSend = session.SendRpcErrorWithBackpressureAsync(
-                                                    requestId,
-                                                    new SharpLinkException(
-                                                        SharpLinkErrorCode.Unavailable,
-                                                        "Server is draining."),
-                                                    connection.ConnectionToken);
-                                                if (!errorSend.IsCompletedSuccessfully)
-                                                    ObserveUserCall(errorSend, requestId);
-                                            }
-                                            break;
-                                        }
-
-                                        if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
-                                        {
-                                            DispatchOneWayRpc(
-                                                connection, requestId, header.Flags, payload, requestCancellationMap, ct);
-                                            break;
-                                        }
-
-                                        var dispatchTask = DispatchRpcAsync(
-                                            connection, requestId, header.Flags, payload, requestCancellationMap, ct);
-                                        if (!dispatchTask.IsCompletedSuccessfully)
-                                            ObserveUserCall(dispatchTask, requestId);
+                                        _ = DispatchRequestAsync(
+                                            connection,
+                                            requestId,
+                                            header.Flags,
+                                            payload,
+                                            requestCancellationMap,
+                                            ct);
                                         break;
                                     }
                                 case ProtocolV2FrameType.Cancel:
@@ -245,9 +219,100 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private async Task AwaitDispatchAsync(ValueTask dispatchTask, long requestId)
+    private async Task DispatchRequestAsync(
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
+        try
+        {
+            if (!TryAcceptRequest(connection, requestId))
+            {
+                if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
+                {
+                    Interlocked.Increment(ref _rejectedOneWayCalls);
+                    LogOnewayRpcResourceExhausted(_logger, "server_unavailable");
+                    return;
+                }
+
+                var rejectionSend = connection.Session.SendRpcErrorWithBackpressureAsync(
+                    requestId,
+                    new SharpLinkException(
+                        SharpLinkErrorCode.Unavailable,
+                        "Server is draining."),
+                    connection.ConnectionToken);
+                payload = default;
+                if (!rejectionSend.IsCompletedSuccessfully)
+                    await rejectionSend.ConfigureAwait(false);
+                return;
+            }
+
+            ValueTask dispatchTask;
+            try
+            {
+                dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
+                    ? DispatchOneWayRpc(
+                        connection,
+                        requestId,
+                        flags,
+                        payload,
+                        requestCancellationMap,
+                        serverLoopToken)
+                    : DispatchRpcAsync(
+                        connection,
+                        requestId,
+                        flags,
+                        payload,
+                        requestCancellationMap,
+                        serverLoopToken);
+            }
+            catch (SharpLinkException exception) when (
+                exception.Code == SharpLinkErrorCode.ProtocolViolation)
+            {
+                SharpLinkTelemetry.RecordProtocolFailure("server");
+                var reason = SharpLinkProtocolViolationException.Classify(exception);
+                if (reason == ProtocolViolationReason.InternalState)
+                {
+                    LogServerBackgroundLoopUnhandledException(
+                        _logger,
+                        nameof(ProcessRequestLoop),
+                        exception);
+                }
+                else
+                {
+                    LogProtocolViolationRateLimited(reason);
+                }
+
+                payload = default;
+                var closeTask = connection.CloseAsync();
+                if (!closeTask.IsCompletedSuccessfully)
+                    await closeTask.ConfigureAwait(false);
+                return;
+            }
+
+            payload = default;
+            if (!dispatchTask.IsCompletedSuccessfully)
+                await dispatchTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (SharpLinkException exception) when (
+            exception.Code == SharpLinkErrorCode.ConnectionClosed)
+        {
+        }
+        catch (Exception ex)
+        {
+            LogRpcDispatchUnhandledException(_logger, ex);
+        }
+    }
+
+    private async Task AwaitDispatchAsync(ValueTask dispatchTask, long requestId)
+    {
         try
         {
             await dispatchTask.ConfigureAwait(false);
@@ -267,6 +332,12 @@ internal sealed partial class SharpLinkServer
 
     private void ObserveUserCall(ValueTask dispatchTask, long requestId)
         => _ = AwaitDispatchAsync(dispatchTask, requestId);
+
+    private async Task ObserveDecodedRequestErrorSend(ValueTask dispatchTask, long requestId)
+    {
+        using var requestScope = BeginRequestLogScope(_logger, requestId);
+        await AwaitDispatchAsync(dispatchTask, requestId).ConfigureAwait(false);
+    }
 
     private static async Task DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
