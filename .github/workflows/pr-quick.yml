@@ -22,10 +22,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ref: fix/311-codec-scope-routing
 
       - name: Integrate issue 311 routing edits
-        if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           python3 - <<'PY'
@@ -108,13 +108,13 @@ jobs:
 
           git diff --check
           git rm .github/workflows/issue-311-patch.yml
-          git fetch origin "${{ github.event.pull_request.base.sha }}" --depth=1
+          git fetch origin 2f836376f43ceae180ae56ee3f370f414ff311b1 --depth=1
           git checkout FETCH_HEAD -- .github/workflows/pr-quick.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add src test .github/workflows
           git commit -m 'Integrate compile-time codec scope routing'
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin HEAD:fix/311-codec-scope-routing
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -187,7 +187,7 @@ jobs:
 
       - name: Upload Chaos Report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0A # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: chaos-pr-smoke
           path: |
