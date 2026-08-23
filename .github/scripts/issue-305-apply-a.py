@@ -134,15 +134,15 @@ replace(
                 owner,
                 singleLease,
                 Interlocked.Exchange(ref _partition, null));''',
-'''            var ownedPartitionEntry = Interlocked.Exchange(ref _partitionEntry, null);
-            var ownedPartitionOwner = ownedPartitionEntry is null
+'''            var singlePartitionEntry = Interlocked.Exchange(ref _partitionEntry, null);
+            var singlePartitionOwner = singlePartitionEntry is null
                 ? null
                 : Interlocked.Exchange(ref _partitionOwner, null);
             admissionLease = new AdmissionLease(
                 owner,
                 singleLease,
-                ownedPartitionOwner,
-                ownedPartitionEntry);''')
+                singlePartitionOwner,
+                singlePartitionEntry);''')
 replace(
 '''        var ownedPartition = Interlocked.Exchange(ref _partition, null);
         admissionLease = new AdmissionLease(owner, leases, ownedPartition);''',
