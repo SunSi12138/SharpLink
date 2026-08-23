@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Threading;
 using System.Threading.Channels;
@@ -95,8 +94,7 @@ public sealed class ConnectionAdmissionSecureDefaultTests
     {
         var listener = new BlockingListener();
         using var provider = new AdmissionLogProvider();
-        using var loggerFactory = LoggerFactory.Create(builder =>
-            builder.SetMinimumLevel(LogLevel.Trace).AddProvider(provider));
+        using var loggerFactory = new AdmissionLoggerFactory(provider);
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
@@ -156,10 +154,20 @@ public sealed class ConnectionAdmissionSecureDefaultTests
         }
     }
 
+    private sealed class AdmissionLoggerFactory(AdmissionLogProvider provider) : ILoggerFactory
+    {
+        public ILogger CreateLogger(string categoryName) => provider.CreateLogger(categoryName);
+
+        public void AddProvider(ILoggerProvider loggerProvider)
+            => throw new NotSupportedException();
+
+        public void Dispose()
+        {
+        }
+    }
+
     private sealed class AdmissionLogProvider : ILoggerProvider
     {
-        private readonly ConcurrentQueue<string> _messages = new();
-
         internal TaskCompletionSource<string> AdmissionConfigured { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -183,7 +191,6 @@ public sealed class ConnectionAdmissionSecureDefaultTests
                 Func<TState, Exception?, string> formatter)
             {
                 var message = formatter(state, exception);
-                owner._messages.Enqueue(message);
                 if (eventId.Id == LogEvents.Server.ConnectionAdmissionConfigured)
                     owner.AdmissionConfigured.TrySetResult(message);
             }
