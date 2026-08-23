@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Security;
@@ -84,8 +85,7 @@ public static class HandshakeDefaultEvidenceRunner
         admissionGauge.ResetPeak();
         var sustainedRejectedBefore = admissionGauge.RejectedTotal;
         var sustained = await MeasureAsync(
-            () => RunSustainedAsync(candidate),
-            admissionGauge).ConfigureAwait(false);
+            () => RunSustainedAsync(candidate)).ConfigureAwait(false);
         var sustainedRejected = admissionGauge.RejectedTotal - sustainedRejectedBefore;
         var sustainedPeak = admissionGauge.PeakHandshakes;
 
@@ -93,8 +93,7 @@ public static class HandshakeDefaultEvidenceRunner
         admissionGauge.ResetPeak();
         var burstRejectedBefore = admissionGauge.RejectedTotal;
         var burst = await MeasureAsync(
-            RunBurstAsync,
-            admissionGauge).ConfigureAwait(false);
+            RunBurstAsync).ConfigureAwait(false);
         var burstRejected = admissionGauge.RejectedTotal - burstRejectedBefore;
         var burstPeak = admissionGauge.PeakHandshakes;
 
@@ -142,9 +141,7 @@ public static class HandshakeDefaultEvidenceRunner
         var tasks = new Task[SustainedAttempts];
 
         for (var index = 0; index < tasks.Length; index++)
-        {
             tasks[index] = RunOneAsync();
-        }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
         return new ConnectBatchResult(successes, failures, latencies.ToArray());
@@ -214,8 +211,7 @@ public static class HandshakeDefaultEvidenceRunner
     }
 
     private static async Task<MeasuredBatchResult> MeasureAsync(
-        Func<Task<ConnectBatchResult>> operation,
-        HandshakeAdmissionGauge admissionGauge)
+        Func<Task<ConnectBatchResult>> operation)
     {
         var process = Process.GetCurrentProcess();
         process.Refresh();
@@ -225,13 +221,14 @@ public static class HandshakeDefaultEvidenceRunner
         using var sampleCts = new CancellationTokenSource();
         var sampleTask = Task.Run(async () =>
         {
+            using var sampleProcess = Process.GetCurrentProcess();
             while (!sampleCts.IsCancellationRequested)
             {
                 try
                 {
-                    process.Refresh();
-                    peakWorkingSet = Math.Max(peakWorkingSet, process.WorkingSet64);
-                    peakThreadCount = Math.Max(peakThreadCount, process.Threads.Count);
+                    sampleProcess.Refresh();
+                    peakWorkingSet = Math.Max(peakWorkingSet, sampleProcess.WorkingSet64);
+                    peakThreadCount = Math.Max(peakThreadCount, sampleProcess.Threads.Count);
                     peakGcHeap = Math.Max(peakGcHeap, GC.GetTotalMemory(forceFullCollection: false));
                     await Task.Delay(10, sampleCts.Token).ConfigureAwait(false);
                 }
