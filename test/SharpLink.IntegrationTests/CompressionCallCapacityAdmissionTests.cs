@@ -108,6 +108,75 @@ public class CompressionCallCapacityAdmissionTests
 
     [Test]
     [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompressedUnaryShouldNotDecompressWhenDecodedByteBudgetIsExhausted(
+        bool useAdvancedAdmission)
+    {
+        var serverProvider = new CountingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await CapacityHarness.CreateAsync(
+            serverProvider,
+            useAdvancedAdmission,
+            maxDecodedBytesInFlightPerServer: 1024);
+        var payload = Enumerable.Repeat((byte)0x45, 32 * 1024).ToArray();
+
+        await EnsureResourceExhaustedAsync(
+            harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
+            "decoded-byte budget rejection");
+
+        Ensure(serverProvider.DecompressCount == 0,
+            "decoded-byte-budget rejection must happen before provider decompression");
+        await WaitUntilAsync(
+            () => harness.ActiveCalls == 0 &&
+                  harness.ActiveDecodes == 0 &&
+                  harness.DecodedBytesInFlight == 0,
+            "decoded-byte rejection resource release");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedCompressedUnaryShouldRejectBeforeRetentionWhenRetainedByteBudgetIsExhausted()
+    {
+        TestService.ResetBlockingAdd();
+        var serverProvider = new CountingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await CapacityHarness.CreateAsync(
+            serverProvider,
+            useAdvancedAdmission: true,
+            admissionConcurrency: 1,
+            maxRetainedCompressedBytesPerServer: 1);
+        var blocker = harness.Client.Get<ITestService>()
+            .BlockingAddAsync(5, 6, CancellationToken.None)
+            .AsTask();
+
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var decompressionsBeforeQueuedRequest = serverProvider.DecompressCount;
+            var payload = Enumerable.Repeat((byte)0x46, 32 * 1024).ToArray();
+
+            await EnsureResourceExhaustedAsync(
+                harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
+                "retained compressed-byte budget rejection");
+
+            Ensure(serverProvider.DecompressCount == decompressionsBeforeQueuedRequest,
+                "retained-byte-budget rejection must happen before provider decompression");
+            await WaitUntilAsync(
+                () => harness.RetainedCompressedBytes == 0,
+                "retained compressed-byte rejection resource release");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
+
+        Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 11,
+            "admission owner should complete after retained-budget rejection");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task CompressedUnaryShouldRejectIfDeadlineExpiresDuringDecompression()
     {
         DeadlineCompressionProbeService.Reset();
@@ -293,30 +362,13 @@ public class CompressionCallCapacityAdmissionTests
         private readonly ISharpLinkServer _server;
 
         public ISharpLinkClient Client { get; }
-        public long RejectedOneWayCalls
-        {
-            get
-            {
-                var reflectionField = _server.GetType().GetField(
-                    "_rejectedOneWayCalls",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic)
-                    ?? throw new Exception("cannot find rejected one-way call counter");
-                return (long)reflectionField.GetValue(_server)!;
-            }
-        }
-        public int ActiveCalls
-        {
-            get
-            {
-                var reflectionField = _server.GetType().GetField(
-                    "_globalActiveCalls",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic)
-                    ?? throw new Exception("cannot find active call counter");
-                return (int)reflectionField.GetValue(_server)!;
-            }
-        }
+        public long RejectedOneWayCalls => ReadField<long>("_rejectedOneWayCalls");
+        public int ActiveCalls => ReadField<int>("_globalActiveCalls");
+        public int ActiveDecodes => ReadDiagnosticProperty<int>("ActiveDecodeCountForDiagnostics");
+        public long RetainedCompressedBytes =>
+            ReadDiagnosticProperty<long>("RetainedCompressedBytesForDiagnostics");
+        public long DecodedBytesInFlight =>
+            ReadDiagnosticProperty<long>("DecodedBytesInFlightForDiagnostics");
 
         private CapacityHarness(
             CancellationTokenSource serverCts,
@@ -333,7 +385,10 @@ public class CompressionCallCapacityAdmissionTests
         public static async Task<CapacityHarness> CreateAsync(
             ISharpLinkCompressionProvider serverProvider,
             bool useAdvancedAdmission,
-            TimeSpan? requestTimeout = null)
+            TimeSpan? requestTimeout = null,
+            int admissionConcurrency = 8,
+            long? maxRetainedCompressedBytesPerServer = null,
+            long? maxDecodedBytesInFlightPerServer = null)
         {
             var serverCts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
@@ -342,12 +397,20 @@ public class CompressionCallCapacityAdmissionTests
                 {
                     options.FlowControl.MaxConcurrentCallsPerConnection = 1;
                     options.FlowControl.MaxConcurrentCallsPerServer = 1;
+                    if (maxRetainedCompressedBytesPerServer is { } retainedBudget)
+                    {
+                        options.FlowControl.MaxRetainedCompressedBytesPerServer = retainedBudget;
+                    }
+                    if (maxDecodedBytesInFlightPerServer is { } decodedBudget)
+                    {
+                        options.FlowControl.MaxDecodedBytesInFlightPerServer = decodedBudget;
+                    }
                     options.Compression.Providers.Add(serverProvider);
                 });
             if (useAdvancedAdmission)
             {
                 serverBuilder.UseAdmissionControl(options =>
-                    options.Global.UseConcurrency(8));
+                    options.Global.UseConcurrency(admissionConcurrency));
             }
 
             serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
@@ -393,6 +456,26 @@ public class CompressionCallCapacityAdmissionTests
             await _server.StopAsync(TimeSpan.Zero);
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             _serverCts.Dispose();
+        }
+
+        private T ReadField<T>(string name)
+        {
+            var reflectionField = _server.GetType().GetField(
+                name,
+                System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)
+                ?? throw new Exception($"cannot find server field {name}");
+            return (T)reflectionField.GetValue(_server)!;
+        }
+
+        private T ReadDiagnosticProperty<T>(string name)
+        {
+            var reflectionProperty = _server.GetType().GetProperty(
+                name,
+                System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)
+                ?? throw new Exception($"cannot find server diagnostic property {name}");
+            return (T)reflectionProperty.GetValue(_server)!;
         }
     }
 }
