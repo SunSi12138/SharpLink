@@ -419,9 +419,9 @@ public interface ITaskPayloadContract : SharpLink.Sdk.IService
         Ensure(proxyStart >= 0 && proxyEnd > proxyStart &&
                generated.AsSpan(proxyStart, proxyEnd - proxyStart).Contains(".AsTask();", StringComparison.Ordinal),
             "Task<T> Proxy emission must convert the channel ValueTask using outer Task semantics");
-        Ensure(generated.Contains("__SerializeResponse(pending.GetAwaiter().GetResult(), false, session, output)", StringComparison.Ordinal),
+        Ensure(generated.Contains("__SerializeResponse(pending.GetAwaiter().GetResult(), false, __responseCodec_", StringComparison.Ordinal),
             "Task<T> Stub emission must use Task result semantics even when T contains 'ValueTask'");
-        Ensure(generated.Contains("return __AwaitTaskResultAsync(pending, false, session, output);", StringComparison.Ordinal),
+        Ensure(generated.Contains("return __AwaitTaskResultAsync(pending, false, __responseCodec_", StringComparison.Ordinal),
             "Task<T> Stub emission must await the outer Task type");
         Ensure(!generated.Contains("Serialize(pending.Result, output)", StringComparison.Ordinal),
             "Task<T> must not use the ValueTask-only Result path");
