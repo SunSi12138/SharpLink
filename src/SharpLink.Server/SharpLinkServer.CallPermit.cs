@@ -153,6 +153,38 @@ internal sealed partial class SharpLinkServer
             decodePermit?.Dispose();
         }
 
+        /// <summary>
+        /// Moves successful decoded-byte ownership onto the call-state payload owner. The call state
+        /// then releases the byte budget only after the physical decoded buffer is returned, even
+        /// when an external cancellation-state lease delays final call-state teardown.
+        /// </summary>
+        internal void TransferDecodedBytesTo(ServerCallCancellationState callState)
+        {
+            ArgumentNullException.ThrowIfNull(callState);
+
+            ServerDecodedBytesPermit? decodedBytesPermit;
+            lock (_resourceGate)
+            {
+                var decodePermit = _decodePermit;
+                if (decodePermit is null)
+                    return;
+                decodedBytesPermit = decodePermit.DetachDecodedBytesOwnership();
+            }
+
+            if (decodedBytesPermit is null)
+                return;
+
+            try
+            {
+                callState.AttachDecodedBytesPermit(decodedBytesPermit);
+            }
+            catch
+            {
+                decodedBytesPermit.Dispose();
+                throw;
+            }
+        }
+
         internal void Activate()
         {
             lock (_resourceGate)
