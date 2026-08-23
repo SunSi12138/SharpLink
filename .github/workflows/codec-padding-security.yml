@@ -2,7 +2,6 @@ name: Codec Padding Security Evidence
 
 on:
   pull_request:
-    branches: [dev]
     paths:
       - 'src/SharpLink.Runtime/Codec/StructCodec.cs'
       - 'test/SharpLink.Benchmarks/UnsafeBlitPaddingBenchmarks.cs'
