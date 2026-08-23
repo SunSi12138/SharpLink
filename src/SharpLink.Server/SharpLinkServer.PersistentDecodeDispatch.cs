@@ -87,31 +87,53 @@ internal sealed partial class SharpLinkServer
             var result = new PersistentDecodeResult();
             var workItem = new ServerDecodeWorkItem(cancellationToken =>
             {
-                // Provider-concurrency and decoded-byte ownership begin only after a worker has won
-                // Queued -> Running. Queued requests therefore do not consume these global budgets.
-                if (!TryPrepareCompressedRequestDecode(
-                        requestOwner,
-                        persistentRetainedPayload.RetainedPermit,
+                var workerRetainedUseOwned = true;
+                try
+                {
+                    // Provider-concurrency and decoded-byte ownership begin only after a worker has
+                    // won Queued -> Running. Queued requests therefore do not consume these budgets.
+                    if (!TryPrepareCompressedRequestDecode(
+                            requestOwner,
+                            persistentRetainedPayload.RetainedPermit,
+                            flags,
+                            stablePayload,
+                            out var decodePermit,
+                            out var resourceRejection))
+                    {
+                        result.DecodePermit = decodePermit;
+                        result.ResourceRejection = resourceRejection ?? throw new InvalidOperationException(
+                            "Persistent request decode resource rejection is missing its error.");
+                        return ValueTask.CompletedTask;
+                    }
+
+                    result.DecodePermit = decodePermit;
+                    result.Payload = session.DecodeInboundPayload(
+                        ProtocolV2FrameType.Request,
                         flags,
                         stablePayload,
-                        out var decodePermit,
-                        out var resourceRejection))
-                {
-                    result.DecodePermit = decodePermit;
-                    result.ResourceRejection = resourceRejection ?? throw new InvalidOperationException(
-                        "Persistent request decode resource rejection is missing its error.");
+                        cancellationToken,
+                        out var decodedOwner);
+                    result.Owner = decodedOwner;
                     return ValueTask.CompletedTask;
                 }
-
-                result.DecodePermit = decodePermit;
-                result.Payload = session.DecodeInboundPayload(
-                    ProtocolV2FrameType.Request,
-                    flags,
-                    stablePayload,
-                    cancellationToken,
-                    out var decodedOwner);
-                result.Owner = decodedOwner;
-                return ValueTask.CompletedTask;
+                finally
+                {
+                    try
+                    {
+                        // Provider execution is done before this worker can service another item.
+                        // Return the physical compressed owner first; only then release the active
+                        // decode credit/retained accounting. Decoded-byte ownership remains attached
+                        // to the completed permit until request activation/teardown transfers it.
+                        ReleaseRetainedPayloadUse(
+                            persistentRetainedPayload,
+                            ref workerRetainedUseOwned);
+                    }
+                    finally
+                    {
+                        result.DecodePermit?.CompleteDecode();
+                        Volatile.Write(ref result.RetainedUseReleased, 1);
+                    }
+                }
             });
 
             var decodeTask = DecodeExecutor.EnqueueReservedAsync(
@@ -168,10 +190,10 @@ internal sealed partial class SharpLinkServer
         try
         {
             await decodeTask.ConfigureAwait(false);
+            ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
 
             if (result.ResourceRejection is { } resourceRejection)
             {
-                ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
                 session.ReturnDecodedPayload(result.Owner);
                 result.Owner = null;
                 CompleteFailedRequestStreams(session, requestId, resourceRejection);
@@ -189,14 +211,11 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
-            (result.DecodePermit ?? throw new InvalidOperationException(
-                "Persistent decode completed without a provider decode permit.")).CompleteDecode();
             request = ReadRequestEnvelope(session, result.Payload, flags);
         }
         catch (ServerDecodeExecutorClosedException)
         {
-            ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
             var exception = new SharpLinkException(
@@ -219,7 +238,7 @@ internal sealed partial class SharpLinkServer
         catch (SharpLinkException exception) when (
             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
         {
-            ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
             CompleteFailedRequestStreams(session, requestId, exception);
@@ -238,7 +257,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (OperationCanceledException exception)
         {
-            ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
             CompleteFailedRequestStreams(session, requestId, exception);
@@ -257,7 +276,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
             CompleteFailedRequestStreams(session, requestId, exception);
@@ -283,6 +302,20 @@ internal sealed partial class SharpLinkServer
             callState,
             requestOwner,
             decodedOwner).ConfigureAwait(false);
+    }
+
+    private static void ReconcileRetainedPayloadUse(
+        PersistentDecodeResult result,
+        ServerRetainedAdmissionPayload retainedPayload,
+        ref bool retainedUseOwned)
+    {
+        if (Volatile.Read(ref result.RetainedUseReleased) != 0)
+        {
+            retainedUseOwned = false;
+            return;
+        }
+
+        ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
     }
 
     private static void ReleaseRetainedPayloadUse(
@@ -312,5 +345,7 @@ internal sealed partial class SharpLinkServer
         internal ServerDecodePermit? DecodePermit { get; set; }
 
         internal SharpLinkException? ResourceRejection { get; set; }
+
+        internal int RetainedUseReleased;
     }
 }
