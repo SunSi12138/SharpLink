@@ -1,0 +1,290 @@
+name: Issue 305 review evidence
+
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  contention-p99:
+    if: github.event.pull_request.number == 309
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record environment
+        run: |
+          mkdir -p artifacts/issue-305-review
+          {
+            echo "runner=$(uname -a)"
+            echo "cpu=$(lscpu | grep 'Model name' | head -1)"
+            echo "dotnet=$(dotnet --version)"
+            echo "base=${{ github.event.pull_request.base.sha }}"
+            echo "head=${{ github.event.pull_request.head.sha }}"
+          } | tee artifacts/issue-305-review/environment.txt
+
+      - name: Generate contention harness
+        run: |
+          mkdir -p artifacts/issue-305-review-harness
+          cat > artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net10.0</TargetFramework>
+              <Nullable>enable</Nullable>
+              <ImplicitUsings>enable</ImplicitUsings>
+              <IsPackable>false</IsPackable>
+            </PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+            </ItemGroup>
+            <ItemGroup>
+              <Compile Include="../../test/SharpLink.Benchmarks/BenchmarkContracts.cs" Link="BenchmarkContracts.cs" />
+              <Compile Include="../../test/SharpLink.Benchmarks/BenchmarkService.cs" Link="BenchmarkService.cs" />
+              <Compile Include="../../test/SharpLink.Benchmarks/BenchmarkEnvironment.cs" Link="BenchmarkEnvironment.cs" />
+            </ItemGroup>
+            <ItemGroup>
+              <PackageReference Include="SharpPack" />
+            </ItemGroup>
+          </Project>
+          EOF
+
+          cat > artifacts/issue-305-review-harness/Program.cs <<'EOF'
+          using System.Diagnostics;
+          using SharpLink.Server;
+
+          namespace SharpLink.Benchmarks;
+
+          internal static class Program
+          {
+              private const int WarmupIterationsPerWorker = 400;
+              private const int MeasurementIterationsPerWorker = 4000;
+
+              public static async Task Main(string[] args)
+              {
+                  var label = args.Length > 0 ? args[0] : "unknown";
+                  var order = args.Length > 1 ? args[1] : "32,128";
+                  foreach (var text in order.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                  {
+                      var concurrency = int.Parse(text);
+                      await RunAsync(label, concurrency);
+                  }
+              }
+
+              private static async Task RunAsync(string label, int concurrency)
+              {
+                  await using var environment = await BenchmarkEnvironment.CreateAsync(
+                      configureServer: builder => builder.UseAdmissionControl(
+                          options => options.UsePartition(
+                              _ => "hot",
+                              partition =>
+                              {
+                                  partition.MaxPartitions = 1;
+                                  partition.UseConcurrency(4096);
+                              })));
+
+                  await ExecuteAsync(environment.Rpc, concurrency, WarmupIterationsPerWorker, record: null);
+
+                  var samples = new double[concurrency * MeasurementIterationsPerWorker];
+                  var started = Stopwatch.GetTimestamp();
+                  await ExecuteAsync(
+                      environment.Rpc,
+                      concurrency,
+                      MeasurementIterationsPerWorker,
+                      samples);
+                  var elapsed = Stopwatch.GetElapsedTime(started);
+
+                  Array.Sort(samples);
+                  var p50 = Percentile(samples, 0.50);
+                  var p99 = Percentile(samples, 0.99);
+                  var qps = samples.Length / elapsed.TotalSeconds;
+                  Console.WriteLine(
+                      $"RESULT label={label} c={concurrency} samples={samples.Length} " +
+                      $"qps={qps:F2} p50_us={p50:F3} p99_us={p99:F3} elapsed_s={elapsed.TotalSeconds:F3}");
+              }
+
+              private static async Task ExecuteAsync(
+                  IBenchmarkRpc rpc,
+                  int concurrency,
+                  int iterationsPerWorker,
+                  double[]? record)
+              {
+                  var start = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                  var workers = new Task[concurrency];
+                  for (var worker = 0; worker < concurrency; worker++)
+                  {
+                      var workerIndex = worker;
+                      workers[worker] = RunWorkerAsync(
+                          rpc,
+                          start.Task,
+                          workerIndex,
+                          iterationsPerWorker,
+                          record);
+                  }
+                  start.SetResult(true);
+                  await Task.WhenAll(workers);
+              }
+
+              private static async Task RunWorkerAsync(
+                  IBenchmarkRpc rpc,
+                  Task start,
+                  int worker,
+                  int iterations,
+                  double[]? record)
+              {
+                  await start.ConfigureAwait(false);
+                  var offset = worker * iterations;
+                  for (var iteration = 0; iteration < iterations; iteration++)
+                  {
+                      var timestamp = Stopwatch.GetTimestamp();
+                      var result = await rpc.AddAsync(10, 20).ConfigureAwait(false);
+                      if (result != 30)
+                          throw new InvalidOperationException($"unexpected RPC result {result}");
+                      if (record is not null)
+                      {
+                          record[offset + iteration] =
+                              Stopwatch.GetElapsedTime(timestamp).TotalMicroseconds;
+                      }
+                  }
+              }
+
+              private static double Percentile(double[] sorted, double percentile)
+              {
+                  var index = (int)Math.Ceiling(sorted.Length * percentile) - 1;
+                  return sorted[Math.Clamp(index, 0, sorted.Length - 1)];
+              }
+          }
+          EOF
+
+      - name: Build frozen baseline harness
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git checkout --force "$BASE_SHA"
+          rm -rf artifacts/issue-305-review-harness/obj artifacts/issue-305-review-harness/bin
+          dotnet restore artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj
+          dotnet publish artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj \
+            -c Release --no-restore -o /tmp/issue305-baseline
+
+      - name: Build candidate harness
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --force "$HEAD_SHA"
+          rm -rf artifacts/issue-305-review-harness/obj artifacts/issue-305-review-harness/bin
+          dotnet restore artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj
+          dotnet publish artifacts/issue-305-review-harness/Issue305ReviewHarness.csproj \
+            -c Release --no-restore -o /tmp/issue305-candidate
+
+      - name: Run alternating c32/c128 samples
+        run: |
+          mkdir -p artifacts/issue-305-review
+          : > artifacts/issue-305-review/contention.log
+          run_sample() {
+            local binary="$1"
+            local label="$2"
+            local order="$3"
+            echo "=== $label order=$order ===" | tee -a artifacts/issue-305-review/contention.log
+            "$binary/Issue305ReviewHarness" "$label" "$order" \
+              | tee -a artifacts/issue-305-review/contention.log
+          }
+          run_sample /tmp/issue305-baseline baseline-r1 32,128
+          run_sample /tmp/issue305-candidate candidate-r1 32,128
+          run_sample /tmp/issue305-candidate candidate-r2 128,32
+          run_sample /tmp/issue305-baseline baseline-r2 128,32
+          run_sample /tmp/issue305-baseline baseline-r3 32,128
+          run_sample /tmp/issue305-candidate candidate-r3 32,128
+
+      - name: Evaluate P99 gate
+        run: |
+          python3 - <<'PY'
+          import re
+          import statistics
+          from pathlib import Path
+
+          text = Path('artifacts/issue-305-review/contention.log').read_text()
+          pattern = re.compile(
+              r'RESULT label=(?P<label>\S+) c=(?P<c>\d+) samples=(?P<samples>\d+) '
+              r'qps=(?P<qps>[0-9.]+) p50_us=(?P<p50>[0-9.]+) p99_us=(?P<p99>[0-9.]+)')
+          rows = []
+          for match in pattern.finditer(text):
+              row = match.groupdict()
+              rows.append({
+                  'label': row['label'],
+                  'kind': 'candidate' if row['label'].startswith('candidate') else 'baseline',
+                  'c': int(row['c']),
+                  'samples': int(row['samples']),
+                  'qps': float(row['qps']),
+                  'p50': float(row['p50']),
+                  'p99': float(row['p99']),
+              })
+
+          if len(rows) != 12:
+              raise SystemExit(f'expected 12 result rows, got {len(rows)}')
+
+          lines = [
+              '# Issue #305 c32/c128 contention evidence',
+              '',
+              '| Concurrency | Baseline median P99 | A2 median P99 | P99 delta | Baseline median QPS | A2 median QPS | QPS delta | Gate |',
+              '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |',
+          ]
+          failed = False
+          for concurrency in (32, 128):
+              baseline = [r for r in rows if r['kind'] == 'baseline' and r['c'] == concurrency]
+              candidate = [r for r in rows if r['kind'] == 'candidate' and r['c'] == concurrency]
+              bp99 = statistics.median(r['p99'] for r in baseline)
+              cp99 = statistics.median(r['p99'] for r in candidate)
+              bqps = statistics.median(r['qps'] for r in baseline)
+              cqps = statistics.median(r['qps'] for r in candidate)
+              p99_delta = (cp99 / bp99 - 1.0) * 100.0
+              qps_delta = (cqps / bqps - 1.0) * 100.0
+              gate = 'PASS' if p99_delta <= 3.0 else 'FAIL'
+              failed |= gate == 'FAIL'
+              lines.append(
+                  f'| {concurrency} | {bp99:.3f} us | {cp99:.3f} us | {p99_delta:+.2f}% | '
+                  f'{bqps:.0f} | {cqps:.0f} | {qps_delta:+.2f}% | **{gate}** |')
+
+          lines += [
+              '',
+              'Method: three samples per variant on the same GitHub-hosted runner, alternating B/A/A/B/B/A; '
+              'each sample uses a partition-enabled full TCP RPC, one hot partition, concurrency limit 4096, '
+              '400 warm-up RPCs/worker and 4000 measured RPCs/worker. The gate is candidate median P99 not worse than baseline median by >3%.',
+              '',
+              'Raw per-run results are in `contention.log`.',
+          ]
+          summary = '\n'.join(lines) + '\n'
+          Path('artifacts/issue-305-review/summary.md').write_text(summary)
+          print(summary)
+          with open(Path(__import__('os').environ['GITHUB_STEP_SUMMARY']), 'a') as stream:
+              stream.write(summary)
+          if failed:
+              raise SystemExit('Issue #305 P99 gate failed')
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue-305-review-evidence
+          path: artifacts/issue-305-review
+          if-no-files-found: error
