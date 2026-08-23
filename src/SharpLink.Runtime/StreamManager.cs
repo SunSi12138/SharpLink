@@ -227,11 +227,8 @@ internal sealed class StreamManager
             return;
         }
 
-        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var retainedEntry))
-        {
-            PublishReceiveTerminal(requestId, streamId, retainedEntry);
+        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out _))
             return;
-        }
 
         if (requestDispatchers.TryRemove(streamId, out var entry))
         {
