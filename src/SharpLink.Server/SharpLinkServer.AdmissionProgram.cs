@@ -4,8 +4,7 @@ internal sealed partial class SharpLinkServer
 {
     private static Action<SharpLinkServer, long, AdmissionProgram?>? s_afterAdmissionCaptureForTests;
 
-    private readonly AdmissionProgram? _ownedAdmissionProgram;
-    private AdmissionProgram? _admissionProgram;
+    private AdmissionProgram _admissionProgram = AdmissionProgram.Uninitialized;
 
     internal static Action<SharpLinkServer, long, AdmissionProgram?>? AfterAdmissionCaptureForTests
     {
@@ -14,18 +13,38 @@ internal sealed partial class SharpLinkServer
     }
 
     internal AdmissionProgram? CurrentAdmissionProgramForTests
-        => Volatile.Read(ref _admissionProgram);
+    {
+        get
+        {
+            var publication = ReadAdmissionPublication();
+            return publication.IsEnabled ? publication : null;
+        }
+    }
 
-    internal AdmissionProgram? OwnedAdmissionProgramForTests => _ownedAdmissionProgram;
+    internal AdmissionProgram? OwnedAdmissionProgramForTests
+        => _admissionController is null
+            ? null
+            : AdmissionProgram.FromController(_admissionController);
 
     internal AdmissionProgram? PublishAdmissionProgramForTests(AdmissionProgram? program)
-        => Interlocked.Exchange(ref _admissionProgram, program);
+    {
+        var replacement = program ?? AdmissionProgram.Disabled;
+        var previous = Interlocked.Exchange(ref _admissionProgram, replacement);
+        if (ReferenceEquals(previous, AdmissionProgram.Uninitialized))
+        {
+            previous = _admissionController is null
+                ? AdmissionProgram.Disabled
+                : AdmissionProgram.FromController(_admissionController);
+        }
+        return previous.IsEnabled ? previous : null;
+    }
 
     private AdmissionProgramUse? CaptureAdmissionProgram(
         long requestId,
         out AdmissionProgram? program)
     {
-        program = Volatile.Read(ref _admissionProgram);
+        var publication = ReadAdmissionPublication();
+        program = publication.IsEnabled ? publication : null;
         var use = program?.AcquireUse();
         try
         {
@@ -39,11 +58,21 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private void StopAdmissionPrograms()
+    private AdmissionProgram ReadAdmissionPublication()
     {
-        var current = Volatile.Read(ref _admissionProgram);
-        current?.Controller.StopAccepting();
-        if (_ownedAdmissionProgram is not null && !ReferenceEquals(current, _ownedAdmissionProgram))
-            _ownedAdmissionProgram.Controller.StopAccepting();
+        var publication = Volatile.Read(ref _admissionProgram);
+        if (!ReferenceEquals(publication, AdmissionProgram.Uninitialized))
+            return publication;
+
+        var initial = _admissionController is null
+            ? AdmissionProgram.Disabled
+            : AdmissionProgram.FromController(_admissionController);
+        var observed = Interlocked.CompareExchange(
+            ref _admissionProgram,
+            initial,
+            AdmissionProgram.Uninitialized);
+        return ReferenceEquals(observed, AdmissionProgram.Uninitialized)
+            ? initial
+            : observed;
     }
 }
