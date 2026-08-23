@@ -1,9 +1,7 @@
 name: Issue 245 Review Evidence
 
 on:
-  pull_request:
-    branches:
-      - dev
+  workflow_call:
 
 jobs:
   evidence:
@@ -168,7 +166,7 @@ jobs:
 
       - name: Upload review evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: issue-245-review-evidence
           path: evidence/
