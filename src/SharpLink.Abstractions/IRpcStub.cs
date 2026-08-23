@@ -14,6 +14,12 @@ public interface IRpcStub
     /// <returns><see langword="true"/> when the server must create per-call cancellation state.</returns>
     bool SupportsCancellation(long methodHash) => true;
 
+    /// <summary>Binds instance-scoped runtime services before this stub starts serving calls.</summary>
+    /// <param name="runtimeContext">The runtime context that owns this stub registration.</param>
+    void BindRuntimeContext(IRpcRuntimeContext runtimeContext)
+    {
+    }
+
     /// <summary>Gets the stable generated contract identifier.</summary>
     long InterfaceHash { get; }
 
