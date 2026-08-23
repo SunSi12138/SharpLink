@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace SharpLink.Runtime;
 
 /// <summary>Immutable, instance-scoped runtime services for one SharpLink client or server.</summary>
@@ -123,7 +125,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
     internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
+        var globalRegistrations = registrations
+            .Where(static pair => !IsManifestScoped(pair.Value.Owner.Manifest, pair.Key))
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+        ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(globalRegistrations);
     }
 
     internal void AdoptGeneratedManifest(RpcGeneratedManifestRegistration registration)
