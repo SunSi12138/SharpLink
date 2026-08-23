@@ -139,13 +139,15 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (!_manifestRegistrations.Add(registration))
                 return;
+            if (registration.Manifest.ManifestScopedCodecTargets.Count == 0)
+                return;
             if (!_manifestCodecProviders.TryAdd(
                     registration.Manifest.OwnerAssembly,
                     new RpcManifestCodecProvider(registration, Codecs)))
             {
                 _manifestRegistrations.Remove(registration);
                 throw new InvalidOperationException(
-                    $"A generated manifest for assembly '{registration.Manifest.OwnerAssembly.FullName}' is already registered in this runtime context.");
+                    $"A manifest-scoped Codec provider for assembly '{registration.Manifest.OwnerAssembly.FullName}' is already registered in this runtime context.");
             }
         }
     }
@@ -186,7 +188,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         lock (_registrationGate)
         {
             _manifestRegistrations.Remove(registration);
-            _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
+            if (registration.Manifest.ManifestScopedCodecTargets.Count != 0)
+                _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
         }
         registration.Dispose();
     }
@@ -298,7 +301,7 @@ public sealed class SharpLinkRuntimeContextBuilder
     }
 
     /// <summary>Sets the optional fallback codec resolver for this context.</summary>
-    public SharpLinkRuntimeContextBuilder UseCodecResolver(Func<Type, IRpcCodec?>? resolver)
+    public SharpLinkRuntimeContextBuilder UseCodecResolver(Func<Type,IRpcCodec?>? resolver)
     {
         _resolver = resolver;
         return this;
