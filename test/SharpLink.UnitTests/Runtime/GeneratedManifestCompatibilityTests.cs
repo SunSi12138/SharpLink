@@ -114,7 +114,7 @@ public class GeneratedManifestCompatibilityTests
         var manifest = new ProbeManifest(
             SharpLinkGeneratedManifestVersions.Api,
             SharpLinkGeneratedManifestVersions.Protocol,
-            typeof(GeneratedManifestCompatibilityTests).Assembly);
+            typeof(string).Assembly);
 
         var error = SharpLinkGeneratedManifestCompatibility.Validate(manifest);
 
