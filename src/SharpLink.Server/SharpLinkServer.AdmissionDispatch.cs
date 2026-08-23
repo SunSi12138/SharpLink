@@ -696,6 +696,7 @@ internal sealed partial class SharpLinkServer
         _ = connection;
         if (callState is not null)
         {
+            requestPermit.TransferDecodedBytesTo(callState);
             requestCancellationMap.TryRemove(requestId, callState);
             callState.Dispose();
         }
