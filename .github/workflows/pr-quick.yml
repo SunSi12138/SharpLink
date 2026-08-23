@@ -45,31 +45,8 @@ jobs:
       - name: Verify Generated Assemblies Do Not Reference Runtime
         run: ./eng/verify-generated-assembly-dependencies.sh
 
-      - name: Diagnose Client Unit Test Hang
-        run: |
-          set +e
-          failed=0
-          for class in \
-            SharpClientBuilderTests \
-            SharpLinkClientCallOptionsTests \
-            SharpLinkClientInterceptorDeadlineTests \
-            SharpLinkClientOneWayTimeBudgetTests \
-            SharpLinkClientReadinessTests \
-            SharpLinkClientRetryTests \
-            SharpLinkClientTimeBudgetTests \
-            SharpLinkClientTimeoutTests \
-            SharpLinkClientTrackedEmissionDeadlineTests \
-            SharpLinkMultiClusterClientTests
-          do
-            echo "=== $class ==="
-            timeout 30s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --maximum-parallel-tests 1 --treenode-filter "/*/*/$class/*"
-            status=$?
-            echo "${class}_STATUS=$status"
-            if [ "$status" -ne 0 ]; then
-              failed=1
-            fi
-          done
-          exit "$failed"
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
