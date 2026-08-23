@@ -12,6 +12,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 {
     private readonly Channel<ServerDecodeWorkItem> _channel;
     private readonly Task[] _workers;
+    private readonly Task _completion;
     private int _completionRequested;
     private int _queueDepth;
     private int _skippedBeforeStart;
@@ -31,6 +32,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         _workers = new Task[workerCount];
         for (var index = 0; index < _workers.Length; index++)
             _workers[index] = Task.Run(WorkerLoopAsync);
+        _completion = Task.WhenAll(_workers);
     }
 
     internal int WorkerCount => _workers.Length;
@@ -42,6 +44,8 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     internal int QueueDepth => Volatile.Read(ref _queueDepth);
 
     internal int SkippedBeforeStart => Volatile.Read(ref _skippedBeforeStart);
+
+    internal Task Completion => _completion;
 
     internal ValueTask EnqueueAsync(
         ServerDecodeWorkItem workItem,
@@ -57,11 +61,16 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         return EnqueueCoreAsync(workItem, cancellationToken);
     }
 
-    internal async ValueTask CompleteAsync()
+    internal void StopAccepting()
     {
         if (Interlocked.Exchange(ref _completionRequested, 1) == 0)
             _channel.Writer.TryComplete();
-        await Task.WhenAll(_workers).ConfigureAwait(false);
+    }
+
+    internal async ValueTask CompleteAsync()
+    {
+        StopAccepting();
+        await _completion.ConfigureAwait(false);
     }
 
     public ValueTask DisposeAsync() => CompleteAsync();
