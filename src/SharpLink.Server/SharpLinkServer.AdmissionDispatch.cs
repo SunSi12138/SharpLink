@@ -262,7 +262,27 @@ internal sealed partial class SharpLinkServer
             return;
         }
 
-        requestOwner.Activate();
+        if (admittedCallState is not null)
+        {
+            if (!admittedCallState.TryActivateRequest(requestOwner))
+            {
+                session.ReturnDecodedPayload(decodedRequestOwner);
+                decodedRequestOwner = null;
+                requestOwner.ReleaseDecodeResources();
+                DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+                ReleaseOneWayDispatchResources(
+                    admittedCallState,
+                    requestId,
+                    requestCancellationMap,
+                    connection,
+                    requestOwner);
+                return;
+            }
+        }
+        else
+        {
+            requestOwner.Activate();
+        }
 
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
