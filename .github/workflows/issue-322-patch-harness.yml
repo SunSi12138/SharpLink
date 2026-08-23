@@ -1,0 +1,58 @@
+name: Issue 322 Patch Harness
+
+on:
+  push:
+    branches:
+      - issue-322-admission-program-generation
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-322-admission-program-generation
+          fetch-depth: 0
+
+      - name: Patch reflection harness exactly
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/SharpLink.UnitTests/Server/SharpLinkServerInvocationTests.cs')
+          text = path.read_text()
+          old = '''                Connection.CallCancellations,
+                CancellationToken.None,
+                null,
+                (flags & ProtocolV2FrameFlags.Cancellable) != 0,
+                null
+          '''
+          new = '''                Connection.CallCancellations,
+                CancellationToken.None,
+                null,
+                null,
+                null,
+                (flags & ProtocolV2FrameFlags.Cancellable) != 0,
+                null
+          '''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly one DispatchRpcAsync argument block, found {count}')
+          path.write_text(text.replace(old, new))
+          PY
+
+      - name: Commit patch and remove helper workflow
+        shell: bash
+        run: |
+          rm .github/workflows/issue-322-patch-harness.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add test/SharpLink.UnitTests/Server/SharpLinkServerInvocationTests.cs .github/workflows/issue-322-patch-harness.yml
+          git commit -m "test(server): pass captured admission generation in dispatch harness"
+          git push origin HEAD:issue-322-admission-program-generation
