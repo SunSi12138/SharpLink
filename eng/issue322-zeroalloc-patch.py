@@ -6,7 +6,7 @@ def replace_once(path: str, old: str, new: str) -> None:
     text = target.read_text()
     count = text.count(old)
     if count != 1:
-        raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:80]!r}")
+        raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:100]!r}")
     target.write_text(text.replace(old, new, 1))
 
 
@@ -18,35 +18,63 @@ Path("src/SharpLink.Server/Admission/AdmissionProgram.cs").write_text("""namespa
 /// </summary>
 internal sealed class AdmissionProgram
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        SharpLinkAdmissionController,
+        AdmissionProgram> ProgramsByController = new();
     private static long s_nextGenerationId;
 
-    private readonly SharpLinkAdmissionController _controller;
+    private readonly SharpLinkAdmissionController? _controller;
     private int _activeUses;
     private int _duplicateReleaseAttempts;
+
+    private AdmissionProgram(long sentinelGenerationId)
+        => GenerationId = sentinelGenerationId;
 
     internal AdmissionProgram(SharpLinkAdmissionController controller)
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         GenerationId = Interlocked.Increment(ref s_nextGenerationId);
+        ProgramsByController.Add(controller, this);
     }
+
+    internal static AdmissionProgram Uninitialized { get; } = new(long.MinValue);
+
+    internal static AdmissionProgram Disabled { get; } = new(0);
 
     internal long GenerationId { get; }
 
-    internal SharpLinkAdmissionController Controller => _controller;
+    internal bool IsEnabled => _controller is not null;
 
-    internal bool QueueOneWayCalls => _controller.QueueOneWayCalls;
+    internal SharpLinkAdmissionController Controller
+        => _controller ?? throw new InvalidOperationException("Disabled admission has no controller.");
+
+    internal bool QueueOneWayCalls => Controller.QueueOneWayCalls;
 
     internal int ActiveUses => Volatile.Read(ref _activeUses);
 
     internal int DuplicateReleaseAttempts => Volatile.Read(ref _duplicateReleaseAttempts);
 
-    internal void AcquireUse() => Interlocked.Increment(ref _activeUses);
+    internal static AdmissionProgram FromController(SharpLinkAdmissionController controller)
+    {
+        ArgumentNullException.ThrowIfNull(controller);
+        return ProgramsByController.TryGetValue(controller, out var program)
+            ? program
+            : throw new InvalidOperationException("Admission controller has no published program generation.");
+    }
+
+    internal void AcquireUse()
+    {
+        if (!IsEnabled)
+            throw new InvalidOperationException("Disabled admission does not acquire generation uses.");
+        Interlocked.Increment(ref _activeUses);
+    }
 
     internal void ReleaseUse()
     {
         if (Interlocked.Decrement(ref _activeUses) >= 0)
             return;
 
+        // Restore accounting before surfacing an ownership bug so diagnostics stay stable.
         Interlocked.Increment(ref _activeUses);
         Interlocked.Increment(ref _duplicateReleaseAttempts);
         throw new InvalidOperationException("Admission program use count underflowed.");
@@ -60,7 +88,8 @@ replace_once(
         long requestId,
         out AdmissionProgram? program)
     {
-        program = Volatile.Read(ref _admissionProgram);
+        var publication = ReadAdmissionPublication();
+        program = publication.IsEnabled ? publication : null;
         var use = program?.AcquireUse();
         try
         {
@@ -76,7 +105,8 @@ replace_once(
 """,
     """    private AdmissionProgram? CaptureAdmissionProgram(long requestId)
     {
-        var program = Volatile.Read(ref _admissionProgram);
+        var publication = ReadAdmissionPublication();
+        var program = publication.IsEnabled ? publication : null;
         program?.AcquireUse();
         try
         {
