@@ -2,6 +2,7 @@ using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 using System.IO.Pipelines;
 using System.Reflection;
+using System.Threading;
 
 namespace SharpLink.UnitTests.Server;
 
