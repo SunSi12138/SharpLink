@@ -1,0 +1,57 @@
+name: Issue 250 Threat Evidence
+
+# Temporary review-evidence workflow for #250; remove after the artifact is captured.
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - '.github/workflows/issue-250-threat-evidence.yml'
+      - 'test/SharpLink.Benchmarks/HandshakeThreatEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'src/SharpLink.Server/**'
+
+permissions:
+  contents: read
+
+jobs:
+  threat-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-250-threat
+          dotnet --info > artifacts/issue-250-threat/dotnet-info.txt
+          uname -a > artifacts/issue-250-threat/uname.txt
+          lscpu > artifacts/issue-250-threat/cpu.txt
+          cat /proc/self/cgroup > artifacts/issue-250-threat/cgroup.txt
+
+      - name: Run legacy-zero vs secure-64 threat matrix
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          --
+          --handshake-threat-evidence
+          artifacts/issue-250-threat/handshake-threat-evidence.json
+
+      - name: Upload threat evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-250-threat-evidence-${{ github.event.pull_request.head.sha }}
+          path: artifacts/issue-250-threat
+          if-no-files-found: error
+          retention-days: 30
