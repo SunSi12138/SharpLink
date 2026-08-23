@@ -38,12 +38,12 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
     public IRpcCodec<T> GetCodec<T>()
     {
         var targetType = typeof(T);
-        if (!_owner.Codecs.TryGetValue(targetType, out var registration))
+        if (!_owner.AllCodecs.TryGetValue(targetType, out var registration))
             return _fallback.GetCodec<T>();
 
         var codec = _resolved.GetOrAdd(
             targetType,
-            _ => registration.GetCodec(this));
+            _ => registration.GetCodec((RpcCodecProvider)_owner.BaseProvider));
         return codec as IRpcCodec<T> ?? throw new InvalidOperationException(
             $"The manifest-scoped codec for '{targetType.FullName}' implements an incompatible codec interface.");
     }
