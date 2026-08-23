@@ -9,17 +9,45 @@ namespace SharpLink.UnitTests.Runtime;
 public class RpcCodecRouteRuntimeTests
 {
     [Test]
-    public void GeneratedCodecBindingShouldOverrideBuiltinCodec()
+    public void ManifestScopedRoutesShouldCoexistWithoutChangingGlobalBuiltin()
     {
-        var replacement = new RoutedInt32Codec();
+        var routeA = new RoutedInt32Codec("A");
+        var routeC = new RoutedInt32Codec("C");
+        var ownerA = typeof(RpcCodecRouteRuntimeTests).Assembly;
+        var ownerB = typeof(IRpcRuntimeContext).Assembly;
+        var ownerC = typeof(SharpLinkRuntimeContext).Assembly;
+
         using var context = new SharpLinkRuntimeContextBuilder()
             .Build(includeGeneratedAssemblyCatalog: false);
-        var registration = context.PrepareGeneratedManifest(new BuiltinOverrideManifest(replacement));
-        context.AdoptGeneratedManifest(registration);
-        context.PublishGeneratedCodecs(registration.Codecs);
+        var registrationA = context.PrepareGeneratedManifest(
+            new RoutedManifest(ownerA, routeA, "route-a/v1", "wire-a/v1"));
+        var registrationB = context.PrepareGeneratedManifest(new DefaultManifest(ownerB));
+        var registrationC = context.PrepareGeneratedManifest(
+            new RoutedManifest(ownerC, routeC, "route-c/v1", "wire-c/v1"));
 
-        Ensure(ReferenceEquals(context.Codecs.GetCodec<int>(), replacement),
-            "a compile-time routed Native payload must override the shared builtin Codec");
+        Ensure(registrationA.Codecs.Count == 0 && registrationC.Codecs.Count == 0,
+            "assembly-routed targets must not enter the context-global generated Codec registry");
+        Ensure(registrationA.AllCodecs.ContainsKey(typeof(int)) &&
+               registrationC.AllCodecs.ContainsKey(typeof(int)),
+            "assembly-routed targets must remain available to their owning manifests");
+
+        context.AdoptGeneratedManifest(registrationA);
+        context.AdoptGeneratedManifest(registrationB);
+        context.AdoptGeneratedManifest(registrationC);
+
+        var global = context.Codecs.GetCodec<int>();
+        var codecsA = RpcGeneratedCodecResolver.GetProvider(context, ownerA);
+        var codecsB = RpcGeneratedCodecResolver.GetProvider(context, ownerB);
+        var codecsC = RpcGeneratedCodecResolver.GetProvider(context, ownerC);
+
+        Ensure(ReferenceEquals(codecsA.GetCodec<int>(), routeA),
+            "owner A must resolve its own routed int Codec");
+        Ensure(ReferenceEquals(codecsB.GetCodec<int>(), global),
+            "owner B without a route must keep the context default builtin int Codec");
+        Ensure(ReferenceEquals(codecsC.GetCodec<int>(), routeC),
+            "owner C must resolve its own routed int Codec independently of owner A");
+        Ensure(!ReferenceEquals(global, routeA) && !ReferenceEquals(global, routeC),
+            "manifest-scoped routes must never replace the context-global builtin Codec");
     }
 
     private static void Ensure(bool condition, string message)
@@ -28,8 +56,10 @@ public class RpcCodecRouteRuntimeTests
             throw new InvalidOperationException(message);
     }
 
-    private sealed class RoutedInt32Codec : IRpcCodec<int>
+    private sealed class RoutedInt32Codec(string owner) : IRpcCodec<int>
     {
+        public string Owner { get; } = owner;
+
         public void Serialize(in int value, IBufferWriter<byte> buffer)
         {
         }
@@ -37,13 +67,13 @@ public class RpcCodecRouteRuntimeTests
         public int Deserialize(in ReadOnlySequence<byte> buffer) => 0;
     }
 
-    private sealed class RouteAdapter(RoutedInt32Codec codec) : IRpcCodecAdapter
+    private sealed class RouteAdapter(
+        RoutedInt32Codec codec,
+        string adapterId,
+        string wireFormatId) : IRpcCodecAdapter
     {
-        public const string Id = "route-native-test/v1";
-        public const string Wire = "route-native-test-wire/v1";
-
-        public string AdapterId => Id;
-        public string WireFormatId => Wire;
+        public string AdapterId { get; } = adapterId;
+        public string WireFormatId { get; } = wireFormatId;
         public IRpcCodecAdapterScope CreateScope() => new RouteScope(codec);
     }
 
@@ -62,9 +92,9 @@ public class RpcCodecRouteRuntimeTests
     private sealed class RoutedInt32Factory(RouteAdapter adapter) : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(int);
-        public string SchemaId => "route-native-int32-test/v1";
-        public string WireFormatId => RouteAdapter.Wire;
-        public string? AdapterId => RouteAdapter.Id;
+        public string SchemaId => $"route-native-int32-{adapter.AdapterId}";
+        public string WireFormatId => adapter.WireFormatId;
+        public string? AdapterId => adapter.AdapterId;
         public IRpcCodecAdapter? Adapter => adapter;
 
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -74,17 +104,40 @@ public class RpcCodecRouteRuntimeTests
         public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<int>;
     }
 
-    private sealed class BuiltinOverrideManifest(RoutedInt32Codec codec) : ISharpLinkGeneratedAssemblyManifest
+    private sealed class RoutedManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public RoutedManifest(
+            Assembly ownerAssembly,
+            RoutedInt32Codec codec,
+            string adapterId,
+            string wireFormatId)
+        {
+            OwnerAssembly = ownerAssembly;
+            Codecs = [new RoutedInt32Factory(new RouteAdapter(codec, adapterId, wireFormatId))];
+        }
+
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "route-test";
+        public Assembly OwnerAssembly { get; }
+        public string CompileTimeDescriptor => $"route-native-{OwnerAssembly.GetName().Name}";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
+        public IReadOnlyList<Type> ManifestScopedCodecTargets => [typeof(int)];
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class DefaultManifest(Assembly ownerAssembly) : ISharpLinkGeneratedAssemblyManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "route-test";
-        public Assembly OwnerAssembly => typeof(BuiltinOverrideManifest).Assembly;
-        public string CompileTimeDescriptor => "route-native-builtin-override-test";
+        public Assembly OwnerAssembly { get; } = ownerAssembly;
+        public string CompileTimeDescriptor => $"route-default-{ownerAssembly.GetName().Name}";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
-        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } =
-            [new RoutedInt32Factory(new RouteAdapter(codec))];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<string> Dependencies => [];
     }
 }
