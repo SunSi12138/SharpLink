@@ -159,7 +159,7 @@ public class PreAdmissionStreamBudgetIntegrationTests
     private static async Task ObserveTerminalAsync(Task task)
     {
         try
-n        {
+        {
             await task.WaitAsync(TimeSpan.FromSeconds(5));
         }
         catch (Exception)
