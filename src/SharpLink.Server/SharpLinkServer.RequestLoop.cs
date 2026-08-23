@@ -55,13 +55,7 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
                         IRpcByteBufferWriter? decodedOwner = null;
-                        if (header.Type is ProtocolV2FrameType.StreamData or
-                            ProtocolV2FrameType.StreamComplete)
-                        {
-                            var streamRequestId = unchecked((long)header.RequestId);
-                            if (!TryAcceptInboundStreamProgress(requestCancellationMap, streamRequestId))
-                                continue;
-                        }
+                        var streamProgressClaimed = false;
                         try
                         {
                             if (header.Type == ProtocolV2FrameType.StreamData &&
@@ -74,6 +68,12 @@ internal sealed partial class SharpLinkServer
                                 var streamId = RpcSession.ReadCompressedStreamId(payload);
                                 var originalLength = RpcSession.ReadCompressedOriginalLength(
                                     header.Type, header.Flags, payload);
+                                if (preAdmissionStreams.TryGetPreAdmission(streamId: streamId, requestId: requestId, out _))
+                                {
+                                    if (!TryAcceptInboundStreamProgress(requestCancellationMap, requestId))
+                                        continue;
+                                    streamProgressClaimed = true;
+                                }
                                 if (preAdmissionStreams.TryDispatchPreAdmissionCompressed(
                                         requestId,
                                         streamId,
@@ -121,8 +121,6 @@ internal sealed partial class SharpLinkServer
                             }
                             else if (header.Type == ProtocolV2FrameType.StreamData)
                             {
-                                if (!TryAcceptInboundStreamProgress(requestCancellationMap, failedRequestId))
-                                    continue;
                                 session.StreamManager.CompleteStream(
                                     failedRequestId,
                                     RpcSession.ReadCompressedStreamId(payload),
@@ -130,8 +128,9 @@ internal sealed partial class SharpLinkServer
                             }
                             continue;
                         }
-                        if (header.Type is ProtocolV2FrameType.StreamData or
-                            ProtocolV2FrameType.StreamComplete)
+                        if (!streamProgressClaimed &&
+                            header.Type is ProtocolV2FrameType.StreamData or
+                                ProtocolV2FrameType.StreamComplete)
                         {
                             var streamRequestId = unchecked((long)header.RequestId);
                             if (!TryAcceptInboundStreamProgress(requestCancellationMap, streamRequestId))
