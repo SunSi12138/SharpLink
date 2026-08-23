@@ -15,6 +15,9 @@ jobs:
   codec-compatibility:
     uses: ./.github/workflows/codec-compatibility.yml
 
+  issue-245-review-evidence:
+    uses: ./.github/workflows/issue-245-review-evidence.yml
+
   quick:
     runs-on: ubuntu-latest
     timeout-minutes: 25
