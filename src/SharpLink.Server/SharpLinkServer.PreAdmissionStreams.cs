@@ -46,6 +46,41 @@ internal sealed partial class SharpLinkServer
             });
     }
 
+    private void ReservePreInvocationRequestStreams(
+        RpcSession session,
+        int clientStreamCount,
+        long requestId,
+        CancellationToken cancellationToken)
+    {
+        if (clientStreamCount == 0)
+            return;
+
+        // Interceptor-delayed active calls are already bounded by receive credit. If admission
+        // already owns the route, this registration promotes that wrapper out of queue-byte
+        // accounting; otherwise it creates the short-lived pre-invocation reservation.
+        session.StreamManager.ReservePreAdmissionStreams(
+            requestId,
+            clientStreamCount,
+            _runtimeContext.Buffers,
+            static _ => true,
+            static _ => { },
+            static () => { },
+            compressedPayload =>
+            {
+                var decodedPayload = session.DecodeInboundPayload(
+                    ProtocolV2FrameType.StreamData,
+                    ProtocolV2FrameFlags.Compressed,
+                    compressedPayload,
+                    cancellationToken,
+                    out var decodedOwner);
+                return new PreAdmissionDecodedPayload(
+                    decodedPayload.Slice(sizeof(ushort)),
+                    decodedOwner ?? throw new InvalidOperationException(
+                        "Compressed stream decoding did not return an owner."),
+                    _runtimeContext.Buffers);
+            });
+    }
+
     private static void DrainRejectedOneWayStreams(
         RpcSession session,
         long requestId,

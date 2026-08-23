@@ -638,6 +638,16 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         if (interceptors.Length == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
+        var method = GetMethodDescriptor(stub, methodId);
+        if (method.Kind != RpcMethodKind.OneWay)
+        {
+            ReservePreInvocationRequestStreams(
+                session,
+                method.ClientStreamCount,
+                requestId,
+                cancellationToken);
+        }
+
         return CreateServerInvocationContext(
             session,
             stub,
