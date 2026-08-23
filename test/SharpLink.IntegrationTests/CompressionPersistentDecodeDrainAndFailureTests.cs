@@ -344,7 +344,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
             return _server.StopAsync(timeout).AsTask();
         }
 
-        private static async Task WaitForCounterAsync(
+        internal static async Task WaitForCounterAsync(
             Func<int> read,
             int expected,
             string scenario)
