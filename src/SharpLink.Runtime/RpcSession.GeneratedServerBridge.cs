@@ -48,7 +48,6 @@ internal sealed partial class RpcSession
         {
             while (true)
             {
-                ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
                 var moveNext = enumerator.MoveNextAsync();
                 bool hasNext;
                 if (!deadline.HasValue || deadlineTimeProvider is null || moveNext.IsCompletedSuccessfully)
@@ -72,7 +71,6 @@ internal sealed partial class RpcSession
                     hasNext = await moveNextTask.ConfigureAwait(false);
                 }
 
-                ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
                 if (!hasNext)
                     break;
 
@@ -89,6 +87,8 @@ internal sealed partial class RpcSession
                     streamId,
                     item,
                     codec,
+                    deadline,
+                    deadlineTimeProvider,
                     lifetimeCancellation.Token);
                 if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
                 {
@@ -173,6 +173,8 @@ internal sealed partial class RpcSession
         ushort streamId,
         T item,
         IRpcCodec<T> codec,
+        RpcDeadline deadline,
+        TimeProvider? deadlineTimeProvider,
         CancellationToken cancellationToken)
     {
         if (codec is IRpcSizedCodec<T> sizedCodec &&
@@ -186,7 +188,9 @@ internal sealed partial class RpcSession
                 sizedCodec,
                 knownEncodedBytes,
                 sizedSnapshot,
-                cancellationToken);
+                cancellationToken,
+                deadline,
+                deadlineTimeProvider);
         }
 
         return SendUnsizedStreamChunkAsync(
@@ -194,7 +198,9 @@ internal sealed partial class RpcSession
             streamId,
             item,
             codec,
-            cancellationToken);
+            cancellationToken,
+            deadline,
+            deadlineTimeProvider);
     }
 
     internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
@@ -204,7 +210,9 @@ internal sealed partial class RpcSession
         IRpcSizedCodec<T> sizedCodec,
         int encodedBytes,
         IRpcSizedCodecSnapshot? sizedSnapshot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcDeadline deadline = default,
+        TimeProvider? deadlineTimeProvider = null)
     {
         var creditBytes = Math.Max(1, encodedBytes);
         var creditAcquired = false;
@@ -246,6 +254,7 @@ internal sealed partial class RpcSession
                     "Generated stream item size differed after credit was acquired.");
             }
 
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
             ownsWriter = false;
             SendPacket(writer);
         }
