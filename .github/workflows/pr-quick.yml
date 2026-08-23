@@ -45,8 +45,21 @@ jobs:
       - name: Verify Generated Assemblies Do Not Reference Runtime
         run: ./eng/verify-generated-assembly-dependencies.sh
 
-      - name: Unit Tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --timeout 30s
+      - name: Diagnose Unit Test Hang
+        run: |
+          set +e
+          timeout 60s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --maximum-parallel-tests 1 --treenode-filter "/*/SharpLink.UnitTests.Client/*/*"
+          client_status=$?
+          echo "CLIENT_STATUS=$client_status"
+          timeout 60s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --maximum-parallel-tests 1 --treenode-filter "/*/SharpLink.UnitTests.Runtime/*/*"
+          runtime_status=$?
+          echo "RUNTIME_STATUS=$runtime_status"
+          timeout 60s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --maximum-parallel-tests 1 --treenode-filter "/*/SharpLink.UnitTests.Server/*/*"
+          server_status=$?
+          echo "SERVER_STATUS=$server_status"
+          if [ "$client_status" -ne 0 ] || [ "$runtime_status" -ne 0 ] || [ "$server_status" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
