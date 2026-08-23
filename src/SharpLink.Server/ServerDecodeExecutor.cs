@@ -16,6 +16,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     private int _completionRequested;
     private int _queueDepth;
     private int _skippedBeforeStart;
+    private int _startedWorkItems;
 
     internal ServerDecodeExecutor(int workerCount, int queueCapacity)
     {
@@ -44,6 +45,12 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     internal int QueueDepth => Volatile.Read(ref _queueDepth);
 
     internal int SkippedBeforeStart => Volatile.Read(ref _skippedBeforeStart);
+
+    /// <summary>
+    /// Monotonic count of work items that won the Queued -&gt; Running transition. This is a test and
+    /// diagnostics signal for proving RequestLoop routing without relying on timing heuristics.
+    /// </summary>
+    internal int StartedWorkItems => Volatile.Read(ref _startedWorkItems);
 
     internal Task Completion => _completion;
 
@@ -122,6 +129,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 continue;
             }
 
+            Interlocked.Increment(ref _startedWorkItems);
             await workItem.RunAsync().ConfigureAwait(false);
         }
     }
