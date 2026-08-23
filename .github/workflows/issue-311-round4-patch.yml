@@ -54,7 +54,7 @@ jobs:
           ])
           script, replaced = re.subn(
               r'def replace_exact\(path, old, new, count=1\):\n.*?(?=\ndef replace_regex)',
-              helper + '\n',
+              lambda _: helper + '\n',
               script,
               count=1,
               flags=re.S)
