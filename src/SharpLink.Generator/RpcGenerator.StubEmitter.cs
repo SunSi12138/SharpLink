@@ -28,26 +28,28 @@ public partial class RpcGenerator
                             public long InterfaceHash => {{model.Hash}}L;
                         """);
         AppendSizeFieldsByType(sb, model.Methods);
+        AppendStubCodecFields(sb, model.Methods);
+        AppendStubCodecBinding(sb, model.Methods);
         AppendCancellationSupport(sb, model.Methods);
         AppendMethodDescriptors(sb, model);
         sb.AppendLine($$"""
-                            private static void __SerializeResponse<T>(T result, bool responseNullable, IRpcSession session, IRpcByteBufferWriter output)
+                            private static void __SerializeResponse<T>(T result, bool responseNullable, IRpcCodec<T> codec, IRpcByteBufferWriter output)
                             {
                                 if (!responseNullable && default(T) is null && result is null)
                                     throw new SharpLinkException(SharpLinkErrorCode.Internal, "A non-nullable RPC response was null.");
-                                session.RuntimeContext.Codecs.GetCodec<T>().Serialize(result, output);
+                                codec.Serialize(result, output);
                             }
 
-                            private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, bool responseNullable, IRpcSession session, IRpcByteBufferWriter output)
+                            private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, bool responseNullable, IRpcCodec<T> codec, IRpcByteBufferWriter output)
                             {
                                 var result = await task.ConfigureAwait(false);
-                                __SerializeResponse(result, responseNullable, session, output);
+                                __SerializeResponse(result, responseNullable, codec, output);
                             }
 
-                            private static async ValueTask __AwaitValueTaskResultAsync<T>(ValueTask<T> task, bool responseNullable, IRpcSession session, IRpcByteBufferWriter output)
+                            private static async ValueTask __AwaitValueTaskResultAsync<T>(ValueTask<T> task, bool responseNullable, IRpcCodec<T> codec, IRpcByteBufferWriter output)
                             {
                                 var result = await task.ConfigureAwait(false);
-                                __SerializeResponse(result, responseNullable, session, output);
+                                __SerializeResponse(result, responseNullable, codec, output);
                             }
 
                             private static async ValueTask __AwaitTaskIgnoreAsync<T>(Task<T> task)
@@ -67,6 +69,7 @@ public partial class RpcGenerator
                                 long contractId,
                                 long methodId,
                                 bool responseNullable,
+                                IRpcCodec<T> codec,
                                 CancellationToken cancellationToken)
                             {
                                 try
@@ -75,8 +78,8 @@ public partial class RpcGenerator
                                     {
                                         if (!responseNullable && default(T) is null && item is null)
                                             throw new SharpLinkException(SharpLinkErrorCode.Internal, "A non-nullable RPC stream response was null.");
-                                        await SharpLink.Runtime.RpcSessionExtensions.SendStreamChunkAsync(
-                                            session, requestId, 0, item, cancellationToken).ConfigureAwait(false);
+                                        await SharpLink.Runtime.RpcBoundStreamExtensions.SendBoundStreamChunkAsync(
+                                            session, requestId, 0, item, codec, cancellationToken).ConfigureAwait(false);
                                     }
 
                                     SharpLink.Runtime.RpcSessionExtensions.SendStreamCompleteAsync(session, requestId, 0);
@@ -159,6 +162,52 @@ public partial class RpcGenerator
         return sb.ToString();
     }
 
+    private static void AppendStubCodecFields(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
+    {
+        foreach (var method in methods)
+        {
+            var suffix = GetMethodSuffix(method);
+            foreach (var parameter in method.Parameters.Where(static p =>
+                         !p.IsStream && !p.IsCancellationToken && !p.IsCallOptions && !p.IsBlittable))
+            {
+                sb.AppendLine($"    private IRpcCodec<{parameter.DisplayType}> __codec_{suffix}_{parameter.Name} = null!;");
+            }
+            var streamIndex = 0;
+            foreach (var parameter in method.Parameters.Where(static p => p.IsStream))
+            {
+                sb.AppendLine($"    private IRpcCodec<{parameter.DisplayStreamItemType}> __streamCodec_{suffix}_{streamIndex} = null!;");
+                streamIndex++;
+            }
+            if (!method.IsOneWay && !method.IsVoid)
+                sb.AppendLine($"    private IRpcCodec<{GetResponseType(method)}> __responseCodec_{suffix} = null!;");
+        }
+    }
+
+    private static void AppendStubCodecBinding(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
+    {
+        sb.AppendLine("    public void BindCodecProvider(IRpcCodecProvider codecs)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        ArgumentNullException.ThrowIfNull(codecs);");
+        foreach (var method in methods)
+        {
+            var suffix = GetMethodSuffix(method);
+            foreach (var parameter in method.Parameters.Where(static p =>
+                         !p.IsStream && !p.IsCancellationToken && !p.IsCallOptions && !p.IsBlittable))
+            {
+                sb.AppendLine($"        __codec_{suffix}_{parameter.Name} = codecs.GetCodec<{parameter.DisplayType}>();");
+            }
+            var streamIndex = 0;
+            foreach (var parameter in method.Parameters.Where(static p => p.IsStream))
+            {
+                sb.AppendLine($"        __streamCodec_{suffix}_{streamIndex} = codecs.GetCodec<{parameter.DisplayStreamItemType}>();");
+                streamIndex++;
+            }
+            if (!method.IsOneWay && !method.IsVoid)
+                sb.AppendLine($"        __responseCodec_{suffix} = codecs.GetCodec<{GetResponseType(method)}>();");
+        }
+        sb.AppendLine("    }");
+    }
+
     private static void AppendCancellationSupport(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
     {
         var cancellableMethods = methods
@@ -216,6 +265,7 @@ public partial class RpcGenerator
     {
         foreach (var method in methods)
         {
+            var suffix = GetMethodSuffix(method);
             sb.AppendLine($"            case {method.Hash}L:");
             sb.AppendLine("            {");
             var streamParams = method.Parameters.Where(p => p.IsStream).ToList();
@@ -277,11 +327,11 @@ public partial class RpcGenerator
                 sb.AppendLine($"                var seq_{p.Name} = reader.UnreadSequence.Slice(0, len_{p.Name});");
                 if (p.IsValueType || p.IsNullableReference)
                 {
-                    sb.AppendLine($"                arg_{p.Name} = session.RuntimeContext.Codecs.GetCodec<{p.DisplayType}>().Deserialize(in seq_{p.Name});");
+                    sb.AppendLine($"                arg_{p.Name} = __codec_{suffix}_{p.Name}.Deserialize(in seq_{p.Name});");
                 }
                 else
                 {
-                    sb.AppendLine($"                arg_{p.Name} = session.RuntimeContext.Codecs.GetCodec<{p.DisplayType}>().Deserialize(in seq_{p.Name}) ?? throw RpcGeneratedCodecWire.DataLoss(\"Argument {p.Name} is null.\");");
+                    sb.AppendLine($"                arg_{p.Name} = __codec_{suffix}_{p.Name}.Deserialize(in seq_{p.Name}) ?? throw RpcGeneratedCodecWire.DataLoss(\"Argument {p.Name} is null.\");");
                 }
 
                 sb.AppendLine($"                reader.Advance(len_{p.Name});");
@@ -289,9 +339,10 @@ public partial class RpcGenerator
 
             sb.AppendLine("                if (reader.Remaining != 0) throw RpcGeneratedCodecWire.DataLoss(\"Request contains trailing data.\");");
 
-            foreach (var p in streamParams)
+            for (var index = 0; index < streamParams.Count; index++)
             {
-                sb.AppendLine($"                dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.DisplayStreamItemType}>.Rent(cancellationToken, session.RuntimeContext.Codecs, {(p.PayloadNullable ? "true" : "false")});");
+                var p = streamParams[index];
+                sb.AppendLine($"                dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.DisplayStreamItemType}>.Rent(cancellationToken, __streamCodec_{suffix}_{index}, {(p.PayloadNullable ? "true" : "false")});");
                 sb.AppendLine($"                session.StreamManager.Register(requestId, (ushort){streamId}, dispatcher_{p.Name});");
                 streamId++;
             }
@@ -302,7 +353,7 @@ public partial class RpcGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
-                sb.AppendLine($"                return __PumpStreamAsync(resultStream, session, requestId, {interfaceHash}L, {method.Hash}L, {(method.ResponseNullable ? "true" : "false")}, cancellationToken);");
+                sb.AppendLine($"                return __PumpStreamAsync(resultStream, session, requestId, {interfaceHash}L, {method.Hash}L, {(method.ResponseNullable ? "true" : "false")}, __responseCodec_{suffix}, cancellationToken);");
             }
             else if (method.IsVoid)
             {
@@ -327,12 +378,12 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                        sb.AppendLine($"                    __SerializeResponse(pending.Result, {(method.ResponseNullable ? "true" : "false")}, session, output);");
+                        sb.AppendLine($"                    __SerializeResponse(pending.Result, {(method.ResponseNullable ? "true" : "false")}, __responseCodec_{suffix}, output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
                     sb.AppendLine(writeResponse
-                        ? $"                    return __AwaitValueTaskResultAsync(pending, {(method.ResponseNullable ? "true" : "false")}, session, output);"
+                        ? $"                    return __AwaitValueTaskResultAsync(pending, {(method.ResponseNullable ? "true" : "false")}, __responseCodec_{suffix}, output);"
                         : "                    return __AwaitValueTaskIgnoreAsync(pending);");
                     sb.AppendLine("                }");
                 }
@@ -342,12 +393,12 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                        sb.AppendLine($"                    __SerializeResponse(pending.GetAwaiter().GetResult(), {(method.ResponseNullable ? "true" : "false")}, session, output);");
+                        sb.AppendLine($"                    __SerializeResponse(pending.GetAwaiter().GetResult(), {(method.ResponseNullable ? "true" : "false")}, __responseCodec_{suffix}, output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
                     sb.AppendLine(writeResponse
-                        ? $"                    return __AwaitTaskResultAsync(pending, {(method.ResponseNullable ? "true" : "false")}, session, output);"
+                        ? $"                    return __AwaitTaskResultAsync(pending, {(method.ResponseNullable ? "true" : "false")}, __responseCodec_{suffix}, output);"
                         : "                    return __AwaitTaskIgnoreAsync(pending);");
                     sb.AppendLine("                }");
                 }
