@@ -1121,7 +1121,7 @@ public partial class RpcGenerator
                         isStream,
                         isStream ? pItemType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) : null,
                         isStream ? pItemType!.ToDisplayString(FullyQualifiedNullableFormat) : null,
-                        IsInlineFixedRpcType(p.Type),
+                        IsInlineFixedRpcType(p.Type) && !HasNativeCodecRoute(symbol.ContainingAssembly),
                         isValueType,
                         isNullableReference,
                         IsNullablePayload(payloadType),
