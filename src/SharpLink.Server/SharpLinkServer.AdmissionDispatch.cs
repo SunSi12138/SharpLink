@@ -154,6 +154,14 @@ internal sealed partial class SharpLinkServer
         {
             if (isCompressed)
             {
+                admittedCallState = EnsurePreDecodeCallState(
+                    connection,
+                    admittedCallState,
+                    requestId,
+                    request.RpcDeadline,
+                    serverLoopToken,
+                    serviceInfo.ModuleCancellation,
+                    requestCancellationMap);
                 if (!TryPrepareCompressedRequestDecode(
                         requestOwner,
                         retainedAdmissionPayload?.RetainedPermit,
@@ -163,6 +171,7 @@ internal sealed partial class SharpLinkServer
                         out var resourceRejection))
                 {
                     retainedAdmissionPayload?.Dispose();
+                    requestOwner.ReleaseDecodeResources();
                     var rejection = resourceRejection ?? throw new InvalidOperationException(
                         "Compressed one-way decode resource rejection is missing its error.");
                     var reason = SharpLinkResourceExhaustion.GetReason(rejection);
@@ -182,7 +191,7 @@ internal sealed partial class SharpLinkServer
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
-                    admittedCallState?.InvocationToken ?? serverLoopToken,
+                    admittedCallState.InvocationToken,
                     out decodedRequestOwner);
                 retainedAdmissionPayload?.Dispose();
                 decodePermit!.CompleteDecode();
@@ -193,6 +202,9 @@ internal sealed partial class SharpLinkServer
             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
         {
             retainedAdmissionPayload?.Dispose();
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
             Interlocked.Increment(ref _rejectedOneWayCalls);
             LogOnewayRpcDispatchFailed(_logger, exception);
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
@@ -207,6 +219,9 @@ internal sealed partial class SharpLinkServer
         catch (OperationCanceledException)
         {
             retainedAdmissionPayload?.Dispose();
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 admittedCallState,
@@ -220,6 +235,8 @@ internal sealed partial class SharpLinkServer
         {
             retainedAdmissionPayload?.Dispose();
             session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 admittedCallState,
@@ -234,6 +251,7 @@ internal sealed partial class SharpLinkServer
         {
             session.ReturnDecodedPayload(decodedRequestOwner);
             decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 admittedCallState,
