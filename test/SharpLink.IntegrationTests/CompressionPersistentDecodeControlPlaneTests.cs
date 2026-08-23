@@ -93,8 +93,10 @@ public class CompressionPersistentDecodeControlPlaneTests
 
             var queued = service.MeasureAsync(CreateLargePayload(0x60), queuedCancellation.Token).AsTask();
             await WaitUntilAsync(
-                () => harness.DecodeQueueDepth >= 1 && harness.ActiveDecodes == workerCount + 1,
-                "persistent decode queued request ownership");
+                () => harness.DecodeQueueDepth >= 1 &&
+                      harness.DecodeQueueReservations >= 1 &&
+                      harness.ActiveDecodes == workerCount,
+                "persistent decode queued request scheduler ownership without decode credit");
             await queuedCancellation.CancelAsync();
             await EnsureRemoteCancelledAsync(queued, "queued persistent decode remote cancel");
             await WaitUntilAsync(
@@ -107,7 +109,9 @@ public class CompressionPersistentDecodeControlPlaneTests
             serverProvider.ReleaseAll();
             await Task.WhenAll(blockers).WaitAsync(TimeSpan.FromSeconds(5));
             await WaitUntilAsync(
-                () => harness.DecodeSkippedBeforeStart >= 1 && harness.DecodeQueueDepth == 0,
+                () => harness.DecodeSkippedBeforeStart >= 1 &&
+                      harness.DecodeQueueDepth == 0 &&
+                      harness.DecodeQueueReservations == 0,
                 "cancelled queued work skipped by worker");
             Ensure(serverProvider.StartedCount == workerCount &&
                    harness.DecodeStartedWorkCount == workerCount,
@@ -199,7 +203,8 @@ public class CompressionPersistentDecodeControlPlaneTests
             () => harness.ActiveCalls == 0 &&
                   harness.ActiveDecodes == 0 &&
                   harness.RetainedCompressedBytes == 0 &&
-                  harness.DecodedBytesInFlight == 0,
+                  harness.DecodedBytesInFlight == 0 &&
+                  harness.DecodeQueueReservations == 0,
             $"{scenario} resource release");
     }
 
@@ -362,6 +367,8 @@ public class CompressionPersistentDecodeControlPlaneTests
             ReadDiagnosticProperty<long>("DecodedBytesInFlightForDiagnostics");
         internal int DecodeWorkerCount => ReadDiagnosticProperty<int>("DecodeWorkerCountForDiagnostics");
         internal int DecodeQueueDepth => ReadDiagnosticProperty<int>("DecodeQueueDepthForDiagnostics");
+        internal int DecodeQueueReservations =>
+            ReadDiagnosticProperty<int>("DecodeQueueReservationsForDiagnostics");
         internal int DecodeSkippedBeforeStart =>
             ReadDiagnosticProperty<int>("DecodeSkippedBeforeStartForDiagnostics");
         internal int DecodeStartedWorkCount =>
