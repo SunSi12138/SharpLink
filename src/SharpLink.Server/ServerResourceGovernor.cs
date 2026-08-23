@@ -282,9 +282,37 @@ internal sealed class ServerRetainedCompressedPermit : IDisposable
 }
 
 /// <summary>
+/// Owns decoded-byte accounting after it has moved out of the decode permit and onto the physical
+/// decoded payload owner. Disposal is exactly once and releases only the decoded-byte budget.
+/// </summary>
+internal sealed class ServerDecodedBytesPermit : IDisposable
+{
+    private readonly ServerResourceGovernor _governor;
+    private readonly long _decodedBytes;
+    private int _disposed;
+
+    internal ServerDecodedBytesPermit(ServerResourceGovernor governor, long decodedBytes)
+    {
+        _governor = governor ?? throw new ArgumentNullException(nameof(governor));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(decodedBytes);
+        _decodedBytes = decodedBytes;
+    }
+
+    internal long DecodedBytes => _decodedBytes;
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        _governor.ReleaseDecodedBytes(_decodedBytes);
+    }
+}
+
+/// <summary>
 /// Request-owned decode resource permit. While decoding it owns one decode-concurrency credit and
 /// any retained compressed bytes. <see cref="CompleteDecode"/> releases those resources while
-/// decoded-byte ownership remains attached until final disposal.
+/// decoded-byte ownership remains attached until final disposal or is transferred to the physical
+/// decoded payload owner.
 /// </summary>
 internal sealed class ServerDecodePermit : IDisposable
 {
@@ -348,6 +376,25 @@ internal sealed class ServerDecodePermit : IDisposable
 
             _governor.ReleaseDecodeAndRetained(_retainedCompressedBytes);
             _decodeCompleted = true;
+        }
+    }
+
+    internal ServerDecodedBytesPermit? DetachDecodedBytesOwnership()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_decodeCompleted)
+            {
+                throw new InvalidOperationException(
+                    "Decoded-byte ownership cannot move before provider decode completes.");
+            }
+            if (_decodedBytes == 0)
+                return null;
+
+            var decodedBytesPermit = new ServerDecodedBytesPermit(_governor, _decodedBytes);
+            _decodedBytes = 0;
+            return decodedBytesPermit;
         }
     }
 
