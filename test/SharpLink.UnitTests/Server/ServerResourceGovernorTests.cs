@@ -32,55 +32,59 @@ public class ServerResourceGovernorTests
             Ensure(server.TryReserveCall(connection, out secondRequest) ==
                    SharpLinkServer.ServerCallAdmissionResult.Acquired && secondRequest is not null,
                 "second call reservation");
+            var first = firstRequest!;
+            var second = secondRequest!;
 
-            Ensure(firstRequest.TryAcquireDecodePermit(800, out var firstDecode) && firstDecode is not null,
+            Ensure(first.TryAcquireDecodePermit(800, out var firstDecode) && firstDecode is not null,
                 "first decode permit");
+            var firstDecodePermit = firstDecode!;
             Ensure(server.ActiveDecodeCountForDiagnostics == 1 &&
                    server.RetainedCompressedBytesForDiagnostics == 800,
                 "first decode must own one concurrency credit and its retained bytes");
 
-            Ensure(!secondRequest.TryAcquireDecodePermit(300, out var rejectedDecode) && rejectedDecode is null,
+            Ensure(!second.TryAcquireDecodePermit(300, out var rejectedDecode) && rejectedDecode is null,
                 "retained-byte budget must reject the second decode without attaching a permit");
             Ensure(server.ActiveDecodeCountForDiagnostics == 1 &&
                    server.RetainedCompressedBytesForDiagnostics == 800,
                 "failed retained-byte acquisition must roll back its provisional decode credit");
 
-            Ensure(secondRequest.TryAcquireDecodePermit(224, out var secondDecode) && secondDecode is not null,
+            Ensure(second.TryAcquireDecodePermit(224, out var secondDecode) && secondDecode is not null,
                 "the exact remaining retained-byte budget must be reusable after rollback");
+            var secondDecodePermit = secondDecode!;
             Ensure(server.ActiveDecodeCountForDiagnostics == 2 &&
                    server.RetainedCompressedBytesForDiagnostics == 1024,
                 "both successful decodes must be accounted");
 
-            Ensure(firstDecode.TryReserveDecodedBytes(1536),
+            Ensure(firstDecodePermit.TryReserveDecodedBytes(1536),
                 "first decoded-byte reservation");
-            Ensure(!secondDecode.TryReserveDecodedBytes(600),
+            Ensure(!secondDecodePermit.TryReserveDecodedBytes(600),
                 "decoded-byte budget must reject an over-budget rent");
             Ensure(server.DecodedBytesInFlightForDiagnostics == 1536,
                 "failed decoded-byte reservation must leave accounting unchanged");
-            Ensure(secondDecode.TryReserveDecodedBytes(512),
+            Ensure(secondDecodePermit.TryReserveDecodedBytes(512),
                 "the exact remaining decoded-byte budget must be admitted");
             Ensure(server.DecodedBytesInFlightForDiagnostics == 2048,
                 "successful decoded ownership must fill the configured budget exactly");
 
-            var prematureActivation = CaptureFailure(firstRequest.Activate);
+            var prematureActivation = CaptureFailure(first.Activate);
             Ensure(prematureActivation is InvalidOperationException,
                 "a request with attached decode resources must not activate before decode completion");
 
-            firstDecode.CompleteDecode();
+            firstDecodePermit.CompleteDecode();
             Ensure(server.ActiveDecodeCountForDiagnostics == 1 &&
                    server.RetainedCompressedBytesForDiagnostics == 224 &&
                    server.DecodedBytesInFlightForDiagnostics == 2048,
                 "CompleteDecode must release only CPU/retained ownership, not decoded bytes");
-            firstRequest.Activate();
+            first.Activate();
 
-            secondRequest.Dispose();
+            second.Dispose();
             secondRequest = null;
             Ensure(server.ActiveDecodeCountForDiagnostics == 0 &&
                    server.RetainedCompressedBytesForDiagnostics == 0 &&
                    server.DecodedBytesInFlightForDiagnostics == 1536,
                 "disposing a still-decoding request must release its attached decode/retained/decoded resources");
 
-            firstRequest.Dispose();
+            first.Dispose();
             firstRequest = null;
             Ensure(server.ActiveDecodeCountForDiagnostics == 0 &&
                    server.RetainedCompressedBytesForDiagnostics == 0 &&
@@ -122,24 +126,29 @@ public class ServerResourceGovernorTests
             Ensure(server.TryReserveCall(connection, out secondRequest) ==
                    SharpLinkServer.ServerCallAdmissionResult.Acquired && secondRequest is not null,
                 "second call reservation");
-            Ensure(firstRequest.TryAcquireDecodePermit(512, out var firstDecode) && firstDecode is not null,
-                "first decode permit");
+            var first = firstRequest!;
+            var second = secondRequest!;
 
-            Ensure(!secondRequest.TryAcquireDecodePermit(256, out var rejectedDecode) && rejectedDecode is null,
+            Ensure(first.TryAcquireDecodePermit(512, out var firstDecode) && firstDecode is not null,
+                "first decode permit");
+            var firstDecodePermit = firstDecode!;
+
+            Ensure(!second.TryAcquireDecodePermit(256, out var rejectedDecode) && rejectedDecode is null,
                 "decode-concurrency exhaustion must reject before retained ownership");
             Ensure(server.ActiveDecodeCountForDiagnostics == 1 &&
                    server.RetainedCompressedBytesForDiagnostics == 512 &&
                    server.DecodedBytesInFlightForDiagnostics == 0,
                 "decode-credit rejection must not mutate retained or decoded-byte accounting");
 
-            firstDecode.CompleteDecode();
-            Ensure(secondRequest.TryAcquireDecodePermit(256, out var secondDecode) && secondDecode is not null,
+            firstDecodePermit.CompleteDecode();
+            Ensure(second.TryAcquireDecodePermit(256, out var secondDecode) && secondDecode is not null,
                 "decode credit must be reusable immediately after CompleteDecode");
-            Ensure(secondDecode.TryReserveDecodedBytes(1024), "decoded-byte reservation");
+            var secondDecodePermit = secondDecode!;
+            Ensure(secondDecodePermit.TryReserveDecodedBytes(1024), "decoded-byte reservation");
 
-            secondRequest.Dispose();
+            second.Dispose();
             secondRequest = null;
-            firstRequest.Dispose();
+            first.Dispose();
             firstRequest = null;
             Ensure(server.ActiveDecodeCountForDiagnostics == 0 &&
                    server.RetainedCompressedBytesForDiagnostics == 0 &&
