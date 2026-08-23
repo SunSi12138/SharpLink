@@ -95,7 +95,9 @@ internal sealed partial class RpcSession
             creationOptions.RuntimeContext.Concurrency,
             AcceptReceivedStreamBytes,
             OnStreamBytesConsumed,
-            OnReceiveStreamCompleted);
+            OnReceiveStreamCompleted,
+            creationOptions.RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection,
+            Fault);
         _flushOptions = creationOptions.FlushOptions;
         _telemetrySide = creationOptions.TelemetrySide;
     }

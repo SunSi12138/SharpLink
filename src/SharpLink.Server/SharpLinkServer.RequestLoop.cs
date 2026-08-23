@@ -269,6 +269,10 @@ internal sealed partial class SharpLinkServer
                 {
                     Interlocked.Increment(ref _rejectedOneWayCalls);
                     LogOnewayRpcResourceExhausted(_logger, "server_unavailable");
+                    DrainRejectedOneWayStreams(
+                        connection.Session,
+                        requestId,
+                        ResolveRawRequestClientStreamCount(payload));
                     return;
                 }
 
@@ -392,11 +396,11 @@ internal sealed partial class SharpLinkServer
         var streamId = TryReadStreamId(ref payload);
         if ((flags & ProtocolV2FrameFlags.Error) == 0)
         {
-            session.StreamManager.CompleteStream(requestId, streamId, exception: null);
+            session.StreamManager.CompletePeerStream(requestId, streamId, exception: null);
             return;
         }
         var error = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
-        session.StreamManager.CompleteStream(
+        session.StreamManager.CompletePeerStream(
             requestId, streamId, new SharpLinkException(error.Code, error.Message));
     }
 
