@@ -53,8 +53,8 @@ internal sealed partial class SharpLinkServer
             requestId,
             clientStreamCount,
             _runtimeContext.Buffers,
-            resourceGovernor.TryReservePreAdmissionStreamBytes,
-            resourceGovernor.ReleasePreAdmissionStreamBytes,
+            bytes => resourceGovernor.TryReservePreAdmissionStreamBytes(bytes),
+            bytes => resourceGovernor.ReleasePreAdmissionStreamBytes(bytes),
             () => callState.TryCancel(
                 ServerCallCancellationReason.PreAdmissionStreamResourceExhausted),
             compressedPayload =>
