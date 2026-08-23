@@ -1,10 +1,11 @@
 name: PR Quick
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: pr-quick-${{ github.event.pull_request.number || github.ref }}
@@ -13,88 +14,105 @@ concurrency:
 jobs:
   quick:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 25
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
-      - name: Checkout head branch
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          ref: ${{ github.head_ref }}
+          dotnet-version: 10.0.x
 
-      - name: Migrate stale stream-budget regression
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
 
-          path = Path('test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs')
-          text = path.read_text()
-          old = '''    [Test]
-              [NotInParallel]
-              public async Task PreAdmissionStreamSpoolShouldRejectWhenRetainedBytesOverflow()
-              {
-                  await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
-                      builder.UseAdmissionControl(options =>
-                      {
-                          options.Global.UseConcurrency(1);
-                          options.MaxQueuedCalls = 1;
-                          options.MaxQueuedBytes = 128;
-                          options.MaxQueueDelay = TimeSpan.FromSeconds(2);
-                      }));
-                  var service = harness.Client.Get<ITestService>();
-                  var active = service.SlowAddWithoutTimeoutAsync(10, 1).AsTask();
-                  await Task.Delay(75);
-                  var oversized = service.UploadAsync(ToAsyncEnumerable(
-                      Enumerable.Range(1, 100), CancellationToken.None)).AsTask();
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
 
-                  // The initial request fits, then the pre-admission stream frames consume the
-                  // remaining retained-byte budget and terminate the call without service execution.
-                  await EnsureThrowsSharpLinkFast(
-                      oversized,
-                      "pre-admission stream retained bytes",
-                      SharpLinkErrorCode.ResourceExhausted);
-                  Ensure(TestService.ActiveUploads == 0, "overflowed stream service did not execute");
-                  Ensure(await active == 11, "spool overflow permit owner");
-                  Ensure(await service.AddAsync(20, 22) == 42, "spool overflow connection recovery");
-              }
-          '''
-          new = '''    [Test]
-              [NotInParallel]
-              public async Task PreAdmissionStreamSpoolShouldRejectWhenStreamBudgetOverflows()
-              {
-                  await using var harness = await TestHarness.CreateAsync(
-                      serverRuntimeConfigure: options =>
-                          options.FlowControl.MaxPreAdmissionStreamBytesPerServer = 128,
-                      serverConfigure: builder => builder.UseAdmissionControl(options =>
-                      {
-                          options.Global.UseConcurrency(1);
-                          options.MaxQueuedCalls = 1;
-                          options.MaxQueuedBytes = 64 * 1024;
-                          options.MaxQueueDelay = TimeSpan.FromSeconds(2);
-                      }));
-                  var service = harness.Client.Get<ITestService>();
-                  var active = service.SlowAddWithoutTimeoutAsync(10, 1).AsTask();
-                  await Task.Delay(75);
-                  var oversized = service.UploadAsync(ToAsyncEnumerable(
-                      Enumerable.Range(1, 100), CancellationToken.None)).AsTask();
+      - name: Build Debug
+        run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
 
-                  // The initial request fits, then pre-admission stream frames exhaust the
-                  // independent server stream-buffer budget without consuming admission queue bytes.
-                  await EnsureThrowsSharpLinkFast(
-                      oversized,
-                      "pre-admission stream budget",
-                      SharpLinkErrorCode.ResourceExhausted);
-                  Ensure(TestService.ActiveUploads == 0, "overflowed stream service did not execute");
-                  Ensure(await active == 11, "spool overflow permit owner");
-                  Ensure(await service.AddAsync(20, 22) == 42, "spool overflow connection recovery");
-              }
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected exactly one stale regression block, found {text.count(old)}')
-          path.write_text(text.replace(old, new))
-          PY
-          git diff --check
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
-          git commit -m 'test(server): migrate stream budget overflow regression'
-          git push origin HEAD:${GITHUB_HEAD_REF}
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Run NativeAOT Transport and Topology Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify SDK Contains Generator
+        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+
+      - name: Verify package metadata, XML documentation, and symbols
+        run: ./eng/verify-packages.sh artifacts/nuget
+
+      - name: Verify Hosting direct Runtime dependency
+        run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
+
+      - name: Verify Abstractions has no DI dependency
+        run: ./eng/verify-abstractions-package-dependency.sh artifacts/nuget
+
+      - name: Restore Package Smoke
+        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Run Package Smoke
+        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Demo Oneway
+        run: dotnet run -c Release --no-build --project demo/Oneway
+
+      - name: Load Smoke
+        run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+
+      - name: Chaos Smoke
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.ChaosTests
+          --
+          --duration-seconds 120
+          --transport sharedmemory
+          --concurrency 16
+          --restart-interval-seconds 10
+          --json-output artifacts/chaos/pr-smoke.json
+
+      - name: Upload Chaos Report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaos-pr-smoke
+          path: |
+            artifacts/chaos/pr-smoke.json
+            artifacts/chaos/pr-smoke.dmp
+            artifacts/chaos/pr-smoke.dmp.crashreport.json
+          if-no-files-found: warn
