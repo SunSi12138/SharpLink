@@ -104,6 +104,11 @@ internal sealed partial class SharpLinkServer
         {
             lock (_resourceGate)
             {
+                var current = Volatile.Read(ref _state);
+                if (current is Releasing or Disposed)
+                    throw new ObjectDisposedException(nameof(ServerRequestPermit));
+                if (current != Reserved)
+                    throw new InvalidOperationException("Only a reserved call permit can be activated.");
                 if (_decodePermit is not null && !_decodePermit.IsDecodeCompleted)
                 {
                     throw new InvalidOperationException(
