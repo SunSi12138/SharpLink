@@ -1,19 +1,29 @@
-using System.Threading.Channels;
+using System.Runtime.CompilerServices;
 
 namespace SharpLink.Server;
 
 /// <summary>
 /// Persistent bounded worker pool for request decompression. Production callers reserve one queue
-/// slot before retaining request bytes. Decode concurrency and decoded-byte budgets are acquired only
-/// after a worker wins the queued-to-running transition.
+/// slot before retaining request bytes. Published work is scheduled round-robin by connection key;
+/// decode concurrency and decoded-byte budgets are acquired only after a worker wins the
+/// queued-to-running transition.
 /// </summary>
 internal sealed class ServerDecodeExecutor : IAsyncDisposable
 {
-    private readonly Channel<ServerDecodeQueueEntry> _channel;
+    private static readonly object s_compatibilitySchedulingKey = new();
+
+    private readonly Lock _schedulerGate = new();
+    private readonly Dictionary<object, ConnectionQueue> _connectionQueues =
+        new(ReferenceKeyComparer.Instance);
+    private readonly LinkedList<ConnectionQueue> _readyConnections = [];
+    private readonly SemaphoreSlim _readySignal = new(0);
+    private readonly SemaphoreSlim _compatibilitySlots;
+    private readonly CancellationTokenSource _compatibilityStop = new();
     private readonly Task[] _workers;
     private readonly Task _completion;
     private readonly int _queueCapacity;
     private int _completionRequested;
+    private int _disposeRequested;
     private int _queueReservations;
     private int _queueDepth;
     private int _skippedBeforeStart;
@@ -25,13 +35,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queueCapacity);
 
         _queueCapacity = queueCapacity;
-        _channel = Channel.CreateBounded<ServerDecodeQueueEntry>(new BoundedChannelOptions(queueCapacity)
-        {
-            AllowSynchronousContinuations = false,
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = workerCount == 1,
-            SingleWriter = false
-        });
+        _compatibilitySlots = new SemaphoreSlim(queueCapacity, queueCapacity);
         _workers = new Task[workerCount];
         for (var index = 0; index < _workers.Length; index++)
             _workers[index] = Task.Run(WorkerLoopAsync);
@@ -42,8 +46,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
     /// <summary>
     /// Number of published operations waiting for worker service, plus compatibility-path writers
-    /// blocked by the bounded channel. Production reserved publication does not block on channel
-    /// capacity because a queue slot is acquired first.
+    /// blocked by queue capacity. Production reserved publication never blocks on scheduler capacity.
     /// </summary>
     internal int QueueDepth => Volatile.Read(ref _queueDepth);
 
@@ -61,9 +64,18 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
     internal Task Completion => _completion;
 
+    internal int ScheduledConnectionCount
+    {
+        get
+        {
+            lock (_schedulerGate)
+                return _connectionQueues.Count;
+        }
+    }
+
     /// <summary>
     /// Reserves scheduler capacity before a production request acquires retained/decode/decoded-byte
-    /// ownership. Queue reservations are bounded independently from provider decode concurrency.
+    /// ownership. Queue reservations remain globally bounded independently from fair scheduling.
     /// </summary>
     internal bool TryReserveQueueSlot(out ServerDecodeQueuePermit? permit)
     {
@@ -92,43 +104,71 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
     /// <summary>
     /// Production publication path. A previously reserved slot guarantees that this caller never
-    /// waits behind the bounded channel while owning downstream decode resources.
+    /// waits while owning downstream decode resources. The scheduling key is normally the physical
+    /// server connection and is compared by reference identity.
     /// </summary>
     internal ValueTask EnqueueReservedAsync(
+        object schedulingKey,
         ServerDecodeQueuePermit queuePermit,
         ServerDecodeWorkItem workItem,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(schedulingKey);
         ArgumentNullException.ThrowIfNull(queuePermit);
         ArgumentNullException.ThrowIfNull(workItem);
         queuePermit.MarkEnqueued(this);
 
-        workItem.EnableQueuedCancellation(cancellationToken);
-        Interlocked.Increment(ref _queueDepth);
-        if (_channel.Writer.TryWrite(new ServerDecodeQueueEntry(workItem, queuePermit)))
-            return new ValueTask(workItem.Completion);
+        var entry = new ServerDecodeQueueEntry(
+            schedulingKey,
+            workItem,
+            queuePermit,
+            releaseCompatibilitySlot: false);
+        workItem.EnableQueuedCancellation(
+            cancellationToken,
+            () => RemoveCancelledBeforeStart(entry));
 
-        workItem.AbandonBeforePublication();
-        DecrementQueueDepth();
-        queuePermit.Dispose();
+        var published = false;
+        var signalWorker = false;
+        lock (_schedulerGate)
+        {
+            if (Volatile.Read(ref _completionRequested) == 0 && !workItem.IsCancelledBeforeStart)
+            {
+                PublishEntryLocked(entry, out signalWorker);
+                published = true;
+            }
+        }
 
-        if (cancellationToken.IsCancellationRequested)
-            return ValueTask.FromCanceled(cancellationToken);
-        if (Volatile.Read(ref _completionRequested) != 0)
+        if (!published)
+        {
+            workItem.AbandonBeforePublication();
+            queuePermit.Dispose();
+
+            if (cancellationToken.IsCancellationRequested)
+                return ValueTask.FromCanceled(cancellationToken);
             return ValueTask.FromException(new ServerDecodeExecutorClosedException());
+        }
 
-        return ValueTask.FromException(new InvalidOperationException(
-            "A reserved server decode queue slot could not be published to the bounded channel."));
+        if (signalWorker)
+            _readySignal.Release();
+        return new ValueTask(workItem.Completion);
     }
 
     /// <summary>
     /// Compatibility/test publication path retained for executor-local race tests. Production D
-    /// dispatch uses <see cref="TryReserveQueueSlot"/> plus <see cref="EnqueueReservedAsync"/>.
+    /// dispatch uses <see cref="TryReserveQueueSlot"/> plus the connection-keyed reserved overload.
     /// </summary>
     internal ValueTask EnqueueAsync(
         ServerDecodeWorkItem workItem,
         CancellationToken cancellationToken)
+        => EnqueueAsync(s_compatibilitySchedulingKey, workItem, cancellationToken);
+
+    /// <summary>Executor-local keyed path used by deterministic fairness tests.</summary>
+    internal ValueTask EnqueueAsync(
+        object schedulingKey,
+        ServerDecodeWorkItem workItem,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(schedulingKey);
         ArgumentNullException.ThrowIfNull(workItem);
         if (Volatile.Read(ref _completionRequested) != 0)
         {
@@ -137,13 +177,16 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 : ValueTask.FromException(new ServerDecodeExecutorClosedException());
         }
 
-        return EnqueueCoreAsync(workItem, cancellationToken);
+        return EnqueueCoreAsync(schedulingKey, workItem, cancellationToken);
     }
 
     internal void StopAccepting()
     {
-        if (Interlocked.Exchange(ref _completionRequested, 1) == 0)
-            _channel.Writer.TryComplete();
+        if (Interlocked.Exchange(ref _completionRequested, 1) != 0)
+            return;
+
+        _compatibilityStop.Cancel();
+        _readySignal.Release(_workers.Length);
     }
 
     internal async ValueTask CompleteAsync()
@@ -152,7 +195,16 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         await _completion.ConfigureAwait(false);
     }
 
-    public ValueTask DisposeAsync() => CompleteAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await CompleteAsync().ConfigureAwait(false);
+        if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
+            return;
+
+        _compatibilityStop.Dispose();
+        _compatibilitySlots.Dispose();
+        _readySignal.Dispose();
+    }
 
     internal void ReleaseQueueReservation()
     {
@@ -165,45 +217,84 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     }
 
     private async ValueTask EnqueueCoreAsync(
+        object schedulingKey,
         ServerDecodeWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        workItem.EnableQueuedCancellation(cancellationToken);
         Interlocked.Increment(ref _queueDepth);
+        var slotAcquired = false;
         var published = false;
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _compatibilityStop.Token);
         try
         {
-            await _channel.Writer.WriteAsync(
-                new ServerDecodeQueueEntry(workItem, null),
-                cancellationToken).ConfigureAwait(false);
-            published = true;
-            await workItem.Completion.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
+            await _compatibilitySlots.WaitAsync(linkedCancellation.Token).ConfigureAwait(false);
+            slotAcquired = true;
+
+            var entry = new ServerDecodeQueueEntry(
+                schedulingKey,
+                workItem,
+                queuePermit: null,
+                releaseCompatibilitySlot: true);
+            workItem.EnableQueuedCancellation(
+                cancellationToken,
+                () => RemoveCancelledBeforeStart(entry));
+
+            var signalWorker = false;
+            lock (_schedulerGate)
+            {
+                if (Volatile.Read(ref _completionRequested) == 0 && !workItem.IsCancelledBeforeStart)
+                {
+                    PublishEntryLocked(entry, out signalWorker, queueDepthAlreadyOwned: true);
+                    published = true;
+                }
+            }
+
             if (!published)
             {
                 workItem.AbandonBeforePublication();
-                DecrementQueueDepth();
-
-                if (exception is ChannelClosedException)
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                        throw new OperationCanceledException(cancellationToken);
-                    throw new ServerDecodeExecutorClosedException(exception);
-                }
+                if (cancellationToken.IsCancellationRequested)
+                    throw new OperationCanceledException(cancellationToken);
+                throw new ServerDecodeExecutorClosedException();
             }
+
+            if (signalWorker)
+                _readySignal.Release();
+            await workItem.Completion.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!published)
+        {
+            workItem.AbandonBeforePublication();
+            if (_compatibilityStop.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                throw new ServerDecodeExecutorClosedException();
             throw;
+        }
+        finally
+        {
+            if (!published)
+            {
+                if (slotAcquired)
+                    _compatibilitySlots.Release();
+                DecrementQueueDepth();
+            }
         }
     }
 
     private async Task WorkerLoopAsync()
     {
-        await foreach (var entry in _channel.Reader.ReadAllAsync().ConfigureAwait(false))
+        while (true)
         {
-            DecrementQueueDepth();
-            entry.QueuePermit?.Dispose();
+            await _readySignal.WaitAsync().ConfigureAwait(false);
 
+            if (!TryTakeNextEntry(out var entry))
+            {
+                if (Volatile.Read(ref _completionRequested) != 0 && QueueDepth == 0)
+                    return;
+                continue;
+            }
+
+            ReleaseQueuedOwnership(entry);
             var workItem = entry.WorkItem;
             if (!workItem.TryStart())
             {
@@ -219,6 +310,120 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         }
     }
 
+    private void PublishEntryLocked(
+        ServerDecodeQueueEntry entry,
+        out bool signalWorker,
+        bool queueDepthAlreadyOwned = false)
+    {
+        if (!_connectionQueues.TryGetValue(entry.SchedulingKey, out var queue))
+        {
+            queue = new ConnectionQueue(entry.SchedulingKey);
+            _connectionQueues.Add(entry.SchedulingKey, queue);
+        }
+
+        entry.Owner = queue;
+        entry.PendingNode = queue.Pending.AddLast(entry);
+        if (!queueDepthAlreadyOwned)
+            Interlocked.Increment(ref _queueDepth);
+
+        signalWorker = false;
+        if (queue.ReadyNode is null)
+        {
+            queue.ReadyNode = _readyConnections.AddLast(queue);
+            signalWorker = true;
+        }
+    }
+
+    private bool TryTakeNextEntry(out ServerDecodeQueueEntry entry)
+    {
+        var signalAnotherWorker = false;
+        lock (_schedulerGate)
+        {
+            while (_readyConnections.First is { } readyNode)
+            {
+                var queue = readyNode.Value;
+                _readyConnections.Remove(readyNode);
+                queue.ReadyNode = null;
+
+                if (queue.Pending.First is not { } pendingNode)
+                {
+                    _connectionQueues.Remove(queue.SchedulingKey);
+                    continue;
+                }
+
+                entry = pendingNode.Value;
+                queue.Pending.Remove(pendingNode);
+                entry.PendingNode = null;
+                entry.Owner = null;
+                DecrementQueueDepth();
+
+                if (queue.Pending.Count == 0)
+                {
+                    _connectionQueues.Remove(queue.SchedulingKey);
+                }
+                else
+                {
+                    queue.ReadyNode = _readyConnections.AddLast(queue);
+                    signalAnotherWorker = true;
+                }
+
+                goto Found;
+            }
+
+            entry = null!;
+            return false;
+        }
+
+    Found:
+        if (signalAnotherWorker)
+            _readySignal.Release();
+        return true;
+    }
+
+    private void RemoveCancelledBeforeStart(ServerDecodeQueueEntry entry)
+    {
+        var removed = false;
+        lock (_schedulerGate)
+        {
+            var queue = entry.Owner;
+            var pendingNode = entry.PendingNode;
+            if (queue is null || pendingNode is null || pendingNode.List is null)
+                return;
+
+            queue.Pending.Remove(pendingNode);
+            entry.PendingNode = null;
+            entry.Owner = null;
+            DecrementQueueDepth();
+
+            if (queue.Pending.Count == 0)
+            {
+                if (queue.ReadyNode is { } readyNode && readyNode.List is not null)
+                {
+                    _readyConnections.Remove(readyNode);
+                    queue.ReadyNode = null;
+                }
+                _connectionQueues.Remove(queue.SchedulingKey);
+            }
+
+            removed = true;
+        }
+
+        if (!removed)
+            return;
+
+        ReleaseQueuedOwnership(entry);
+        Interlocked.Increment(ref _skippedBeforeStart);
+        entry.WorkItem.CompleteRemovedBeforeStart();
+    }
+
+    private void ReleaseQueuedOwnership(ServerDecodeQueueEntry entry)
+    {
+        if (entry.QueuePermit is not null)
+            entry.QueuePermit.Dispose();
+        if (entry.ReleaseCompatibilitySlot)
+            _compatibilitySlots.Release();
+    }
+
     private void DecrementQueueDepth()
     {
         var remaining = Interlocked.Decrement(ref _queueDepth);
@@ -229,14 +434,48 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         throw new InvalidOperationException("Server decode queue depth accounting underflowed.");
     }
 
-    private readonly record struct ServerDecodeQueueEntry(
-        ServerDecodeWorkItem WorkItem,
-        ServerDecodeQueuePermit? QueuePermit);
+    private sealed class ConnectionQueue(object schedulingKey)
+    {
+        internal object SchedulingKey { get; } = schedulingKey;
+
+        internal LinkedList<ServerDecodeQueueEntry> Pending { get; } = [];
+
+        internal LinkedListNode<ConnectionQueue>? ReadyNode { get; set; }
+    }
+
+    private sealed class ServerDecodeQueueEntry(
+        object schedulingKey,
+        ServerDecodeWorkItem workItem,
+        ServerDecodeQueuePermit? queuePermit,
+        bool releaseCompatibilitySlot)
+    {
+        internal object SchedulingKey { get; } = schedulingKey;
+
+        internal ServerDecodeWorkItem WorkItem { get; } = workItem;
+
+        internal ServerDecodeQueuePermit? QueuePermit { get; } = queuePermit;
+
+        internal bool ReleaseCompatibilitySlot { get; } = releaseCompatibilitySlot;
+
+        internal ConnectionQueue? Owner { get; set; }
+
+        internal LinkedListNode<ServerDecodeQueueEntry>? PendingNode { get; set; }
+    }
+
+    private sealed class ReferenceKeyComparer : IEqualityComparer<object>
+    {
+        internal static ReferenceKeyComparer Instance { get; } = new();
+
+        public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
+    }
 }
 
 /// <summary>
 /// One bounded persistent-executor queue slot. It is acquired before long-lived request retention and
-/// released when a worker dequeues the corresponding work or publication fails.
+/// released when a worker dequeues the corresponding work, queued cancellation removes it, or
+/// publication fails.
 /// </summary>
 internal sealed class ServerDecodeQueuePermit : IDisposable
 {
@@ -302,6 +541,7 @@ internal sealed class ServerDecodeWorkItem
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenRegistration _queuedCancellationRegistration;
     private CancellationToken _cancellationToken;
+    private Action? _cancelledBeforeStart;
     private int _state = Queued;
     private int _cancellationRegistrationEnabled;
 
@@ -313,12 +553,15 @@ internal sealed class ServerDecodeWorkItem
     internal bool IsCancelledBeforeStart
         => Volatile.Read(ref _state) == CancelledBeforeStart;
 
-    internal void EnableQueuedCancellation(CancellationToken cancellationToken)
+    internal void EnableQueuedCancellation(
+        CancellationToken cancellationToken,
+        Action? cancelledBeforeStart = null)
     {
         if (Interlocked.Exchange(ref _cancellationRegistrationEnabled, 1) != 0)
             throw new InvalidOperationException("Queued cancellation can only be enabled once.");
 
         _cancellationToken = cancellationToken;
+        _cancelledBeforeStart = cancelledBeforeStart;
         if (cancellationToken.CanBeCanceled)
         {
             _queuedCancellationRegistration = cancellationToken.UnsafeRegister(
@@ -369,6 +612,14 @@ internal sealed class ServerDecodeWorkItem
         Volatile.Write(ref _state, Completed);
     }
 
+    internal void CompleteRemovedBeforeStart()
+    {
+        if (Volatile.Read(ref _state) != CancelledBeforeStart)
+            throw new InvalidOperationException("Only cancelled queued decode work can be removed.");
+        _queuedCancellationRegistration.Unregister();
+        Volatile.Write(ref _state, Completed);
+    }
+
     internal void AbandonBeforePublication()
     {
         _queuedCancellationRegistration.Dispose();
@@ -380,5 +631,6 @@ internal sealed class ServerDecodeWorkItem
         if (Interlocked.CompareExchange(ref _state, CancelledBeforeStart, Queued) != Queued)
             return;
         _completion.TrySetCanceled(_cancellationToken);
+        _cancelledBeforeStart?.Invoke();
     }
 }
