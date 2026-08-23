@@ -478,7 +478,7 @@ internal sealed partial class SharpLinkServer
                 serverLoopToken,
                 callState,
                 admissionGranted: true,
-                retainedCompressedPermit: retainedPayload.RetainedPermit);
+                retainedAdmissionPayload: retainedPayload);
             transferred = true;
             if ((flags & ProtocolV2FrameFlags.Compressed) != 0)
                 retainedPayload.Dispose();
