@@ -524,7 +524,7 @@ internal sealed partial class SharpLinkClient
         {
             if (connection.PendingCalls.Contains(requestId))
             {
-                SendRpcCall(
+                var emission = SendRpcCall(
                     connection.Session,
                     contractId,
                     methodId,
@@ -533,7 +533,15 @@ internal sealed partial class SharpLinkClient
                     request,
                     requestCodec,
                     control.Deadline,
-                    control.Metadata);
+                    control.Metadata,
+                    observeEmission: control.Deadline.HasValue,
+                    cancellationToken: CancellationToken.None);
+                if (!emission.IsCompletedSuccessfully)
+                {
+                    TrackFrameworkTask(
+                        ObserveTrackedRequestEmissionAsync(connection, requestId, emission),
+                        "UnaryRequestEmission");
+                }
             }
         }
         catch (Exception exception)
@@ -599,6 +607,8 @@ internal sealed partial class SharpLinkClient
             outcome?.CompleteLocalFailure(exception);
             throw exception;
         }
+        if (!method.HasClientStreams)
+            cancellationToken.ThrowIfCancellationRequested();
         if (!method.HasClientStreams && !connection.TryBeginUntrackedCall())
         {
             var exception = new SharpLinkException(
@@ -622,7 +632,9 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                    cancellationToken: method.HasClientStreams
+                        ? cancellationToken
+                        : CancellationToken.None).ConfigureAwait(false);
                 if (method.HasClientStreams)
                 {
                     await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
@@ -799,7 +811,9 @@ internal sealed partial class SharpLinkClient
                 request,
                 requestCodec,
                 control.Deadline,
-                control.Metadata);
+                control.Metadata,
+                observeEmission: control.Deadline.HasValue,
+                cancellationToken: CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -860,6 +874,28 @@ internal sealed partial class SharpLinkClient
         {
             producerLease.Dispose();
             dispatcher.ReleaseRegistrationRetention(registrationLease);
+        }
+    }
+
+    private async Task ObserveTrackedRequestEmissionAsync(
+        ClientConnection connection,
+        long requestId,
+        ValueTask emission)
+    {
+        try
+        {
+            await emission.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            var deadlineExceeded = exception is SharpLinkException
+                { Code: SharpLinkErrorCode.DeadlineExceeded };
+            connection.PendingCalls.TryComplete(
+                requestId,
+                deadlineExceeded
+                    ? PendingCallCompletionReason.DeadlineExceeded
+                    : PendingCallCompletionReason.SendFailure,
+                deadlineExceeded ? null : exception);
         }
     }
 

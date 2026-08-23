@@ -366,7 +366,7 @@ internal sealed class PendingRequestTable : IDisposable
         var reason = deadlineExpired
             ? PendingCallCompletionReason.DeadlineExceeded
             : PendingCallCompletionReason.Response;
-        CompleteTakenCall(call, reason, exception: null, ref payload);
+        CompleteTakenCall(call!, reason, exception: null, ref payload);
         return true;
     }
 

@@ -58,6 +58,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
         var owner = expectedOwner ?? manifest.OwnerAssembly;
         if (owner is not null)
         {
+            var locatorFound = false;
             foreach (var attribute in owner.GetCustomAttributesData())
             {
                 if (!string.Equals(
@@ -68,6 +69,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
                     continue;
                 }
 
+                locatorFound = true;
                 var actualIdentity = attribute.ConstructorArguments.Count >= 5
                     ? attribute.ConstructorArguments[4].Value as string
                     : null;
@@ -87,6 +89,22 @@ internal static class SharpLinkGeneratedManifestCompatibility
                         "Manifest");
                 }
                 break;
+            }
+
+            // Loader validation supplies expectedOwner only after it has already parsed and
+            // validated the locator. Catalog/static registration has no such preflight, so the
+            // exact ABI identity must be present here rather than falling back to API integer 4.
+            if (expectedOwner is null && !locatorFound)
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    FormatVersionMismatch(
+                        apiVersion,
+                        protocolVersion,
+                        TryGetGeneratorVersion(manifest),
+                        "<missing: no current ABI locator>"),
+                    owner,
+                    "Manifest");
             }
         }
 

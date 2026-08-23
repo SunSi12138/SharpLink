@@ -109,6 +109,24 @@ public class GeneratedManifestCompatibilityTests
     }
 
     [Test]
+    public void CurrentApiWithoutExactLocatorShouldRejectBeforeReadingManifestShape()
+    {
+        var manifest = new ProbeManifest(
+            SharpLinkGeneratedManifestVersions.Api,
+            SharpLinkGeneratedManifestVersions.Protocol,
+            typeof(GeneratedManifestCompatibilityTests).Assembly);
+
+        var error = SharpLinkGeneratedManifestCompatibility.Validate(manifest);
+
+        Ensure(error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+            "current API without an exact locator should be incompatible");
+        Ensure(error!.Message.Contains("<missing: no current ABI locator>", StringComparison.Ordinal),
+            "missing-locator diagnostic should identify the exact ABI discriminator");
+        Ensure(manifest.ShapeReads == 0,
+            "missing exact locator must be rejected before manifest shape validation");
+    }
+
+    [Test]
     public void ValidatorShouldValidateShapeBeforeRejectingOwnership()
     {
         var manifest = new OwnershipProbeManifest(typeof(string).Assembly);
