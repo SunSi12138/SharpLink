@@ -289,7 +289,10 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
             if (!TryTakeNextEntry(out var entry))
             {
-                if (Volatile.Read(ref _completionRequested) != 0 && QueueDepth == 0)
+                // Stop seals publication and cancels compatibility writers that have not published.
+                // With no ready connection left there is therefore no work a worker can still own,
+                // even if QueueDepth transiently includes a blocked writer rolling back its count.
+                if (Volatile.Read(ref _completionRequested) != 0)
                     return;
                 continue;
             }
