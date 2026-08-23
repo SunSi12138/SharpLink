@@ -1,95 +1,278 @@
 name: Release Gate
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   pull_request:
     branches:
       - main
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
-  integrate-issue-311:
-    runs-on: ubuntu-latest
+  matrix-build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
-      - name: Checkout feature branch
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: fix/311-codec-scope-routing
 
-      - name: Apply compile-time routing integration
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+          --output Detailed
+          --github-reporter-style full
+          --no-progress
+          --results-directory artifacts/test-results/integration-${{ runner.os }}
+          --junit-output-path artifacts/test-results/integration-${{ runner.os }}/junit.xml
+          --diagnostic
+          --diagnostic-verbosity Trace
+          --diagnostic-output-directory artifacts/test-results/integration-${{ runner.os }}
+
+      - name: Upload Integration Diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-${{ runner.os }}-diagnostics
+          path: artifacts/test-results/integration-${{ runner.os }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Restore Package Smoke
+        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Run Package Smoke
+        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+  aot-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run Independent-process Shared-memory AOT Smoke
+        shell: bash
+        env:
+          SHARPLINK_AOT_RID: ${{ matrix.rid }}
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/aot
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify SDK Contains Generator
+        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+
+      - name: Verify package metadata, XML documentation, and symbols
+        run: ./eng/verify-packages.sh artifacts/nuget
+
+      - name: Restore Package Smoke
+        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Run Package Smoke
+        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Verify packages exist
+        run: |
+          ls -lah artifacts/nuget
+          test -n "$(find artifacts/nuget -name '*.nupkg' -type f)"
+
+      - name: Upload NuGet artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nuget-packages
+          path: |
+            artifacts/nuget/*.nupkg
+            artifacts/nuget/*.snupkg
+
+  chaos-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run Release Chaos Smoke
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.ChaosTests
+          --
+          --duration-seconds 120
+          --transport sharedmemory
+          --concurrency 32
+          --restart-interval-seconds 10
+          --json-output artifacts/chaos/release-smoke.json
+
+      - name: Upload Chaos Report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaos-release-smoke-${{ runner.os }}
+          path: |
+            artifacts/chaos/release-smoke.json
+            artifacts/chaos/release-smoke.dmp
+            artifacts/chaos/release-smoke.dmp.crashreport.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  release-summary:
+    runs-on: ubuntu-latest
+    needs: [matrix-build-test, aot-smoke, pack, chaos-smoke]
+    if: ${{ success() }}
+    steps:
+      - name: Release gate passed
+        run: echo "Release gate passed on all required checks."
+
+  publish-nuget:
+    needs: [release-summary, pack]
+    if: ${{ success() && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout exact tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download release-gated packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-packages
+          path: artifacts/nuget
+
+      - name: Validate tag, project, package, symbol, and commit identity
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PROJECT_VERSION="$(dotnet msbuild src/SharpLink.Sdk/SharpLink.Sdk.csproj -nologo -getProperty:Version)"
+          if [[ "$PROJECT_VERSION" != "$TAG_VERSION" ]]; then
+            echo "::error::Tag version $TAG_VERSION does not match project version $PROJECT_VERSION."
+            exit 1
+          fi
+          ./eng/verify-packages.sh artifacts/nuget "$TAG_VERSION"
 
-          def replace_once(path, old, new):
-              p = Path(path)
-              text = p.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{path}: expected exactly one match, got {count}")
-              p.write_text(text.replace(old, new, 1))
+      - name: NuGet login (OIDC)
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
 
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.Analysis.cs',
-              '                        IsInlineFixedRpcType(p.Type),\n',
-              '                        IsInlineFixedRpcType(p.Type) && !HasNativeCodecRoute(symbol.ContainingAssembly),\n')
-
-          replace_once(
-              'src/SharpLink.Runtime/Codec/RpcCodecProvider.cs',
-              '''    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public IRpcCodec<T> GetCodec<T>()
-    {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-
-        if (SharedRpcCodec<T>.Instance is { } shared)
-            return shared;
-
-        var targetType = typeof(T);
-        if (_resolvedCodecs.TryGetValue(targetType, out var fastCached))
-        {
-            if (fastCached.IsExplicit)
-                return Cast<T>(fastCached.Codec);
-            var fastSnapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
-            if (ReferenceEquals(fastCached.SnapshotIdentity, fastSnapshot.Identity))
-                return Cast<T>(fastCached.Codec);
-        }
-
-        return ResolveCodec<T>(targetType);
-    }
-''',
-              '''    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public IRpcCodec<T> GetCodec<T>()
-    {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-
-        var targetType = typeof(T);
-        if (_resolvedCodecs.TryGetValue(targetType, out var fastCached))
-        {
-            if (fastCached.IsExplicit)
-                return Cast<T>(fastCached.Codec);
-            var fastSnapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
-            if (ReferenceEquals(fastCached.SnapshotIdentity, fastSnapshot.Identity))
-                return Cast<T>(fastCached.Codec);
-        }
-
-        var snapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
-        if (!snapshot.Registrations.ContainsKey(targetType) && SharedRpcCodec<T>.Instance is { } shared)
-            return shared;
-
-        return ResolveCodec<T>(targetType);
-    }
-''')
-          PY
-
-          git diff --check
-          git rm .github/workflows/issue-311-patch.yml
-          git fetch origin 2f836376f43ceae180ae56ee3f370f414ff311b1 --depth=1
-          git checkout FETCH_HEAD -- .github/workflows/pr-quick.yml .github/workflows/release-gate.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src test .github/workflows
-          git commit -m 'Integrate compile-time codec scope routing'
-          git push origin HEAD:fix/311-codec-scope-routing
+      - name: Publish packages and matching symbols
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          packages=(
+            SharpLink.Sdk
+            SharpLink.Abstractions
+            SharpLink.Runtime
+            SharpLink.Serializer.SharpPack
+            SharpLink.Client
+            SharpLink.Server
+            SharpLink.Hosting
+          )
+          version="${GITHUB_REF_NAME#v}"
+          for package_id in "${packages[@]}"; do
+            dotnet nuget push "artifacts/nuget/$package_id.$version.nupkg" \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
