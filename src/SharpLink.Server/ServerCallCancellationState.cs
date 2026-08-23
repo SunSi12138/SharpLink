@@ -52,6 +52,7 @@ internal sealed class ServerCallCancellationState : IDisposable
 {
     private const int MaxRetained = 4096;
     private static readonly ConcurrentStack<ServerCallCancellationState> Pool = new();
+    private static Action<ServerCallCancellationState>? s_beforeRequestActivationForTests;
     private static int s_retainedCount;
 
     private readonly Lock _lifetimeGate = new();
@@ -89,6 +90,12 @@ internal sealed class ServerCallCancellationState : IDisposable
     public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);
 
     internal bool HasPayloadOwnerForDiagnostics => Volatile.Read(ref _payloadOwner) is not null;
+
+    internal static Action<ServerCallCancellationState>? BeforeRequestActivationForTests
+    {
+        get => Volatile.Read(ref s_beforeRequestActivationForTests);
+        set => Volatile.Write(ref s_beforeRequestActivationForTests, value);
+    }
 
     public static ServerCallCancellationState Rent(
         long requestId,
@@ -217,6 +224,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     internal bool TryActivateRequest(SharpLinkServer.ServerRequestPermit requestPermit)
     {
         ArgumentNullException.ThrowIfNull(requestPermit);
+        Volatile.Read(ref s_beforeRequestActivationForTests)?.Invoke(this);
         lock (_terminalGate)
         {
             if (Reason != ServerCallCancellationReason.None)
