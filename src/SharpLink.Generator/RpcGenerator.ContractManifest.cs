@@ -248,9 +248,11 @@ public partial class RpcGenerator
                     {
                         Name = parameter.Name,
                         Type = typeName,
-                        WireType = GetContractWireType(typeName, parameter.IsStream
-                            ? parameter.StreamItemEnumUnderlyingType
-                            : parameter.EnumUnderlyingType),
+                        WireType = !parameter.IsStream && !parameter.IsBlittable
+                            ? "LengthDelimited"
+                            : GetContractWireType(typeName, parameter.IsStream
+                                ? parameter.StreamItemEnumUnderlyingType
+                                : parameter.EnumUnderlyingType),
                         WireFormatId = GetWireFormatId(typeName, wireFormats),
                         Nullable = parameter.PayloadNullable,
                         Stream = parameter.IsStream,

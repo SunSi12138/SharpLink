@@ -10,8 +10,8 @@ public class SharpClientBuilderTests
     [Test]
     public async Task StaticClientSnapshotShouldRejectIncompatibleManifestVersions()
     {
-        Ensure(SharpLinkGeneratedManifestVersions.Api == 3,
-            "Codec Adapter metadata requires generated manifest API 3");
+        Ensure(SharpLinkGeneratedManifestVersions.Api == 4,
+            "owner-scoped generated Codec binding requires generated manifest API 4");
         await EnsureThrows<InvalidOperationException>(() =>
         {
             SharpLinkClient.ValidateStaticManifestCompatibility(new IncompatibleManifest());
@@ -345,7 +345,7 @@ public class SharpClientBuilderTests
 
     private sealed class IncompatibleManifest : ISharpLinkGeneratedAssemblyManifest
     {
-        public int ApiVersion => 1;
+        public int ApiVersion => 3;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "0.7.3-legacy-test";
         public Assembly OwnerAssembly => typeof(IncompatibleManifest).Assembly;
