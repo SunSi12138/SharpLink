@@ -17,6 +17,7 @@ internal sealed partial class SharpLinkServer
     {
         var session = connection.Session;
         var retainedPayload = retainedAdmissionPayload;
+        var retainedUseAcquired = false;
         try
         {
             if (retainedPayload is null)
@@ -39,7 +40,9 @@ internal sealed partial class SharpLinkServer
                 }
             }
 
-            var stablePayload = retainedPayload!.Payload;
+            retainedPayload!.AcquireUse();
+            retainedUseAcquired = true;
+            var stablePayload = retainedPayload.Payload;
             if (!TryPrepareCompressedRequestDecode(
                     requestOwner,
                     retainedPayload.RetainedPermit,
@@ -49,6 +52,8 @@ internal sealed partial class SharpLinkServer
                     out var resourceRejection))
             {
                 retainedPayload.Dispose();
+                retainedPayload.ReleaseUse();
+                retainedUseAcquired = false;
                 var rejection = resourceRejection ?? throw new InvalidOperationException(
                     "Persistent request decode resource rejection is missing its error.");
                 CompleteFailedRequestStreams(session, requestId, rejection);
@@ -88,6 +93,7 @@ internal sealed partial class SharpLinkServer
                 return ValueTask.CompletedTask;
             });
             var decodeTask = DecodeExecutor.EnqueueAsync(workItem, callState.InvocationToken);
+            retainedUseAcquired = false;
             return AwaitPersistentDecodeAndContinueAsync(
                 decodeTask,
                 retainedPayload,
@@ -105,6 +111,8 @@ internal sealed partial class SharpLinkServer
         catch
         {
             retainedPayload?.Dispose();
+            if (retainedUseAcquired)
+                retainedPayload!.ReleaseUse();
             ReleaseDispatchResources(
                 admittedCallState,
                 requestId,
@@ -134,12 +142,14 @@ internal sealed partial class SharpLinkServer
         {
             await decodeTask.ConfigureAwait(false);
             retainedPayload.Dispose();
+            retainedPayload.ReleaseUse();
             request = ReadRequestEnvelope(session, result.Payload, flags);
         }
         catch (SharpLinkException exception) when (
             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
         {
             retainedPayload.Dispose();
+            retainedPayload.ReleaseUse();
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
             CompleteFailedRequestStreams(session, requestId, exception);
@@ -159,6 +169,7 @@ internal sealed partial class SharpLinkServer
         catch (OperationCanceledException exception)
         {
             retainedPayload.Dispose();
+            retainedPayload.ReleaseUse();
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
             CompleteFailedRequestStreams(session, requestId, exception);
@@ -178,6 +189,7 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             retainedPayload.Dispose();
+            retainedPayload.ReleaseUse();
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
             CompleteFailedRequestStreams(session, requestId, exception);
