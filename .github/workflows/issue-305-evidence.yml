@@ -60,8 +60,7 @@ jobs:
         shell: bash
         run: |
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
-            --configuration Release --no-restore \
-            --filter 'FullyQualifiedName~AdmissionControlTests|FullyQualifiedName~AdmissionPartitionPoolTests|FullyQualifiedName~AdmissionPartitionOwnershipTests'
+            --configuration Release --no-restore
 
       - name: Candidate partition benchmarks
         shell: bash
