@@ -68,7 +68,8 @@ internal static class ServerCallTerminationMapper
             ServerCallCancellationReason.PreAdmissionStreamResourceExhausted =>
                 SharpLinkResourceExhaustion.CreateWire(
                     SharpLinkResourceExhaustion.ServerPreAdmissionStreamBytes,
-                    "Pre-admission stream retained-byte capacity was exhausted."),
+                    $"Pre-admission stream retained-byte capacity was exhausted " +
+                    $"({SharpLinkResourceExhaustion.ServerPreAdmissionStreamBytes})."),
             _ => new SharpLinkException(SharpLinkErrorCode.Cancelled, "Request canceled.")
         };
 }
