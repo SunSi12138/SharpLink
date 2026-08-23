@@ -79,6 +79,48 @@ public class PreAdmissionStreamBudgetIntegrationTests
         }
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task ForceStopShouldReleaseBufferedStreamBudgetBeforeExit()
+    {
+        TestService.ResetBlockingAdd();
+        await using var harness = await BudgetHarness.CreateAsync();
+        var producerRelease = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var active = harness.ClientA.Get<ITestService>()
+            .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
+        Task<int>? queued = null;
+
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            queued = harness.ClientB.Get<ICompressionService>()
+                .UploadBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
+            await WaitUntilAsync(
+                () => harness.PreAdmissionStreamBytes > ItemBytes * 2 &&
+                      harness.AdmissionQueuedBytes > 0,
+                "buffered stream ownership exists before force stop");
+
+            await harness.StopServerAsync(TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+            producerRelease.TrySetResult();
+            await ObserveTerminalAsync(active);
+            await ObserveTerminalAsync(queued);
+
+            await WaitUntilAsync(
+                () => harness.PreAdmissionStreamBytes == 0 &&
+                      harness.AdmissionQueuedBytes == 0,
+                "force stop releases stable stream budget and admission waiter bytes");
+        }
+        finally
+        {
+            producerRelease.TrySetResult();
+            TestService.ReleaseBlockingAdd();
+            await ObserveTerminalAsync(active);
+            if (queued is not null)
+                await ObserveTerminalAsync(queued);
+        }
+    }
+
     private static byte[] CreateItem(byte value)
         => Enumerable.Repeat(value, ItemBytes).ToArray();
 
@@ -117,7 +159,7 @@ public class PreAdmissionStreamBudgetIntegrationTests
     private static async Task ObserveTerminalAsync(Task task)
     {
         try
-        {
+n        {
             await task.WaitAsync(TimeSpan.FromSeconds(5));
         }
         catch (Exception)
@@ -226,6 +268,9 @@ public class PreAdmissionStreamBudgetIntegrationTests
                 clientA,
                 clientB);
         }
+
+        internal Task StopServerAsync(TimeSpan gracefulTimeout)
+            => _server.StopAsync(gracefulTimeout).AsTask();
 
         public async ValueTask DisposeAsync()
         {
