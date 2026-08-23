@@ -191,6 +191,7 @@ internal sealed class StreamManager
         {
             try
             {
+                ThrowIfPeerTerminal(entry);
                 var dispatcher = entry.Dispatcher;
                 var encodedByteCount = Math.Max(1, checked((int)payload.Length));
                 if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
@@ -218,6 +219,16 @@ internal sealed class StreamManager
 
         Interlocked.Increment(ref _droppedStreamFrames);
         return ValueTask.CompletedTask;
+    }
+
+    private static void ThrowIfPeerTerminal(DispatcherEntry entry)
+    {
+        if (entry.PeerTerminalReceived)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
+                "StreamData was received after the peer completed the stream.");
+        }
     }
 
     private static ValueTask CompleteDispatch(DispatcherEntry entry, ValueTask dispatch)
@@ -528,28 +539,43 @@ internal sealed class StreamManager
         out ValueTask dispatch)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
-        if (dispatchersByRequestId is null)
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+            !requestDispatchers.TryAcquire(streamId, out var entry))
         {
             dispatch = default;
             return false;
         }
 
-        if (dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
-            requestDispatchers.TryGetPreAdmission(streamId, out var preAdmission))
+        try
         {
-            _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-            dispatch = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
-            return true;
+            ThrowIfPeerTerminal(entry);
+            if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
+            {
+                _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+                dispatch = CompleteDispatch(
+                    entry,
+                    preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount));
+                return true;
+            }
+            if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
+            {
+                _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+                dispatch = CompleteDispatch(
+                    entry,
+                    discarding.DispatchAsync(wirePayload, originalByteCount));
+                return true;
+            }
+
+            entry.Release();
+            dispatch = default;
+            return false;
         }
-        if (dispatchersByRequestId.TryGetValue(requestId, out requestDispatchers) &&
-            requestDispatchers.TryGetDiscarding(streamId, out var discarding))
+        catch
         {
-            _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-            dispatch = discarding.DispatchAsync(wirePayload, originalByteCount);
-            return true;
+            entry.Release();
+            throw;
         }
-        dispatch = default;
-        return false;
     }
 
     private void CompleteTerminatedRegistration(
