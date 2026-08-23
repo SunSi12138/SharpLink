@@ -35,8 +35,9 @@ Generated ABI 与网络 minor 是独立版本轴。SharpLink 2.0 以 Protocol v2
 2.0 不保留 `SharpLinkCallOptions` 或兼容 options bag。旧调用点按能力迁移：
 
 - `SharpLinkCallOptions.Metadata` → `client.GetWithMetadata<TContract>(metadata)`，用于调用方为单次/一组显式 invocation 选择 metadata；横切 metadata policy 仍可使用 Client interceptor。
-- `SharpLinkCallOptions.Timeout` → 契约方法 `[Timeout]`，或 Client 的 `UseRequestTimeout` / `DisableRequestTimeout` fallback policy。timeout 不再是业务方法伪参数。
-- `SharpLinkCallOptions.CancellationToken` → 业务方法原有 `CancellationToken` 参数；没有 token 的 RPC 必须明确审计 `[NonCancellable]`。
+- `SharpLinkCallOptions.Timeout` → 契约方法 `[Timeout]`，或普通 Unary 调用的 Client `UseRequestTimeout` / `DisableRequestTimeout` fallback policy。OneWay 和三类 Streaming 不自动继承 Client-wide fallback；它们需要方法 `[Timeout]` 或继承父调用 lifetime 才会携带对应 `TimeBudget`。timeout 不再是业务方法伪参数。
+- `SharpLinkCallOptions.Deadline` → 删除。2.0 不再公开或重建跨机器 absolute UTC deadline，也没有新的 per-call absolute-deadline 替代项；使用相对 timeout policy，并由 runtime 解析本地 monotonic `RpcDeadline`、在 wire 上只传播剩余 `TimeBudget`。
+- 调用方取消仍使用业务方法原有的 `CancellationToken` 参数；它从来不是 `SharpLinkCallOptions` 字段。删除旧 options 伪参数时保留正常的 cancellation-token 参数；没有 token 的 RPC 必须明确审计 `[NonCancellable]`。
 - `WaitForReady` 不再有每调用兼容开关；连接/readiness 使用 Client readiness API 和拓扑策略表达。
 
 因此生成的业务签名和 `IRpcChannel` ABI 都不再接收 `SharpLinkCallOptions`。迁移时应删除旧 options 参数并重新生成全部 API 4 proxy/stub，而不是创建新的通用调用控制对象。
