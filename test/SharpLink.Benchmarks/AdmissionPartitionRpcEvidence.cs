@@ -63,15 +63,22 @@ internal static class AdmissionPartitionRpcEvidence
                         partition.UseConcurrency(4096);
                     }))).ConfigureAwait(false);
 
-        // Every invocation is a fresh process. Give each process the same RPC-only
-        // warmup so pool benchmark duration cannot affect Tiered PGO/runtime state.
+        // Every invocation is a fresh process. Equalize both call-count warmup and
+        // wall-clock maturation so a faster candidate does not enter measurement
+        // before Tiered PGO/background JIT work has had the same opportunity to settle.
         const int warmupOperations = 20_000;
+        var warmupStarted = Stopwatch.GetTimestamp();
         for (var operation = 0; operation < warmupOperations; operation++)
         {
             var result = await environment.Rpc.AddAsync(10, 20).ConfigureAwait(false);
             if (result != 30)
                 throw new InvalidOperationException($"RPC warmup returned {result} instead of 30.");
         }
+
+        var warmupElapsed = Stopwatch.GetElapsedTime(warmupStarted);
+        var remainingWarmup = TimeSpan.FromSeconds(5) - warmupElapsed;
+        if (remainingWarmup > TimeSpan.Zero)
+            await Task.Delay(remainingWarmup).ConfigureAwait(false);
 
         Interlocked.Exchange(ref selectorIndex, -1);
         await Task.Delay(100).ConfigureAwait(false);
