@@ -116,8 +116,14 @@ internal sealed class StreamManager
             Interlocked.Decrement(ref _activeStreamCount);
             try
             {
-                if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                // A stable inbound route may still have a typed child owned by replay/consumer
+                // after the parent entry is removed. Preserve that child's callback so buffered
+                // late credit can reach the receive-flow tombstone until the child is disposed.
+                if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware &&
+                    dispatcher is not PreAdmissionStreamDispatcher)
+                {
                     consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+                }
                 PublishReceiveTerminal(requestId, streamId, entry);
             }
             finally
