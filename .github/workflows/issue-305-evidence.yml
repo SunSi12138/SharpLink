@@ -51,9 +51,11 @@ jobs:
         run: |
           python3 .github/scripts/issue-305-apply-a.py
           python3 .github/scripts/issue-305-adapt-tests.py
+          python3 .github/scripts/issue-305-adapt-tests-a.py
           git add -N test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs
           git diff -- src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
             test/SharpLink.Benchmarks/AdmissionPartitionBenchmarks.cs \
+            test/SharpLink.UnitTests/Server/AdmissionControlTests.cs \
             test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs \
             test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs \
             > artifacts/issue-305/candidate-a/candidate.patch
@@ -78,7 +80,9 @@ jobs:
           git restore --source=HEAD -- \
             src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
             test/SharpLink.Benchmarks/AdmissionPartitionBenchmarks.cs \
+            test/SharpLink.UnitTests/Server/AdmissionControlTests.cs \
             test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs
+          git reset -- test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs || true
           rm -f test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs
 
       - name: Apply Candidate A2 in workspace
