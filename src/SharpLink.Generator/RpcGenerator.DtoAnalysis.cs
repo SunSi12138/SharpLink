@@ -7,7 +7,7 @@ public partial class RpcGenerator
         CancellationToken cancellationToken)
         => new DtoAnalysisState(compilation, cancellationToken).Analyze();
 
-    private sealed class DtoAnalysisState
+    private sealed partial class DtoAnalysisState
     {
         private const int MaximumDepth = 64;
         private readonly Compilation _compilation;
@@ -33,6 +33,7 @@ public partial class RpcGenerator
             _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
             CollectAdapterRegistrations();
             CollectAssemblyBindings();
+            CollectAssemblyRoutes();
         }
 
         public DtoGenerationResult Analyze()
@@ -81,7 +82,8 @@ public partial class RpcGenerator
             foreach (var reference in _compilation.References)
             {
                 if (_compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly ||
-                    !_allowedAssemblyNames.Contains(assembly.Identity.Name))
+                    !_allowedAssemblyNames.Contains(assembly.Identity.Name) ||
+                    HasGeneratedAssemblyManifest(assembly))
                 {
                     continue;
                 }
@@ -319,24 +321,13 @@ public partial class RpcGenerator
             if (TrySelectAdapter(type, out var adapter))
             {
                 if (adapter is not null)
-                {
-                    _models[typeName] = new GeneratedCodecModel(
-                        typeName,
-                        GetCodecName(typeName),
-                        GetSchemaId(typeName, adapter.WireFormatId),
-                        GeneratedCodecKind.Adapter,
-                        type.IsReferenceType,
-                        ImmutableArray<GeneratedMemberModel>.Empty,
-                        ImmutableArray<string>.Empty,
-                        null,
-                        null,
-                        null,
-                        GetTypeName(adapter.AdapterType),
-                        adapter.AdapterId,
-                        adapter.WireFormatId,
-                        GetAssemblyDependencies([type]),
-                        type.Locations.FirstOrDefault());
-                }
+                    AddAdapterModel(type, typeName, adapter);
+                return;
+            }
+            if (TrySelectRouteAdapter(type, out var routedAdapter))
+            {
+                if (routedAdapter is not null)
+                    AddAdapterModel(type, typeName, routedAdapter);
                 return;
             }
             if (IsBuiltin(type))
