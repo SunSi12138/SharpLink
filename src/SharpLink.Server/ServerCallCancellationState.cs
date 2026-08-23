@@ -67,6 +67,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private bool _disposeRequested;
     private int _externalUsers;
     private long _leaseGeneration;
+    private AdmissionProgramUse? _admissionProgramUse;
     private AdmissionLease? _admissionLease;
     private SharpLinkBufferWriterPool? _payloadPool;
     private IRpcByteBufferWriter? _payloadOwner;
@@ -134,6 +135,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
+        state._admissionProgramUse = null;
         state._admissionLease = null;
         state._payloadPool = null;
         state._payloadOwner = null;
@@ -174,6 +176,13 @@ internal sealed class ServerCallCancellationState : IDisposable
         }
 
         return state;
+    }
+
+    internal void AttachAdmissionProgramUse(AdmissionProgramUse admissionProgramUse)
+    {
+        ArgumentNullException.ThrowIfNull(admissionProgramUse);
+        if (Interlocked.CompareExchange(ref _admissionProgramUse, admissionProgramUse, null) is not null)
+            throw new InvalidOperationException("An admission program use is already attached to this call.");
     }
 
     internal void AttachAdmissionLease(AdmissionLease lease)
@@ -339,6 +348,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         _serverStoppingRegistration.Dispose();
         _invocationCancellation?.Dispose();
         Interlocked.Exchange(ref _admissionLease, null)?.Dispose();
+        Interlocked.Exchange(ref _admissionProgramUse, null)?.Dispose();
         var payloadOwner = Interlocked.Exchange(ref _payloadOwner, null);
         var payloadPool = Interlocked.Exchange(ref _payloadPool, null);
         var decodedBytesPermit = Interlocked.Exchange(ref _decodedBytesPermit, null);
