@@ -465,26 +465,102 @@ internal sealed class PreAdmissionStreamDispatcher(
 
     private void PromoteFrom(PreAdmissionStreamDispatcher replacement)
     {
-        BufferedItem[] buffered;
-        lock (_gate)
+        while (true)
         {
-            _retentionPolicy = replacement._retentionPolicy;
-            _decodeCompressed = replacement._decodeCompressed;
-            buffered = [.. _items];
-            if (buffered.Length != 0)
+            RetentionPolicy currentPolicy;
+            RetentionPolicy replacementPolicy;
+            BufferedItem[] buffered;
+            lock (_gate)
             {
-                _items.Clear();
-                for (var index = 0; index < buffered.Length; index++)
-                    _items.Enqueue(buffered[index] with { ReleaseBytes = NoopReleaseBytes });
+                currentPolicy = _retentionPolicy;
+                replacementPolicy = replacement._retentionPolicy;
+                buffered = [.. _items];
             }
-        }
 
-        // Admission has granted the call, so bytes retained before this point are no longer
-        // queue bytes. Settle the old reservation immediately; replay later only releases the
-        // pooled owners. A frame racing promotion detects the policy swap before enqueue and
-        // retries under the active policy instead of charging the old queue budget.
-        for (var index = 0; index < buffered.Length; index++)
-            buffered[index].ReleaseBytes(buffered[index].RetainedBytes);
+            if (currentPolicy == replacementPolicy)
+            {
+                lock (_gate)
+                {
+                    if (!ReferenceEquals(currentPolicy, _retentionPolicy))
+                        continue;
+                    _decodeCompressed = replacement._decodeCompressed;
+                }
+                return;
+            }
+
+            var reservedCount = 0;
+            for (; reservedCount < buffered.Length; reservedCount++)
+            {
+                if (!replacementPolicy.ReserveBytes(buffered[reservedCount].RetainedBytes))
+                    break;
+            }
+            var reservationSucceeded = reservedCount == buffered.Length;
+            if (!reservationSucceeded)
+            {
+                for (var index = 0; index < reservedCount; index++)
+                    replacementPolicy.ReleaseBytes(buffered[index].RetainedBytes);
+            }
+
+            var retry = false;
+            BufferedItem[] rejected = [];
+            lock (_gate)
+            {
+                if (!ReferenceEquals(currentPolicy, _retentionPolicy) ||
+                    _items.Count != buffered.Length)
+                {
+                    retry = true;
+                }
+                else if (!reservationSucceeded)
+                {
+                    _retentionPolicy = replacementPolicy;
+                    _decodeCompressed = replacement._decodeCompressed;
+                    rejected = [.. _items];
+                    _items.Clear();
+                    _completed = true;
+                    _completion = CreateRetentionPromotionCapacityException();
+                }
+                else
+                {
+                    _retentionPolicy = replacementPolicy;
+                    _decodeCompressed = replacement._decodeCompressed;
+                    if (buffered.Length != 0)
+                    {
+                        _items.Clear();
+                        for (var index = 0; index < buffered.Length; index++)
+                        {
+                            _items.Enqueue(buffered[index] with
+                            {
+                                ReleaseBytes = replacementPolicy.ReleaseBytes
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (retry)
+            {
+                if (reservationSucceeded)
+                {
+                    for (var index = 0; index < buffered.Length; index++)
+                        replacementPolicy.ReleaseBytes(buffered[index].RetainedBytes);
+                }
+                continue;
+            }
+
+            if (!reservationSucceeded)
+            {
+                ReleaseBufferedItems(rejected);
+                replacementPolicy.CapacityExceeded();
+                return;
+            }
+
+            // The active policy now owns the retained-byte accounting. Settle the old admission
+            // reservation only after that ownership transfer is published, so there is never a
+            // window where the same pooled owners are charged to neither budget.
+            for (var index = 0; index < buffered.Length; index++)
+                buffered[index].ReleaseBytes(buffered[index].RetainedBytes);
+            return;
+        }
     }
 
     private async Task ReplayBufferedItemsAsync(
@@ -717,6 +793,11 @@ internal sealed class PreAdmissionStreamDispatcher(
         => new(
             SharpLinkErrorCode.ResourceExhausted,
             $"Stream receive buffer exceeded {MaxBufferedElements} elements.");
+
+    private static SharpLinkException CreateRetentionPromotionCapacityException()
+        => new(
+            SharpLinkErrorCode.ResourceExhausted,
+            "Deferred stream retention exceeded the active byte budget during admission promotion.");
 
     private void ReleaseBufferedItems(IEnumerable<BufferedItem> items)
     {
