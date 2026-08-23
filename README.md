@@ -6,7 +6,7 @@
 
 [![PR Quick](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml)
 [![Nightly Regression](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/MIT-yellow.svg)](LICENSE)
 
 一个面向 .NET 的高性能 RPC 框架（当前主目标框架为 `net10.0`），支持：
 
@@ -29,7 +29,7 @@
 - `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
 - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
-- `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成
+- `SharpLink.Generator`：契约/服务分析器和代码生成
 - `SharpLink.Serializer.SharpPack`：精确依赖 SharpPack `[1.1.0]` 的 Codec Adapter（`memorypack-binary/v1`）
 
 示例（`demo/`）：
@@ -91,7 +91,7 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 
 - RPC 契约接口必须标记 `[RpcContract]`
 - RPC 服务实现必须标记 `[RpcService]`
-- 契约接口必须继承 `IService`
+- RPC 契约接口必须继承 `IService`
 - 契约及其 containing type 必须 public；公开 nested contract 受支持并获得确定性唯一生成类型名
 - RPC route 必须是普通 instance method；`ref/out/in`、by-ref return、static method 与 abstract property/indexer/event 会在编译期报告错误
 - Contract 所在程序集生成 Descriptor、Proxy、contract-based Stub 和 Codec；Service 所在程序集生成 Activator、生命周期与显式依赖
@@ -243,6 +243,23 @@ var server = SharpLinkServerBuilder.Create()
 内置 Provider 只提供框架自带的 Brotli，并允许为每个方向选择 `CompressionLevel`。Gzip、Deflate、Zstandard 或其他格式可通过自定义 `ISharpLinkCompressionProvider` 接入。Provider 的 `WireProfile` 必须是唯一的 1–64 字节规范 ASCII；dictionary identity 等影响解码的配置必须进入 profile，只影响编码成本的 level 不协商。例如，同一 Zstandard 实现可以分别注册 `zstd/v1` 与 `zstd-dict/0123abcd`。实现必须线程安全、NativeAOT 安全，并准确返回 consumed/written bytes。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩；默认收益门槛为 1024 B、64 B 和 5%。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)。
 
 压缩在连接握手后按每个方向自动应用，不存在 per-call 强制开关；需要控制是否尝试压缩时，应在对应 Client/Server Runtime Context 配置 Provider 或调整 payload/收益阈值。
+
+## 连接接入资源边界
+
+服务端默认对 accept 后、Ready 前的资源建立独立硬边界：最多同时保留 1024 个 live accepted connection，并最多允许 64 个连接同时处于 TLS / Protocol v2 / application authentication handshake。handshake slot 覆盖完整的 pre-auth 阶段，并在连接 Ready 时立即释放；connection slot 一直持有到 terminal cleanup。超过任一边界时连接立即关闭，不排队，也不会进入更多握手工作。
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseTcp(5000)
+    .UseConnectionAdmission(options =>
+    {
+        options.MaxConcurrentConnections = 1024;
+        options.MaxConcurrentHandshakes = 64;
+    })
+    .Build();
+```
+
+`MaxConcurrentHandshakes` 的默认值为固定 64；如果只把 `MaxConcurrentConnections` 配到 64 以下且没有显式设置 handshake 上限，默认会自动 clamp 到更低的 connection bound。显式 `MaxConcurrentHandshakes = 0` 是保留的 opt-out：它关闭独立 handshake 上限，让握手并发只受 `MaxConcurrentConnections` 约束。启动日志会输出最终生效的 `max_connections` / `max_handshakes`。迁移与滚动重连注意事项见 [`doc/migration.md`](doc/migration.md)，完整接入说明见 [`doc/admission-control.md`](doc/admission-control.md)。
 
 ## 主动接入控制
 
@@ -567,6 +584,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 日志：`UseLoggerFactory(...)`
 - 心跳：`UseHeartbeat(...)`
 - 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
+- 连接资源边界：`UseConnectionAdmission(...)`；默认 `1024` live connections / `64` concurrent handshakes，显式 handshake `0` 关闭独立上限
 - 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
 - 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
 - 服务注册与生命周期：`[RpcService]`、`EnableService` / `ExcludeService` / `ReplaceService`、`UseServiceProvider(...)` 与 `SharpLinkServiceLifetime`
