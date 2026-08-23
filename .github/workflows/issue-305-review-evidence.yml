@@ -78,8 +78,8 @@ jobs:
 
           internal static class Program
           {
-              private const int WarmupIterationsPerWorker = 400;
-              private const int MeasurementIterationsPerWorker = 4000;
+              private const int WarmupIterationsPerWorker = 2000;
+              private const int MeasurementIterationsPerWorker = 20000;
 
               public static async Task Main(string[] args)
               {
@@ -269,7 +269,7 @@ jobs:
               '',
               'Method: three samples per variant on the same GitHub-hosted runner, alternating B/A/A/B/B/A; '
               'each sample uses a partition-enabled full TCP RPC, one hot partition, concurrency limit 4096, '
-              '400 warm-up RPCs/worker and 4000 measured RPCs/worker. The gate is candidate median P99 not worse than baseline median by >3%.',
+              '2000 warm-up RPCs/worker and 20000 measured RPCs/worker. The gate is candidate median P99 not worse than baseline median by >3%.',
               '',
               'Raw per-run results are in `contention.log`.',
           ]
