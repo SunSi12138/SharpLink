@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
 
+# Contents-API trigger; this workflow self-deletes after materialization.
 jobs:
   materialize:
     if: ${{ github.actor != 'github-actions[bot]' }}
