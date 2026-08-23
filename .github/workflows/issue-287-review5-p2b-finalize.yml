@@ -29,6 +29,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 .github/issue-287-review5-p2b-repair.py
           python3 .github/issue-287-review5-p2b.py
           git diff --check
           ! git grep -n -E '^(<<<<<<<|=======|>>>>>>>)' -- src test doc CHANGELOG.md
@@ -38,7 +39,7 @@ jobs:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          git rm -f .github/issue-287-review5-p2b.py
+          git rm -f .github/issue-287-review5-p2b.py .github/issue-287-review5-p2b-repair.py
           git add -A
           git diff --cached --check
           git config user.name 'github-actions[bot]'
