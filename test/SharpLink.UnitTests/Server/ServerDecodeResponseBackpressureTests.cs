@@ -172,6 +172,7 @@ public class ServerDecodeResponseBackpressureTests
         var externalLease = callState.CaptureLease(72);
         Ensure(externalLease.TryAcquire(), "external call-state lease acquired");
         var externalUseOwned = true;
+        var dispatchTeardownOwned = false;
 
         try
         {
@@ -187,6 +188,7 @@ public class ServerDecodeResponseBackpressureTests
                 connection,
                 permit
             ]);
+            dispatchTeardownOwned = true;
 
             Ensure(server.ActiveCallCountForDiagnostics == 0 && connection.ActiveCalls == 0,
                 "dispatch teardown releases call capacity even while the call-state lease is retained");
@@ -205,8 +207,11 @@ public class ServerDecodeResponseBackpressureTests
         {
             if (externalUseOwned)
                 externalLease.ReleaseUse();
-            permit.Dispose();
-            callState.Dispose();
+            if (!dispatchTeardownOwned)
+            {
+                permit.Dispose();
+                callState.Dispose();
+            }
         }
 
         await connection.CloseAsync();
