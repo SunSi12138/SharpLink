@@ -21,7 +21,7 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
             NoopOwner.Instance,
             timeProvider);
 
-        var laterDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(10), timeProvider);
+        var laterDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), timeProvider);
         var later = table.Rent(
             Int32Codec.Instance,
             PendingCallKind.Unary,
@@ -33,7 +33,7 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
         Ensure(timeProvider.BlockedChangeEntered.Wait(CoordinationTimeout),
             "the scanner should reach its deterministic final-arm gate");
 
-        var earlierDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
+        var earlierDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
         var earlier = table.Rent(
             Int32Codec.Instance,
             PendingCallKind.Unary,
@@ -77,7 +77,7 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
             NoopOwner.Instance,
             timeProvider);
 
-        var laterDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(10), timeProvider);
+        var laterDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), timeProvider);
         var later = table.Rent(
             Int32Codec.Instance,
             PendingCallKind.Unary,
@@ -103,7 +103,7 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
         Ensure(timeProvider.BlockedChangeEntered.Wait(CoordinationTimeout),
             "reconciliation should sample the ten-second earliest value before its stale arm is applied");
 
-        var earlierDeadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddSeconds(1), timeProvider);
+        var earlierDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
 
         // Model the review interleaving directly: schedule identity has already been observed,
         // then the actual earliest deadline moves earlier before the stale arm completes. Using
