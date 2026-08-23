@@ -48,9 +48,11 @@ jobs:
         shell: bash
         run: |
           python3 .github/scripts/issue-305-apply.py
+          python3 .github/scripts/issue-305-adapt-tests.py
           git add -N test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs
           git diff -- src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
             test/SharpLink.Benchmarks/AdmissionPartitionBenchmarks.cs \
+            test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs \
             test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs \
             > artifacts/issue-305/candidate/candidate.patch
 
@@ -59,7 +61,7 @@ jobs:
         run: |
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
             --configuration Release --no-restore \
-            --filter 'FullyQualifiedName~AdmissionControlTests|FullyQualifiedName~AdmissionPartitionOwnershipTests'
+            --filter 'FullyQualifiedName~AdmissionControlTests|FullyQualifiedName~AdmissionPartitionPoolTests|FullyQualifiedName~AdmissionPartitionOwnershipTests'
 
       - name: Candidate partition benchmarks
         shell: bash
