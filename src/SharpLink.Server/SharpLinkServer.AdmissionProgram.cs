@@ -21,11 +21,22 @@ internal sealed partial class SharpLinkServer
     internal AdmissionProgram? PublishAdmissionProgramForTests(AdmissionProgram? program)
         => Interlocked.Exchange(ref _admissionProgram, program);
 
-    private AdmissionProgram? CaptureAdmissionProgram(long requestId)
+    private AdmissionProgramUse? CaptureAdmissionProgram(
+        long requestId,
+        out AdmissionProgram? program)
     {
-        var program = Volatile.Read(ref _admissionProgram);
-        Volatile.Read(ref s_afterAdmissionCaptureForTests)?.Invoke(this, requestId, program);
-        return program;
+        program = Volatile.Read(ref _admissionProgram);
+        var use = program?.AcquireUse();
+        try
+        {
+            Volatile.Read(ref s_afterAdmissionCaptureForTests)?.Invoke(this, requestId, program);
+            return use;
+        }
+        catch
+        {
+            use?.Dispose();
+            throw;
+        }
     }
 
     private void StopAdmissionPrograms()
