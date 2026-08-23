@@ -10,6 +10,34 @@ internal sealed partial class SharpLinkServer
         return owner;
     }
 
+    private bool TryCopyAdmissionPayload(
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags,
+        out IRpcByteBufferWriter? owner,
+        out ServerRetainedCompressedPermit? retainedPermit)
+    {
+        owner = null;
+        retainedPermit = null;
+        var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
+        if (isCompressed &&
+            !ResourceGovernor.TryAcquireRetained(payload.Length, out retainedPermit))
+        {
+            return false;
+        }
+
+        try
+        {
+            owner = CopyAdmissionPayload(payload);
+            return true;
+        }
+        catch
+        {
+            retainedPermit?.Dispose();
+            retainedPermit = null;
+            throw;
+        }
+    }
+
     private void ReservePreAdmissionRequestStreams(
         RpcSession session,
         long requestId,
