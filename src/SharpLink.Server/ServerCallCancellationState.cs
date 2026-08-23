@@ -214,14 +214,15 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
 
-        return TryClaimTerminal(reason);
+        return TryClaimTerminal(reason, out _);
     }
 
     public bool TryAcceptStreamData()
         => TryClaimStreamProgress();
 
     public bool TryClaimResponse()
-        => TryClaimTerminal(ServerCallCancellationReason.Completed);
+        => TryClaimTerminal(ServerCallCancellationReason.Completed, out var claimedReason) &&
+           claimedReason == ServerCallCancellationReason.Completed;
 
     private bool TryClaimStreamProgress()
     {
@@ -232,14 +233,16 @@ internal sealed class ServerCallCancellationState : IDisposable
             "Server call state has no time provider.");
         if (Deadline.IsExpired(timeProvider))
         {
-            _ = TryClaimTerminal(ServerCallCancellationReason.DeadlineExceeded);
+            _ = TryClaimTerminal(ServerCallCancellationReason.DeadlineExceeded, out _);
             return false;
         }
 
         return Reason == ServerCallCancellationReason.None;
     }
 
-    private bool TryClaimTerminal(ServerCallCancellationReason proposedReason)
+    private bool TryClaimTerminal(
+        ServerCallCancellationReason proposedReason,
+        out ServerCallCancellationReason claimedReason)
     {
         if (proposedReason == ServerCallCancellationReason.None)
             throw new ArgumentOutOfRangeException(nameof(proposedReason));
@@ -253,9 +256,11 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
             (int)ServerCallCancellationReason.None)
         {
+            claimedReason = Reason;
             return false;
         }
 
+        claimedReason = reason;
         if (reason == ServerCallCancellationReason.Completed)
             return true;
 
