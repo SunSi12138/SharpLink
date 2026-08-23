@@ -72,7 +72,7 @@ public class ActivePreInvocationStreamRetentionTests
     }
 
     [Test]
-    public async Task PromotionShouldTransferQueuedBytesIntoActiveBudget()
+    public async Task NoFlowControlPromotionShouldTransferQueuedBytesIntoActiveBudget()
     {
         const long requestId = 223;
         const ushort streamId = 1;
@@ -145,7 +145,7 @@ public class ActivePreInvocationStreamRetentionTests
     }
 
     [Test]
-    public async Task PromotionShouldRejectQueuedBytesAlreadyAboveActiveBudget()
+    public async Task NoFlowControlPromotionShouldRejectQueuedBytesAlreadyAboveActiveBudget()
     {
         const long requestId = 227;
         const ushort streamId = 1;
