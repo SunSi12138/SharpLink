@@ -68,7 +68,7 @@ internal sealed partial class SharpLinkServer
                                 var streamId = RpcSession.ReadCompressedStreamId(payload);
                                 var originalLength = RpcSession.ReadCompressedOriginalLength(
                                     header.Type, header.Flags, payload);
-                                if (preAdmissionStreams.TryGetPreAdmission(streamId: streamId, requestId: requestId, out _))
+                                if (preAdmissionStreams.TryGetPreAdmission(requestId, streamId, out _))
                                 {
                                     if (!TryAcceptInboundStreamProgress(requestCancellationMap, requestId))
                                         continue;
