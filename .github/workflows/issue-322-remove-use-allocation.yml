@@ -1,4 +1,4 @@
-name: Issue 322 Remove Use Allocation
+name: Issue 322 Remove Use Allocation v2
 
 on:
   pull_request:
