@@ -276,17 +276,27 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     private RpcGeneratedManifestRegistration(
         ISharpLinkGeneratedAssemblyManifest manifest,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> allCodecs,
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs,
+        IRpcCodecProvider baseProvider,
         IRpcCodecAdapterScope[] scopes)
     {
         Manifest = manifest;
+        AllCodecs = allCodecs;
         Codecs = codecs;
+        BaseProvider = baseProvider;
         _scopes = scopes;
     }
 
     internal ISharpLinkGeneratedAssemblyManifest Manifest { get; }
 
+    /// <summary>Gets every Codec owned by this manifest, including assembly-routed targets.</summary>
+    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> AllCodecs { get; }
+
+    /// <summary>Gets only Codecs that may participate in the context-global generated registry.</summary>
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Codecs { get; }
+
+    internal IRpcCodecProvider BaseProvider { get; }
 
     internal static RpcGeneratedManifestRegistration Create(
         ISharpLinkGeneratedAssemblyManifest manifest,
@@ -328,7 +338,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             }
 
             var ownerBox = new OwnerBox();
-            var codecs = new Dictionary<Type, RpcGeneratedCodecRegistration>();
+            var allCodecs = new Dictionary<Type, RpcGeneratedCodecRegistration>();
             foreach (var factory in manifest.Codecs.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
             {
                 IRpcCodec? preparedCodec = null;
@@ -339,14 +349,23 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                         $"Generated Codec factory for '{factory.TargetType.FullName}' returned null.");
                     ValidateCodec(factory, preparedCodec);
                 }
-                if (codecs.ContainsKey(factory.TargetType))
+                if (allCodecs.ContainsKey(factory.TargetType))
                     throw new InvalidOperationException(
                         $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}'.");
-                codecs.Add(factory.TargetType, new RpcGeneratedCodecRegistration(
+                allCodecs.Add(factory.TargetType, new RpcGeneratedCodecRegistration(
                     ownerBox, factory, preparedCodec));
             }
 
-            var registration = new RpcGeneratedManifestRegistration(manifest, codecs, [.. scopes]);
+            var manifestScopedTargets = new HashSet<Type>(manifest.ManifestScopedCodecTargets);
+            var publishedCodecs = allCodecs
+                .Where(pair => !manifestScopedTargets.Contains(pair.Key))
+                .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            var registration = new RpcGeneratedManifestRegistration(
+                manifest,
+                allCodecs,
+                publishedCodecs,
+                provider,
+                [.. scopes]);
             ownerBox.Value = registration;
             return registration;
         }
