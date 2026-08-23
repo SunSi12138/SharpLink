@@ -1,7 +1,7 @@
 namespace SharpLink.Abstractions;
 
 /// <summary>
-/// Keeps the wire UTC deadline separate from the monotonic timestamp used for local timing.
+/// Represents a process-local RPC lifetime boundary using a monotonic timestamp.
 /// </summary>
 internal readonly struct RpcDeadline
 {
@@ -43,6 +43,21 @@ internal readonly struct RpcDeadline
             remaining <= TimeSpan.Zero
                 ? timestampNow
                 : SharpLinkTime.AddDuration(timestampNow, remaining, timestampFrequency));
+    }
+
+    internal static RpcDeadline Create(TimeSpan timeBudget, TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentOutOfRangeException.ThrowIfLessThan(timeBudget, TimeSpan.Zero);
+        var utcNow = timeProvider.GetUtcNow();
+        var maximum = DateTimeOffset.MaxValue - utcNow;
+        var utcDeadline = timeBudget >= maximum ? DateTimeOffset.MaxValue : utcNow.Add(timeBudget);
+        var timestampNow = timeProvider.GetTimestamp();
+        return new RpcDeadline(
+            utcDeadline,
+            timeBudget == TimeSpan.Zero
+                ? timestampNow
+                : SharpLinkTime.AddDuration(timestampNow, timeBudget, timeProvider.TimestampFrequency));
     }
 
     internal static RpcDeadline Create(DateTimeOffset utcDeadline, long timestamp)

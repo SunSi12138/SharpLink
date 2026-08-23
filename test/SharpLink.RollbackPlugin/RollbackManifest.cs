@@ -8,8 +8,8 @@ using SharpLink.Abstractions;
 
 [assembly: SharpLinkGeneratedAssemblyManifest(
     typeof(SharpLink.RollbackPlugin.RollbackManifest),
-    5,
-    2,
+    SharpLinkGeneratedManifestVersions.Api,
+    SharpLinkGeneratedManifestVersions.Protocol,
     "rollback-test")]
 
 namespace SharpLink.RollbackPlugin;

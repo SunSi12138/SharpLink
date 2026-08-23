@@ -31,7 +31,7 @@ public partial class RpcGenerator
         sb.AppendLine("using SharpLink.Abstractions;");
         sb.AppendLine("using SharpLink.Sdk;");
         sb.AppendLine();
-        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 5, 2, \"{EscapeString(ExecutingGeneratorVersion)}\")]");
+        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 4, 2, \"{EscapeString(ExecutingGeneratorVersion)}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
@@ -44,7 +44,7 @@ public partial class RpcGenerator
         sb.AppendLine($"    public {manifestTypeName}() {{ }}");
         sb.AppendLine("    public static void Register()");
         sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
-        sb.AppendLine("    public int ApiVersion => 5;");
+        sb.AppendLine("    public int ApiVersion => 4;");
         sb.AppendLine("    public int ProtocolVersion => 2;");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");

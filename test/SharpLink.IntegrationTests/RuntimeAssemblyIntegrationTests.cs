@@ -1512,7 +1512,7 @@ public sealed class RuntimeAssemblyIntegrationTests
             await Task.Delay(20);
         }
         Ensure(!weakContext.IsAlive,
-            $"API 5 dynamic stream '{exitMode}' must not retain its collectible ALC");
+            $"API 4 dynamic stream '{exitMode}' must not retain its collectible ALC");
     }
 
     [Test]
@@ -1528,7 +1528,7 @@ public sealed class RuntimeAssemblyIntegrationTests
             await Task.Delay(20);
         }
         Ensure(!weakContext.IsAlive,
-            "rejected API 5 registration must not retain its collectible ALC");
+            "rejected API 4 registration must not retain its collectible ALC");
     }
 
     [Test]
@@ -1605,7 +1605,7 @@ public sealed class RuntimeAssemblyIntegrationTests
                     "ServerStreamAsync",
                     3,
                     CancellationToken.None))).SequenceEqual([0, 1, 2]),
-                "normal API 5 dynamic stream completes");
+                "normal API 4 dynamic stream completes");
         }
         else if (string.Equals(exitMode, "service-exception", StringComparison.Ordinal))
         {
@@ -1645,7 +1645,7 @@ public sealed class RuntimeAssemblyIntegrationTests
                 cancelled = true;
             }
             Ensure(cancelled,
-                "API 5 dynamic stream cancellation before the first item reaches the caller");
+                "API 4 dynamic stream cancellation before the first item reaches the caller");
         }
         else
         {
@@ -1661,7 +1661,7 @@ public sealed class RuntimeAssemblyIntegrationTests
                     token)
                 .GetAsyncEnumerator();
             Ensure(await enumerator.MoveNextAsync(),
-                $"API 5 dynamic stream '{exitMode}' starts before exit");
+                $"API 4 dynamic stream '{exitMode}' starts before exit");
             if (string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal))
             {
                 cancellation.Cancel();
@@ -1675,7 +1675,7 @@ public sealed class RuntimeAssemblyIntegrationTests
                     cancelled = true;
                 }
                 Ensure(cancelled,
-                    "API 5 dynamic stream cancellation after the first item reaches the caller");
+                    "API 4 dynamic stream cancellation after the first item reaches the caller");
             }
             else
                 Ensure(string.Equals(exitMode, "consumer-break", StringComparison.Ordinal),
@@ -1691,7 +1691,7 @@ public sealed class RuntimeAssemblyIntegrationTests
             plugin.ServiceAssembly,
             TimeSpan.FromSeconds(2));
         Ensure(service.ReferencesReleased,
-            $"API 5 dynamic stream '{exitMode}' releases its service module before dependants");
+            $"API 4 dynamic stream '{exitMode}' releases its service module before dependants");
         var serverContract = await harness.Server.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
@@ -1699,8 +1699,8 @@ public sealed class RuntimeAssemblyIntegrationTests
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
         Ensure(serverContract.ReferencesReleased && clientContract.ReferencesReleased,
-            $"API 5 dynamic stream '{exitMode}' releases all module references");
-        EnsureClientAndServerCountersAreZero(harness, $"API 5 dynamic stream '{exitMode}'");
+            $"API 4 dynamic stream '{exitMode}' releases all module references");
+        EnsureClientAndServerCountersAreZero(harness, $"API 4 dynamic stream '{exitMode}'");
         return plugin.Unload();
     }
 
@@ -1711,16 +1711,16 @@ public sealed class RuntimeAssemblyIntegrationTests
         using var accepted = PluginBundle.Load("api4-registration-accepted", loadService: false);
         var rejected = PluginBundle.Load("api4-registration-rejected", loadService: false);
         Ensure(harness.Client.RegisterAssembly(accepted.ContractAssembly).Succeeded,
-            "first API 5 dynamic contract registers");
+            "first API 4 dynamic contract registers");
         var conflict = harness.Client.RegisterAssembly(rejected.ContractAssembly);
         Ensure(!conflict.Succeeded &&
                conflict.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
-            "conflicting API 5 dynamic contract is rejected before publication");
+            "conflicting API 4 dynamic contract is rejected before publication");
         var weakContext = rejected.Unload();
         Ensure((await harness.Client.UnregisterAssemblyAsync(
             accepted.ContractAssembly,
             TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "accepted API 5 contract releases after conflict verification");
+            "accepted API 4 contract releases after conflict verification");
         return weakContext;
     }
 

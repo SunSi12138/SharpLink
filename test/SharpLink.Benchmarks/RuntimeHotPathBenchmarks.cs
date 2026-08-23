@@ -23,7 +23,6 @@ public class RuntimeHotPathBenchmarks
     private readonly SharpLinkProtocolOptions _limits = new();
     private readonly SharpLinkCallContextSnapshot _callContext =
         new("benchmark", authentication: null);
-    private readonly DateTimeOffset _deadline = DateTimeOffset.UtcNow.AddSeconds(30);
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
     private byte[] _responsePayload = null!;
@@ -100,16 +99,6 @@ public class RuntimeHotPathBenchmarks
         _ = SharpLinkCallContext.Current;
     }
 
-    [Benchmark]
-    public void CreateDeadlinePushAndRestoreCallContext()
-    {
-        var callContext = new SharpLinkCallContextSnapshot(
-            "benchmark",
-            authentication: null,
-            _deadline);
-        using var scope = SharpLinkCallContext.Push(callContext);
-        _ = SharpLinkCallContext.Current;
-    }
 
     [Benchmark]
     public void PushAndRestoreCallContext()

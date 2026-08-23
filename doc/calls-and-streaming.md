@@ -1,14 +1,16 @@
 # 调用、流式与取消
 
-## 超时与 deadline
+## 超时、RpcDeadline 与 TimeBudget
 
-Client 默认请求超时为 30 秒。有效 deadline 取调用方 token、`SharpLinkCallOptions`、Client 默认超时和方法 `[Timeout]` 中最早者。可用 `UseRequestTimeout` 修改默认值，或 `DisableRequestTimeout` 关闭默认值；显式 deadline 和方法 timeout 仍生效。
+Client 默认请求超时为 30 秒，可用 `UseRequestTimeout` 修改默认值，或用 `DisableRequestTimeout` 关闭默认值。方法 `[Timeout]` 是方法级策略，会覆盖 Client 默认 fallback；例如 Client 默认 30 秒、方法 `[Timeout(120)]` 时，该方法的本地策略为 120 秒，而不是两者取最小值。无参数 `[Timeout]` 继续表示使用 Client 默认策略。
 
-超时在 wire 上使用绝对 deadline，但本地调度和心跳使用 monotonic clock。到期错误为 `DeadlineExceeded`，调用方显式取消为 `Cancelled`。`demo/Timeout` 和 `demo/Cancel` 展示两种终止路径。
+Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock 的 `RpcDeadline`。请求真正发出前再计算剩余 `TimeBudget` 并写入 wire；Server 收到后用自己的 monotonic clock 解析新的本地 `RpcDeadline`。因此 Client/Server 不依赖墙钟同步，wire 也不再传播绝对 UTC deadline。
+
+当服务处理一个已有上游 `TimeBudget` 的 RPC 并继续发起下游 RPC 时，上游剩余 lifetime 是真正的上限：先选择下游方法/Client 的本地 timeout policy，再用父调用的剩余 `TimeBudget` 做 cap。中间 hop 不会重启原始 timeout。到期错误为 `DeadlineExceeded`，调用方显式取消为 `Cancelled`。`demo/Timeout` 和 `demo/Cancel` 展示两种终止路径。
 
 ## Metadata
 
-`SharpLinkCallOptions.Metadata` 随请求发送，受 `MaxMetadataBytes` 限制。服务端可从 `SharpLinkCallContext.Current?.Metadata` 或 Interceptor context 读取。Metadata 适合低基数路由/诊断信息，不适合大对象、凭据日志或无限增长标签。
+Metadata 是 RPC envelope state，不是业务合同参数。Client interceptor 可通过 `SharpLinkClientInvocationContext.Metadata` 为当前逻辑调用提供 metadata；服务端从 `SharpLinkCallContext.Current?.Metadata` 或 Server interceptor context 读取。Metadata 受 `MaxMetadataBytes` 限制，适合低基数路由/诊断信息，不适合大对象、凭据日志或无限增长标签。
 
 ## Streaming
 

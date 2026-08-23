@@ -5,7 +5,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
     public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
 
     public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method, in TRequest request,
-        IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, SharpLinkCallOptions options,
+        IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
     {
         if (!module.TryAcquire(false, out var lease))
@@ -13,7 +13,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         var combined = Combine(cancellationToken, module.ForcedCancellation);
         try
         {
-            var call = inner.InvokeUnaryAsync(method, request, requestCodec, responseCodec, options, combined.Token);
+            var call = inner.InvokeUnaryAsync(method, request, requestCodec, responseCodec, metadata, combined.Token);
             if (call.IsCompletedSuccessfully)
             {
                 lease.Dispose();
@@ -26,7 +26,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
     }
 
     public ValueTask InvokeOneWayAsync<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
-        IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLinkCallOptions options,
+        IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default) where TStreams : struct, IRpcClientStreamWriter
     {
         if (!module.TryAcquire(method.HasClientStreams, out var lease))
@@ -34,7 +34,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         var combined = Combine(cancellationToken, module.ForcedCancellation);
         try
         {
-            var call = inner.InvokeOneWayAsync(method, request, requestCodec, streams, options, combined.Token);
+            var call = inner.InvokeOneWayAsync(method, request, requestCodec, streams, metadata, combined.Token);
             if (call.IsCompletedSuccessfully)
             {
                 lease.Dispose();
@@ -48,7 +48,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
 
     public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
-        in TStreams streams, SharpLinkCallOptions options, CancellationToken cancellationToken = default)
+        in TStreams streams, SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
         if (!module.TryAcquire(true, out var lease))
@@ -66,7 +66,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
             using (SharpLinkClientStreamModuleLeaseContext.Push(producerLifetime))
             {
                 call = inner.InvokeClientStreamingAsync(
-                    method, request, requestCodec, responseCodec, streams, options, combined.Token);
+                    method, request, requestCodec, responseCodec, streams, metadata, combined.Token);
             }
             if (call.IsCompletedSuccessfully)
             {
@@ -82,22 +82,22 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
 
     public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
-        SharpLinkCallOptions options, CancellationToken cancellationToken = default)
+        SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
     {
         var requestValue = request;
         return InvokeServerStreamingDeferred(
-            method, requestValue, requestCodec, responseCodec, options, cancellationToken);
+            method, requestValue, requestCodec, responseCodec, metadata, cancellationToken);
     }
 
     public IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
-        in TStreams streams, SharpLinkCallOptions options, CancellationToken cancellationToken = default)
+        in TStreams streams, SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
         var requestValue = request;
         var streamsValue = streams;
         return InvokeDuplexStreamingDeferred(
-            method, requestValue, requestCodec, responseCodec, streamsValue, options, cancellationToken);
+            method, requestValue, requestCodec, responseCodec, streamsValue, metadata, cancellationToken);
     }
 
     public Task SendClientStreamAsync<T>(long requestId, ushort streamId, IAsyncEnumerable<T> stream,
@@ -133,7 +133,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken callCancellation,
         [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
     {
@@ -143,7 +143,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         try
         {
             var stream = inner.InvokeServerStreamingAsync(
-                method, request, requestCodec, responseCodec, options, combined.Token);
+                method, request, requestCodec, responseCodec, metadata, combined.Token);
             await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
                 yield return item;
         }
@@ -156,7 +156,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken callCancellation,
         [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
         where TStreams : struct, IRpcClientStreamWriter
@@ -175,7 +175,7 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
             using (SharpLinkClientStreamModuleLeaseContext.Push(producerLifetime))
             {
                 var stream = inner.InvokeDuplexStreamingAsync(
-                    method, request, requestCodec, responseCodec, streams, options, combined.Token);
+                    method, request, requestCodec, responseCodec, streams, metadata, combined.Token);
                 await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
                     yield return item;
             }

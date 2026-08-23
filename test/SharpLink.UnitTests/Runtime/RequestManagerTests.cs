@@ -151,6 +151,32 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task ResponseAtExpiredTimestampShouldLoseBeforeDeadlineTimerCallbackRuns()
+    {
+        var timeProvider = new ManualTimeProvider();
+        using var manager = CreateTable(8, timeProvider: timeProvider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
+        var operation = manager.Rent(
+            new Int32Codec(),
+            PendingCallKind.Unary,
+            deadline,
+            CancellationToken.None,
+            out var requestId).AsValueTask().AsTask();
+
+        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
+        var payload = SInt32Payload;
+        Ensure(manager.Dispatch(requestId, ref payload),
+            "matching response should claim the pending slot");
+
+        var failure = await CaptureExceptionAsync(operation);
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "response processing must consult the monotonic boundary even before the timer callback runs");
+        Ensure(manager.Count == 0,
+            "deadline-gated response must release the pending slot exactly once");
+        timeProvider.Advance(TimeSpan.Zero);
+    }
+
+    [Test]
     public async Task FakeTimeCancellationAndDisposeShouldRemoveCallsAndTheOwnedTimerExactlyOnce()
     {
         var timeProvider = new ManualTimeProvider();

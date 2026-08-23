@@ -326,9 +326,10 @@ internal sealed class PendingRequestTable : IDisposable
             current.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
         {
             // A successful Response is only the server's acknowledgement; StreamComplete owns
-            // the terminal transition for server and duplex streams. The callback shares the
-            // per-call completion gate with terminal removal, so a matching acknowledgement is
-            // observed before cancellation, deadline, or disconnect can report the terminal result.
+            // the terminal transition for server and duplex streams. Deadline equality is checked
+            // under the same completion gate so a late acknowledgement cannot beat the monotonic
+            // boundary merely because the timer callback has not run yet.
+            PendingCall? expiredCall = null;
             lock (current.CompletionGate)
             {
                 if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) ||
@@ -338,15 +339,34 @@ internal sealed class PendingRequestTable : IDisposable
                     return false;
                 }
 
-                current.CompletionObserver?.OnResponseObserved();
-                return true;
+                if (current.Deadline.IsExpired(_timeProvider))
+                {
+                    var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+                    if (!ReferenceEquals(exchanged, current))
+                        return false;
+                    current.WaitUntilRegistered();
+                    expiredCall = current;
+                }
+                else
+                {
+                    current.CompletionObserver?.OnResponseObserved();
+                    return true;
+                }
             }
+
+            var emptyPayload = ReadOnlySequence<byte>.Empty;
+            CompleteTakenCall(
+                expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+            return true;
         }
 
         if (!TryTakeMatchingCall(id, out var call))
             return false;
 
-        CompleteTakenCall(call!, PendingCallCompletionReason.Response, exception: null, ref payload);
+        var reason = call!.Deadline.IsExpired(_timeProvider)
+            ? PendingCallCompletionReason.DeadlineExceeded
+            : PendingCallCompletionReason.Response;
+        CompleteTakenCall(call, reason, exception: null, ref payload);
         return true;
     }
 
@@ -360,6 +380,14 @@ internal sealed class PendingRequestTable : IDisposable
     {
         if (!TryTakeMatchingCall(id, out var call))
             return false;
+
+        if ((reason is PendingCallCompletionReason.RemoteError or
+             PendingCallCompletionReason.RemoteStreamComplete) &&
+            call!.Deadline.IsExpired(_timeProvider))
+        {
+            reason = PendingCallCompletionReason.DeadlineExceeded;
+            exception = null;
+        }
 
         var emptyPayload = ReadOnlySequence<byte>.Empty;
         CompleteTakenCall(call!, reason, exception, ref emptyPayload);

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Pipelines;
@@ -7,6 +8,59 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class SendPumpTests
 {
+    [Test]
+    public async Task TimedBatchShouldDeductLatencyFromRequestTimeBudgetAtFlush()
+    {
+        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromSeconds(5);
+        var provider = new TimerArmObservingTimeProvider(clock, maxLatency);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "time-budget-emission",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        var frame = new PooledByteBufferWriter();
+        var token = ProtocolV2FrameWriter.BeginFrame(
+            frame,
+            ProtocolV2FrameType.Request,
+            ProtocolV2FrameFlags.HasTimeBudget,
+            1);
+        frame.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        frame.Advance(sizeof(long));
+        ProtocolV2FrameWriter.EndFrame(frame, token);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), provider);
+
+        try
+        {
+            session.SendPacket(frame, deadline);
+            await provider.ExpectedTimerArmed.WaitAsync(TimeSpan.FromSeconds(2));
+            clock.Advance(maxLatency);
+
+            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            var bytes = read.Buffer.ToArray();
+            output.Reader.AdvanceTo(read.Buffer.End);
+            var budget = BinaryPrimitives.ReadInt64LittleEndian(
+                bytes.AsSpan(
+                    ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes,
+                    sizeof(long)));
+            Ensure(budget == TimeSpan.FromSeconds(5).Ticks,
+                "the emitted budget must deduct the full local batching interval");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
     [Test]
     public async Task HugeFlushLatencyShouldNotOverflowIntoImmediateFlush()
     {

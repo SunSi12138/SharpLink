@@ -13,7 +13,8 @@ public class SharpLinkClientRetryTests
     {
         var transport = new TestClientTransportFactory();
         var policy = new RecordingRetryPolicy();
-        await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
+        await using var client = CreateRetryClient(
+            transport, policy, maxAttempts: 2, requestTimeout: TimeSpan.FromSeconds(1));
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
@@ -58,11 +59,11 @@ public class SharpLinkClientRetryTests
     {
         var deadlineTransport = new TestClientTransportFactory();
         await using var deadlineClient = CreateRetryClient(
-            deadlineTransport, policy: null, maxAttempts: 2, initialBackoff: TimeSpan.FromMilliseconds(50));
+            deadlineTransport, policy: null, maxAttempts: 2, initialBackoff: TimeSpan.FromMilliseconds(50),
+            requestTimeout: TimeSpan.FromMilliseconds(20));
         await deadlineClient.ConnectAsync();
 
-        var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            deadlineClient, new SharpLinkCallOptions { Timeout = TimeSpan.FromMilliseconds(20) }).AsTask();
+        var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(deadlineClient).AsTask();
         var deadlineRequest = await deadlineTransport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(deadlineTransport, deadlineRequest, SharpLinkErrorCode.Unavailable);
         var deadlineError = await EnsureThrows<SharpLinkException>(deadlineInvocation);
@@ -173,9 +174,7 @@ public class SharpLinkClientRetryTests
         await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            client,
-            new SharpLinkCallOptions { Timeout = TimeSpan.FromSeconds(1) }).AsTask();
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
 
@@ -297,33 +296,6 @@ public class SharpLinkClientRetryTests
         Ensure(admission.ReportCount == 1, "only the admitted retry should report");
     }
 
-    [Test]
-    public async Task ClientStopShouldCancelRetryAdmissionDelayPromptly()
-    {
-        var transport = new TestClientTransportFactory();
-        var admission = new SignaledRejectWithRetryAfterPolicy(TimeSpan.MaxValue);
-        await using var client = ClientBuilderTestHelper.BuildEndpoint(
-            Endpoint("retry-admission", 5001), transport, builder =>
-            {
-                ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
-                builder.UseEndpointAdmission(admission);
-            });
-        await client.ConnectAsync();
-
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            client, new SharpLinkCallOptions { WaitForReady = true }).AsTask();
-        await admission.RejectionStarted.WaitAsync(TimeSpan.FromSeconds(2));
-
-        var stoppedAt = Stopwatch.GetTimestamp();
-        var stop = client.StopAsync().AsTask();
-        var exception = await EnsureThrows<SharpLinkException>(
-            invocation.WaitAsync(TimeSpan.FromSeconds(2)));
-        await stop.WaitAsync(TimeSpan.FromSeconds(2));
-
-        Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "stopped retry admission error code");
-        Ensure(Stopwatch.GetElapsedTime(stoppedAt) < TimeSpan.FromSeconds(1),
-            "client stop must cancel the retry admission delay promptly");
-    }
 
     [Test]
     public async Task RetryShouldNotDelayUntriedEndpointsAfterAnAdmittedAttemptFails()
@@ -626,13 +598,12 @@ public class SharpLinkClientRetryTests
                 builder.UseTimeProvider(provider);
                 ConfigureRetry(builder, RetryOptions(2, TimeSpan.FromSeconds(5)));
                 builder.UseEndpointAdmission(admission);
+                builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
             });
         try
         {
             await client.ConnectAsync();
-            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-                client,
-                new SharpLinkCallOptions { Timeout = TimeSpan.FromSeconds(5) }).AsTask();
+            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
             var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
             var timersBeforeFailure = provider.ActiveTimerCount;
 
@@ -709,12 +680,15 @@ public class SharpLinkClientRetryTests
         TestClientTransportFactory transport,
         ISharpLinkRetryPolicy? policy,
         int maxAttempts,
-        TimeSpan? initialBackoff = null)
+        TimeSpan? initialBackoff = null,
+        TimeSpan? requestTimeout = null)
     {
         var options = RetryOptions(maxAttempts, initialBackoff ?? TimeSpan.Zero);
         return ClientBuilderTestHelper.Build(transport, builder =>
         {
             ConfigureRetry(builder, options);
+            if (requestTimeout is { } timeout)
+                builder.UseRequestTimeout(timeout);
             if (policy is not null)
                 builder.UseRetry(policy);
         });

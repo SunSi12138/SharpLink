@@ -13,6 +13,7 @@ internal sealed class ServerConnectionState
 {
     private readonly CancellationTokenSource _connectionCancellation;
     private readonly CancellationToken _connectionToken;
+    private readonly TimeProvider _timeProvider;
     private readonly TaskCompletionSource _sessionCompleted =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _callsDrained =
@@ -47,10 +48,11 @@ internal sealed class ServerConnectionState
         Session = session ?? throw new ArgumentNullException(nameof(session));
         GeneratedBridge = generatedBridge ?? throw new ArgumentNullException(nameof(generatedBridge));
         CallCancellations = callCancellations ?? throw new ArgumentNullException(nameof(callCancellations));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         DeadlineScheduler = new ServerCallDeadlineScheduler(
             CallCancellations,
             maxConcurrentCalls,
-            timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
+            _timeProvider);
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;
 #if DEBUG
@@ -69,10 +71,10 @@ internal sealed class ServerConnectionState
         => Volatile.Read(ref _defaultCallContext);
 
     internal SharpLinkCallContextSnapshot GetCallContextSnapshot(
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         SharpLinkMetadata? metadata)
     {
-        if (deadline is null && metadata is null &&
+        if (!deadline.HasValue && metadata is null &&
             Volatile.Read(ref _defaultCallContext) is { } defaultCallContext)
         {
             return defaultCallContext;
@@ -82,6 +84,7 @@ internal sealed class ServerConnectionState
             Session.Id,
             Volatile.Read(ref _authenticationContext),
             deadline,
+            _timeProvider,
             metadata);
     }
 

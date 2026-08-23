@@ -16,7 +16,8 @@ internal sealed partial class SharpLinkServer
         var session = connection.Session;
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
-        var request = ReadRequestEnvelope(session, payload, flags);
+        var request = ReadRequestEnvelope(
+            session, payload, flags, admittedCallState?.Deadline ?? default);
         if (IsDeadlineExceeded(request.RpcDeadline))
         {
             if (admittedCallState is not null)
@@ -142,7 +143,8 @@ internal sealed partial class SharpLinkServer
                     payload,
                     admittedCallState?.InvocationToken ?? serverLoopToken,
                     out decodedRequestOwner);
-                request = ReadRequestEnvelope(session, payload, flags);
+                request = ReadRequestEnvelope(
+                    session, payload, flags, request.RpcDeadline);
             }
         }
         catch (SharpLinkException exception) when (
@@ -196,7 +198,7 @@ internal sealed partial class SharpLinkServer
 
         var callContext = CreateCallContext(
             connection, serviceInfo.Stub, request.MethodHash, requestId,
-            request.Deadline, request.Metadata, invokeToken);
+            request.RpcDeadline, request.Metadata, invokeToken);
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(callContext);
@@ -428,8 +430,7 @@ internal sealed partial class SharpLinkServer
             descriptor.Kind,
             connection.Session.Id,
             connection.AuthenticationContext,
-            request.Metadata,
-            request.Deadline);
+            request.Metadata);
 
     private ValueTask RejectAdmission(
         RpcSession session,

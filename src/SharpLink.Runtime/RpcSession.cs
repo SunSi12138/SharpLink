@@ -175,7 +175,7 @@ internal sealed partial class RpcSession
         }
     }
 
-    internal void SendPacket(IRpcByteBufferWriter packet)
+    internal void SendPacket(IRpcByteBufferWriter packet, RpcDeadline deadline = default)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -196,7 +196,7 @@ internal sealed partial class RpcSession
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
         var result = GetOrCreatePumpOrReturn(packet)
-            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null));
+            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null, deadline));
         if (result == SendEnqueueResult.Full)
         {
             throw SharpLinkResourceExhaustion.Create(
@@ -212,6 +212,19 @@ internal sealed partial class RpcSession
         CancellationToken ct = default)
         => await SendPacketAsync(packet, waitForCapacity: true, forceFlush: true, ct).ConfigureAwait(false);
 
+    internal ValueTask SendPacketAndObserveEmissionAsync(
+        IRpcByteBufferWriter packet,
+        RpcDeadline deadline,
+        CancellationToken ct = default)
+        => SendPacketAsync(
+            packet,
+            waitForCapacity: false,
+            forceFlush: false,
+            ct,
+            allowEmpty: false,
+            deadline,
+            waitForEmission: true);
+
     internal async ValueTask FlushSendQueueAsync(CancellationToken ct = default)
     {
         var marker = RuntimeContext.Buffers.Rent();
@@ -224,7 +237,9 @@ internal sealed partial class RpcSession
         bool waitForCapacity,
         bool forceFlush,
         CancellationToken ct = default,
-        bool allowEmpty = false)
+        bool allowEmpty = false,
+        RpcDeadline deadline = default,
+        bool waitForEmission = false)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -247,10 +262,10 @@ internal sealed partial class RpcSession
         }
         ValidateOutboundPacketOrReturn(packet, allowEmpty);
 
-        var completion = forceFlush
+        var completion = forceFlush || waitForEmission
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
-        var frame = CreateFrame(packet, forceFlush, completion);
+        var frame = CreateFrame(packet, forceFlush, completion, deadline);
         var pump = GetOrCreatePumpOrReturn(packet);
         var result = waitForCapacity
             ? await pump.EnqueueAsync(frame, ct).ConfigureAwait(false)
@@ -335,12 +350,29 @@ internal sealed partial class RpcSession
     private static OwnedFrame CreateFrame(
         IRpcByteBufferWriter packet,
         bool forceFlush,
-        TaskCompletionSource<bool>? flushCompletion)
-        => new(
+        TaskCompletionSource<bool>? flushCompletion,
+        RpcDeadline deadline = default)
+    {
+        if (deadline.HasValue)
+        {
+            var span = packet.WrittenSpan;
+            var budgetOffset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
+            if (span.Length >= budgetOffset + sizeof(long) &&
+                (ProtocolV2FrameType)span[5] == ProtocolV2FrameType.Request &&
+                (((ProtocolV2FrameFlags)span[6]) & ProtocolV2FrameFlags.HasTimeBudget) != 0)
+            {
+                BinaryPrimitives.WriteInt64LittleEndian(
+                    span.Slice(budgetOffset, sizeof(long)),
+                    deadline.Timestamp);
+            }
+        }
+
+        return new OwnedFrame(
             packet,
             forceFlush,
             flushCompletion,
             IsProtocolProgressFrame(packet.WrittenSpan));
+    }
 
     private static void ObserveAbandonedFlushCompletion(Task flushCompletion)
         => _ = ObserveAbandonedFlushCompletionAsync(flushCompletion);

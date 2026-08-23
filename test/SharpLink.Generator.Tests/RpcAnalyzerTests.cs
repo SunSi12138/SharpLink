@@ -51,16 +51,16 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             text.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         var allGenerated = string.Join("\n", generated);
 
-        Ensure(manifest.Contains("public int ApiVersion => 5;", StringComparison.Ordinal) &&
+        Ensure(manifest.Contains("public int ApiVersion => 4;", StringComparison.Ordinal) &&
                manifest.Contains("public int ProtocolVersion => 2;", StringComparison.Ordinal),
-            "the Generator must own literal API 5 / Protocol 2 stamps");
+            "the Generator must own literal API 4 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
-               manifest.Contains(", 5, 2,", StringComparison.Ordinal),
+               manifest.Contains(", 4, 2,", StringComparison.Ordinal),
             "the manifest locator must describe compatibility before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
         Ensure(stub.Contains("IRpcGeneratedServerBridge bridge", StringComparison.Ordinal),
-            "API 5 stubs must depend on the whole-stream server bridge");
+            "API 4 stubs must depend on the whole-stream server bridge");
         Ensure(stub.Contains("IBufferWriter<byte> output", StringComparison.Ordinal),
             "response payload output must be narrowed to IBufferWriter<byte>");
         Ensure(stub.Contains("internal __Stub_", StringComparison.Ordinal) &&
@@ -76,12 +76,12 @@ public interface IAbi4Service : SharpLink.Sdk.IService
                  })
         {
             Ensure(!stub.Contains(forbidden, StringComparison.Ordinal),
-                $"API 5 Stub leaked forbidden Runtime ABI token '{forbidden}'");
+                $"API 4 Stub leaked forbidden Runtime ABI token '{forbidden}'");
         }
         Ensure(!proxy.Contains("using SharpLink.Runtime;", StringComparison.Ordinal),
-            "API 5 Proxy must not acquire a Runtime AssemblyRef through an unused import");
+            "API 4 Proxy must not acquire a Runtime AssemblyRef through an unused import");
         Ensure(!allGenerated.Contains("SharpLink.Runtime", StringComparison.Ordinal),
-            "no generated API 5 source may reference SharpLink.Runtime");
+            "no generated API 4 source may reference SharpLink.Runtime");
         return Task.CompletedTask;
     }
 
@@ -680,20 +680,6 @@ public interface IHelloService : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
-    [Test]
-    public Task MultipleCallOptionsShouldReportSharplink007()
-    {
-        var source = BuildSource("""
-public interface IHelloService : SharpLink.Sdk.IService
-{
-    ValueTask<int> Echo(int value, SharpLink.Sdk.SharpLinkCallOptions first, SharpLink.Sdk.SharpLinkCallOptions second);
-}
-""");
-        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
-
-        EnsureHasRule(source, "SHARPLINK007");
-        return Task.CompletedTask;
-    }
 
     [Test]
     public Task MisplacedControlParameterShouldReportSharplink008()
@@ -701,7 +687,7 @@ public interface IHelloService : SharpLink.Sdk.IService
         var source = BuildSource("""
 public interface IHelloService : SharpLink.Sdk.IService
 {
-    ValueTask<int> Echo(SharpLink.Sdk.SharpLinkCallOptions options, int value, CancellationToken cancellationToken);
+    ValueTask<int> Echo(CancellationToken cancellationToken, int value);
 }
 """);
         source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
@@ -983,7 +969,7 @@ internal sealed class InternalService : IInternalService
         Ensure(alphaCall >= 0 && zetaCall > alphaCall,
             "bootstrap calls must use public fully qualified entry points in assembly-identity order");
         Ensure(!first.Contains("LegacyManifest", StringComparison.Ordinal),
-            "legacy API 3 locators must not be bootstrapped into an API 5 process");
+            "legacy API 3 locators must not be bootstrapped into an API 4 process");
         Ensure(first.Contains("ModuleInitializer", StringComparison.Ordinal),
             "the consumer bootstrap must execute before application entry and server Build");
         Ensure(!first.Contains("OrdinaryDependency", StringComparison.Ordinal) &&
@@ -1498,7 +1484,7 @@ namespace Nested
 [SharpLink.Sdk.RpcContract]
 public interface IKeywordContract : SharpLink.Sdk.IService
 {
-    ValueTask<int> @class(int @event, SharpLink.Sdk.SharpLinkCallOptions @params, CancellationToken @default);
+    ValueTask<int> @class(int @event, CancellationToken @default);
 }
 """);
 
@@ -3136,8 +3122,6 @@ namespace SharpLink.Sdk
         public SharpLinkServiceLifetime Lifetime { get; set; } = SharpLinkServiceLifetime.Singleton;
     }
 
-    public readonly record struct SharpLinkCallOptions;
-
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
     public sealed class RpcSerializableAttribute : Attribute;
 
@@ -3431,7 +3415,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 5, 2, "2.0.0-test")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test")]
 
 namespace SharpLink.Generated
 {
@@ -3473,7 +3457,7 @@ namespace SharpLink.Generated
             """
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.MalformedManifest), 5, 2, "2.0.0-test")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.MalformedManifest), 4, 2, "2.0.0-test")]
 
 namespace SharpLink.Generated
 {

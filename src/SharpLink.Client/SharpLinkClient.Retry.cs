@@ -150,13 +150,6 @@ internal sealed partial class SharpLinkClient
         AttemptOutcomeState outcome,
         CancellationToken cancellationToken)
     {
-        if (control.WaitForReady)
-        {
-            return InvokeUnaryRetryWaitForReadyAsync(
-                contractId, methodId, hasResponsePayload, request, requestCodec, responseCodec,
-                method, control, selection, outcome, cancellationToken);
-        }
-
         try
         {
             var connection = GetReadyConnection(method, selection, outcome);
@@ -186,109 +179,6 @@ internal sealed partial class SharpLinkClient
         {
             outcome.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);
-        }
-    }
-
-    private async ValueTask<TResponse> InvokeUnaryRetryWaitForReadyAsync<TRequest, TResponse>(
-        long contractId,
-        long methodId,
-        bool hasResponsePayload,
-        TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        RpcMethodDescriptor method,
-        ResolvedCallControl control,
-        EndpointRetrySelectionState selection,
-        AttemptOutcomeState outcome,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var connection = await GetReadyConnectionForRetryAsync(
-                method, selection, outcome, control.Deadline, cancellationToken).ConfigureAwait(false);
-            outcome.SetConnection(connection);
-            var lease = await connection.PendingCalls.RentAsync(
-                responseCodec,
-                PendingCallKind.Unary,
-                control.Deadline,
-                waitForSlot: true,
-                cancellationToken,
-                outcome,
-                hasResponsePayload: hasResponsePayload,
-                responseNullable: method.ResponseNullable).ConfigureAwait(false);
-            return await StartUnaryCall(
-                connection,
-                contractId,
-                methodId,
-                lease.Id,
-                hasResponsePayload,
-                request,
-                requestCodec,
-                lease.Operation,
-                control,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            if (!outcome.HasCompletion)
-                outcome.CompleteLocalFailure(exception);
-            throw;
-        }
-    }
-
-    private async ValueTask<ClientConnection> GetReadyConnectionForRetryAsync(
-        RpcMethodDescriptor method,
-        EndpointRetrySelectionState selection,
-        AttemptOutcomeState outcome,
-        RpcDeadline deadline,
-        CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            outcome.BeginAdmissionSelection();
-            try
-            {
-                return GetReadyConnection(method, selection, outcome);
-            }
-            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.Unavailable)
-            {
-                if (Volatile.Read(ref _stopStarted) != 0 ||
-                    State == SharpLinkConnectionState.Stopped ||
-                    _shutdownCts.IsCancellationRequested)
-                    throw CreateConnectionClosedException("Client has stopped.");
-
-                if (outcome.ShouldHonorAdmissionRetryAfter)
-                {
-                    if (outcome.RetryAfter is not { } retryAfter)
-                        throw;
-                    var delay = retryAfter > TimeSpan.Zero
-                        ? retryAfter
-                        : TimeSpan.FromMilliseconds(1);
-                    if (WouldReachDeadline(deadline, delay))
-                        throw CreateDeadlineExceededException();
-                    await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                if (outcome.HasAdmissionRejection && !outcome.HasAdmissionGrant)
-                    throw;
-
-                var signal = Volatile.Read(ref _readySignal).Task;
-                if (!deadline.HasValue)
-                {
-                    await signal.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                if (!await SharpLinkTimer.WaitAsync(
-                        signal,
-                        deadline,
-                        _runtimeContext.TimeProvider,
-                        cancellationToken).ConfigureAwait(false))
-                {
-                    throw CreateDeadlineExceededException();
-                }
-            }
         }
     }
 

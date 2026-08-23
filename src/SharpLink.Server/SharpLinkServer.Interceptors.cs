@@ -496,7 +496,8 @@ internal sealed partial class SharpLinkServer
                 methodId,
                 requestId,
                 callContext.Authentication,
-                callContext.Deadline,
+                callContext.LocalRpcDeadline,
+                callContext.DeadlineTimeProvider ?? _runtimeContext.TimeProvider,
                 callContext.Metadata,
                 cancellationToken);
         return MapServiceException(exception, invocationContext);

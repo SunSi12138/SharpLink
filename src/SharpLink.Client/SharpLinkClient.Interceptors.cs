@@ -8,10 +8,10 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
         => new UnaryInterceptorState<TRequest, TResponse>(
-            this, method, request, requestCodec, responseCodec, interceptors, options, cancellationToken).InvokeTypedAsync();
+            this, method, request, requestCodec, responseCodec, interceptors, metadata, cancellationToken).InvokeTypedAsync();
 
     private ValueTask InvokeOneWayInterceptedAsync<TRequest, TStreams>(
         RpcMethodDescriptor method,
@@ -19,11 +19,11 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
         => new OneWayInterceptorState<TRequest, TStreams>(
-            this, method, request, requestCodec, streams, interceptors, options, cancellationToken).InvokeVoidAsync();
+            this, method, request, requestCodec, streams, interceptors, metadata, cancellationToken).InvokeVoidAsync();
 
     private ValueTask<TResponse> InvokeClientStreamingInterceptedAsync<TRequest, TResponse, TStreams>(
         RpcMethodDescriptor method,
@@ -32,11 +32,11 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
         => new ClientStreamingInterceptorState<TRequest, TResponse, TStreams>(
-            this, method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken).InvokeTypedAsync();
+            this, method, request, requestCodec, responseCodec, streams, interceptors, metadata, cancellationToken).InvokeTypedAsync();
 
     private IAsyncEnumerable<TResponse> InvokeServerStreamingIntercepted<TRequest, TResponse>(
         RpcMethodDescriptor method,
@@ -44,12 +44,13 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
     {
-        var invocation = new ServerStreamingInterceptorState<TRequest, TResponse>(
-            this, method, request, requestCodec, responseCodec, interceptors, options, cancellationToken).InvokeAsync();
-        return new InterceptedAsyncEnumerable<TResponse>(invocation, method.ResponseNullable);
+        var state = new ServerStreamingInterceptorState<TRequest, TResponse>(
+            this, method, request, requestCodec, responseCodec, interceptors, metadata, cancellationToken);
+        return new InterceptedAsyncEnumerable<TResponse>(
+            state.InvokeAsync(), method.ResponseNullable, state.Deadline, _runtimeContext.TimeProvider);
     }
 
     private IAsyncEnumerable<TResponse> InvokeDuplexStreamingIntercepted<TRequest, TResponse, TStreams>(
@@ -59,13 +60,14 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var invocation = new DuplexStreamingInterceptorState<TRequest, TResponse, TStreams>(
-            this, method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken).InvokeAsync();
-        return new InterceptedAsyncEnumerable<TResponse>(invocation, method.ResponseNullable);
+        var state = new DuplexStreamingInterceptorState<TRequest, TResponse, TStreams>(
+            this, method, request, requestCodec, responseCodec, streams, interceptors, metadata, cancellationToken);
+        return new InterceptedAsyncEnumerable<TResponse>(
+            state.InvokeAsync(), method.ResponseNullable, state.Deadline, _runtimeContext.TimeProvider);
     }
 
     private abstract class ClientInterceptorState
@@ -73,6 +75,7 @@ internal sealed partial class SharpLinkClient
         private readonly SharpLinkClient _client;
         private readonly ISharpLinkClientInterceptor[] _interceptors;
         private readonly SharpLinkClientInvocationContext _context;
+        private readonly ResolvedCallControl _control;
         private long _started;
 
         protected ClientInterceptorState(
@@ -80,16 +83,23 @@ internal sealed partial class SharpLinkClient
             RpcMethodDescriptor method,
             object? request,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkCallOptions options,
+            SharpLinkMetadata? metadata,
             CancellationToken cancellationToken)
         {
             _client = client;
             _interceptors = interceptors;
-            _context = new SharpLinkClientInvocationContext(method, request, options, cancellationToken);
+            _control = client.ResolveCallControl(
+                metadata,
+                method.Kind == RpcMethodKind.Unary,
+                method.HasMethodTimeout,
+                method.MethodTimeout);
+            _context = new SharpLinkClientInvocationContext(
+                method, request, _control.Metadata, cancellationToken);
         }
 
         protected SharpLinkClient Client => _client;
         protected SharpLinkClientInvocationContext Context => _context;
+        internal RpcDeadline Deadline => _control.Deadline;
 
         public ValueTask<SharpLinkClientInvocationResult> InvokeAsync()
             => RunChainAsync();
@@ -100,6 +110,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
                 return result;
@@ -121,6 +132,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
                 return result.GetValue<TResult>();
@@ -148,6 +160,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                ThrowIfFrozenDeadlineExpired();
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
             }
@@ -377,6 +390,17 @@ internal sealed partial class SharpLinkClient
             SharpLinkClientInvocationContext context)
             => InvokeTerminalAsync(context);
 
+        protected ResolvedCallControl GetTerminalControl(SharpLinkClientInvocationContext context)
+            => new(
+                _control.Deadline,
+                context.Metadata is { Count: > 0 } ? context.Metadata : null);
+
+        private void ThrowIfFrozenDeadlineExpired()
+        {
+            if (_control.Deadline.IsExpired(_client._runtimeContext.TimeProvider))
+                throw CreateDeadlineExceededException();
+        }
+
         protected void MarkTerminalSucceeded(SharpLinkClientInvocationContext context)
             => context.Status = SharpLinkInvocationStatus.Succeeded;
 
@@ -424,9 +448,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkCallOptions options,
+            SharpLinkMetadata? metadata,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, options, cancellationToken)
+            : base(client, method, request, interceptors, metadata, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -449,8 +473,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                var control = Client.ResolveCallControl(
-                    context.Options, true, _method.HasMethodTimeout, _method.MethodTimeout);
+                var control = GetTerminalControl(context);
                 var response = await Client.InvokeUnaryWithOptionalRetryAsync(
                     _method, _request, _requestCodec, _responseCodec, control, context.CancellationToken).ConfigureAwait(false);
                 MarkTerminalSucceeded(context);
@@ -483,9 +506,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             TStreams streams,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkCallOptions options,
+            SharpLinkMetadata? metadata,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, options, cancellationToken)
+            : base(client, method, request, interceptors, metadata, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -507,8 +530,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                var control = Client.ResolveCallControl(
-                    context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
+                var control = GetTerminalControl(context);
                 await Client.InvokeOneWayCoreAsync(
                     _method,
                     _request, _requestCodec, _streams, control, context.CancellationToken).ConfigureAwait(false);
@@ -544,9 +566,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkCallOptions options,
+            SharpLinkMetadata? metadata,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, options, cancellationToken)
+            : base(client, method, request, interceptors, metadata, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -570,8 +592,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                var control = Client.ResolveCallControl(
-                    context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
+                var control = GetTerminalControl(context);
                 var response = await Client.InvokeClientStreamingCoreAsync(
                     _method,
                     _request, _requestCodec, _responseCodec, _streams, control,
@@ -605,9 +626,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkCallOptions options,
+            SharpLinkMetadata? metadata,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, options, cancellationToken)
+            : base(client, method, request, interceptors, metadata, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -621,7 +642,8 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var stream = Client.InvokeServerStreamingCore(
-                    _method, _request, _requestCodec, _responseCodec, context.Options, context.CancellationToken);
+                    _method, _request, _requestCodec, _responseCodec,
+                    GetTerminalControl(context), context.CancellationToken);
                 MarkTerminalSucceeded(context);
                 return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
             }
@@ -660,9 +682,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkCallOptions options,
+            SharpLinkMetadata? metadata,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, options, cancellationToken)
+            : base(client, method, request, interceptors, metadata, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -678,7 +700,7 @@ internal sealed partial class SharpLinkClient
             {
                 var stream = Client.InvokeDuplexStreamingCore(
                     _method, _request, _requestCodec, _responseCodec, _streams,
-                    context.Options, context.CancellationToken);
+                    GetTerminalControl(context), context.CancellationToken);
                 MarkTerminalSucceeded(context);
                 return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
             }
@@ -702,7 +724,9 @@ internal sealed partial class SharpLinkClient
 
     private sealed class InterceptedAsyncEnumerable<T>(
         ValueTask<SharpLinkClientInvocationResult> invocation,
-        bool responseNullable) : IAsyncEnumerable<T>
+        bool responseNullable,
+        RpcDeadline deadline,
+        TimeProvider timeProvider) : IAsyncEnumerable<T>
     {
         private int _enumerated;
 
@@ -712,13 +736,27 @@ internal sealed partial class SharpLinkClient
             if (Interlocked.Exchange(ref _enumerated, 1) != 0)
                 throw new InvalidOperationException("An intercepted RPC stream can only be enumerated once.");
 
+            ThrowIfDeadlineExpired();
             var stream = (await invocation.ConfigureAwait(false)).GetValue<IAsyncEnumerable<T>>();
-            await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
+            ThrowIfDeadlineExpired();
+            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+            while (true)
             {
+                ThrowIfDeadlineExpired();
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    yield break;
+                ThrowIfDeadlineExpired();
+                var item = enumerator.Current;
                 if (!responseNullable && default(T) is null && item is null)
                     throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
                 yield return item;
             }
+        }
+
+        private void ThrowIfDeadlineExpired()
+        {
+            if (deadline.IsExpired(timeProvider))
+                throw CreateDeadlineExceededException();
         }
     }
 }

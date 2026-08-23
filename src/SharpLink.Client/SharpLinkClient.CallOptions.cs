@@ -7,105 +7,42 @@ internal sealed partial class SharpLinkClient
     private static readonly TimeSpan MaximumRetryOrAdmissionDelay = TimeSpan.FromMilliseconds(int.MaxValue);
 
     private ResolvedCallControl ResolveCallControl(
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         bool includeClientDefault,
         bool hasMethodTimeout,
         TimeSpan? methodTimeout)
     {
-        if (options.Timeout is { } optionTimeout)
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(optionTimeout, TimeSpan.Zero);
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
-        var timeProvider = _runtimeContext.TimeProvider;
-        var utcNow = timeProvider.GetUtcNow();
-        var timestampNow = timeProvider.GetTimestamp();
-        DateTimeOffset? utcDeadline = null;
-        AddDeadlineCandidate(ref utcDeadline, options.Deadline);
-        if (options.Timeout is { } timeout)
-            AddDeadlineCandidate(ref utcDeadline, AddTimeout(utcNow, timeout));
-        if (methodTimeout is { } explicitMethodTimeout)
-            AddDeadlineCandidate(ref utcDeadline, AddTimeout(utcNow, explicitMethodTimeout));
-        if ((includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)
-            AddDeadlineCandidate(ref utcDeadline, AddTimeout(utcNow, _requestTimeoutValue));
 
-        var deadline = utcDeadline is { } value
-            ? RpcDeadline.Create(
-                value,
-                utcNow,
-                timestampNow,
-                timeProvider.TimestampFrequency)
+        // Method policy overrides the client-wide fallback. These are policy-selection layers,
+        // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
+        // the client-wide value even on call shapes that do not otherwise use the client default.
+        var selectedTimeout = methodTimeout;
+        if (selectedTimeout is null && (includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)
+            selectedTimeout = _requestTimeoutValue;
+
+        var ambientCall = SharpLinkCallContext.Current;
+        if (ambientCall is not null &&
+            ambientCall.LocalRpcDeadline.HasValue &&
+            ambientCall.DeadlineTimeProvider is { } inheritedTimeProvider)
+        {
+            var inheritedRemaining = ambientCall.LocalRpcDeadline.GetRemaining(inheritedTimeProvider);
+            if (inheritedRemaining <= TimeSpan.Zero)
+                throw CreateDeadlineExceededException();
+            if (selectedTimeout is null || inheritedRemaining < selectedTimeout.Value)
+                selectedTimeout = inheritedRemaining;
+        }
+
+        var timeProvider = _runtimeContext.TimeProvider;
+        var deadline = selectedTimeout is { } timeout
+            ? RpcDeadline.Create(timeout, timeProvider)
             : default;
-        if (deadline.IsExpired(timestampNow))
+        if (deadline.IsExpired(timeProvider))
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
             deadline,
-            options.Metadata is { Count: > 0 } ? options.Metadata : null,
-            options.WaitForReady);
-    }
-
-    private async ValueTask<ClientConnection> GetReadyConnectionAsync(
-        bool waitForReady,
-        RpcDeadline deadline,
-        CancellationToken cancellationToken,
-        RpcMethodDescriptor? method = null,
-        AttemptOutcomeState? attemptOutcome = null)
-    {
-        while (true)
-        {
-            attemptOutcome?.BeginAdmissionSelection();
-            try
-            {
-                if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)
-                    return method is { } descriptor
-                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
-                        : GetReadyConnection();
-
-                if (!waitForReady)
-                    return method is { } descriptor
-                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
-                        : GetReadyConnection();
-            }
-            catch (SharpLinkException exception) when (
-                waitForReady && exception.Code == SharpLinkErrorCode.Unavailable)
-            {
-                if (attemptOutcome?.ShouldHonorAdmissionRetryAfter == true)
-                {
-                    if (attemptOutcome.RetryAfter is not { } retryAfter)
-                        throw;
-                    var delay = retryAfter > TimeSpan.Zero ? retryAfter : TimeSpan.FromMilliseconds(1);
-                    if (WouldReachDeadline(deadline, delay))
-                        throw CreateDeadlineExceededException();
-                    await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                // A grant after the rejection supersedes that earlier delay, but a stale grant must
-                // not suppress a retry-after returned by a later rejected endpoint.
-                if (attemptOutcome?.HasAdmissionRejection == true && !attemptOutcome.HasAdmissionGrant)
-                    throw;
-            }
-
-            if (Volatile.Read(ref _stopStarted) != 0 ||
-                State == SharpLinkConnectionState.Stopped ||
-                _shutdownCts.IsCancellationRequested)
-                throw CreateConnectionClosedException("Client has stopped.");
-
-            var signal = Volatile.Read(ref _readySignal).Task;
-            if (!deadline.HasValue)
-            {
-                await signal.WaitAsync(cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            if (!await SharpLinkTimer.WaitAsync(
-                    signal,
-                    deadline,
-                    _runtimeContext.TimeProvider,
-                    cancellationToken).ConfigureAwait(false))
-            {
-                throw CreateDeadlineExceededException();
-            }
-        }
+            metadata is { Count: > 0 } ? metadata : null);
     }
 
     private async ValueTask DelayForRetryOrAdmissionAsync(TimeSpan delay, CancellationToken cancellationToken)
@@ -137,16 +74,11 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private static void AddDeadlineCandidate(
-        ref DateTimeOffset? deadline,
-        DateTimeOffset? candidate)
-    {
-        if (candidate is { } value && (deadline is null || value < deadline.Value))
-            deadline = value;
-    }
 
     private bool WouldReachDeadline(RpcDeadline deadline, TimeSpan delay)
         => deadline.WouldExpireBeforeOrAt(delay, _runtimeContext.TimeProvider);
+
+
 
     private static DateTimeOffset AddTimeout(DateTimeOffset now, TimeSpan timeout)
     {
@@ -159,6 +91,5 @@ internal sealed partial class SharpLinkClient
 
     private readonly record struct ResolvedCallControl(
         RpcDeadline Deadline,
-        SharpLinkMetadata? Metadata,
-        bool WaitForReady);
+        SharpLinkMetadata? Metadata);
 }

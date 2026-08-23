@@ -29,7 +29,7 @@ or a stream registry.
 | Client/server interceptors and authenticators | Apply application policy around calls or handshakes. | These instances are caller-owned and are only retained/invoked; SharpLink does not dispose them. The framework owns the invocation and connection lifecycle represented by their documented context values. |
 | Endpoint selector, retry/admission policy | Configure endpoint choice and policy. | These instances are caller-owned and are only retained/invoked; SharpLink does not dispose them or transfer transport/Session ownership to them. |
 | Logger factory and `TimeProvider` | Supply diagnostics and time semantics. | Caller-supplied instances are retained/invoked but remain caller-owned and are not disposed by SharpLink. |
-| `SharpLinkCallOptions`, endpoints, Client/Server builders | Configure and create application clients/servers. | Builders copy or freeze configuration during materialization. Only the resources identified above enter the framework ownership transaction; other supplied components remain caller-owned unless their public contract explicitly states otherwise. |
+| endpoints, Client/Server builders | Configure and create application clients/servers. | Builders copy or freeze configuration during materialization. Only the resources identified above enter the framework ownership transaction; other supplied components remain caller-owned unless their public contract explicitly states otherwise. |
 | `IRpcGeneratedServerBridge` | Source-generated stub ABI only. | Runtime owns stream dispatch, flow-control credit, serialization buffers, send-pump and terminal arbitration. Hand-written business code should not implement it. |
 
 ## Migration
