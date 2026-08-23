@@ -226,21 +226,6 @@ internal sealed partial class SharpLinkServer
             throw;
         }
 
-        if (IsDeadlineExceeded(request.RpcDeadline))
-        {
-            session.ReturnDecodedPayload(decodedRequestOwner);
-            decodedRequestOwner = null;
-            var deadlineException = new SharpLinkException(
-                SharpLinkErrorCode.DeadlineExceeded,
-                "Request deadline exceeded during admission/decompression.");
-            CompleteFailedRequestStreams(session, requestId, deadlineException);
-            admittedCallState?.TryCancel(ServerCallCancellationReason.DeadlineExceeded);
-            var responseSend = session.SendRpcErrorWithBackpressureAsync(
-                requestId, deadlineException, connection.ConnectionToken);
-            return ReleaseDispatchResourcesAfterResponseAsync(
-                responseSend, admittedCallState, requestId, requestCancellationMap, connection);
-        }
-
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
             serviceInfo.Stub.SupportsCancellation(request.MethodHash);
