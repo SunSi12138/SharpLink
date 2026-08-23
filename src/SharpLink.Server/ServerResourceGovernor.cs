@@ -82,8 +82,16 @@ internal sealed class ServerResourceGovernor
             return false;
         }
 
-        permit = new ServerDecodePermit(this, retainedCompressedBytes);
-        return true;
+        try
+        {
+            permit = new ServerDecodePermit(this, retainedCompressedBytes);
+            return true;
+        }
+        catch
+        {
+            ReleaseDecodeAndRetained(retainedCompressedBytes);
+            throw;
+        }
     }
 
     internal bool TryReserveDecodedBytes(long decodedBytes)
@@ -239,9 +247,15 @@ internal sealed class ServerDecodePermit : IDisposable
 
             try
             {
-                if (!_decodeCompleted)
-                    _governor.ReleaseDecodeAndRetained(_retainedCompressedBytes);
-                _governor.ReleaseDecodedBytes(_decodedBytes);
+                try
+                {
+                    if (!_decodeCompleted)
+                        _governor.ReleaseDecodeAndRetained(_retainedCompressedBytes);
+                }
+                finally
+                {
+                    _governor.ReleaseDecodedBytes(_decodedBytes);
+                }
             }
             finally
             {
