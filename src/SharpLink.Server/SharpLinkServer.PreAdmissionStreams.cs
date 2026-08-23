@@ -48,16 +48,15 @@ internal sealed partial class SharpLinkServer
             return;
 
         var streamManager = session.StreamManager;
-        var admissionController = _admissionController ?? throw new InvalidOperationException(
-            "Pre-admission streams require an admission controller.");
+        var resourceGovernor = ResourceGovernor;
         streamManager.ReservePreAdmissionStreams(
             requestId,
             clientStreamCount,
             _runtimeContext.Buffers,
-            admissionController.TryReserveAdditionalQueuedBytes,
-            admissionController.ReleaseAdditionalQueuedBytes,
+            resourceGovernor.TryReservePreAdmissionStreamBytes,
+            resourceGovernor.ReleasePreAdmissionStreamBytes,
             () => callState.TryCancel(
-                ServerCallCancellationReason.AdmissionResourceExhausted),
+                ServerCallCancellationReason.PreAdmissionStreamResourceExhausted),
             compressedPayload =>
             {
                 var decodedPayload = session.DecodeInboundPayload(
