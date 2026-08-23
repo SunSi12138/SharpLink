@@ -39,21 +39,19 @@ internal sealed partial class SharpLinkServer
         return previous.IsEnabled ? previous : null;
     }
 
-    private AdmissionProgramUse? CaptureAdmissionProgram(
-        long requestId,
-        out AdmissionProgram? program)
+    private AdmissionProgram? CaptureAdmissionProgram(long requestId)
     {
         var publication = ReadAdmissionPublication();
-        program = publication.IsEnabled ? publication : null;
-        var use = program?.AcquireUse();
+        var program = publication.IsEnabled ? publication : null;
+        program?.AcquireUse();
         try
         {
             Volatile.Read(ref s_afterAdmissionCaptureForTests)?.Invoke(this, requestId, program);
-            return use;
+            return program;
         }
         catch
         {
-            use?.Dispose();
+            program?.ReleaseUse();
             throw;
         }
     }

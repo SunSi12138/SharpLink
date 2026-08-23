@@ -136,9 +136,7 @@ internal sealed partial class SharpLinkServer
                                             break;
                                         }
 
-                                        var admissionProgramUse = CaptureAdmissionProgram(
-                                            requestId,
-                                            out var admissionProgram);
+                                        var admissionProgram = CaptureAdmissionProgram(requestId);
                                         if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
                                         {
                                             DispatchOneWayRpc(
@@ -148,8 +146,7 @@ internal sealed partial class SharpLinkServer
                                                 payload,
                                                 requestCancellationMap,
                                                 ct,
-                                                admissionProgram,
-                                                admissionProgramUse);
+                                                admissionProgram);
                                             break;
                                         }
 
@@ -160,8 +157,7 @@ internal sealed partial class SharpLinkServer
                                             payload,
                                             requestCancellationMap,
                                             ct,
-                                            admissionProgram,
-                                            admissionProgramUse);
+                                            admissionProgram);
                                         if (!dispatchTask.IsCompletedSuccessfully)
                                             ObserveUserCall(dispatchTask, requestId);
                                         break;

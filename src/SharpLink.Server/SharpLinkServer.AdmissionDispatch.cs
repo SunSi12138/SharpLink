@@ -10,17 +10,12 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
-        AdmissionProgramUse? admissionProgramUse,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         int admittedClientStreamCount = 0,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
     {
-        if (admissionProgram is null && admissionProgramUse is not null)
-            throw new InvalidOperationException("A captured admission use requires its program generation.");
-        if (!admissionGranted && admissionProgram is not null && admissionProgramUse is null)
-            throw new InvalidOperationException("An enabled captured admission generation requires one use token.");
-
+        var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
         try
         {
             var session = connection.Session;
@@ -67,8 +62,8 @@ internal sealed partial class SharpLinkServer
                     serverLoopToken,
                     serviceInfo.ModuleCancellation,
                     requestCancellationMap);
-                admittedCallState.AttachAdmissionProgramUse(admissionProgramUse!);
-                admissionProgramUse = null;
+                admittedCallState.AttachAdmissionProgramUse(admissionProgram);
+                ownsAdmissionProgramUse = false;
                 var admissionController = admissionProgram.Controller;
                 ValueTask<AdmissionDecision> admissionTask;
                 try
@@ -389,7 +384,8 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            admissionProgramUse?.Dispose();
+            if (ownsAdmissionProgramUse)
+                admissionProgram!.ReleaseUse();
         }
     }
 
@@ -479,7 +475,6 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 admissionProgram,
-                admissionProgramUse: null,
                 callState,
                 admissionGranted: true,
                 admittedClientStreamCount: clientStreamCount,
@@ -537,7 +532,6 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 admissionProgram,
-                admissionProgramUse: null,
                 callState,
                 admissionGranted: true,
                 retainedAdmissionPayload: retainedPayload);
