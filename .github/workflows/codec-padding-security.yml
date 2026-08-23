@@ -1,0 +1,81 @@
+name: Codec Padding Security Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'src/SharpLink.Runtime/Codec/**'
+      - 'src/SharpLink.Runtime/SharpLink.Runtime.csproj'
+      - 'test/SharpLink.Benchmarks/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+      - 'doc/unsafe-blit-padding-security.md'
+      - 'doc/codec-compatibility.md'
+      - 'doc/contracts-and-codecs.md'
+      - 'doc/security.md'
+      - 'doc/index.md'
+      - 'doc/evidence/unsafe-blit-padding-*.json'
+      - '.github/workflows/codec-padding-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  padding-evidence:
+    name: Padding evidence (${{ matrix.tag }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            tag: linux-x64
+          - os: windows-latest
+            tag: windows-x64
+          - os: macos-14
+            tag: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      SHARPLINK_PADDING_EVIDENCE_OUTPUT: ${{ github.workspace }}/artifacts/codec-padding/${{ matrix.tag }}/padding-evidence.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record runtime environment
+        run: dotnet --info
+
+      - name: Assert padding disclosure behavior
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          --
+          --unsafe-blit-padding-evidence
+
+      - name: Benchmark padding canonicalization
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          --
+          --filter "*UnsafeBlitPaddingBenchmarks*"
+          --exporters json
+
+      - name: Upload padding evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-padding-security-${{ matrix.tag }}-${{ github.run_id }}
+          path: |
+            artifacts/codec-padding/${{ matrix.tag }}/padding-evidence.json
+            BenchmarkDotNet.Artifacts/**
+          if-no-files-found: error
+          retention-days: 90
