@@ -23,6 +23,18 @@ public class SharpLinkTimePrecisionTests
     }
 
     [Test]
+    public void WouldExpireBeforeOrAtShouldNotRoundProspectiveDelayUpAtLowFrequency()
+    {
+        var provider = new FixedTimestampTimeProvider(timestamp: 0, frequency: 1);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
+
+        Ensure(!deadline.WouldExpireBeforeOrAt(TimeSpan.FromTicks(1), provider),
+            "a 100ns prospective delay must not consume a full one-second timestamp unit");
+        Ensure(deadline.WouldExpireBeforeOrAt(TimeSpan.FromSeconds(1), provider),
+            "a delay that reaches the exact monotonic boundary must be rejected");
+    }
+
+    [Test]
     public void RoundTripShouldNeverExpireEarlyAtExtremeValues()
     {
         const long frequency = 9_007_199_254_740_993L;
@@ -48,5 +60,12 @@ public class SharpLinkTimePrecisionTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class FixedTimestampTimeProvider(long timestamp, long frequency) : TimeProvider
+    {
+        public override long TimestampFrequency => frequency;
+
+        public override long GetTimestamp() => timestamp;
     }
 }
