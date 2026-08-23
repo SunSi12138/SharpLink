@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using SharpLink.Runtime;
 using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
@@ -19,16 +20,21 @@ internal static class AdmissionPartitionRpcEvidence
 
     public static async Task RunAsync(string[] args)
     {
-        if (args.Length != 3 || !int.TryParse(args[1], out var concurrency) || concurrency <= 0)
+        if (args.Length is < 3 or > 4 ||
+            !int.TryParse(args[1], out var concurrency) || concurrency <= 0)
         {
             throw new ArgumentException(
-                "Usage: --issue-245-rpc-evidence <label> <concurrency> <output-json>");
+                "Usage: --issue-245-rpc-evidence <label> <concurrency> <output-json> [default|server-low-latency|client-low-latency|both-low-latency]");
         }
+
+        var mode = args.Length == 4 ? args[3] : "default";
+        if (mode is not ("default" or "server-low-latency" or "client-low-latency" or "both-low-latency"))
+            throw new ArgumentOutOfRangeException(nameof(args), $"Unknown RPC diagnostic mode '{mode}'.");
 
         ThreadPool.GetMinThreads(out var workerThreads, out var completionPortThreads);
         ThreadPool.SetMinThreads(Math.Max(workerThreads, 256), completionPortThreads);
 
-        var result = await RunRpcAsync(args[0], concurrency).ConfigureAwait(false);
+        var result = await RunRpcAsync(args[0], concurrency, mode).ConfigureAwait(false);
         var outputPath = Path.GetFullPath(args[2]);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         await File.WriteAllTextAsync(
@@ -36,7 +42,7 @@ internal static class AdmissionPartitionRpcEvidence
             JsonSerializer.Serialize(result, SJsonOptions)).ConfigureAwait(false);
 
         Console.WriteLine(
-            $"ISSUE245_RPC label={result.Label} concurrency={result.Concurrency} " +
+            $"ISSUE245_RPC label={result.Label} mode={result.Mode} concurrency={result.Concurrency} " +
             $"ops={result.Operations} qps={result.ThroughputPerSecond:F0} " +
             $"p99_us={result.P99Us:F3} cpu_us_op={result.CpuUsPerOperation:F3} " +
             $"alloc_b_op={result.AllocatedBytesPerOperation:F1}");
@@ -44,13 +50,21 @@ internal static class AdmissionPartitionRpcEvidence
 
     private static async Task<AdmissionPartitionRpcEvidenceResult> RunRpcAsync(
         string label,
-        int concurrency)
+        int concurrency,
+        string mode)
     {
         const int partitions = 1024;
         var keys = Enumerable.Range(0, partitions)
             .Select(static index => $"partition-{index}")
             .ToArray();
         var selectorIndex = -1;
+
+        Action<SharpLinkRuntimeOptions>? configureServerRuntime = mode is "server-low-latency" or "both-low-latency"
+            ? static options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency
+            : null;
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = mode is "client-low-latency" or "both-low-latency"
+            ? static options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency
+            : null;
 
         await using var environment = await BenchmarkEnvironment.CreateAsync(
             configureServer: builder => builder.UseAdmissionControl(options =>
@@ -61,7 +75,9 @@ internal static class AdmissionPartitionRpcEvidence
                         partition.MaxPartitions = partitions;
                         partition.IdleTimeout = TimeSpan.FromMinutes(5);
                         partition.UseConcurrency(4096);
-                    }))).ConfigureAwait(false);
+                    })),
+            configureServerRuntime: configureServerRuntime,
+            configureClientRuntime: configureClientRuntime).ConfigureAwait(false);
 
         // Every invocation is a fresh process. Equalize both call-count warmup and
         // wall-clock maturation so a faster candidate does not enter measurement
@@ -137,6 +153,7 @@ internal static class AdmissionPartitionRpcEvidence
         return new AdmissionPartitionRpcEvidenceResult
         {
             Label = label,
+            Mode = mode,
             Commit = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_SHA") ?? "unknown",
             Concurrency = concurrency,
             Operations = operationCount,
@@ -151,6 +168,7 @@ internal static class AdmissionPartitionRpcEvidence
 internal sealed class AdmissionPartitionRpcEvidenceResult
 {
     public string Label { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
     public string Commit { get; init; } = string.Empty;
     public int Concurrency { get; init; }
     public int Operations { get; init; }
