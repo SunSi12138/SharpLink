@@ -12,10 +12,12 @@ This decision is safe only with the following contract:
 
 - raw-blit values whose storage provenance is ordinary zero-initialized managed storage are the expected use case;
 - values populated through unsafe code, `stackalloc`, `Unsafe.SkipInit`, skipped local initialization, native interop, pooled/native buffers, or other mechanisms that can leave non-field bytes tainted must be treated as potentially carrying those bytes onto the wire;
-- when such a value crosses a confidentiality boundary, use a generated/registered field-wise codec or explicitly sanitize the source representation before serialization;
+- when such a value crosses a confidentiality boundary, explicitly bind that payload type to a non-`UnsafeBlitCodec<T>` custom/adapter Codec, or explicitly sanitize the source representation before serialization;
 - SharpLink does not promise canonical wire bytes for padding-bearing raw-blit structs.
 
-A future major-version contract may choose explicit opt-in or fallback restrictions for raw blit. That is a compatibility decision and should not be smuggled into this security assessment without separate migration design.
+Issue #311 tracks a compile-time routing extension to make this escape path practical at Contract scope without adding runtime codec-selection cost. Its planned `Unmanaged` route means “for payload types that SharpLink would otherwise resolve to `UnsafeBlitCodec<T>`, bind the selected third-party adapter at Contract compilation instead.” Explicit per-type `RpcCodec` / `RpcCodecAdapter` / serializer-selector bindings remain higher priority than such a route. Until #311 is implemented, callers that need to leave the raw-blit domain should use the existing explicit per-type binding mechanisms.
+
+A future compatibility decision may still choose stronger raw-blit restrictions or opt-in semantics, but that should remain separate from this evidence PR.
 
 ## Threat model
 
@@ -87,17 +89,29 @@ Security effect: removes alignment padding for simple sequential fixtures such a
 
 Compatibility/performance cost: changes the user's managed/native ABI and can introduce unaligned field access. It is not a reasonable blanket requirement for an RPC library.
 
-### 4. Require raw-blit opt-in
+### 4. Explicit per-type Codec/Adapter binding
 
-Security effect: makes the representation/confidentiality tradeoff explicit and prevents accidental fallback.
+Security effect: removes the selected payload type from the SharpLink `UnsafeBlitCodec<T>` domain when the chosen custom Codec/Adapter uses an appropriate representation.
 
-Compatibility cost: source/runtime behavior change for every unmanaged value type that currently relies on automatic fallback. This is a plausible future major-version design, not a targeted 2.x security fix.
+Current availability: SharpLink already supports compile-time per-type custom Codec and Adapter/selector bindings. This keeps serializer ownership in the Contract and does not require Client/Server runtime `UseCodec<T>` configuration.
 
-### 5. Reject padding-bearing fallback types
+Limitation: it is repetitive when many payload types need the same third-party serializer policy.
 
-Security effect: strong for the automatic fallback path.
+### 5. Compile-time payload-scope routing (#311)
 
-Compatibility cost: breaks existing DTOs and still requires a reliable managed-layout padding detector. It also discards the established performance/compatibility envelope for types that intentionally use raw blit.
+Security effect: planned `RpcCodecScope.Unmanaged` routing can move every wire-reachable payload that would otherwise resolve to SharpLink `UnsafeBlitCodec<T>` to a selected `IRpcCodecAdapter` during Contract compilation.
+
+Design constraint: route selection is compile-time only. The generated Manifest/ContractCodecSet records the final binding, so Serialize/Deserialize should not gain route lookup, reflection, allocation, or per-call branching. Explicit per-type bindings override the broader route rather than conflicting with it.
+
+Scope: #311 also plans `Managed`, `Unmanaged`, and `Native` flags so the mechanism is a general codec-routing feature rather than an UnsafeBlit-specific switch.
+
+Limitation: SharpLink can guarantee only that the selected payload no longer uses SharpLink `UnsafeBlitCodec<T>`; a third-party serializer can still choose its own raw-copy representation internally.
+
+### 6. Require raw-blit opt-in / reject padding-bearing fallback types
+
+Security effect: stronger global restriction of the automatic raw fallback.
+
+Compatibility cost: source/runtime behavior change for existing unmanaged payloads, and padding-based rejection additionally requires a reliable managed-layout padding detector. This remains a separate compatibility-policy option rather than the selected mitigation in this PR.
 
 ## Performance evidence
 
@@ -126,7 +140,8 @@ For 2.x, the selected balance is therefore **retain + document/constrain**:
 1. keep the current allocation-free raw-blit production path;
 2. explicitly document that padding is wire-visible and non-canonical;
 3. classify unsafe/native/uninitialized source provenance as unsuitable for confidential raw-blit RPC boundaries unless the representation is sanitized;
-4. direct security-sensitive callers to generated/registered field-wise codecs;
-5. keep automated multi-runtime poison evidence and canonicalization-cost evidence so a future opt-in/restriction decision has regression data.
+4. for affected payloads today, use existing explicit per-type custom Codec/Adapter/selector binding to leave the SharpLink raw-blit domain;
+5. track #311 as the Contract-level, compile-time scaling mechanism: an `Unmanaged` route can replace the whole SharpLink UnsafeBlit domain with a chosen third-party Adapter while explicit per-type bindings remain higher priority;
+6. keep automated multi-runtime poison evidence and canonicalization-cost evidence so future routing/restriction/canonicalization decisions have regression data.
 
 This decision can be revisited if future evidence shows non-zero padding arising from ordinary safe SharpLink DTO construction, if a runtime changes initialization/layout behavior, or if a low-cost/AOT-safe canonicalization mechanism becomes available.
