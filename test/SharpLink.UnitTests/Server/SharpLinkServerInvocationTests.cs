@@ -412,6 +412,9 @@ public class SharpLinkServerInvocationTests
         Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
             "the admitted invocation must hold one global and one connection slot");
 
+        // This direct ServerConnectionState is not registered through a transport
+        // handshake. MarkDraining models GoAway publication while the real
+        // RunAsync/StopAsync path waits for the paired invocation release.
         connection.MarkDraining();
         var stopTask = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
         await YieldUntilAsync(
@@ -469,6 +472,10 @@ public class SharpLinkServerInvocationTests
                 allowGlobalAcquire.Wait();
             });
         Ensure(connection.MarkReady(null), "connection ready");
+
+        // The direct connection is deliberately outside the transport registry;
+        // the test drives the real admission and StopAsync state machines while
+        // the Debug-only instance probe controls only the local-to-global gap.
 
         var runTask = server.RunAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
