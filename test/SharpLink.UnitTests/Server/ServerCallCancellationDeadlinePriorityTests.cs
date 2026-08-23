@@ -7,7 +7,7 @@ namespace SharpLink.UnitTests.Server;
 public class ServerCallCancellationDeadlinePriorityTests
 {
     [Test]
-    public void ExpiredDeadlineShouldBeatConnectionCloseWithoutTimerCallback()
+    public async Task ExpiredDeadlineShouldBeatConnectionCloseWithoutTimerCallback()
     {
         var timeProvider = new ManualTimeProvider();
         var state = ServerCallCancellationState.Rent(
@@ -21,12 +21,9 @@ public class ServerCallCancellationDeadlinePriorityTests
         {
             timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
 
-            Ensure(state.TryCancel(ServerCallCancellationReason.ConnectionClosed),
-                "the first terminal claim should still succeed");
-            Ensure(state.Reason == ServerCallCancellationReason.DeadlineExceeded,
-                "an already-expired monotonic deadline must outrank a later connection close");
-            Ensure(state.InvocationToken.IsCancellationRequested,
-                "deadline promotion must still cancel cooperative business code");
+            await Assert.That(state.TryCancel(ServerCallCancellationReason.ConnectionClosed)).IsTrue();
+            await Assert.That(state.Reason).IsEqualTo(ServerCallCancellationReason.DeadlineExceeded);
+            await Assert.That(state.InvocationToken.IsCancellationRequested).IsTrue();
         }
         finally
         {
@@ -35,7 +32,7 @@ public class ServerCallCancellationDeadlinePriorityTests
     }
 
     [Test]
-    public void CancellationBeforeDeadlineShouldRemainTheWinner()
+    public async Task CancellationBeforeDeadlineShouldRemainTheWinner()
     {
         var timeProvider = new ManualTimeProvider();
         var state = ServerCallCancellationState.Rent(
@@ -47,12 +44,10 @@ public class ServerCallCancellationDeadlinePriorityTests
             supportsCooperativeCancellation: true);
         try
         {
-            Ensure(state.TryCancel(ServerCallCancellationReason.RemoteCancel),
-                "caller cancellation before the boundary should claim the call");
+            await Assert.That(state.TryCancel(ServerCallCancellationReason.RemoteCancel)).IsTrue();
             timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
 
-            Ensure(state.Reason == ServerCallCancellationReason.RemoteCancel,
-                "a deadline that expires after cancellation must not replace the earlier winner");
+            await Assert.That(state.Reason).IsEqualTo(ServerCallCancellationReason.RemoteCancel);
         }
         finally
         {
