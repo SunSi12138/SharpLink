@@ -20,8 +20,6 @@ public class DynamicAdmissionGenerationTests
         var hookCount = 0;
         var captureCompleted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var captureCompleted = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
 
         try
         {
@@ -33,14 +31,12 @@ public class DynamicAdmissionGenerationTests
                 captured = observed;
                 server.PublishAdmissionProgramForTests(null);
                 captureCompleted.TrySetResult();
-                captureCompleted.TrySetResult();
             };
 
             var service = harness.ClientA.Get<ITestService>();
             if (oneWay)
             {
                 await service.NotifyAsync("captured-enabled");
-                await captureCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await captureCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 SharpLinkServer.AfterAdmissionCaptureForTests = null;
                 Ensure(await service.AddAsync(20, 22) == 42,
