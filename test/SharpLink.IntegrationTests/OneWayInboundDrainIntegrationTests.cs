@@ -186,6 +186,12 @@ public interface IOneWayInboundDrainService : IService
     [NonCancellable]
     ValueTask IgnoreStreamAfterGateAsync(IAsyncEnumerable<byte[]> values);
 
+    [Oneway]
+    [NonCancellable]
+    ValueTask IgnoreCorruptiblePayloadAndStreamAsync(
+        byte[] payload,
+        IAsyncEnumerable<byte[]> values);
+
     [NonCancellable]
     ValueTask<int> PingAsync(int value);
 }
@@ -215,6 +221,16 @@ public sealed class OneWayInboundDrainService : IOneWayInboundDrainService
         Volatile.Read(ref s_entered).TrySetResult();
         await Volatile.Read(ref s_release).Task.ConfigureAwait(false);
         // Intentionally do not enumerate values. This is the already-typed-attached #304 case.
+    }
+
+    public async ValueTask IgnoreCorruptiblePayloadAndStreamAsync(
+        byte[] payload,
+        IAsyncEnumerable<byte[]> values)
+    {
+        _ = payload;
+        _ = values;
+        Volatile.Read(ref s_entered).TrySetResult();
+        await Volatile.Read(ref s_release).Task.ConfigureAwait(false);
     }
 
     public ValueTask<int> PingAsync(int value) => ValueTask.FromResult(value + 1);
