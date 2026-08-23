@@ -63,7 +63,8 @@ public static class HandshakeThreatEvidenceRunner
             MaxConcurrentConnections = MaxConnections,
             Note = "Server and clients run in one process on the same runner. Configured handshake bound 0 is the documented explicit opt-out and materializes to the 1024 connection bound; 64 is the proposed secure default. " +
                    "TLS stall connects TCP but sends no ClientHello. Protocol stall completes TLS (therefore performs the expensive TLS work) and then sends no Protocol v2 HandshakeRequest. Auth stall completes TLS + Protocol v2 and blocks in the application authenticator. " +
-                   "Process peak deltas include both server and local clients, but active-handshake/rejection/auth-concurrency observations are server-side admission evidence. Stop/drain is measured while the stalled handshakes are still held.",
+                   "Process peak deltas include both server and local clients, but active-handshake/rejection/auth-concurrency observations are server-side admission evidence. Stop/drain is measured while the stalled handshakes are still held. " +
+                   "Authenticator client failures are snapshotted before Stop so teardown cancellation does not contaminate admission-failure counts.",
             Scenarios = results
         };
 
@@ -229,6 +230,8 @@ public static class HandshakeThreatEvidenceRunner
         var rejected = gauge.RejectedTotal - rejectedBefore;
         var authCurrentAtSample = authenticator.Current;
         var authPeak = authenticator.Peak;
+        var failuresAtSample = Volatile.Read(ref failures);
+        var failureSamplesAtSample = failureSamples.ToArray();
         var peak = sampler.SnapshotPeak();
 
         var stopMs = await MeasureStopAsync(server).ConfigureAwait(false);
@@ -248,7 +251,7 @@ public static class HandshakeThreatEvidenceRunner
             "authenticator-stall",
             configuredBound,
             watch.Elapsed.TotalMilliseconds,
-            Volatile.Read(ref failures),
+            failuresAtSample,
             sampler.Baseline,
             peak,
             activeAtSample,
@@ -260,7 +263,7 @@ public static class HandshakeThreatEvidenceRunner
             authPeak,
             authenticator.Current,
             after,
-            failureSamples.ToArray());
+            failureSamplesAtSample);
 
         async Task ConnectAsync()
         {
@@ -662,8 +665,6 @@ public static class HandshakeThreatEvidenceRunner
 
     private sealed class ServerHarness : IAsyncDisposable
     {
-        private bool _stopped;
-
         internal ServerHarness(ISharpLinkServer server, Task runTask, CancellationTokenSource runCts)
         {
             Server = server;
@@ -677,15 +678,12 @@ public static class HandshakeThreatEvidenceRunner
 
         public async ValueTask DisposeAsync()
         {
-            if (!_stopped)
+            try
             {
-                try
-                {
-                    await Server.StopAsync(TimeSpan.Zero).ConfigureAwait(false);
-                }
-                catch
-                {
-                }
+                await Server.StopAsync(TimeSpan.Zero).ConfigureAwait(false);
+            }
+            catch
+            {
             }
             try
             {
