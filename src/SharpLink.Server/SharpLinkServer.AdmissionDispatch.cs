@@ -643,6 +643,7 @@ internal sealed partial class SharpLinkServer
         {
             "concurrency" => SharpLinkResourceExhaustion.AdmissionConcurrency,
             "queue_count" or "queue_bytes" => SharpLinkResourceExhaustion.AdmissionQueue,
+            "pre_admission_stream_bytes" => SharpLinkResourceExhaustion.ServerPreAdmissionStreamBytes,
             "rate" => SharpLinkResourceExhaustion.AdmissionRate,
             "partition_capacity" => SharpLinkResourceExhaustion.AdmissionPartitionCapacity,
             _ => SharpLinkResourceExhaustion.AdmissionOther
@@ -658,6 +659,8 @@ internal sealed partial class SharpLinkServer
                 "disconnect", SharpLinkErrorCode.ConnectionClosed),
             ServerCallCancellationReason.AdmissionResourceExhausted => AdmissionDecision.Reject(
                 "queue_bytes", SharpLinkErrorCode.ResourceExhausted),
+            ServerCallCancellationReason.PreAdmissionStreamResourceExhausted => AdmissionDecision.Reject(
+                "pre_admission_stream_bytes", SharpLinkErrorCode.ResourceExhausted),
             ServerCallCancellationReason.ServerStopping or ServerCallCancellationReason.ModuleDraining =>
                 AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable),
             _ => AdmissionDecision.Reject("cancelled", SharpLinkErrorCode.Cancelled)
