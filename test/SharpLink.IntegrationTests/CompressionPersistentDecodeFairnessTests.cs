@@ -19,20 +19,21 @@ public class CompressionPersistentDecodeFairnessTests
         var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
         var payloadA = Enumerable.Repeat((byte)0x41, LargePayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x42, LargePayloadBytes).ToArray();
+        using var cancellation = new CancellationTokenSource();
 
-        var a1 = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
+        var a1 = serviceA.MeasureAsync(payloadA, cancellation.Token).AsTask();
         await coordinator.WaitForStartedCountAsync(1);
         Ensure(coordinator.StartOrder[0] == "A", "connection A must own the intentionally blocked first turn");
 
-        var a2 = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
-        var a3 = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
+        var a2 = serviceA.MeasureAsync(payloadA, cancellation.Token).AsTask();
+        var a3 = serviceA.MeasureAsync(payloadA, cancellation.Token).AsTask();
         await WaitUntilAsync(
             () => harness.DecodeQueueDepth == 2 &&
                   harness.DecodeQueueReservations == 2 &&
                   harness.DecodeScheduledConnectionCount == 1,
             "connection A backlog entered its scheduler queue before B publication");
 
-        var b1 = serviceB.MeasureAsync(payloadB, CancellationToken.None).AsTask();
+        var b1 = serviceB.MeasureAsync(payloadB, cancellation.Token).AsTask();
         await WaitUntilAsync(
             () => harness.DecodeQueueDepth == 3 &&
                   harness.DecodeQueueReservations == 3 &&
@@ -63,11 +64,12 @@ public class CompressionPersistentDecodeFairnessTests
         var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
         var payloadA = Enumerable.Repeat((byte)0x51, LargePayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x52, LargePayloadBytes).ToArray();
+        using var cancellation = new CancellationTokenSource();
 
-        var a1 = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
+        var a1 = serviceA.MeasureAsync(payloadA, cancellation.Token).AsTask();
         await coordinator.WaitForStartedCountAsync(1);
-        var a2 = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
-        var b1 = serviceB.MeasureAsync(payloadB, CancellationToken.None).AsTask();
+        var a2 = serviceA.MeasureAsync(payloadA, cancellation.Token).AsTask();
+        var b1 = serviceB.MeasureAsync(payloadB, cancellation.Token).AsTask();
         await WaitUntilAsync(
             () => harness.DecodeQueueDepth == 2 &&
                   harness.DecodeQueueReservations == 2 &&
