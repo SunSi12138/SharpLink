@@ -55,6 +55,8 @@ internal sealed partial class SharpLinkServer
         private readonly SharpLinkServer _server;
         private readonly ServerConnectionState _connection;
         private readonly ServerRequestPermitTestHooks? _testHooks;
+        private readonly Lock _resourceGate = new();
+        private ServerDecodePermit? _decodePermit;
         private int _state = Reserved;
 
         internal ServerRequestPermit(
@@ -71,20 +73,56 @@ internal sealed partial class SharpLinkServer
 
         internal bool IsActive => Volatile.Read(ref _state) == Active;
 
+        /// <summary>
+        /// Reserves the server-wide decode concurrency credit and any compressed bytes that must
+        /// outlive the current reader-loop frame. The resulting permit is attached to this request
+        /// owner so cancellation/disposal cannot orphan decode resources.
+        /// </summary>
+        internal bool TryAcquireDecodePermit(
+            long retainedCompressedBytes,
+            out ServerDecodePermit? decodePermit)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(retainedCompressedBytes);
+
+            lock (_resourceGate)
+            {
+                if (Volatile.Read(ref _state) != Reserved || _decodePermit is not null)
+                {
+                    decodePermit = null;
+                    return false;
+                }
+
+                if (!_server.ResourceGovernor.TryAcquireDecode(retainedCompressedBytes, out decodePermit))
+                    return false;
+
+                _decodePermit = decodePermit;
+                return true;
+            }
+        }
+
         internal void Activate()
         {
-            var observed = Interlocked.CompareExchange(ref _state, Activating, Reserved);
-            if (observed != Reserved)
+            lock (_resourceGate)
             {
-                if (observed is Releasing or Disposed)
-                    throw new ObjectDisposedException(nameof(ServerRequestPermit));
-                throw new InvalidOperationException("Only a reserved call permit can be activated.");
-            }
+                if (_decodePermit is not null && !_decodePermit.IsDecodeCompleted)
+                {
+                    throw new InvalidOperationException(
+                        "A request with decode resources cannot be activated before decode completes.");
+                }
 
-            // Capacity was deliberately acquired during TryReserveCall. There is
-            // no counter transfer here yet: this slice introduces the unique owner
-            // while preserving the existing Stop/Drain linearization unchanged.
-            Volatile.Write(ref _state, Active);
+                var observed = Interlocked.CompareExchange(ref _state, Activating, Reserved);
+                if (observed != Reserved)
+                {
+                    if (observed is Releasing or Disposed)
+                        throw new ObjectDisposedException(nameof(ServerRequestPermit));
+                    throw new InvalidOperationException("Only a reserved call permit can be activated.");
+                }
+
+                // Capacity was deliberately acquired during TryReserveCall. There is
+                // no counter transfer here yet: this slice introduces the unique owner
+                // while preserving the existing Stop/Drain linearization unchanged.
+                Volatile.Write(ref _state, Active);
+            }
         }
 
         public void Dispose()
@@ -96,7 +134,7 @@ internal sealed partial class SharpLinkServer
                 switch (observed)
                 {
                     case Reserved:
-                        if (Interlocked.CompareExchange(ref _state, Releasing, Reserved) != Reserved)
+                        if (!TryClaimRelease(Reserved))
                             continue;
                         ReleaseBackingCapacity();
                         return;
@@ -104,7 +142,7 @@ internal sealed partial class SharpLinkServer
                         spinner.SpinOnce();
                         continue;
                     case Active:
-                        if (Interlocked.CompareExchange(ref _state, Releasing, Active) != Active)
+                        if (!TryClaimRelease(Active))
                             continue;
                         ReleaseBackingCapacity();
                         return;
@@ -120,18 +158,39 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+        private bool TryClaimRelease(int expectedState)
+        {
+            lock (_resourceGate)
+            {
+                if (Volatile.Read(ref _state) != expectedState)
+                    return false;
+                return Interlocked.CompareExchange(ref _state, Releasing, expectedState) == expectedState;
+            }
+        }
+
         private void ReleaseBackingCapacity()
         {
             try
             {
                 _testHooks?.ReleaseClaimed?.Invoke();
-                _server.ReleaseCall(_connection);
+                ServerDecodePermit? decodePermit;
+                lock (_resourceGate)
+                    decodePermit = _decodePermit;
+
+                try
+                {
+                    decodePermit?.Dispose();
+                }
+                finally
+                {
+                    _server.ReleaseCall(_connection);
+                }
             }
             finally
             {
-                // Normal completion publishes Disposed only after both backing
-                // capacity scopes have been released. The finally prevents an
-                // invariant exception from stranding aliases forever in Releasing.
+                // Normal completion publishes Disposed only after request-owned decode
+                // resources and both backing call-capacity scopes have been released.
+                // The finally prevents an invariant exception from stranding aliases forever.
                 Volatile.Write(ref _state, Disposed);
             }
         }
