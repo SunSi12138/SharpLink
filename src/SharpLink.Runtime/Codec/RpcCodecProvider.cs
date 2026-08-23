@@ -28,9 +28,6 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
-        if (SharedRpcCodec<T>.Instance is { } shared)
-            return shared;
-
         var targetType = typeof(T);
         if (_resolvedCodecs.TryGetValue(targetType, out var fastCached))
         {
@@ -40,6 +37,10 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
             if (ReferenceEquals(fastCached.SnapshotIdentity, fastSnapshot.Identity))
                 return Cast<T>(fastCached.Codec);
         }
+
+        var snapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
+        if (!snapshot.Registrations.ContainsKey(targetType) && SharedRpcCodec<T>.Instance is { } shared)
+            return shared;
 
         return ResolveCodec<T>(targetType);
     }
