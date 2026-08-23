@@ -316,7 +316,7 @@ public partial class RpcGenerator
         {
             var stream = streams[0];
             sb.AppendLine("    public ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)");
-            sb.AppendLine($"        => new(sink.SendClientStreamAsync(requestId, (ushort)1, new RpcCodecBoundAsyncEnumerable<{stream.DisplayStreamItemType}>(_{stream.Name}, __codec_{stream.Name}), cancellationToken));");
+            sb.AppendLine($"        => new(sink.SendClientStreamAsync(requestId, (ushort)1, _{stream.Name}, __codec_{stream.Name}, cancellationToken));");
         }
         else
         {
@@ -325,7 +325,7 @@ public partial class RpcGenerator
             for (var index = 0; index < streams.Length; index++)
             {
                 var stream = streams[index];
-                sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, new RpcCodecBoundAsyncEnumerable<{stream.DisplayStreamItemType}>(_{stream.Name}, __codec_{stream.Name}), cancellationToken);");
+                sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, _{stream.Name}, __codec_{stream.Name}, cancellationToken);");
             }
             for (var index = 0; index < streams.Length; index++)
                 sb.AppendLine($"        await pending_{index}.ConfigureAwait(false);");
