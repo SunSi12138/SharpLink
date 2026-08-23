@@ -10,10 +10,10 @@ The codec is intentionally an ABI-sensitive raw blit fallback. Its wire represen
 
 This decision is safe only with the following contract:
 
-- raw-blit values whose storage provenance is ordinary zero-initialized managed storage are the expected use case;
+- representative ordinary managed-construction controls produced zero padding on the tested runtimes, but zero-valued padding is an observed implementation behavior here, **not** a C#/.NET representation guarantee and not a supported sanitization mechanism;
 - values populated through unsafe code, `stackalloc`, `Unsafe.SkipInit`, skipped local initialization, native interop, pooled/native buffers, or other mechanisms that can leave non-field bytes tainted must be treated as potentially carrying those bytes onto the wire;
-- when such a value crosses a confidentiality boundary, explicitly bind that payload type to a non-`UnsafeBlitCodec<T>` custom/adapter Codec, or explicitly sanitize the source representation before serialization;
-- SharpLink does not promise canonical wire bytes for padding-bearing raw-blit structs.
+- when such a value crosses a confidentiality boundary, explicitly bind that payload type to a non-`UnsafeBlitCodec<T>` custom/adapter Codec, or explicitly sanitize the complete source representation before serialization;
+- SharpLink does not promise zero padding or canonical wire bytes for padding-bearing raw-blit structs, regardless of how their logical fields were initialized.
 
 Issue #311 tracks a compile-time routing extension to make this escape path practical at Contract scope without adding runtime codec-selection cost. Its planned `Unmanaged` route means “for payload types that SharpLink would otherwise resolve to `UnsafeBlitCodec<T>`, bind the selected third-party adapter at Contract compilation instead.” Explicit per-type `RpcCodec` / `RpcCodecAdapter` / serializer-selector bindings remain higher priority than such a route. Until #311 is implemented, callers that need to leave the raw-blit domain should use the existing explicit per-type binding mechanisms.
 
@@ -27,9 +27,9 @@ A future compatibility decision may still choose stronger raw-blit restrictions 
 
 ### When padding can contain non-logical state
 
-Ordinary `default`/`new` managed construction starts from zeroed storage, and the evidence workflow verifies zero padding for representative controls before field assignment. In those ordinary paths, padding does not expose prior process state.
+In the tested Linux x64, Windows x64, and macOS ARM64 controls, ordinary `default`/`new` construction followed by field assignment produced zero bytes at the known padding offsets. That is empirical evidence about these representative executions, not a language/runtime contract for padding. C#/.NET define the logical value of the fields; padding bytes are not logical fields and SharpLink must not promise that every JIT/AOT/runtime/copy path preserves them as zero. Consequently, constructing `new T()` or assigning all logical fields must not be treated as a confidentiality-boundary sanitizer for a raw representation.
 
-The confidentiality risk appears when callers construct or receive a struct through mechanisms that can preserve arbitrary non-field bytes. Representative examples include:
+The confidentiality risk is clearest when callers construct or receive a struct through mechanisms that can preserve arbitrary non-field bytes. Representative examples include:
 
 - a struct reinterpreted over uninitialized or reused stack/native storage;
 - `Unsafe.SkipInit` or skipped local initialization followed by assignment of only logical fields;
@@ -39,7 +39,7 @@ The confidentiality risk appears when callers construct or receive a struct thro
 
 In those cases, the raw blit can move padding across an RPC/process/network boundary. Repeated serialization can therefore expose a small number of source-storage bytes per value. This is a **real but conditional information-disclosure primitive**, not merely a canonicalization concern.
 
-The practical risk is low for ordinary safe managed construction and materially higher for unsafe/native-origin values crossing trust boundaries.
+The tested ordinary managed-construction controls did not expose non-zero padding, while unsafe/native/uninitialized provenance demonstrably can. The latter therefore carries materially higher confidentiality risk. The former observation should not be elevated into a guarantee that padding is always zero.
 
 ## Reproduction coverage
 
@@ -65,9 +65,9 @@ Fixtures cover more than the original `ByteInt32` and `Int64Byte` controls:
 
 The explicit-layout fixture is important: **requiring `LayoutKind.Explicit` alone does not remove disclosure risk** because explicit layouts can still contain holes.
 
-The workflow also asserts that zeroing only the known padding offsets makes the two poisoned wires identical and that the ordinary default-initialized control has zero padding.
+The workflow also asserts that zeroing only the known padding offsets makes the two poisoned wires identical and records whether the ordinary managed-construction control happens to contain zero at those offsets on each tested runtime. That control is evidence, not a contractual assertion about all .NET executions.
 
-Evidence snapshot `32627839187` at head `50996b10f3d365c3c8b64cc458018ed5e1ab1563` passed on all three platforms. For every fixture, observed poisoned-wire differences exactly matched the expected padding offsets; all ordinary default-initialized controls had zero padding; and zeroing only those padding bytes made the poisoned wires identical. The packed control produced no differing bytes.
+Evidence snapshot `32627839187` at head `50996b10f3d365c3c8b64cc458018ed5e1ab1563` passed on all three platforms. For every fixture, observed poisoned-wire differences exactly matched the expected padding offsets; the representative ordinary managed-construction controls observed zero at all known padding offsets; and zeroing only those padding bytes made the poisoned wires identical. The packed control produced no differing bytes.
 
 ## Candidate mitigations
 
@@ -138,10 +138,10 @@ The observed behavior is not an arbitrary-memory over-read: only bytes inside `T
 For 2.x, the selected balance is therefore **retain + document/constrain**:
 
 1. keep the current allocation-free raw-blit production path;
-2. explicitly document that padding is wire-visible and non-canonical;
-3. classify unsafe/native/uninitialized source provenance as unsuitable for confidential raw-blit RPC boundaries unless the representation is sanitized;
+2. explicitly document that padding is wire-visible and non-canonical, and that zero padding observed from representative `new`/`default` controls is not a supported representation guarantee;
+3. classify unsafe/native/uninitialized source provenance as unsuitable for confidential raw-blit RPC boundaries unless the complete representation is sanitized; do not treat ordinary logical field initialization alone as a padding sanitizer;
 4. for affected payloads today, use existing explicit per-type custom Codec/Adapter/selector binding to leave the SharpLink raw-blit domain;
 5. track #311 as the Contract-level, compile-time scaling mechanism: an `Unmanaged` route can replace the whole SharpLink UnsafeBlit domain with a chosen third-party Adapter while explicit per-type bindings remain higher priority;
 6. keep automated multi-runtime poison evidence and canonicalization-cost evidence so future routing/restriction/canonicalization decisions have regression data.
 
-This decision can be revisited if future evidence shows non-zero padding arising from ordinary safe SharpLink DTO construction, if a runtime changes initialization/layout behavior, or if a low-cost/AOT-safe canonicalization mechanism becomes available.
+This decision can be revisited if broader runtime/JIT/AOT evidence changes the observed padding-risk profile, if a runtime changes initialization/layout behavior, or if a low-cost/AOT-safe canonicalization mechanism becomes available.
