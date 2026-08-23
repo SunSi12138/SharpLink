@@ -43,11 +43,14 @@ internal sealed partial class SharpLinkServer
                     requestOwner);
             }
 
+            var reservedQueuePermit = queuePermit ?? throw new InvalidOperationException(
+                "Persistent decode queue admission did not return its permit.");
+
             if (retainedPayload is null)
             {
                 if (!TryCopyAdmissionPayload(payload, flags, out retainedPayload))
                 {
-                    queuePermit.Dispose();
+                    reservedQueuePermit.Dispose();
                     queuePermit = null;
                     var rejection = CreateRetainedCompressedResourceExhaustion();
                     CompleteFailedRequestStreams(session, requestId, rejection);
@@ -65,9 +68,11 @@ internal sealed partial class SharpLinkServer
                 }
             }
 
-            retainedPayload!.AcquireUse();
+            var persistentRetainedPayload = retainedPayload ?? throw new InvalidOperationException(
+                "Persistent decode requires a retained request payload.");
+            persistentRetainedPayload.AcquireUse();
             retainedUseOwned = true;
-            var stablePayload = retainedPayload.Payload;
+            var stablePayload = persistentRetainedPayload.Payload;
 
             callState ??= CreateTrackedCallState(
                 connection,
@@ -86,7 +91,7 @@ internal sealed partial class SharpLinkServer
                 // Queued -> Running. Queued requests therefore do not consume these global budgets.
                 if (!TryPrepareCompressedRequestDecode(
                         requestOwner,
-                        retainedPayload.RetainedPermit,
+                        persistentRetainedPayload.RetainedPermit,
                         flags,
                         stablePayload,
                         out var decodePermit,
@@ -110,14 +115,14 @@ internal sealed partial class SharpLinkServer
             });
 
             var decodeTask = DecodeExecutor.EnqueueReservedAsync(
-                queuePermit,
+                reservedQueuePermit,
                 workItem,
                 callState.InvocationToken);
             queuePermit = null;
             retainedUseOwned = false;
             return AwaitPersistentDecodeAndContinueAsync(
                 decodeTask,
-                retainedPayload,
+                persistentRetainedPayload,
                 result,
                 connection,
                 requestId,

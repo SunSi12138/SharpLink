@@ -174,7 +174,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         try
         {
             await _channel.Writer.WriteAsync(
-                new ServerDecodeQueueEntry(workItem, queuePermit: null),
+                new ServerDecodeQueueEntry(workItem, null),
                 cancellationToken).ConfigureAwait(false);
             published = true;
             await workItem.Completion.ConfigureAwait(false);
