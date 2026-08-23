@@ -34,12 +34,70 @@ jobs:
           xz -t /tmp/issue-287-review4.patch.xz
           xz -dc /tmp/issue-287-review4.patch.xz > /tmp/issue-287-review4.patch
           echo '0b749e52cf22e80bee51bafe03be3f733ab13a25980b46e98c39341a6d9e5425  /tmp/issue-287-review4.patch' | sha256sum -c -
-          git apply --3way /tmp/issue-287-review4.patch
+          git apply \
+            --exclude=test/SharpLink.RollbackPlugin/RollbackManifest.cs \
+            --exclude=test/SharpLink.UnitTests/Runtime/GeneratedManifestLocatorTests.cs \
+            /tmp/issue-287-review4.patch
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rollback = Path('test/SharpLink.RollbackPlugin/RollbackManifest.cs')
+          text = rollback.read_text()
+          old = '''    SharpLinkGeneratedManifestVersions.Protocol,
+              "rollback-test")]'''
+          new = '''    SharpLinkGeneratedManifestVersions.Protocol,
+              "rollback-test",
+              SharpLinkGeneratedManifestVersions.AbiIdentity)]'''
+          if 'SharpLinkGeneratedManifestVersions.AbiIdentity)]' not in text:
+              assert text.count(old) == 1, 'unexpected rollback locator shape'
+              text = text.replace(old, new, 1)
+          rollback.write_text(text)
+
+          locator = Path('test/SharpLink.UnitTests/Runtime/GeneratedManifestLocatorTests.cs')
+          text = locator.read_text()
+          text = text.replace(
+              'not a valid self-describing locator',
+              'not a valid current self-describing locator')
+
+          old_sig = '''        string locatorGeneratorVersion = CurrentGeneratorVersion,
+              int manifestApiVersion = SharpLinkGeneratedManifestVersions.Api,'''
+          new_sig = '''        string locatorGeneratorVersion = CurrentGeneratorVersion,
+              string locatorAbiIdentity = SharpLinkGeneratedManifestVersions.AbiIdentity,
+              int manifestApiVersion = SharpLinkGeneratedManifestVersions.Api,'''
+          if 'string locatorAbiIdentity = SharpLinkGeneratedManifestVersions.AbiIdentity' not in text:
+              assert text.count(old_sig) == 1, 'unexpected locator fixture signature'
+              text = text.replace(old_sig, new_sig, 1)
+
+          old_ctor = '''                    [typeof(Type), typeof(int), typeof(int), typeof(string)]) ??
+                        throw new MissingMethodException(
+                            typeof(SharpLinkGeneratedAssemblyManifestAttribute).FullName,
+                            ".ctor(Type, Int32, Int32, String)");'''
+          new_ctor = '''                    [typeof(Type), typeof(int), typeof(int), typeof(string), typeof(string)]) ??
+                        throw new MissingMethodException(
+                            typeof(SharpLinkGeneratedAssemblyManifestAttribute).FullName,
+                            ".ctor(Type, Int32, Int32, String, String)");'''
+          if '.ctor(Type, Int32, Int32, String, String)' not in text:
+              assert text.count(old_ctor) == 1, 'unexpected locator constructor lookup'
+              text = text.replace(old_ctor, new_ctor, 1)
+
+          old_args = '''                    [manifestType, locatorApiVersion, locatorProtocolVersion, locatorGeneratorVersion]));'''
+          new_args = '''                    [manifestType, locatorApiVersion, locatorProtocolVersion, locatorGeneratorVersion, locatorAbiIdentity]));'''
+          if 'locatorGeneratorVersion, locatorAbiIdentity' not in text:
+              assert text.count(old_args) == 1, 'unexpected locator constructor args'
+              text = text.replace(old_args, new_args, 1)
+
+          assert '[Arguments(3, 2)]' in text
+          assert '[Arguments(5, 2)]' in text
+          assert '[Arguments(4, 3)]' in text
+          locator.write_text(text)
+          PY
           git diff --check
           ! git grep -n -E '^(<<<<<<<|=======|>>>>>>>)' -- src test doc README.md CHANGELOG.md
           ! git grep -n -E 'UtcDeadline|RpcDeadline\.Create\(DateTimeOffset|AddTimeout\(' -- src test
           grep -F 'public const int Api = 4;' src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs
           grep -F 'public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";' src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs
+          grep -F 'SharpLinkGeneratedManifestVersions.AbiIdentity)]' test/SharpLink.RollbackPlugin/RollbackManifest.cs
+          grep -F '.ctor(Type, Int32, Int32, String, String)' test/SharpLink.UnitTests/Runtime/GeneratedManifestLocatorTests.cs
           grep -F 'TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;' src/SharpLink.Abstractions/ISharpLinkClient.cs
           grep -F 'TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;' src/SharpLink.Abstractions/ISharpLinkMultiClusterClient.cs
       - name: Commit real source
