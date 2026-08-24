@@ -81,19 +81,19 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         ValidatePermitCount(permitCount);
 
         // The complete AdmissionRequest owns the reader-visible target-version transaction. Keep
-        // this limiter's immediate path BCL-shaped and allocation-minimal; the request validates one
-        // stable epoch across every Global / Contract / Method slot before exposing the lease set.
-        return AttemptAcquireStableCore();
-    }
-
-    private RateLimitLease AttemptAcquireStableCore()
-    {
+        // exhausted rejection directly in the override so the common denied path does not pay a
+        // secondary helper call; only a potentially successful acquisition reaches the hook/lock.
         if (Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit) ||
             Volatile.Read(ref _disposed) != 0)
         {
             return FailedLease.Instance;
         }
 
+        return AttemptAcquireStableCore();
+    }
+
+    private RateLimitLease AttemptAcquireStableCore()
+    {
         // The deterministic publication-race hook is needed only once an immediate attempt can
         // still reach the state lock. Exhausted rejection is already final and must stay on the
         // minimal production fast path.
