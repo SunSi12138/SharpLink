@@ -8,7 +8,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private readonly SharpLinkRuntimeOptions _options;
     private readonly Lock _registrationGate = new();
     private readonly HashSet<RpcGeneratedManifestRegistration> _manifestRegistrations = [];
-    private readonly Dictionary<System.Reflection.Assembly, IRpcCodecProvider> _manifestCodecProviders = [];
+    private readonly Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> _manifestCodecProviders = [];
     private int _disposed;
 
     internal SharpLinkRuntimeContext(
@@ -148,14 +148,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             if (!_manifestRegistrations.Add(registration))
                 return;
             var provider = RpcGeneratedCodecResolver.GetProvider(registration);
-            if (!_manifestCodecProviders.TryAdd(
-                    registration.Manifest.OwnerAssembly,
-                    provider))
+            if (!_manifestCodecProviders.TryGetValue(registration.Manifest.OwnerAssembly, out var providers))
             {
-                _manifestRegistrations.Remove(registration);
-                throw new InvalidOperationException(
-                    $"A manifest-owned Codec provider for assembly '{registration.Manifest.OwnerAssembly.FullName}' is already registered in this runtime context.");
+                providers = [];
+                _manifestCodecProviders.Add(registration.Manifest.OwnerAssembly, providers);
             }
+            providers.Add(new ManifestCodecProviderEntry(registration, provider));
         }
     }
 
@@ -170,8 +168,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_manifestCodecProviders.TryGetValue(ownerAssembly, out var provider))
-                return provider;
+            if (_manifestCodecProviders.TryGetValue(ownerAssembly, out var providers) && providers.Count != 0)
+                return providers[^1].Provider;
         }
 
         var loadedPolicyOwner = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
@@ -185,8 +183,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_manifestCodecProviders.TryGetValue(ownerAssembly, out var provider))
-                return provider;
+            if (_manifestCodecProviders.TryGetValue(ownerAssembly, out var providers) && providers.Count != 0)
+                return providers[^1].Provider;
         }
 
         throw new InvalidOperationException(
@@ -217,7 +215,16 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         lock (_registrationGate)
         {
             _manifestRegistrations.Remove(registration);
-            _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
+            if (_manifestCodecProviders.TryGetValue(registration.Manifest.OwnerAssembly, out var providers))
+            {
+                for (var index = providers.Count - 1; index >= 0; index--)
+                {
+                    if (ReferenceEquals(providers[index].Registration, registration))
+                        providers.RemoveAt(index);
+                }
+                if (providers.Count == 0)
+                    _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
+            }
         }
         registration.Dispose();
     }
@@ -259,6 +266,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     // would otherwise become a permanent root for collectible plugin load contexts.
     internal static SharpLinkRuntimeContext Default { get; } =
         new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+
+    private readonly record struct ManifestCodecProviderEntry(
+        RpcGeneratedManifestRegistration Registration,
+        IRpcCodecProvider Provider);
 }
 
 /// <summary>Builds and validates an immutable <see cref="SharpLinkRuntimeContext"/>.</summary>
