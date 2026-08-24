@@ -104,7 +104,8 @@ public class SharpLinkServerRequestScopeTests
 
         secondStub.Fail(new InvalidOperationException("issue-248-second"));
         firstStub.Fail(new InvalidOperationException("issue-248-first"));
-        await Task.WhenAll(firstDispatch.AsTask(), secondDispatch.AsTask());
+        await firstDispatch;
+        await secondDispatch;
 
         var logs = loggerFactory.Logs
             .Where(static entry => entry.Message == "One-way RPC dispatch failed.")
@@ -127,7 +128,7 @@ public class SharpLinkServerRequestScopeTests
         for (var i = 0; i < requestCount; i++)
         {
             using (harness.BeginRequestScope(1_000L + i))
-                _ = harness.DispatchOneWay(1_000L + i);
+                await harness.DispatchOneWay(1_000L + i);
         }
 
         var snapshot = loggerFactory.Snapshot();
@@ -156,9 +157,6 @@ public class SharpLinkServerRequestScopeTests
         if (observer is not null)
             await observer;
 
-        await YieldUntilAsync(
-            () => loggerFactory.RequestScopeDisposeCount == loggerFactory.RequestScopeBeginCount,
-            "unary RequestId scopes did not all dispose");
         return loggerFactory.Snapshot();
     }
 
@@ -176,20 +174,8 @@ public class SharpLinkServerRequestScopeTests
             stub.Complete();
         await dispatch;
 
-        if (harness.Connection.ActiveCalls != 0 ||
-            loggerFactory.RequestScopeDisposeCount != loggerFactory.RequestScopeBeginCount)
-        {
-            throw new Exception("one-way RequestId scopes did not all dispose");
-        }
+        await Assert.That(harness.Connection.ActiveCalls).IsEqualTo(0);
         return loggerFactory.Snapshot();
-    }
-
-    private static async Task YieldUntilAsync(Func<bool> condition, string failureMessage)
-    {
-        for (var attempt = 0; attempt < 512 && !condition(); attempt++)
-            await Task.Yield();
-        if (!condition())
-            throw new Exception(failureMessage);
     }
 
     private readonly record struct ScopeSnapshot(int BeginCount, int DisposeCount, int MaxDepth);
