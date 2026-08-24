@@ -13,6 +13,11 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        var control = ResolveCallControl(
+            metadata,
+            includeClientDefault: true,
+            method.HasMethodTimeout,
+            method.MethodTimeout);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -21,20 +26,15 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeUnaryWithTelemetryAsync(
-                    method, request, requestCodec, responseCodec, interceptors, metadata, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else if (interceptors.Length != 0)
             {
                 invocation = InvokeUnaryInterceptedAsync(
-                    method, request, requestCodec, responseCodec, interceptors, metadata, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else
             {
-                var control = ResolveCallControl(
-                    metadata,
-                    includeClientDefault: true,
-                    method.HasMethodTimeout,
-                    method.MethodTimeout);
                 invocation = InvokeUnaryWithOptionalRetryAsync(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             }
@@ -58,6 +58,11 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        var control = ResolveCallControl(
+            metadata,
+            includeClientDefault: false,
+            method.HasMethodTimeout,
+            method.MethodTimeout);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -66,20 +71,15 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeOneWayWithTelemetryAsync(
-                    method, request, requestCodec, streams, interceptors, metadata, cancellationToken);
+                    method, request, requestCodec, streams, interceptors, control, cancellationToken);
             }
             else if (interceptors.Length != 0)
             {
                 invocation = InvokeOneWayInterceptedAsync(
-                    method, request, requestCodec, streams, interceptors, metadata, cancellationToken);
+                    method, request, requestCodec, streams, interceptors, control, cancellationToken);
             }
             else
             {
-                var control = ResolveCallControl(
-                    metadata,
-                    includeClientDefault: false,
-                    method.HasMethodTimeout,
-                    method.MethodTimeout);
                 invocation = InvokeOneWayCoreAsync(
                     method,
                     request,
@@ -110,6 +110,11 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        var control = ResolveCallControl(
+            metadata,
+            includeClientDefault: false,
+            method.HasMethodTimeout,
+            method.MethodTimeout);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -118,20 +123,15 @@ internal sealed partial class SharpLinkClient
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
                 invocation = InvokeClientStreamingWithTelemetryAsync(
-                    method, request, requestCodec, responseCodec, streams, interceptors, metadata, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else if (interceptors.Length != 0)
             {
                 invocation = InvokeClientStreamingInterceptedAsync(
-                    method, request, requestCodec, responseCodec, streams, interceptors, metadata, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else
             {
-                var control = ResolveCallControl(
-                    metadata,
-                    includeClientDefault: false,
-                    method.HasMethodTimeout,
-                    method.MethodTimeout);
                 invocation = InvokeClientStreamingCoreAsync(
                     method,
                     request,
