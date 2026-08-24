@@ -463,8 +463,6 @@ internal sealed partial class SharpLinkClient
     {
         var oldIdentity = oldModule.Manifest.OwnerAssembly.FullName;
         var newIdentity = incoming.OwnerAssembly.FullName;
-        if (string.Equals(oldIdentity, newIdentity, StringComparison.Ordinal))
-            return null;
         foreach (var candidate in _dynamicModules.Values)
         {
             if (!ReferenceEquals(candidate, oldModule) &&
@@ -473,7 +471,7 @@ internal sealed partial class SharpLinkClient
                 return CreateError(
                     SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
                     $"Assembly '{candidate.Manifest.OwnerAssembly.FullName}' depends on '{oldIdentity}', " +
-                    $"so it cannot remain registered after replacement by '{newIdentity}'.",
+                    $"so it cannot remain registered while that dependency generation is replaced by '{newIdentity}'.",
                     incoming.OwnerAssembly,
                     artifact: "Dependency");
             }
