@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Threading;
@@ -85,7 +86,7 @@ public sealed class AdmissionRuntimeControlTests
 
     [Test]
     [NotInParallel]
-    public async Task PublicReEnableShouldReuseCompatibleRateAndPartitionStateDuringOverlap()
+    public async Task PublicReEnableShouldReuseCompatibleConcurrencyRateAndPartitionStateDuringOverlap()
     {
         await using var server = CreateServer();
         var publicServer = (ISharpLinkServer)server;
@@ -96,8 +97,7 @@ public sealed class AdmissionRuntimeControlTests
 
         var first = await original.Controller.AcquireAsync(
             CreateContext(), 1, allowQueue: false, CancellationToken.None);
-        Ensure(first.IsAcquired, "generation N must consume the shared rate token and create partition state");
-        first.Lease!.Dispose();
+        Ensure(first.IsAcquired, "generation N must consume shared permits/rate and create partition state");
         Ensure(kernel.RuleStateCount == 1 && kernel.PartitionStateCount == 1,
             "generation N must own one global rule state and one partition namespace");
 
@@ -119,6 +119,12 @@ public sealed class AdmissionRuntimeControlTests
                kernel.RuleStateCount == 1 && kernel.PartitionStateCount == 1,
             "overlap must not duplicate compatible state registries");
 
+        var blockedByOldPermit = await replacement.Controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: false, CancellationToken.None);
+        Ensure(!blockedByOldPermit.IsAcquired && blockedByOldPermit.Reason == "concurrency",
+            "old concurrency permit must constrain the compatible re-enabled generation");
+
+        first.Lease!.Dispose();
         var exhausted = await replacement.Controller.AcquireAsync(
             CreateContext(), 1, allowQueue: false, CancellationToken.None);
         Ensure(!exhausted.IsAcquired && exhausted.Reason == "rate",
@@ -129,6 +135,57 @@ public sealed class AdmissionRuntimeControlTests
             "last old-generation use must reclaim exactly once");
         publicServer.DisableAdmissionControl();
         AssertDisabledAndEmpty(server, kernel, "overlap cleanup");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task PublicReEnableShouldShareOldQueueAccountingDuringOverlap()
+    {
+        await using var server = CreateServer();
+        var publicServer = (ISharpLinkServer)server;
+        publicServer.EnableAdmissionControl(ConfigureQueue);
+        var original = server.CurrentAdmissionProgramForTests!;
+        var kernel = original.Kernel;
+        Ensure(original.TryAcquireUse() && original.TryAcquireUse(),
+            "test must retain active and queued generation-N uses");
+        var held = await original.Controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: false, CancellationToken.None);
+        Ensure(held.IsAcquired, "generation N must hold the shared concurrency permit");
+        var queued = original.Controller.AcquireAsync(
+            CreateContext(), retainedBytes: 2, allowQueue: true, CancellationToken.None).AsTask();
+        await WaitUntilAsync(() => kernel.QueuedCalls == 1,
+            "generation N must reserve one shared queue slot");
+
+        publicServer.DisableAdmissionControl();
+        publicServer.EnableAdmissionControl(ConfigureQueue);
+        var replacement = server.CurrentAdmissionProgramForTests!;
+        Ensure(ReferenceEquals(
+                original.Controller.GlobalStateForTests,
+                replacement.Controller.GlobalStateForTests),
+            "re-enabled queue policy must share compatible global state");
+        Ensure(kernel.QueuedCalls == 1 && kernel.QueuedBytes == 2 && kernel.RuleStateCount == 1,
+            "old queued call and re-enabled generation must use one queue accounting kernel");
+
+        var rejected = await replacement.Controller.AcquireAsync(
+            CreateContext(), retainedBytes: 2, allowQueue: true, CancellationToken.None);
+        Ensure(!rejected.IsAcquired && rejected.Reason == "queue_count",
+            "re-enabled generation must observe old generation queue occupancy");
+        Ensure(kernel.QueuedCalls == 1 && kernel.QueuedBytes == 2,
+            "rejected re-enabled enqueue must not underflow shared queue accounting");
+
+        held.Lease!.Dispose();
+        var admitted = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(admitted.IsAcquired, "old queued call must survive disable/re-enable overlap");
+        admitted.Lease!.Dispose();
+        original.ReleaseUse();
+        original.ReleaseUse();
+        Ensure(original.IsReclaimed && original.ReclaimCount == 1,
+            "old queued generation must reclaim exactly once after simulated captures release");
+        await WaitUntilAsync(
+            () => kernel.QueuedCalls == 0 && kernel.QueuedBytes == 0 && kernel.ActivePermits == 0,
+            "shared queue and permit accounting must drain without underflow");
+        publicServer.DisableAdmissionControl();
+        AssertDisabledAndEmpty(server, kernel, "queue overlap cleanup");
     }
 
     [Test]
@@ -181,6 +238,55 @@ public sealed class AdmissionRuntimeControlTests
 
     [Test]
     [NotInParallel]
+    public async Task EnableRacingDisableShouldLinearizeInWriterOrder()
+    {
+        await using var server = CreateServer();
+        var publicServer = (ISharpLinkServer)server;
+        var kernel = server.AdmissionStateKernelForTests!;
+        publicServer.EnableAdmissionControl(options => options.Global.UseConcurrency(1));
+        var original = server.CurrentAdmissionProgramForTests!;
+        using var candidateBuilt = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+
+        try
+        {
+            SharpLinkServer.AfterAdmissionCandidateBuiltForTests = (owner, _) =>
+            {
+                if (!ReferenceEquals(owner, server))
+                    return;
+                candidateBuilt.Set();
+                if (!release.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("enable-vs-disable release timed out");
+            };
+
+            var enable = Task.Run(() => CaptureFailure(() =>
+                publicServer.EnableAdmissionControl(options => options.Global.UseConcurrency(1))));
+            Ensure(candidateBuilt.Wait(TimeSpan.FromSeconds(5)),
+                "enable candidate must be fully built before the competing disable wins");
+            publicServer.DisableAdmissionControl();
+            Ensure(server.CurrentAdmissionProgramForTests is null,
+                "disable must be visible before the blocked enable is released");
+            release.Set();
+            Ensure(await enable is null,
+                "enable that linearizes after disable must succeed as a re-enable");
+            Ensure(server.CurrentAdmissionProgramForTests is not null &&
+                   original.IsRetired && original.IsReclaimed &&
+                   kernel.LiveProgramCount == 1 && kernel.RetiredProgramCount == 0 &&
+                   kernel.RuleStateCount == 1,
+                "final state must match disable-then-enable publication order without registry growth");
+        }
+        finally
+        {
+            SharpLinkServer.AfterAdmissionCandidateBuiltForTests = null;
+            release.Set();
+        }
+
+        publicServer.DisableAdmissionControl();
+        AssertDisabledAndEmpty(server, kernel, "enable-vs-disable cleanup");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task CandidateBuiltBeforeStopShouldBeRejectedAndReclaimed()
     {
         await using var server = CreateServer();
@@ -210,6 +316,8 @@ public sealed class AdmissionRuntimeControlTests
             await stopTask!.WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(candidate!.IsRetired && candidate.IsReclaimed && candidate.ReclaimCount == 1,
                 "Stop-racing candidate must retire and reclaim exactly once");
+            Ensure(CaptureFailure(publicServer.DisableAdmissionControl) is InvalidOperationException,
+                "disable after lifecycle sealing must deterministically reject without publishing");
             AssertKernelDrained(kernel, "candidate-vs-Stop");
         }
         finally
@@ -250,6 +358,7 @@ public sealed class AdmissionRuntimeControlTests
 
     private static void ConfigureRateAndPartition(SharpLinkAdmissionControlOptions options)
     {
+        options.Global.UseConcurrency(1);
         options.Global.UseTokenBucket(rate =>
         {
             rate.TokenLimit = 1;
@@ -264,8 +373,30 @@ public sealed class AdmissionRuntimeControlTests
         });
     }
 
+    private static void ConfigureQueue(SharpLinkAdmissionControlOptions options)
+    {
+        options.Global.UseConcurrency(1);
+        options.MaxQueuedCalls = 1;
+        options.MaxQueuedBytes = 8;
+        options.MaxQueueDelay = TimeSpan.FromSeconds(5);
+    }
+
     private static SharpLinkAdmissionContext CreateContext()
         => new(101, 202, RpcMethodKind.Unary, "runtime-control-test", null, null, null);
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string scenario)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (!condition())
+                await Task.Delay(10, timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new Exception($"assert failed: {scenario}");
+        }
+    }
 
     private static Exception? CaptureFailure(Action action)
     {
