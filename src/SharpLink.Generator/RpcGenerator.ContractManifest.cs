@@ -754,18 +754,32 @@ public partial class RpcGenerator
         foreach (var oldCodec in baseline.Codecs)
         {
             if (directlyDescribedCodecTypes.Contains(oldCodec.Type) ||
-                !currentCodecs.TryGetValue(oldCodec.Type, out var newCodec) ||
-                string.Equals(oldCodec.WireFormatId, newCodec.WireFormatId, StringComparison.Ordinal))
+                !currentCodecs.TryGetValue(oldCodec.Type, out var newCodec))
             {
                 continue;
             }
+
+            var kindChanged = !string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal);
+            var selectedImplementationKind =
+                string.Equals(oldCodec.Kind, GeneratedCodecKind.Adapter.ToString(), StringComparison.Ordinal) ||
+                string.Equals(oldCodec.Kind, GeneratedCodecKind.Direct.ToString(), StringComparison.Ordinal) ||
+                string.Equals(newCodec.Kind, GeneratedCodecKind.Adapter.ToString(), StringComparison.Ordinal) ||
+                string.Equals(newCodec.Kind, GeneratedCodecKind.Direct.ToString(), StringComparison.Ordinal);
+            var schemaChanged = selectedImplementationKind &&
+                                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
+            var wireFormatChanged = !string.Equals(
+                oldCodec.WireFormatId,
+                newCodec.WireFormatId,
+                StringComparison.Ordinal);
+            if (!kindChanged && !schemaChanged && !wireFormatChanged)
+                continue;
 
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
                 newCodec.SourceLocation,
                 oldCodec.Type,
-                $"nested Codec wire format changed from {oldCodec.WireFormatId} to {newCodec.WireFormatId}",
-                "restore the previous nested wire format or add a new RPC payload type"));
+                $"nested Codec selection changed from {oldCodec.Kind}/{oldCodec.SchemaId ?? "unknown"}/{oldCodec.WireFormatId} to {newCodec.Kind}/{newCodec.SchemaId ?? "unknown"}/{newCodec.WireFormatId}",
+                "restore the previous nested Codec selection or publish a new RPC payload type"));
         }
 
         var currentEnums = current.Enums.ToDictionary(static item => item.Name, StringComparer.Ordinal);
