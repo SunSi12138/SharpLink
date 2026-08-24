@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
     private static Action<SharpLinkServer, long, AdmissionProgram>? s_afterAdmissionPublicationReadForTests;
     private static Action<SharpLinkServer, long, AdmissionProgram?>? s_afterAdmissionCaptureForTests;
     private static Action<SharpLinkServer, AdmissionProgram>? s_afterAdmissionCandidateBuiltForTests;
+    private static Action<SharpLinkServer, AdmissionProgram?>? s_beforeAdmissionPublicationLockForTests;
 
     private AdmissionProgram _admissionProgram = AdmissionProgram.Uninitialized;
 
@@ -32,6 +33,15 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
     {
         get => Volatile.Read(ref s_afterAdmissionCandidateBuiltForTests);
         set => Volatile.Write(ref s_afterAdmissionCandidateBuiltForTests, value);
+    }
+
+    /// <summary>
+    /// Deterministic writer probe. A null program represents disable publication.
+    /// </summary>
+    internal static Action<SharpLinkServer, AdmissionProgram?>? BeforeAdmissionPublicationLockForTests
+    {
+        get => Volatile.Read(ref s_beforeAdmissionPublicationLockForTests);
+        set => Volatile.Write(ref s_beforeAdmissionPublicationLockForTests, value);
     }
 
     internal AdmissionProgram? CurrentAdmissionProgramForTests
@@ -99,6 +109,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             throw new InvalidOperationException("Server admission lifecycle owner is unavailable.");
         if (program is not null && !ReferenceEquals(program.Kernel, lifecycle.Kernel))
             throw new InvalidOperationException("Admission program belongs to a different server state kernel.");
+
+        Volatile.Read(ref s_beforeAdmissionPublicationLockForTests)?.Invoke(this, program);
 
         AdmissionProgram previous;
         lock (_registryGate)
