@@ -9,7 +9,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class RpcCodecRouteRuntimeTests
 {
     [Test]
-    public void ManifestScopedRoutesShouldCoexistWithoutChangingGlobalBuiltin()
+    public void ContractRoutesShouldCoexistWithoutChangingGlobalBuiltin()
     {
         var routeA = new RoutedInt32Codec("A");
         var routeC = new RoutedInt32Codec("C");
@@ -26,10 +26,10 @@ public class RpcCodecRouteRuntimeTests
             new RoutedManifest(ownerC, routeC, "route-c/v1", "wire-c/v1"));
 
         Ensure(registrationA.Codecs.Count == 0 && registrationC.Codecs.Count == 0,
-            "assembly-routed targets must not enter the context-global generated Codec registry");
-        Ensure(registrationA.AllCodecs.ContainsKey(typeof(int)) &&
-               registrationC.AllCodecs.ContainsKey(typeof(int)),
-            "assembly-routed targets must remain available to their owning manifests");
+            "Contract-routed targets must not enter the context-global generated Codec registry");
+        Ensure(registrationA.ContractCodecs.ContainsKey(typeof(int)) &&
+               registrationC.ContractCodecs.ContainsKey(typeof(int)),
+            "Contract-routed targets must remain available only to their owning Contracts");
 
         context.AdoptGeneratedManifest(registrationA);
         context.AdoptGeneratedManifest(registrationB);
@@ -43,11 +43,11 @@ public class RpcCodecRouteRuntimeTests
         Ensure(ReferenceEquals(codecsA.GetCodec<int>(), routeA),
             "owner A must resolve its own routed int Codec");
         Ensure(ReferenceEquals(codecsB.GetCodec<int>(), global),
-            "owner B without a route must keep the context default builtin int Codec");
+            "owner B without a Contract Codec binding must keep the context default builtin int Codec");
         Ensure(ReferenceEquals(codecsC.GetCodec<int>(), routeC),
             "owner C must resolve its own routed int Codec independently of owner A");
         Ensure(!ReferenceEquals(global, routeA) && !ReferenceEquals(global, routeC),
-            "manifest-scoped routes must never replace the context-global builtin Codec");
+            "Contract routes must never replace the context-global builtin Codec");
     }
 
     private static void Ensure(bool condition, string message)
@@ -113,7 +113,7 @@ public class RpcCodecRouteRuntimeTests
             string wireFormatId)
         {
             OwnerAssembly = ownerAssembly;
-            Codecs = [new RoutedInt32Factory(new RouteAdapter(codec, adapterId, wireFormatId))];
+            ContractCodecs = [new RoutedInt32Factory(new RouteAdapter(codec, adapterId, wireFormatId))];
         }
 
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
@@ -123,8 +123,8 @@ public class RpcCodecRouteRuntimeTests
         public string CompileTimeDescriptor => $"route-native-{OwnerAssembly.GetName().Name}";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
-        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
-        public IReadOnlyList<Type> ManifestScopedCodecTargets => [typeof(int)];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; }
         public IReadOnlyList<string> Dependencies => [];
     }
 
