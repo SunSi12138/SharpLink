@@ -639,6 +639,11 @@ internal sealed partial class SharpLinkServer
             if (index >= _interceptors.Length)
                 return InvokeTerminalTrackedAsync(context);
 
+            // Every interceptor invocation is a user-code re-entry boundary. Route it through
+            // the same Server call-state/deadline claimant used by generated service methods
+            // and server-stream MoveNextAsync so no later interceptor can run after terminal.
+            _generatedBridge.EnsureUserCodeEntry(_requestId);
+
             var continuation = new ServerInterceptorContinuation(
                 ServerContinuationState.Rent(this, index + 1));
             ValueTask invocation;
