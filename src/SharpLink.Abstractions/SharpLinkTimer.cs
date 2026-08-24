@@ -113,6 +113,11 @@ internal static class SharpLinkTimer
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                if (task.IsCompleted)
+                {
+                    await task.ConfigureAwait(false);
+                    return true;
+                }
                 if (deadline.IsExpired(timeProvider))
                     return false;
                 throw;
