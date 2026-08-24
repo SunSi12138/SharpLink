@@ -59,14 +59,21 @@ public sealed class SelectorAdapter : TestRouteAdapterBase
 
         var sources = RunGeneratorAndGetSources(source);
         var generated = string.Join("\n", sources);
-        Ensure(generated.Split("TargetType => typeof(global::SelectorPayload)", StringSplitOptions.None).Length - 1 == 2,
-            "selector default and identical explicit Contract policy must be represented by independent factories");
+        Ensure(generated.Split("TargetType => typeof(global::SelectorPayload)", StringSplitOptions.None).Length - 1 == 1,
+            "selector default and identical explicit Contract policy should reuse one generated factory implementation");
 
         var manifest = sources.Single(static item => item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+        var globalStart = manifest.IndexOf("__codecs =", StringComparison.Ordinal);
         var contractStart = manifest.IndexOf("__contractCodecs =", StringComparison.Ordinal);
-        Ensure(contractStart >= 0 && manifest.Substring(contractStart).Contains(
-                "__SharpLinkGeneratedContractPolicyCodec_", StringComparison.Ordinal),
-            "an explicit binding must remain Contract-owned even when it resolves to the same Adapter as the selector default");
+        Ensure(globalStart >= 0 && contractStart > globalStart,
+            "generated manifest must expose separate default and Contract-owned Codec tables");
+        var globalSection = manifest.Substring(globalStart, contractStart - globalStart);
+        var contractSection = manifest.Substring(contractStart);
+        Ensure(globalSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal) &&
+               contractSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal),
+            "explicit provenance must place the shared selector factory in ContractCodecs as well as the default table");
+        Ensure(!contractSection.Contains("__SharpLinkGeneratedContractPolicyCodec_", StringComparison.Ordinal),
+            "definition-identical policy should not manufacture a duplicate owner implementation type");
         return Task.CompletedTask;
     }
 
