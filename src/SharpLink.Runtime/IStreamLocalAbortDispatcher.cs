@@ -7,7 +7,7 @@ namespace SharpLink.Runtime;
 /// </summary>
 internal interface IStreamLocalAbortDispatcher : IStreamDispatcher
 {
-    void AbortLocal(Exception? exception);
+    void CompleteLocalAbort(Exception? exception);
 
     void RetireLocalAbortBuffer();
 }
