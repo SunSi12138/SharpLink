@@ -21,7 +21,7 @@ public static class HostExtensions
             services.AddHealthChecks()
                 .AddCheck<SharpLinkServerHealthCheck>("sharplink_server", tags: ["ready"]);
             if (builder.Transport is IAnonymousPipeAllocator anonymousPipeAllocator)
-                services.AddSingleton<IAnonymousPipeAllocatorAccessor>(new AnonymousPipeAllocatorAccessor{AnonymousPipeAllocator = anonymousPipeAllocator});
+                services.AddSingleton<IAnonymousPipeAllocatorAccessor>(new AnonymousPipeAllocatorAccessor { AnonymousPipeAllocator = anonymousPipeAllocator });
 
             services.AddHostedService<SharpLinkServerHostedService>();
             return builder;

@@ -228,6 +228,13 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "explicit per-type adapter must win over the assembly route");
         Ensure(!generated.Contains("route-wire/v1", StringComparison.Ordinal),
             "the losing route must not enter the generated manifest for the explicitly bound type");
+        var manifest = RunGeneratorAndGetSources(source).Single(static item =>
+            item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+        var globalSection = manifest.Substring(
+            manifest.IndexOf("__codecs =", StringComparison.Ordinal),
+            manifest.IndexOf("__contractCodecs =", StringComparison.Ordinal) - manifest.IndexOf("__codecs =", StringComparison.Ordinal));
+        Ensure(!globalSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal),
+            "a Contract-reachable explicit binding must not be published to the global Codec registry");
         EnsureDoesNotHaveRule(source, "SHARPLINK045");
         return Task.CompletedTask;
     }
@@ -415,6 +422,42 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "dynamic must not enter a routed Codec factory");
         Ensure(!generated.Contains("typeof(dynamic)", StringComparison.Ordinal),
             "generated manifests must not contain illegal typeof(dynamic)");
+        return Task.CompletedTask;
+    }
+
+
+    [Test]
+    public Task RpcSerializableContractPayloadShouldKeepIndependentBindings()
+    {
+        var source = AddAssemblyAttributes(BuildRouteSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class Payload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IDualRoleContract : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Echo(Payload value, CancellationToken cancellationToken);
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.dual-role/v1";
+    public override string WireFormatId => "route-dual-role-wire/v1";
+}
+"""),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.dual-role/v1\", \"route-dual-role-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+
+        var sources = RunGeneratorAndGetSources(source);
+        var generated = string.Join("\n", sources);
+        Ensure(generated.Split("TargetType => typeof(global::Payload)", StringSplitOptions.None).Length - 1 == 2,
+            "dual-role Payload must have independent standalone-native and Contract-routed factories");
+        var manifest = sources.Single(static item => item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+        Ensure(manifest.Contains("ContractCodecs => __readOnlyContractCodecs", StringComparison.Ordinal),
+            "generated manifest must expose a separate Contract Codec binding table");
         return Task.CompletedTask;
     }
 

@@ -277,13 +277,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     private RpcGeneratedManifestRegistration(
         ISharpLinkGeneratedAssemblyManifest manifest,
-        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> allCodecs,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> contractCodecs,
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs,
         IRpcCodecProvider baseProvider,
         IRpcCodecAdapterScope[] scopes)
     {
         Manifest = manifest;
-        AllCodecs = allCodecs;
+        ContractCodecs = contractCodecs;
         Codecs = codecs;
         BaseProvider = baseProvider;
         _scopes = scopes;
@@ -291,21 +291,21 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     internal ISharpLinkGeneratedAssemblyManifest Manifest { get; }
 
-    /// <summary>Gets every Codec owned by this manifest, including assembly-routed targets.</summary>
-    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> AllCodecs { get; }
+    /// <summary>Gets Codec bindings visible only to RPC Contracts owned by this manifest.</summary>
+    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> ContractCodecs { get; }
 
     /// <summary>Gets only Codecs that may participate in the context-global generated registry.</summary>
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Codecs { get; }
 
     internal IRpcCodecProvider BaseProvider { get; }
 
-    internal bool HasManifestScopedCodecs => Manifest.ManifestScopedCodecTargets.Count != 0;
+    internal bool HasContractCodecs => ContractCodecs.Count != 0;
 
     internal IRpcCodecProvider ContractCodecProvider
     {
         get
         {
-            if (!HasManifestScopedCodecs)
+            if (!HasContractCodecs)
                 return BaseProvider;
             var existing = Volatile.Read(ref _contractCodecProvider);
             if (existing is not null)
@@ -326,7 +326,8 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         try
         {
             var scopeByAdapterId = new Dictionary<string, AdapterScopeRegistration>(StringComparer.Ordinal);
-            foreach (var factory in manifest.Codecs.OrderBy(static factory => factory.AdapterId, StringComparer.Ordinal)
+            var allFactories = manifest.Codecs.Concat(manifest.ContractCodecs).ToArray();
+            foreach (var factory in allFactories.OrderBy(static factory => factory.AdapterId, StringComparer.Ordinal)
                          .ThenBy(static factory => factory.WireFormatId, StringComparer.Ordinal)
                          .ThenBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
             {
@@ -355,36 +356,41 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             }
 
             var ownerBox = new OwnerBox();
-            var allCodecs = new Dictionary<Type, RpcGeneratedCodecRegistration>();
-            foreach (var factory in manifest.Codecs.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
-            {
-                IRpcCodec? preparedCodec = null;
-                if (factory.AdapterId is not null)
-                {
-                    var scope = scopeByAdapterId[factory.AdapterId].Scope;
-                    preparedCodec = factory.Create(provider, scope) ?? throw new InvalidOperationException(
-                        $"Generated Codec factory for '{factory.TargetType.FullName}' returned null.");
-                    ValidateCodec(factory, preparedCodec);
-                }
-                if (allCodecs.ContainsKey(factory.TargetType))
-                    throw new InvalidOperationException(
-                        $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}'.");
-                allCodecs.Add(factory.TargetType, new RpcGeneratedCodecRegistration(
-                    ownerBox, factory, preparedCodec));
-            }
-
-            var manifestScopedTargets = new HashSet<Type>(manifest.ManifestScopedCodecTargets);
-            var publishedCodecs = allCodecs
-                .Where(pair => !manifestScopedTargets.Contains(pair.Key))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            var publishedCodecs = CreateRegistrations(manifest.Codecs);
+            var contractCodecs = CreateRegistrations(manifest.ContractCodecs);
             var registration = new RpcGeneratedManifestRegistration(
                 manifest,
-                allCodecs,
+                contractCodecs,
                 publishedCodecs,
                 provider,
                 [.. scopes]);
             ownerBox.Value = registration;
             return registration;
+
+            Dictionary<Type, RpcGeneratedCodecRegistration> CreateRegistrations(
+                IReadOnlyList<IRpcGeneratedCodecFactory> factories)
+            {
+                var registrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
+                foreach (var factory in factories.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
+                {
+                    IRpcCodec? preparedCodec = null;
+                    if (factory.AdapterId is not null)
+                    {
+                        var scope = scopeByAdapterId[factory.AdapterId].Scope;
+                        preparedCodec = factory.Create(provider, scope) ?? throw new InvalidOperationException(
+                            $"Generated Codec factory for '{factory.TargetType.FullName}' returned null.");
+                        ValidateCodec(factory, preparedCodec);
+                    }
+                    if (!registrations.TryAdd(
+                            factory.TargetType,
+                            new RpcGeneratedCodecRegistration(ownerBox, factory, preparedCodec)))
+                    {
+                        throw new InvalidOperationException(
+                            $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}' in one binding scope.");
+                    }
+                }
+                return registrations;
+            }
         }
         catch (Exception preparationException)
         {

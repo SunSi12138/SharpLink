@@ -31,10 +31,15 @@ public partial class RpcGenerator
             AppendProxyFields(sb, model, method);
 
         sb.AppendLine($"    public {model.Name}_Proxy(IRpcChannel channel)");
+        sb.AppendLine($"        : this(channel, RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof({model.FullName}).Assembly))");
+        sb.AppendLine("    {");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine($"    internal {model.Name}_Proxy(IRpcChannel channel, IRpcCodecProvider __codecs)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(channel);");
+        sb.AppendLine("        ArgumentNullException.ThrowIfNull(__codecs);");
         sb.AppendLine("        _channel = channel;");
-        sb.AppendLine($"        var __codecs = RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof({model.FullName}).Assembly);");
         foreach (var method in model.Methods)
         {
             var suffix = GetMethodSuffix(method);

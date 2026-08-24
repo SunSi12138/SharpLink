@@ -5,7 +5,7 @@ public partial class RpcGenerator
     private static bool IsAsyncEnumerable(ITypeSymbol type, out ITypeSymbol? itemType)
     {
         itemType = null;
-        if (type is not INamedTypeSymbol named || named.OriginalDefinition.ToDisplayString() != "System.Collections.Generic.IAsyncEnumerable<T>") 
+        if (type is not INamedTypeSymbol named || named.OriginalDefinition.ToDisplayString() != "System.Collections.Generic.IAsyncEnumerable<T>")
             return false;
         itemType = named.TypeArguments[0];
         return true;

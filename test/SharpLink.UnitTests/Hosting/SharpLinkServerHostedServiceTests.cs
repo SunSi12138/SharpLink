@@ -160,7 +160,7 @@ public class SharpLinkServerHostedServiceTests
             await server.DisposeAsync();
 
         Ensure(duplicateFailure is InvalidOperationException
-            { Message: "The SharpLink server host has already started." },
+        { Message: "The SharpLink server host has already started." },
             "a duplicate hosted Start must be rejected before replacing the owned server");
         Ensure(startFailure is InvalidOperationException,
             "a completed hosted Stop must be a terminal barrier to later Start");

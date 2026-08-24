@@ -5,13 +5,34 @@ public partial class RpcGenerator
     private static DtoGenerationResult AnalyzeGeneratedCodecs(
         Compilation compilation,
         CancellationToken cancellationToken)
-        => new DtoAnalysisState(compilation, cancellationToken).Analyze();
+    {
+        var standalone = new DtoAnalysisState(compilation, cancellationToken, contractMode: false).Analyze();
+        var contract = new DtoAnalysisState(compilation, cancellationToken, contractMode: true).Analyze();
+        var diagnostics = standalone.Diagnostics
+            .Concat(contract.Diagnostics)
+            .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
+            .Select(static group => group.First())
+            .ToImmutableArray();
+        var enums = standalone.Enums
+            .Concat(contract.Enums)
+            .GroupBy(static item => item.TypeName, StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .OrderBy(static item => item.TypeName, StringComparer.Ordinal)
+            .ToImmutableArray();
+        return new DtoGenerationResult(standalone.Codecs, contract.Codecs, diagnostics, enums);
+    }
+
+    private sealed record DtoAnalysisPassResult(
+        ImmutableArray<GeneratedCodecModel> Codecs,
+        ImmutableArray<DtoDiagnosticModel> Diagnostics,
+        ImmutableArray<GeneratedEnumModel> Enums);
 
     private sealed partial class DtoAnalysisState
     {
         private const int MaximumDepth = 64;
         private readonly Compilation _compilation;
         private readonly CancellationToken _cancellationToken;
+        private readonly bool _contractMode;
         private readonly HashSet<string> _allowedAssemblyNames;
         private readonly Dictionary<ITypeSymbol, AdapterRegistration> _adaptersByType =
             new(SymbolEqualityComparer.Default);
@@ -25,22 +46,29 @@ public partial class RpcGenerator
         private readonly HashSet<string> _diagnosticKeys = new(StringComparer.Ordinal);
         private readonly List<DtoDiagnosticModel> _diagnostics = [];
 
-        public DtoAnalysisState(Compilation compilation, CancellationToken cancellationToken)
+        public DtoAnalysisState(Compilation compilation, CancellationToken cancellationToken, bool contractMode)
         {
             _compilation = compilation;
             _cancellationToken = cancellationToken;
+            _contractMode = contractMode;
             _allowedAssemblyNames = ResolveReferenceAssemblyNames(compilation);
             _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
             CollectAdapterRegistrations();
             CollectAssemblyBindings();
-            CollectAssemblyRoutes();
+            if (_contractMode)
+                CollectAssemblyRoutes();
         }
 
-        public DtoGenerationResult Analyze()
+        public DtoAnalysisPassResult Analyze()
         {
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots);
-            CollectReferencedContractRoots(roots);
+            CollectCurrentAssemblyRoots(
+                _compilation.Assembly.GlobalNamespace,
+                roots,
+                includeSerializable: !_contractMode,
+                includeContracts: _contractMode);
+            if (_contractMode)
+                CollectReferencedContractRoots(roots);
 
             foreach (var root in roots.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
             {
@@ -48,7 +76,7 @@ public partial class RpcGenerator
                 Visit(root.Value, [], 0);
             }
 
-            return new DtoGenerationResult(
+            return new DtoAnalysisPassResult(
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
                 _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
@@ -56,25 +84,29 @@ public partial class RpcGenerator
 
         private void CollectCurrentAssemblyRoots(
             INamespaceSymbol namespaceSymbol,
-            Dictionary<string, ITypeSymbol> roots)
+            Dictionary<string, ITypeSymbol> roots,
+            bool includeSerializable,
+            bool includeContracts)
         {
             foreach (var type in namespaceSymbol.GetTypeMembers())
-                CollectCurrentAssemblyRoots(type, roots);
+                CollectCurrentAssemblyRoots(type, roots, includeSerializable, includeContracts);
             foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
-                CollectCurrentAssemblyRoots(nestedNamespace, roots);
+                CollectCurrentAssemblyRoots(nestedNamespace, roots, includeSerializable, includeContracts);
         }
 
         private void CollectCurrentAssemblyRoots(
             INamedTypeSymbol type,
-            Dictionary<string, ITypeSymbol> roots)
+            Dictionary<string, ITypeSymbol> roots,
+            bool includeSerializable,
+            bool includeContracts)
         {
-            if (HasAttribute(type, "SharpLink.Sdk", "RpcSerializableAttribute"))
+            if (includeSerializable && HasAttribute(type, "SharpLink.Sdk", "RpcSerializableAttribute"))
                 AddRoot(roots, type);
-            if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
+            if (includeContracts && type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
                 CollectContractPayloadRoots(type, roots);
 
             foreach (var nested in type.GetTypeMembers())
-                CollectCurrentAssemblyRoots(nested, roots);
+                CollectCurrentAssemblyRoots(nested, roots, includeSerializable, includeContracts);
         }
 
         private void CollectReferencedContractRoots(Dictionary<string, ITypeSymbol> roots)
@@ -325,7 +357,10 @@ public partial class RpcGenerator
                 _failed.Add(typeName);
                 return;
             }
-            if (TrySelectContractCodecOverride(type, out var selectedAdapter))
+            var hasSelectedOverride = _contractMode
+                ? TrySelectContractCodecOverride(type, out var selectedAdapter)
+                : TrySelectAdapter(type, out selectedAdapter);
+            if (hasSelectedOverride)
             {
                 if (selectedAdapter is not null)
                     AddAdapterModel(type, typeName, selectedAdapter);
@@ -372,7 +407,7 @@ public partial class RpcGenerator
 
                 _models[typeName] = new GeneratedCodecModel(
                     typeName,
-                    GetCodecName(typeName),
+                    GetCodecName(typeName, _contractMode),
                     GetSchemaId(typeName, collectionKind.ToString()),
                     collectionKind,
                     type.IsReferenceType,
@@ -521,7 +556,7 @@ public partial class RpcGenerator
             dependencyTypes.AddRange(analyzedMembers.Select(static member => member.Type));
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
-                GetCodecName(typeName),
+                GetCodecName(typeName, _contractMode),
                 GetSchemaId(typeName, schema.ToString()),
                 GeneratedCodecKind.Dto,
                 named.IsReferenceType,
@@ -1150,8 +1185,8 @@ public partial class RpcGenerator
                 ? "@" + identifier
                 : identifier;
 
-        private static string GetCodecName(string typeName)
-            => "__SharpLinkGeneratedCodec_" + ComputeHash(typeName).ToString("X16", InvariantCulture);
+        private static string GetCodecName(string typeName, bool contractMode)
+            => "__SharpLinkGeneratedCodec_" + ComputeHash((contractMode ? "contract|" : "standalone|") + typeName).ToString("X16", InvariantCulture);
 
         private static string GetSchemaId(string typeName, string schema)
             => typeName + ":" + ComputeHash(schema).ToString("X16", InvariantCulture);

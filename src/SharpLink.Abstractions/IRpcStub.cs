@@ -14,12 +14,6 @@ public interface IRpcStub
     /// <returns><see langword="true"/> when the server must create per-call cancellation state.</returns>
     bool SupportsCancellation(long methodHash) => true;
 
-    /// <summary>Binds the Codec provider selected for this generated Contract owner.</summary>
-    /// <param name="codecs">The construction-time Codec provider for this stub registration.</param>
-    void BindCodecProvider(IRpcCodecProvider codecs)
-    {
-    }
-
     /// <summary>Gets the stable generated contract identifier.</summary>
     long InterfaceHash { get; }
 

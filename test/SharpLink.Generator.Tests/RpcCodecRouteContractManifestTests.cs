@@ -123,6 +123,51 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         return Task.CompletedTask;
     }
 
+
+    [Test]
+    public Task LegacyCollectionBaselineWithoutCodecKindShouldRequireRegeneration()
+    {
+        const string contract = """
+public sealed class NativeItem
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ILegacyCollectionContract : SharpLink.Sdk.IService
+{
+    ValueTask<System.Collections.Generic.List<NativeItem>> Echo(
+        System.Collections.Generic.List<NativeItem> value,
+        CancellationToken cancellationToken);
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.legacy-collection/v1";
+    public override string WireFormatId => "sharplink-native/v1";
+}
+""";
+        const string registration =
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.legacy-collection/v1\", \"sharplink-native/v1\")]";
+        var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
+        var routedSource = AddAssemblyAttributes(
+            BuildRouteSource(contract),
+            registration,
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+
+        var baselineNode = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(baselineSource).Json)!.AsObject();
+        baselineNode["version"] = 1;
+        foreach (var codec in baselineNode["codecs"]!.AsArray().Select(static item => item!.AsObject()))
+        {
+            codec.Remove("kind");
+            codec.Remove("schemaId");
+        }
+        var compared = RunContractGenerator(routedSource, baselineNode.ToJsonString());
+        Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK025"),
+            $"legacy format-1 baselines without codec kind/schema identity must require regeneration. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
     private static System.Text.Json.Nodes.JsonObject GetFirstRequestValue(string json)
     {
         var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();

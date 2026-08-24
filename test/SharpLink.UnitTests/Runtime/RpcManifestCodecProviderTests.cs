@@ -50,6 +50,48 @@ public class RpcManifestCodecProviderTests
   "dynamic candidate binding must use the same no-route precedence as static binding");
     }
 
+
+    [Test]
+    public void ContractOwnedCodecBindingsShouldCoexistForSameClrType()
+    {
+        var ownerA = typeof(RpcManifestCodecProviderTests).Assembly;
+        var ownerB = typeof(SharpLinkRuntimeContext).Assembly;
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var codecA = new NamedContractCodec("A");
+        var codecB = new NamedContractCodec("B");
+        var registrationA = context.PrepareGeneratedManifest(new ContractCodecManifest(ownerA, codecA, "contract-a"));
+        var registrationB = context.PrepareGeneratedManifest(new ContractCodecManifest(ownerB, codecB, "contract-b"));
+        context.AdoptGeneratedManifest(registrationA);
+        context.AdoptGeneratedManifest(registrationB);
+
+        Ensure(ReferenceEquals(RpcGeneratedCodecResolver.GetProvider(context, ownerA).GetCodec<ContractValue>(), codecA),
+            "Contract owner A must resolve its own binding for the shared CLR type");
+        Ensure(ReferenceEquals(RpcGeneratedCodecResolver.GetProvider(context, ownerB).GetCodec<ContractValue>(), codecB),
+            "Contract owner B must resolve its own binding for the shared CLR type");
+        var global = context.Codecs.GetCodec<ContractValue>();
+        Ensure(!ReferenceEquals(global, codecA) && !ReferenceEquals(global, codecB),
+            "Contract-owned bindings must never be published to the global Type -> Codec registry");
+    }
+
+    [Test]
+    public void CustomRuntimeMustExposeContractCodecResolution()
+    {
+        try
+        {
+            _ = RpcGeneratedCodecResolver.GetProvider(
+                new CustomRuntimeContext(),
+                typeof(RpcManifestCodecProviderTests).Assembly);
+        }
+        catch (NotSupportedException exception)
+        {
+            Ensure(exception.Message.Contains(nameof(IRpcContractCodecProviderResolver), StringComparison.Ordinal),
+                "custom runtimes must receive a deterministic owner-resolution requirement");
+            return;
+        }
+
+        throw new Exception("Expected a custom IRpcRuntimeContext without owner resolution to be rejected.");
+    }
+
     [Test]
     public void RuntimeContextBuildShouldRejectPreviousGeneratedManifestApi()
     {
@@ -76,6 +118,7 @@ public class RpcManifestCodecProviderTests
 
     private readonly record struct Point(int X, int Y);
     private readonly record struct NoRouteValue(int Value);
+    private readonly record struct ContractValue(int Value);
 
     private sealed class Envelope
     {
@@ -223,12 +266,53 @@ public class RpcManifestCodecProviderTests
         public IReadOnlyList<string> Dependencies => [];
     }
 
+    private sealed class NamedContractCodec(string name) : IRpcCodec<ContractValue>
+    {
+        internal string Name { get; } = name;
+        public void Serialize(in ContractValue value, IBufferWriter<byte> buffer) { }
+        public ContractValue Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class ContractCodecManifest(Assembly ownerAssembly, NamedContractCodec codec, string schemaId)
+        : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "contract-codec-test";
+        public Assembly OwnerAssembly { get; } = ownerAssembly;
+        public string CompileTimeDescriptor => schemaId;
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } =
+            [new NativeFactory<ContractValue>(_ => codec, schemaId)];
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class CustomRuntimeContext : IRpcRuntimeContext
+    {
+        public IRpcCodecProvider Codecs { get; } = new ThrowingCodecProvider();
+        public IRpcBufferWriterPool Buffers { get; } = new ThrowingBufferPool();
+    }
+
+    private sealed class ThrowingCodecProvider : IRpcCodecProvider
+    {
+        public IRpcCodec<T> GetCodec<T>() => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingBufferPool : IRpcBufferWriterPool
+    {
+        public IRpcByteBufferWriter Rent() => throw new NotSupportedException();
+        public IRpcByteBufferWriter Rent(int maxWrittenBytes) => throw new NotSupportedException();
+        public void Return(IRpcByteBufferWriter writer) { }
+    }
+
     private sealed class NestedRouteManifest : ISharpLinkGeneratedAssemblyManifest
     {
         internal NestedRouteManifest(Assembly ownerAssembly, RoutedPointCodec routedPoint)
         {
             OwnerAssembly = ownerAssembly;
-            Codecs =
+            ContractCodecs =
             [
                 new NativeFactory<Envelope>(static provider => new EnvelopeCodec(provider), "nested-envelope-native"),
                 new NativeFactory<List<Point>>(static provider => new PointListCodec(provider), "nested-list-native"),
@@ -243,8 +327,8 @@ public class RpcManifestCodecProviderTests
         public string CompileTimeDescriptor => "nested-route-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
-        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
-        public IReadOnlyList<Type> ManifestScopedCodecTargets => [typeof(Point)];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; }
         public IReadOnlyList<string> Dependencies => [];
     }
 }

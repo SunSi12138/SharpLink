@@ -3,7 +3,7 @@ using System.Linq;
 namespace SharpLink.Runtime;
 
 /// <summary>Immutable, instance-scoped runtime services for one SharpLink client or server.</summary>
-public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
+public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCodecProviderResolver, IDisposable
 {
     private readonly SharpLinkRuntimeOptions _options;
     private readonly Lock _registrationGate = new();
@@ -32,8 +32,6 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
                 prepared.Add(owner);
                 foreach (var pair in owner.Codecs)
                 {
-                    if (IsManifestScoped(owner.Manifest, pair.Key))
-                        continue;
                     if (generatedRegistrations.TryGetValue(pair.Key, out var existing) &&
                         (!string.Equals(existing.Factory.SchemaId, pair.Value.Factory.SchemaId, StringComparison.Ordinal) ||
                          !string.Equals(existing.Factory.WireFormatId, pair.Value.Factory.WireFormatId, StringComparison.Ordinal)))
@@ -117,7 +115,6 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ArgumentNullException.ThrowIfNull(manifest);
         ValidateGeneratedManifestCompatibility(manifest);
-        ValidateManifestScopedCodecTargets(manifest);
         return RpcGeneratedManifestRegistration.Create(manifest, Codecs);
     }
 
@@ -139,10 +136,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
     internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        var globalRegistrations = registrations
-            .Where(static pair => !IsManifestScoped(pair.Value.Owner.Manifest, pair.Key))
-            .ToDictionary(static pair => pair.Key, static pair => pair.Value);
-        ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(globalRegistrations);
+        ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
     }
 
     internal void AdoptGeneratedManifest(RpcGeneratedManifestRegistration registration)
@@ -167,6 +161,9 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             }
         }
     }
+
+    IRpcCodecProvider IRpcContractCodecProviderResolver.GetContractCodecProvider(System.Reflection.Assembly ownerAssembly)
+        => GetManifestCodecProvider(ownerAssembly);
 
     internal IRpcCodecProvider GetManifestCodecProvider(System.Reflection.Assembly ownerAssembly)
     {
@@ -204,7 +201,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         lock (_registrationGate)
         {
             _manifestRegistrations.Remove(registration);
-            if (registration.HasManifestScopedCodecs)
+            if (registration.HasContractCodecs)
                 _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
 
         }
@@ -241,40 +238,6 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
         if (failures is not null)
             throw new AggregateException(failures);
-    }
-
-    private static bool IsManifestScoped(
-        ISharpLinkGeneratedAssemblyManifest manifest,
-        Type targetType)
-        => manifest.ManifestScopedCodecTargets.Contains(targetType);
-
-    private static void ValidateManifestScopedCodecTargets(ISharpLinkGeneratedAssemblyManifest manifest)
-    {
-        ArgumentNullException.ThrowIfNull(manifest);
-        var targets = manifest.ManifestScopedCodecTargets ?? throw new InvalidOperationException(
-            $"Generated manifest '{manifest.OwnerAssembly.FullName}' returned a null manifest-scoped Codec target list.");
-        if (targets.Count == 0)
-            return;
-
-        var factories = manifest.Codecs ?? throw new InvalidOperationException(
-            $"Generated manifest '{manifest.OwnerAssembly.FullName}' returned a null Codec factory list.");
-        var factoryTargets = new HashSet<Type>(factories.Select(static factory => factory.TargetType));
-        var seen = new HashSet<Type>();
-        for (var index = 0; index < targets.Count; index++)
-        {
-            var target = targets[index] ?? throw new InvalidOperationException(
-                $"Generated manifest '{manifest.OwnerAssembly.FullName}' contains a null manifest-scoped Codec target.");
-            if (!seen.Add(target))
-            {
-                throw new InvalidOperationException(
-                    $"Generated manifest '{manifest.OwnerAssembly.FullName}' contains duplicate manifest-scoped Codec target '{target.FullName}'.");
-            }
-            if (!factoryTargets.Contains(target))
-            {
-                throw new InvalidOperationException(
-                    $"Generated manifest '{manifest.OwnerAssembly.FullName}' marks '{target.FullName}' as manifest-scoped without a matching Codec factory.");
-            }
-        }
     }
 
     // This process-wide fallback is used only before an instance-owned Context is attached.

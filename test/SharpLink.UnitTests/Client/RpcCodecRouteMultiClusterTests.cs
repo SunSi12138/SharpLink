@@ -19,11 +19,10 @@ public sealed class RpcCodecRouteMultiClusterTests
             .Single();
         var view = (ISharpLinkGeneratedAssemblyManifest)constructor.Invoke([source]);
 
-        Ensure(view.Codecs.Count == 1 && view.Codecs[0].TargetType == typeof(ScopedPayload),
-            "the dependency view must retain the routed generated Codec factory");
-        Ensure(view.ManifestScopedCodecTargets.Count == 1 &&
-               view.ManifestScopedCodecTargets[0] == typeof(ScopedPayload),
-            "the dependency view must retain owner-scoped route metadata instead of publishing the Codec globally");
+        Ensure(view.Codecs.Count == 0,
+            "the dependency view must not republish a Contract-owned Codec globally");
+        Ensure(view.ContractCodecs.Count == 1 && view.ContractCodecs[0].TargetType == typeof(ScopedPayload),
+            "the dependency view must retain the Contract-owned Codec binding");
         return Task.CompletedTask;
     }
 
@@ -36,8 +35,8 @@ public sealed class RpcCodecRouteMultiClusterTests
         public string CompileTimeDescriptor => string.Empty;
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
-        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [new ScopedFactory()];
-        public IReadOnlyList<Type> ManifestScopedCodecTargets => [typeof(ScopedPayload)];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [new ScopedFactory()];
         public IReadOnlyList<string> Dependencies => [];
     }
 

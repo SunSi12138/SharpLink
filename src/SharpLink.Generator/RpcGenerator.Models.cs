@@ -202,8 +202,7 @@ internal sealed record GeneratedCodecModel(
     string? AdapterId,
     string WireFormatId,
     ImmutableArray<string> AssemblyDependencies,
-    Location? Location,
-    bool IsManifestScoped = false);
+    Location? Location);
 
 internal enum DtoDiagnosticKind
 {
@@ -230,6 +229,7 @@ internal readonly record struct DtoDiagnosticModel(
 
 internal sealed record DtoGenerationResult(
     ImmutableArray<GeneratedCodecModel> Codecs,
+    ImmutableArray<GeneratedCodecModel> ContractCodecs,
     ImmutableArray<DtoDiagnosticModel> Diagnostics,
     ImmutableArray<GeneratedEnumModel> Enums);
 
@@ -247,6 +247,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         if (ReferenceEquals(x, y))
             return true;
         if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
+            x.ContractCodecs.Length != y.ContractCodecs.Length ||
             x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
         {
             return false;
@@ -254,6 +255,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         for (var index = 0; index < x.Codecs.Length; index++)
         {
             if (!CodecEquals(x.Codecs[index], y.Codecs[index]))
+                return false;
+        }
+        for (var index = 0; index < x.ContractCodecs.Length; index++)
+        {
+            if (!CodecEquals(x.ContractCodecs[index], y.ContractCodecs[index]))
                 return false;
         }
         for (var index = 0; index < x.Diagnostics.Length; index++)
@@ -287,7 +293,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         {
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
-            hash = unchecked(hash * 31 + codec.IsManifestScoped.GetHashCode());
+        }
+        foreach (var codec in obj.ContractCodecs)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
         }
         foreach (var diagnostic in obj.Diagnostics)
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.Detail));
@@ -311,7 +321,6 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
             !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
             !string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal) ||
-            left.IsManifestScoped != right.IsManifestScoped ||
             !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
             !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
             left.Members.Length != right.Members.Length)

@@ -11,10 +11,10 @@ internal sealed partial class SharpLinkServer
 
     private static readonly Func<ILogger, long, IDisposable?> SRequestScope =
         LoggerMessage.DefineScope<long>("RequestId:{RequestId}");
-    
-    
+
+
     [Conditional(CompileSymbols.Debug)]
-    private static void DebugLogClientHeartbeatReceived(ILogger logger)=>LogClientHeartbeatReceived(logger);
+    private static void DebugLogClientHeartbeatReceived(ILogger logger) => LogClientHeartbeatReceived(logger);
 
     private static IDisposable? BeginSessionLogScope(ILogger logger, string sessionId) => SSessionScope(logger, sessionId);
 
@@ -25,7 +25,7 @@ internal sealed partial class SharpLinkServer
 
     [LoggerMessage(EventId = LogEvents.Connection.ClientDisconnected, Level = LogLevel.Information, Message = "Client disconnected.")]
     private static partial void LogClientDisconnected(ILogger logger);
-    
+
     [LoggerMessage(EventId = LogEvents.Connection.HandshakeFailed, Level = LogLevel.Warning, Message = "Handshake failed for client.")]
     private static partial void LogHandshakeFailed(ILogger logger);
 
@@ -37,10 +37,10 @@ internal sealed partial class SharpLinkServer
 
     [LoggerMessage(EventId = LogEvents.Connection.AuthenticationProviderFailed, Level = LogLevel.Warning, Message = "Authentication provider failed without exposing payload data.")]
     private static partial void LogAuthenticationProviderFailed(ILogger logger, Exception exception);
-    
+
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatTimeout, Level = LogLevel.Warning, Message = "Client disconnected due to heartbeat timeout.")]
     private static partial void LogClientHeartbeatTimeout(ILogger logger);
-    
+
     [LoggerMessage(EventId = LogEvents.Rpc.OneWayDispatchFailed, Level = LogLevel.Warning, Message = "One-way RPC dispatch failed.")]
     private static partial void LogOnewayRpcDispatchFailed(ILogger logger, Exception e);
 
@@ -70,7 +70,7 @@ internal sealed partial class SharpLinkServer
 
     [LoggerMessage(EventId = LogEvents.Server.FrameworkCleanupTimeout, Level = LogLevel.Critical, Message = "Server framework cleanup exceeded its fixed {CleanupBudgetSeconds}-second budget; StopAsync is returning with the server faulted.")]
     private static partial void LogFrameworkCleanupTimeout(ILogger logger, int cleanupBudgetSeconds);
-    
+
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatReceived, Level = LogLevel.Debug, Message = "Received client heartbeat.")]
     private static partial void LogClientHeartbeatReceived(ILogger logger);
 }

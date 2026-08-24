@@ -303,18 +303,18 @@ public partial class RpcGenerator : IIncrementalGenerator
                     diagnostic.Detail));
             }
 
-            if (!result.Codecs.IsDefaultOrEmpty)
+            if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)
             {
                 spc.AddSource(
                     "SharpLink.GeneratedCodecs.g.cs",
-                    SourceText.From(GenerateCodecs(result.Codecs), Encoding.UTF8));
+                    SourceText.From(GenerateCodecs(result.Codecs.AddRange(result.ContractCodecs)), Encoding.UTF8));
             }
         });
 
         var manifest = interfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
-            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs);
+            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs, value.Right.ContractCodecs);
             if (!string.IsNullOrEmpty(code))
             {
                 spc.AddSource(
@@ -330,7 +330,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Select(static (value, _) => new ContractManifestModels(
                 value.Left.Left.Left,
                 value.Left.Left.Right,
-                value.Left.Right.Codecs,
+                value.Left.Right.ContractCodecs,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider

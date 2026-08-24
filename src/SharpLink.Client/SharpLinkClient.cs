@@ -143,7 +143,7 @@ internal sealed partial class SharpLinkClient :
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
         _clientInterceptors = clientInterceptors is { Length: > 0 } ? [.. clientInterceptors] : [];
-        _proxies = BuildStaticProxySnapshot(_staticManifests);
+        _proxies = BuildStaticProxySnapshot(_staticManifests, _runtimeContext);
     }
 
     public SharpLinkClient(

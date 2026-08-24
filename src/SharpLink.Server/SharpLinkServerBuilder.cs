@@ -71,7 +71,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
     /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
-    public SharpLinkServerBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
+    public SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
         _runtimeContextBuilder.UseCodecResolver(codecResolver);
         return this;
@@ -140,7 +140,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        
+
         if (timeout <= checkInterval)
             throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
 
@@ -284,13 +284,11 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     _admissionControlOptions,
                     manifests);
             }
-            var definitions = BuildServiceDefinitions(manifests, serviceProvider);
+            var definitions = BuildServiceDefinitions(manifests, serviceProvider, runtimeContext);
             registrations = new List<ServiceRegistration>(definitions.Count);
             var registrationsByContract = new Dictionary<long, ServiceRegistration>(definitions.Count);
             foreach (var pair in definitions)
             {
-                pair.Value.Stub.BindCodecProvider(
-                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, pair.Value.ContractType.Assembly));
                 var registration = pair.Value.Build(serviceProvider);
                 registrations.Add(registration);
                 registrationsByContract.Add(pair.Key, registration);
@@ -402,7 +400,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        SharpLinkRuntimeContext runtimeContext)
     {
         var contracts = new Dictionary<long, (SharpLinkGeneratedContractDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
         var services = new Dictionary<long, (SharpLinkGeneratedServiceDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
@@ -452,7 +451,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             ValidateDependencies(service, serviceProvider);
             definitions.Add(service.ContractId, new ServiceRegistrationDefinition(
                 service.ContractType,
-                contract.Descriptor.StubFactory(),
+                contract.Descriptor.StubFactory(RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.Manifest.OwnerAssembly)),
                 service.Lifetime,
                 service.Activator,
                 instance: null,
@@ -471,7 +470,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             var value = replacement.Value;
             definitions[contract.Descriptor.ContractId] = new ServiceRegistrationDefinition(
                 replacement.Key,
-                contract.Descriptor.StubFactory(),
+                contract.Descriptor.StubFactory(RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.Manifest.OwnerAssembly)),
                 value.Lifetime,
                 value.Factory,
                 value.Instance,

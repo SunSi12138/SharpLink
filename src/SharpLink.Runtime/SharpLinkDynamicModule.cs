@@ -136,7 +136,7 @@ internal static class SharpLinkAssemblyManifestLoader
         if (string.IsNullOrWhiteSpace(manifest.GeneratorVersion) ||
             string.IsNullOrWhiteSpace(manifest.CompileTimeDescriptor) ||
             manifest.Contracts is null || manifest.Services is null ||
-            manifest.Codecs is null || manifest.Dependencies is null)
+            manifest.Codecs is null || manifest.ContractCodecs is null || manifest.Dependencies is null)
         {
             return Error(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,

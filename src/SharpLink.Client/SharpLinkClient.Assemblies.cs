@@ -343,7 +343,8 @@ internal sealed partial class SharpLinkClient
     }
 
     private static FrozenDictionary<Type, ClientProxyRegistration> BuildStaticProxySnapshot(
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        SharpLinkRuntimeContext runtimeContext)
     {
         var registrations = new Dictionary<Type, ClientProxyRegistration>();
         var contractIds = new Dictionary<long, ISharpLinkGeneratedAssemblyManifest>();
@@ -364,7 +365,10 @@ internal sealed partial class SharpLinkClient
                         $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(existing.OwnerAssembly)}'.");
                 }
                 contractIds.Add(contract.ContractId, manifest);
-                registrations.Add(contract.ContractType, new ClientProxyRegistration(contract, null));
+                registrations.Add(contract.ContractType, new ClientProxyRegistration(
+                    contract,
+                    null,
+                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, manifest.OwnerAssembly)));
             }
         }
         return registrations.ToFrozenDictionary();
@@ -407,7 +411,10 @@ internal sealed partial class SharpLinkClient
                     FindManifest(existing.Descriptor.ContractType.Assembly, currentModules), existing.Descriptor);
                 return default;
             }
-            var registration = new ClientProxyRegistration(contract, module);
+            var registration = new ClientProxyRegistration(
+                contract,
+                module,
+                RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration));
             nextProxies.Add(contract.ContractType, registration);
             byId.Add(contract.ContractId, registration);
         }
@@ -698,7 +705,8 @@ internal sealed partial class SharpLinkClient
 
     private sealed record ClientProxyRegistration(
         SharpLinkGeneratedContractDescriptor Descriptor,
-        SharpLinkDynamicModule? Module);
+        SharpLinkDynamicModule? Module,
+        IRpcCodecProvider Codecs);
 
     private readonly record struct RegistrationCandidate(
         FrozenDictionary<Type, ClientProxyRegistration> Proxies,

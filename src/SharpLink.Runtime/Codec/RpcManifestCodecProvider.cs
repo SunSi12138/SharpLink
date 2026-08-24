@@ -15,9 +15,10 @@ public static class RpcGeneratedCodecResolver
     {
         ArgumentNullException.ThrowIfNull(runtimeContext);
         ArgumentNullException.ThrowIfNull(ownerAssembly);
-        return runtimeContext is SharpLinkRuntimeContext sharpLinkContext
-  ? sharpLinkContext.GetManifestCodecProvider(ownerAssembly)
-  : runtimeContext.Codecs;
+        if (runtimeContext is IRpcContractCodecProviderResolver resolver)
+            return resolver.GetContractCodecProvider(ownerAssembly);
+        throw new NotSupportedException(
+            $"Runtime context '{runtimeContext.GetType().FullName}' must implement {nameof(IRpcContractCodecProviderResolver)} to construct generated Contract artifacts.");
     }
 
     internal static IRpcCodecProvider GetProvider(RpcGeneratedManifestRegistration registration)
@@ -45,7 +46,7 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
     public IRpcCodec<T> GetCodec<T>()
     {
         var targetType = typeof(T);
-        if (!_owner.AllCodecs.TryGetValue(targetType, out var registration))
+        if (!_owner.ContractCodecs.TryGetValue(targetType, out var registration))
             return _fallback.GetCodec<T>();
 
         var codec = _resolved.GetOrAdd(

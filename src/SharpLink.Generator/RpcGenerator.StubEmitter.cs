@@ -29,7 +29,7 @@ public partial class RpcGenerator
                         """);
         AppendSizeFieldsByType(sb, model.Methods);
         AppendStubCodecFields(sb, model.Methods);
-        AppendStubCodecBinding(sb, model.Methods);
+        AppendStubCodecBinding(sb, model);
         AppendCancellationSupport(sb, model.Methods);
         AppendMethodDescriptors(sb, model);
         sb.AppendLine($$"""
@@ -183,12 +183,12 @@ public partial class RpcGenerator
         }
     }
 
-    private static void AppendStubCodecBinding(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
+    private static void AppendStubCodecBinding(StringBuilder sb, RpcInterfaceModel model)
     {
-        sb.AppendLine("    public void BindCodecProvider(IRpcCodecProvider codecs)");
+        sb.AppendLine($"    internal {model.Name}_Stub(IRpcCodecProvider codecs)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(codecs);");
-        foreach (var method in methods)
+        foreach (var method in model.Methods)
         {
             var suffix = GetMethodSuffix(method);
             foreach (var parameter in method.Parameters.Where(static p =>

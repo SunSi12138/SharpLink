@@ -414,7 +414,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => source.Codecs;
-        public IReadOnlyList<Type> ManifestScopedCodecTargets => source.ManifestScopedCodecTargets;
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => source.ContractCodecs;
         public IReadOnlyList<string> Dependencies => source.Dependencies;
     }
 

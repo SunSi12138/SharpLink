@@ -39,8 +39,29 @@ public sealed record SharpLinkGeneratedContractDescriptor(
     long ContractId,
     string Fingerprint,
     IReadOnlyList<SharpLinkGeneratedMethodDescriptor> Methods,
-    Func<IRpcChannel, object> ProxyFactory,
-    Func<IRpcStub> StubFactory);
+    Func<IRpcChannel, IRpcCodecProvider, object> ProxyFactory,
+    Func<IRpcCodecProvider, IRpcStub> StubFactory)
+{
+    /// <summary>Compatibility constructor for descriptors that do not own a Contract-specific Codec graph.</summary>
+    public SharpLinkGeneratedContractDescriptor(
+        Type contractType,
+        string contractName,
+        long contractId,
+        string fingerprint,
+        IReadOnlyList<SharpLinkGeneratedMethodDescriptor> methods,
+        Func<IRpcChannel, object> proxyFactory,
+        Func<IRpcStub> stubFactory)
+        : this(
+            contractType,
+            contractName,
+            contractId,
+            fingerprint,
+            methods,
+            (channel, _) => proxyFactory(channel),
+            _ => stubFactory())
+    {
+    }
+}
 
 /// <summary>Describes one service-owned generated activator.</summary>
 public sealed record SharpLinkGeneratedServiceDescriptor(
@@ -82,10 +103,10 @@ public interface ISharpLinkGeneratedAssemblyManifest
     IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
 
     /// <summary>
-    /// Gets generated Codec targets selected by an assembly-level route. These targets are
-    /// resolved only for artifacts owned by this manifest and are not published as context-global bindings.
+    /// Gets Codec factories used only by RPC Contracts owned by this manifest. These bindings
+    /// are resolved through the Contract owner provider and are never published globally.
     /// </summary>
-    IReadOnlyList<Type> ManifestScopedCodecTargets => Array.Empty<Type>();
+    IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => Array.Empty<IRpcGeneratedCodecFactory>();
 
     /// <summary>Gets the identities of generated assemblies that this manifest depends on.</summary>
     IReadOnlyList<string> Dependencies { get; }
