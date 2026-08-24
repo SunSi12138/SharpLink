@@ -194,12 +194,16 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
                 throw new InvalidOperationException("Admission publication is sealed because the server is stopping.");
             }
             if (program is { IsRetired: true })
-            {
                 throw new InvalidOperationException("A retired admission program cannot be published again.");
-            }
 
             var replacement = program ?? AdmissionProgram.Disabled;
             previous = ReadAdmissionPublication();
+
+            // Refresh lineage only from the actual current publication. Candidate construction and
+            // losing writers never become a compatibility source for future re-enable operations.
+            if (previous.IsEnabled)
+                lifecycle.Kernel.RecordPublishedConcurrencyLineage(previous.Controller);
+
             if (intent == AdmissionPublicationIntent.Enable && previous.IsEnabled)
             {
                 program!.Retire();
@@ -217,16 +221,35 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
                     throw new InvalidOperationException(
                         "Admission control changed while the update candidate was being prepared.");
                 }
-
-                // No shared target is mutated during speculative candidate construction. Commit the
-                // already validated resize plan only after exact-source validation wins this writer
-                // critical section, then publish N+1 and retire N as one serialized transition.
-                updatePlan.Commit();
             }
             if (ReferenceEquals(previous, replacement))
                 return previous.IsEnabled ? previous : null;
 
-            Volatile.Write(ref _admissionProgram, replacement);
+            if (intent == AdmissionPublicationIntent.Update && updatePlan!.ResizeCount != 0)
+            {
+                // Exact-source validation has already won the writer. Keep the reader-visible epoch
+                // odd across every physical target resize and the N+1 pointer write. Request paths
+                // never take this writer lock; concurrency states retry/defer while the epoch is odd.
+                lifecycle.Kernel.BeginConcurrencyTargetCommit();
+                try
+                {
+                    updatePlan.Commit(lifecycle.Kernel.AfterConcurrencyResizeForTests);
+                    Volatile.Write(ref _admissionProgram, replacement);
+                }
+                finally
+                {
+                    lifecycle.Kernel.CompleteConcurrencyTargetCommit();
+                }
+            }
+            else
+            {
+                if (intent == AdmissionPublicationIntent.Update)
+                    updatePlan!.Commit(lifecycle.Kernel.AfterConcurrencyResizeForTests);
+                Volatile.Write(ref _admissionProgram, replacement);
+            }
+
+            if (replacement.IsEnabled)
+                lifecycle.Kernel.RecordPublishedConcurrencyLineage(replacement.Controller);
             if (previous.IsEnabled)
                 previous.Retire();
         }
