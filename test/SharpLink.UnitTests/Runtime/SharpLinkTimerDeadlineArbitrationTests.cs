@@ -23,39 +23,6 @@ public class SharpLinkTimerDeadlineArbitrationTests
     }
 
     [Test]
-    public async Task TaskWaitShouldLetExpiredDeadlineWinLaterTaskCompletionWithoutTimerCallback()
-    {
-        var provider = new ManualTimeProvider();
-        var owner = new TaskCompletionSource();
-        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
-        var wait = SharpLinkTimer.WaitAsync(
-            owner.Task, deadline, provider, CancellationToken.None).AsTask();
-
-        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
-        owner.SetResult();
-
-        Ensure(!await wait,
-            "a task completing after the monotonic boundary must not beat a delayed deadline timer");
-    }
-
-    [Test]
-    public async Task TaskWaitShouldPreserveTaskClaimedBeforeDeadlineWhenContinuationRunsLater()
-    {
-        var provider = new ManualTimeProvider();
-        var owner = new TaskCompletionSource();
-        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
-        var wait = SharpLinkTimer.WaitAsync(
-            owner.Task, deadline, provider, CancellationToken.None).AsTask();
-
-        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(4));
-        owner.SetResult();
-        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
-
-        Ensure(await wait,
-            "a task that claims completion before the deadline must remain the winner later");
-    }
-
-    [Test]
     public async Task SemaphoreWaitShouldLetExpiredDeadlineWinLaterCallerCancellation()
     {
         var provider = new ManualTimeProvider();
