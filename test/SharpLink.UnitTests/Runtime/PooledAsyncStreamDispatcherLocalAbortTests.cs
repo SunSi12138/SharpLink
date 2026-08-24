@@ -42,6 +42,39 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
     }
 
     [Test]
+    public async Task LocalAbortCleanupRetentionShouldOutliveEarlyConsumerDispose()
+    {
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(default, Int32Codec.Instance);
+        var creditedBytes = 0;
+        dispatcher.SetBytesConsumedCallback(
+            (_, _, bytes) => Interlocked.Add(ref creditedBytes, bytes),
+            requestId: 72,
+            streamId: 0);
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        await dispatcher.DispatchAsync(Encode(7));
+
+        var localAbort = (IStreamLocalAbortDispatcher)dispatcher;
+        localAbort.CompleteLocalAbort(new SharpLinkException(
+            SharpLinkErrorCode.DeadlineExceeded,
+            "test deadline"));
+
+        // Consumer disposal may race the connection's dispatch-drain continuation. It may
+        // perform the one-shot buffer drain, but it must not return the dispatcher to the
+        // process-wide pool before the terminal owner releases its cleanup retention.
+        await enumerator.DisposeAsync();
+        Ensure(Volatile.Read(ref creditedBytes) == 4,
+            "early disposal must preserve receive credit while sharing local-abort retirement");
+        Ensure(PooledAsyncStreamDispatcher<int>.RetainedCountForTests == 0,
+            "the terminal cleanup retention must keep a disposed dispatcher out of the pool");
+
+        localAbort.RetireLocalAbortBuffer();
+        Ensure(PooledAsyncStreamDispatcher<int>.RetainedCountForTests == 1,
+            "releasing terminal cleanup ownership must make the finalized dispatcher reusable");
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+    }
+
+    [Test]
     public async Task RemoteTerminalShouldStillDrainBufferedItemsBeforeError()
     {
         PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
