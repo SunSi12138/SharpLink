@@ -111,12 +111,24 @@ public partial class RpcGenerator
 
         return contractPolicy
             .Where(codec => scopedTypes.Contains(codec.TypeName))
-            .Select(static codec => codec with
+            .Select(codec =>
             {
-                // The global/default and Contract-policy versions of one type can coexist in one
-                // generated source file, so policy factories need a distinct generated type name.
-                CodecName = "__SharpLinkGeneratedContractPolicyCodec_" +
-                            Hashing.GetIdentifierHash("contract-policy|" + codec.TypeName)
+                // Explicit provenance can owner-scope a definition that is byte-for-byte identical
+                // to the intrinsic selector/default definition. In that case both manifest tables
+                // can reference the same generated factory: ownership comes from ContractCodecs,
+                // not from manufacturing a duplicate implementation type. A real definition delta
+                // still needs a distinct generated type because both versions coexist in one source.
+                if (defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) &&
+                    HasSameCodecDefinition(defaultCodec, codec))
+                {
+                    return codec with { CodecName = defaultCodec.CodecName };
+                }
+
+                return codec with
+                {
+                    CodecName = "__SharpLinkGeneratedContractPolicyCodec_" +
+                                Hashing.GetIdentifierHash("contract-policy|" + codec.TypeName)
+                };
             })
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
