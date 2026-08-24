@@ -64,7 +64,7 @@ internal sealed partial class RpcSession
                             lifetimeCancellation.Token).ConfigureAwait(false))
                     {
                         deadlineWon = true;
-                        lifetimeCancellation.Cancel();
+                        TryCancelGeneratedLifetime(lifetimeCancellation);
                         _ = ObserveAbandonedGeneratedMoveNextAsync(moveNextTask);
                         throw CreateGeneratedStreamDeadlineExceededException();
                     }
@@ -104,7 +104,7 @@ internal sealed partial class RpcSession
                             lifetimeCancellation.Token).ConfigureAwait(false))
                     {
                         deadlineWon = true;
-                        lifetimeCancellation.Cancel();
+                        TryCancelGeneratedLifetime(lifetimeCancellation);
                         _ = ObserveAbandonedGeneratedSendAsync(sendTask);
                         throw CreateGeneratedStreamDeadlineExceededException();
                     }
@@ -113,11 +113,11 @@ internal sealed partial class RpcSession
             }
 
             ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
-            SendStreamCompleteAsync(requestId, streamId);
+            SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
         }
         finally
         {
-            lifetimeCancellation.Cancel();
+            TryCancelGeneratedLifetime(lifetimeCancellation);
             try
             {
                 var dispose = enumerator.DisposeAsync();
@@ -131,6 +131,60 @@ internal sealed partial class RpcSession
                 // The monotonic deadline is already terminal; a user enumerator that ignores
                 // cancellation cannot delay the RPC while its disposal completes.
             }
+        }
+    }
+
+    private static void TryCancelGeneratedLifetime(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            cancellation.Cancel();
+        }
+        catch
+        {
+            // Cancellation is cleanup after the call has already selected its terminal path.
+            // User callbacks cannot replace that terminal outcome.
+        }
+    }
+
+    private void SendGeneratedStreamComplete(
+        long requestId,
+        ushort streamId,
+        RpcDeadline deadline,
+        TimeProvider? deadlineTimeProvider)
+    {
+        var writer = RentFrameWriter();
+        var ownsWriter = true;
+        try
+        {
+            using (writer.BeginPacketScope(
+                       ProtocolV2FrameType.StreamComplete,
+                       ProtocolV2FrameFlags.None,
+                       unchecked((ulong)requestId)))
+            {
+                var idSpan = writer.GetSpan(sizeof(ushort));
+                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
+                writer.Advance(sizeof(ushort));
+            }
+
+            // The enqueue is the publication commit. Re-check after frame construction so clean
+            // EOF cannot publish after the frozen RPC deadline merely because the pump checked
+            // before building the terminal frame.
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+            ownsWriter = false;
+            try
+            {
+                SendPacket(writer);
+            }
+            finally
+            {
+                CompleteSendStream(requestId, streamId);
+            }
+        }
+        finally
+        {
+            if (ownsWriter)
+                RuntimeContext.Buffers.Return(writer);
         }
     }
 
