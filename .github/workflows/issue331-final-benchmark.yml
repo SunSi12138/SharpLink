@@ -70,4 +70,4 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-# Refresh after keeping the exhausted concurrency reject path free of test-hook overhead.
+# Refresh after keeping exhausted rejection directly in the limiter override.
