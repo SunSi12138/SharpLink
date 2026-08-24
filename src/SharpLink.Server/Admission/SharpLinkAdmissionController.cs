@@ -479,9 +479,13 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 RateLimitLease waitedLease;
                 try
                 {
-                    waitedLease = await failedSlot.Limiter
-                        .AcquireAsync(1, waitCancellation.Token)
-                        .ConfigureAwait(false);
+                    waitedLease = failedSlot.Limiter is ResizableConcurrencyState concurrency
+                        ? await concurrency.AcquireAsyncForAdmission(
+                            request.TracksConcurrencyTargetVersion,
+                            waitCancellation.Token).ConfigureAwait(false)
+                        : await failedSlot.Limiter
+                            .AcquireAsync(1, waitCancellation.Token)
+                            .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (
                     _kernel.IsDraining && !cancellationToken.IsCancellationRequested)
@@ -738,7 +742,9 @@ internal sealed class AdmissionRequest(
     private readonly RateLimitLease?[]? _retainedLeases =
         HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
     private readonly bool _tracksConcurrencyTargetVersion =
-        HasVersionedConcurrencySlot(slots, slotCount);
+        HasMultipleVersionedConcurrencySlots(slots, slotCount);
+
+    internal bool TracksConcurrencyTargetVersion => _tracksConcurrencyTargetVersion;
 
     internal bool TryAcquire(
         AdmissionStateKernel owner,
@@ -829,7 +835,8 @@ internal sealed class AdmissionRequest(
             // A queued concurrency permit is granted under a particular complete target epoch. If
             // its continuation did not resume until after a later update, it cannot be combined with
             // slots from the new epoch; release it and reacquire/requeue under the current policy.
-            if (currentSuppliedLease is not null &&
+            if (_tracksConcurrencyTargetVersion &&
+                currentSuppliedLease is not null &&
                 currentSuppliedLimiter is ResizableConcurrencyState suppliedConcurrency &&
                 suppliedConcurrency.TracksTargetVersion &&
                 !suppliedConcurrency.IsLeaseFromTargetVersion(currentSuppliedLease, targetVersion))
@@ -954,11 +961,16 @@ internal sealed class AdmissionRequest(
         return false;
     }
 
-    private static bool HasVersionedConcurrencySlot(AdmissionLimiterSlot[] slots, int slotCount)
+    private static bool HasMultipleVersionedConcurrencySlots(
+        AdmissionLimiterSlot[] slots,
+        int slotCount)
     {
+        var count = 0;
         for (var index = 0; index < slotCount; index++)
         {
-            if (slots[index].Limiter is ResizableConcurrencyState { TracksTargetVersion: true })
+            if (slots[index].Limiter is not ResizableConcurrencyState { TracksTargetVersion: true })
+                continue;
+            if (++count > 1)
                 return true;
         }
         return false;

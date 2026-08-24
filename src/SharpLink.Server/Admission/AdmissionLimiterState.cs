@@ -72,7 +72,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     public override RateLimiterStatistics? GetStatistics() => null;
 
     internal bool IsLeaseFromTargetVersion(RateLimitLease lease, long targetVersion)
-        => lease is ConcurrencyLease concurrencyLease &&
+        => lease is VersionedConcurrencyLease concurrencyLease &&
            ReferenceEquals(concurrencyLease.State, this) &&
            concurrencyLease.TargetVersion == targetVersion;
 
@@ -105,8 +105,17 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 return FailedLease.Instance;
 
             _active++;
-            return new ConcurrencyLease(this, UnversionedTarget);
+            return new ConcurrencyLease(this);
         }
+    }
+
+    internal ValueTask<RateLimitLease> AcquireAsyncForAdmission(
+        bool captureTargetVersion,
+        CancellationToken cancellationToken)
+    {
+        if (!captureTargetVersion || _targetVersionOwner is null)
+            return AcquireAsyncUnversioned(cancellationToken);
+        return AcquireAsyncVersioned(cancellationToken);
     }
 
     protected override ValueTask<RateLimitLease> AcquireAsyncCore(
@@ -114,13 +123,18 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         CancellationToken cancellationToken)
     {
         ValidatePermitCount(permitCount);
+        return _targetVersionOwner is null
+            ? AcquireAsyncUnversioned(cancellationToken)
+            : AcquireAsyncVersioned(cancellationToken);
+    }
+
+    private ValueTask<RateLimitLease> AcquireAsyncVersioned(CancellationToken cancellationToken)
+    {
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled<RateLimitLease>(cancellationToken);
 
-        var versionOwner = _targetVersionOwner;
-        if (versionOwner is null)
-            return AcquireAsyncUnversioned(cancellationToken);
-
+        var versionOwner = _targetVersionOwner ??
+            throw new InvalidOperationException("Versioned admission acquisition requires a target owner.");
         while (true)
         {
             var targetVersion = versionOwner.ReadStableConcurrencyTargetVersion();
@@ -131,37 +145,28 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             {
                 if (_disposed != 0)
                     return ValueTask.FromResult<RateLimitLease>(FailedLease.Instance);
-
                 if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
                     continue;
 
                 if (_waitingCount == 0 && _active < _permitLimit)
                 {
                     _active++;
-
-                    // Close the version-check -> counter-mutation window while still holding the
-                    // state lock. Roll back the unexposed counter directly rather than disposing a
-                    // lease and recursively entering the same lock.
                     if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
                     {
                         _active--;
                         continue;
                     }
-
-                    immediateLease = new ConcurrencyLease(this, targetVersion);
+                    immediateLease = new VersionedConcurrencyLease(this, targetVersion);
                 }
                 else
                 {
-                    // Queue membership itself is policy-neutral and survives target changes. The
-                    // eventual grant is version-tagged and atomically authorized below.
-                    waiter = new Waiter(this, cancellationToken);
+                    waiter = new Waiter(this, cancellationToken, captureTargetVersion: true);
                     EnqueueWaiterLocked(waiter);
                 }
             }
 
             if (immediateLease is not null)
                 return ValueTask.FromResult(immediateLease);
-
             if (waiter is null)
                 continue;
 
@@ -187,11 +192,10 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_waitingCount == 0 && _active < _permitLimit)
             {
                 _active++;
-                return ValueTask.FromResult<RateLimitLease>(
-                    new ConcurrencyLease(this, UnversionedTarget));
+                return ValueTask.FromResult<RateLimitLease>(new ConcurrencyLease(this));
             }
 
-            waiter = new Waiter(this, cancellationToken);
+            waiter = new Waiter(this, cancellationToken, captureTargetVersion: false);
             EnqueueWaiterLocked(waiter);
         }
 
@@ -220,9 +224,9 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 throw new ObjectDisposedException(nameof(ResizableConcurrencyState));
             _permitLimit = permitLimit;
             if (_targetVersionOwner is null)
-                granted = GrantWaitersLocked(UnversionedTarget);
+                granted = GrantWaitersLocked();
         }
-        CompleteGranted(granted);
+        CompleteGranted(granted, UnversionedTarget);
     }
 
     /// <summary>
@@ -275,9 +279,9 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             {
                 if (_disposed != 0)
                     return;
-                granted = GrantWaitersLocked(UnversionedTarget);
+                granted = GrantWaitersLocked();
             }
-            CompleteGranted(granted);
+            CompleteGranted(granted, UnversionedTarget);
             return;
         }
 
@@ -304,26 +308,25 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 }
                 else
                 {
-                    granted = GrantWaitersLocked(targetVersion);
+                    granted = GrantWaitersLocked();
                 }
             }
 
             if (retry)
                 continue;
 
-            CompleteGranted(granted);
+            CompleteGranted(granted, targetVersion);
             return;
         }
     }
 
-    private Waiter? GrantWaitersLocked(long targetVersion)
+    private Waiter? GrantWaitersLocked()
     {
         Waiter? grantedHead = null;
         Waiter? grantedTail = null;
         while (_active < _permitLimit && _waiterHead is not null)
         {
             var waiter = DequeueWaiterLocked();
-            waiter.GrantTargetVersion = targetVersion;
             _active++;
             if (grantedTail is null)
                 grantedHead = waiter;
@@ -408,13 +411,13 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         return head;
     }
 
-    private void CompleteGranted(Waiter? granted)
+    private void CompleteGranted(Waiter? granted, long targetVersion)
     {
         while (granted is not null)
         {
             var next = granted.Next;
             granted.Next = null;
-            granted.CompleteGranted(this, granted.GrantTargetVersion);
+            granted.CompleteGranted(this, targetVersion);
             granted = next;
         }
     }
@@ -438,7 +441,8 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 
     private sealed class Waiter(
         ResizableConcurrencyState owner,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool captureTargetVersion)
         : TaskCompletionSource<RateLimitLease>(TaskCreationOptions.RunContinuationsAsynchronously)
     {
         private CancellationTokenRegistration _registration;
@@ -449,7 +453,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         internal Waiter? Previous { get; set; }
         internal Waiter? Next { get; set; }
         internal bool IsQueued { get; set; }
-        internal long GrantTargetVersion { get; set; } = UnversionedTarget;
+        internal bool CaptureTargetVersion { get; } = captureTargetVersion;
 
         internal void SetRegistration(CancellationTokenRegistration registration)
         {
@@ -463,7 +467,9 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (Interlocked.Exchange(ref _completed, 1) != 0)
                 return;
             _registration.Dispose();
-            TrySetResult(new ConcurrencyLease(state, targetVersion));
+            TrySetResult(CaptureTargetVersion
+                ? new VersionedConcurrencyLease(state, targetVersion)
+                : new ConcurrencyLease(state));
         }
 
         internal void CompleteCanceled()
@@ -483,13 +489,31 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         }
     }
 
-    private sealed class ConcurrencyLease(
+    private sealed class ConcurrencyLease(ResizableConcurrencyState state) : RateLimitLease
+    {
+        private ResizableConcurrencyState? _owner = state;
+
+        public override bool IsAcquired => true;
+
+        public override IEnumerable<string> MetadataNames => [];
+
+        public override bool TryGetMetadata(string metadataName, out object? metadata)
+        {
+            metadata = null;
+            return false;
+        }
+
+        protected override void Dispose(bool disposing)
+            => Interlocked.Exchange(ref _owner, null)?.ReleasePermit();
+    }
+
+    private sealed class VersionedConcurrencyLease(
         ResizableConcurrencyState state,
         long targetVersion) : RateLimitLease
     {
         private ResizableConcurrencyState? _owner = state;
 
-        internal ResizableConcurrencyState State { get; } = state;
+        internal ResizableConcurrencyState? State => Volatile.Read(ref _owner);
         internal long TargetVersion { get; } = targetVersion;
 
         public override bool IsAcquired => true;
