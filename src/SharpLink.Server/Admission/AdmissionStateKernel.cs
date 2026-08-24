@@ -10,6 +10,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     private readonly Lock _accountingGate = new();
     private readonly Lock _registryGate = new();
     private readonly Dictionary<AdmissionRuleStateKey, List<ConcurrencyStateEntry>> _concurrencyStates = [];
+    private readonly Dictionary<AdmissionRuleStateKey, ResizableConcurrencyState> _publishedConcurrencyStates = [];
     private readonly Dictionary<AdmissionRateStateKey, RateStateEntry> _rateStates = [];
     private readonly Dictionary<AdmissionPartitionStateKey, PartitionStateEntry> _partitionStates = [];
     private readonly HashSet<AdmissionProgram> _programs = new(ReferenceEqualityComparer.Instance);
@@ -22,6 +23,8 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     private int _queuedCalls;
     private long _queuedBytes;
     private int _activePermits;
+    private long _concurrencyTargetVersion;
+    private bool _hasPublishedConcurrencyLineage;
     private int _disposed;
 
     internal AdmissionStateKernel(TimeProvider timeProvider)
@@ -35,11 +38,45 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
 
     internal Action? BeforeReclaimedStateDisposalForTests { get; set; }
 
+    internal Action<int, int>? AfterConcurrencyResizeForTests { get; set; }
+
+    internal Action? ConcurrencyTargetTransitionObservedForTests { get; set; }
+
     internal int QueuedCalls => Volatile.Read(ref _queuedCalls);
 
     internal long QueuedBytes => Volatile.Read(ref _queuedBytes);
 
     internal int ActivePermits => Volatile.Read(ref _activePermits);
+
+    internal long ReadStableConcurrencyTargetVersion()
+    {
+        var spinner = new SpinWait();
+        while (true)
+        {
+            var version = Volatile.Read(ref _concurrencyTargetVersion);
+            if ((version & 1L) == 0)
+                return version;
+            ConcurrencyTargetTransitionObservedForTests?.Invoke();
+            spinner.SpinOnce();
+        }
+    }
+
+    internal bool IsConcurrencyTargetVersionCurrent(long version)
+        => Volatile.Read(ref _concurrencyTargetVersion) == version;
+
+    internal void BeginConcurrencyTargetCommit()
+    {
+        var version = Interlocked.Increment(ref _concurrencyTargetVersion);
+        if ((version & 1L) == 0)
+            throw new InvalidOperationException("Admission concurrency target commit was already open.");
+    }
+
+    internal void CompleteConcurrencyTargetCommit()
+    {
+        var version = Interlocked.Increment(ref _concurrencyTargetVersion);
+        if ((version & 1L) != 0)
+            throw new InvalidOperationException("Admission concurrency target commit was not open.");
+    }
 
     internal int RetiredProgramCount
     {
@@ -111,6 +148,41 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         {
             lock (_registryGate)
                 return _partitionStates.Count;
+        }
+    }
+
+    /// <summary>
+    /// Records only the concurrency states of a successfully published runtime generation. This is
+    /// deliberately separate from candidate construction: speculative or losing candidates never
+    /// become a compatibility source for a later Disable -&gt; Enable transition.
+    /// </summary>
+    internal void RecordPublishedConcurrencyLineage(SharpLinkAdmissionController controller)
+    {
+        ArgumentNullException.ThrowIfNull(controller);
+        lock (_registryGate)
+        {
+            ThrowIfDisposed();
+            _hasPublishedConcurrencyLineage = true;
+            _publishedConcurrencyStates.Clear();
+            foreach (var binding in controller.RuleStateBindings)
+            {
+                if (binding.ConcurrencyState is not { } state)
+                    continue;
+                if (!_concurrencyStates.TryGetValue(binding.Key, out var entries))
+                    throw new InvalidOperationException("Published admission concurrency state is no longer registered.");
+
+                var registered = false;
+                foreach (var entry in entries)
+                {
+                    if (!ReferenceEquals(entry.State, state))
+                        continue;
+                    registered = true;
+                    break;
+                }
+                if (!registered)
+                    throw new InvalidOperationException("Published admission concurrency state is no longer registered.");
+                _publishedConcurrencyStates.Add(binding.Key, state);
+            }
         }
     }
 
@@ -479,6 +551,8 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             foreach (var entry in _partitionStates.Values)
                 dispose.Add(entry.Pool);
             _concurrencyStates.Clear();
+            _publishedConcurrencyStates.Clear();
+            _hasPublishedConcurrencyLineage = false;
             _rateStates.Clear();
             _partitionStates.Clear();
             _retiredPrograms.Clear();
@@ -491,6 +565,20 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         AdmissionRuleStateKey key,
         int permitLimit)
     {
+        // Before runtime publication exists, preserve the original static/kernel compatibility
+        // behavior. Once runtime lineage exists, only the most recently published state may be
+        // reused; historical removed variants and speculative candidates are never fallback peers.
+        if (_hasPublishedConcurrencyLineage)
+        {
+            if (_publishedConcurrencyStates.TryGetValue(key, out var published) &&
+                published.PermitLimit == permitLimit)
+            {
+                AddConcurrencyReferenceLocked(key, published);
+                return published;
+            }
+            return CreateConcurrencyLocked(key, permitLimit);
+        }
+
         if (_concurrencyStates.TryGetValue(key, out var entries))
         {
             foreach (var entry in entries)
@@ -508,7 +596,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         AdmissionRuleStateKey key,
         int permitLimit)
     {
-        var state = new ResizableConcurrencyState(permitLimit);
+        var state = new ResizableConcurrencyState(permitLimit, this);
         if (!_concurrencyStates.TryGetValue(key, out var entries))
         {
             entries = [];
@@ -575,6 +663,11 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                         throw new InvalidOperationException("Admission concurrency state reference count underflowed.");
                     if (entry.ProgramReferences == 0)
                     {
+                        if (_publishedConcurrencyStates.TryGetValue(binding.Key, out var published) &&
+                            ReferenceEquals(published, entry.State))
+                        {
+                            _publishedConcurrencyStates.Remove(binding.Key);
+                        }
                         entries.RemoveAt(index);
                         if (entries.Count == 0)
                             _concurrencyStates.Remove(binding.Key);
@@ -778,14 +871,18 @@ internal sealed class AdmissionUpdatePlan
 
     internal int ResizeCount => _resizes.Length;
 
-    internal void Commit()
+    internal void Commit(Action<int, int>? afterResize = null)
     {
         if (Interlocked.Exchange(ref _committed, 1) != 0)
             throw new InvalidOperationException("Admission update plan was committed more than once.");
 
         // Candidate and source references keep every state alive through this point. Targets were
         // validated before candidate publication, so Resize has no policy-validation failure path.
-        foreach (var resize in _resizes)
+        for (var index = 0; index < _resizes.Length; index++)
+        {
+            var resize = _resizes[index];
             resize.State.Resize(resize.PermitLimit);
+            afterResize?.Invoke(index, _resizes.Length);
+        }
     }
 }
