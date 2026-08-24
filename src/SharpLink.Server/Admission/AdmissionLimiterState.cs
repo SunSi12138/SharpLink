@@ -10,7 +10,9 @@ namespace SharpLink.Server;
 internal sealed class ResizableConcurrencyState : RateLimiter
 {
     private readonly Lock _gate = new();
-    private readonly LinkedList<Waiter> _waiters = [];
+    private Waiter? _waiterHead;
+    private Waiter? _waiterTail;
+    private int _waitingCount;
     private int _permitLimit;
     private int _active;
     private int _disposed;
@@ -44,7 +46,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         get
         {
             lock (_gate)
-                return _waiters.Count;
+                return _waitingCount;
         }
     }
 
@@ -61,7 +63,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 return FailedLease.Instance;
 
             // Do not let a new immediate caller barge ahead of an already queued Request.
-            if (_waiters.Count != 0 || _active >= _permitLimit)
+            if (_waitingCount != 0 || _active >= _permitLimit)
                 return FailedLease.Instance;
 
             _active++;
@@ -83,20 +85,23 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_disposed != 0)
                 return ValueTask.FromResult<RateLimitLease>(FailedLease.Instance);
 
-            if (_waiters.Count == 0 && _active < _permitLimit)
+            if (_waitingCount == 0 && _active < _permitLimit)
             {
                 _active++;
                 return ValueTask.FromResult<RateLimitLease>(new ConcurrencyLease(this));
             }
 
             waiter = new Waiter(this, cancellationToken);
-            waiter.Node = _waiters.AddLast(waiter);
+            EnqueueWaiterLocked(waiter);
         }
 
-        var registration = cancellationToken.Register(
-            static state => ((Waiter)state!).Owner.CancelWaiter((Waiter)state!),
-            waiter);
-        waiter.SetRegistration(registration);
+        if (cancellationToken.CanBeCanceled)
+        {
+            var registration = cancellationToken.UnsafeRegister(
+                static state => ((Waiter)state!).Owner.CancelWaiter((Waiter)state!),
+                waiter);
+            waiter.SetRegistration(registration);
+        }
         return new ValueTask<RateLimitLease>(waiter.Task);
     }
 
@@ -107,7 +112,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     internal void Resize(int permitLimit)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(permitLimit);
-        List<Waiter>? granted;
+        Waiter? granted;
         lock (_gate)
         {
             if (_disposed != 0)
@@ -123,28 +128,21 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         if (!disposing)
             return;
 
-        List<Waiter>? failed = null;
+        Waiter? failed;
         lock (_gate)
         {
             if (_disposed != 0)
                 return;
             _disposed = 1;
-            while (_waiters.First is { } node)
-            {
-                _waiters.RemoveFirst();
-                node.Value.Node = null;
-                (failed ??= []).Add(node.Value);
-            }
+            failed = DetachAllWaitersLocked();
         }
 
-        if (failed is not null)
-            foreach (var waiter in failed)
-                waiter.CompleteFailed();
+        CompleteFailed(failed);
     }
 
     private void ReleasePermit()
     {
-        List<Waiter>? granted = null;
+        Waiter? granted = null;
         lock (_gate)
         {
             if (_active <= 0)
@@ -156,42 +154,117 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         CompleteGranted(granted);
     }
 
-    private List<Waiter>? GrantWaitersLocked()
+    private Waiter? GrantWaitersLocked()
     {
-        List<Waiter>? granted = null;
-        while (_active < _permitLimit && _waiters.First is { } node)
+        Waiter? grantedHead = null;
+        Waiter? grantedTail = null;
+        while (_active < _permitLimit && _waiterHead is not null)
         {
-            _waiters.RemoveFirst();
-            var waiter = node.Value;
-            waiter.Node = null;
+            var waiter = DequeueWaiterLocked();
             _active++;
-            (granted ??= []).Add(waiter);
+            if (grantedTail is null)
+                grantedHead = waiter;
+            else
+                grantedTail.Next = waiter;
+            grantedTail = waiter;
         }
-        return granted;
+        return grantedHead;
     }
 
     private void CancelWaiter(Waiter waiter)
     {
         var removed = false;
         lock (_gate)
-        {
-            if (waiter.Node is { } node)
-            {
-                _waiters.Remove(node);
-                waiter.Node = null;
-                removed = true;
-            }
-        }
+            removed = RemoveWaiterLocked(waiter);
         if (removed)
             waiter.CompleteCanceled();
     }
 
-    private void CompleteGranted(List<Waiter>? granted)
+    private void EnqueueWaiterLocked(Waiter waiter)
     {
-        if (granted is null)
-            return;
-        foreach (var waiter in granted)
-            waiter.CompleteGranted(this);
+        waiter.IsQueued = true;
+        waiter.Previous = _waiterTail;
+        if (_waiterTail is null)
+            _waiterHead = waiter;
+        else
+            _waiterTail.Next = waiter;
+        _waiterTail = waiter;
+        _waitingCount++;
+    }
+
+    private Waiter DequeueWaiterLocked()
+    {
+        var waiter = _waiterHead ??
+            throw new InvalidOperationException("Admission concurrency waiter queue was unexpectedly empty.");
+        var next = waiter.Next;
+        _waiterHead = next;
+        if (next is null)
+            _waiterTail = null;
+        else
+            next.Previous = null;
+        waiter.Previous = null;
+        waiter.Next = null;
+        waiter.IsQueued = false;
+        _waitingCount--;
+        return waiter;
+    }
+
+    private bool RemoveWaiterLocked(Waiter waiter)
+    {
+        if (!waiter.IsQueued)
+            return false;
+
+        var previous = waiter.Previous;
+        var next = waiter.Next;
+        if (previous is null)
+            _waiterHead = next;
+        else
+            previous.Next = next;
+        if (next is null)
+            _waiterTail = previous;
+        else
+            next.Previous = previous;
+        waiter.Previous = null;
+        waiter.Next = null;
+        waiter.IsQueued = false;
+        _waitingCount--;
+        return true;
+    }
+
+    private Waiter? DetachAllWaitersLocked()
+    {
+        var head = _waiterHead;
+        _waiterHead = null;
+        _waiterTail = null;
+        _waitingCount = 0;
+        for (var waiter = head; waiter is not null; waiter = waiter.Next)
+        {
+            waiter.Previous = null;
+            waiter.IsQueued = false;
+        }
+        return head;
+    }
+
+    private void CompleteGranted(Waiter? granted)
+    {
+        while (granted is not null)
+        {
+            var next = granted.Next;
+            granted.Next = null;
+            granted.CompleteGranted(this);
+            granted = next;
+        }
+    }
+
+    private static void CompleteFailed(Waiter? failed)
+    {
+        while (failed is not null)
+        {
+            var next = failed.Next;
+            failed.Next = null;
+            failed.CompleteFailed();
+            failed = next;
+        }
     }
 
     private static void ValidatePermitCount(int permitCount)
@@ -203,16 +276,16 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     private sealed class Waiter(
         ResizableConcurrencyState owner,
         CancellationToken cancellationToken)
+        : TaskCompletionSource<RateLimitLease>(TaskCreationOptions.RunContinuationsAsynchronously)
     {
-        private readonly TaskCompletionSource<RateLimitLease> _source = new(
-            TaskCreationOptions.RunContinuationsAsynchronously);
         private CancellationTokenRegistration _registration;
         private int _completed;
 
         internal ResizableConcurrencyState Owner { get; } = owner;
         internal CancellationToken CancellationToken { get; } = cancellationToken;
-        internal LinkedListNode<Waiter>? Node { get; set; }
-        internal Task<RateLimitLease> Task => _source.Task;
+        internal Waiter? Previous { get; set; }
+        internal Waiter? Next { get; set; }
+        internal bool IsQueued { get; set; }
 
         internal void SetRegistration(CancellationTokenRegistration registration)
         {
@@ -226,7 +299,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (Interlocked.Exchange(ref _completed, 1) != 0)
                 return;
             _registration.Dispose();
-            _source.TrySetResult(new ConcurrencyLease(state));
+            TrySetResult(new ConcurrencyLease(state));
         }
 
         internal void CompleteCanceled()
@@ -234,7 +307,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (Interlocked.Exchange(ref _completed, 1) != 0)
                 return;
             _registration.Dispose();
-            _source.TrySetCanceled(CancellationToken);
+            TrySetCanceled(CancellationToken);
         }
 
         internal void CompleteFailed()
@@ -242,7 +315,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (Interlocked.Exchange(ref _completed, 1) != 0)
                 return;
             _registration.Dispose();
-            _source.TrySetResult(FailedLease.Instance);
+            TrySetResult(FailedLease.Instance);
         }
     }
 
