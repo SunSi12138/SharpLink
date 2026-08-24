@@ -49,6 +49,8 @@ server.EnableAdmissionControl(options =>
 
 停用只影响之后捕获接入状态的请求，不会取消已经捕获旧 generation 的活动或排队请求，也不会等待这些请求结束。旧 generation 会按正常 retire/reclaim 生命周期完成；在旧 generation 尚未回收时以兼容配置重新启用，会复用稳定 kernel 中兼容的并发、速率、队列和 partition 状态，因此不会重置已消费配额或复制全局记账。
 
+普通的 `DisableAdmissionControl` 不是 Server Stop：它只切换 Admission publication，不触发 `StopAccepting`，也不取消或等待旧 generation。反过来，一旦 Server 已进入 Draining、Stopped 或 Faulted，Admission control plane 就已封口；之后的 `EnableAdmissionControl` 或 `DisableAdmissionControl` 都会抛出 `InvalidOperationException`，且不会再发布任何 program。与 Stop 并发时，结果按同一生命周期 writer lock 的线性化顺序决定。
+
 运行时停用 Admission 不会停用 `ServerResourceGovernor`。调用容量、解码/预接入预算、保留字节和流式字节等服务器资源限制始终独立生效。
 
 ## 排队
