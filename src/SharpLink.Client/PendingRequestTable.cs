@@ -488,6 +488,42 @@ internal sealed class PendingRequestTable : IDisposable
         return call.ProducerCancellationToken;
     }
 
+    public bool TryGetProducerDeadline(long id, out RpcDeadline deadline)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+        {
+            deadline = default;
+            return false;
+        }
+
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref slots[index]);
+        if (current is null || current.Id != id ||
+            current.Kind is not (PendingCallKind.OneWayClientStreaming or
+                                 PendingCallKind.ClientStreaming or
+                                 PendingCallKind.DuplexStreaming))
+        {
+            deadline = default;
+            return false;
+        }
+
+        lock (current.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id ||
+                current.Kind is not (PendingCallKind.OneWayClientStreaming or
+                                     PendingCallKind.ClientStreaming or
+                                     PendingCallKind.DuplexStreaming))
+            {
+                deadline = default;
+                return false;
+            }
+
+            deadline = current.Deadline;
+            return true;
+        }
+    }
+
     public long AllocateRequestId()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
