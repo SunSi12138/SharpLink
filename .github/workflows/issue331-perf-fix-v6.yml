@@ -1,0 +1,65 @@
+name: Issue 331 Perf Fix V6
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.event.pull_request.head.ref == 'issue-331-dynamic-admission-update'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Keep exhausted rejection directly in override
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/SharpLink.Server/Admission/AdmissionLimiterState.cs')
+          text = path.read_text()
+          old = '''        // The complete AdmissionRequest owns the reader-visible target-version transaction. Keep\n        // this limiter's immediate path BCL-shaped and allocation-minimal; the request validates one\n        // stable epoch across every Global / Contract / Method slot before exposing the lease set.\n        return AttemptAcquireStableCore();\n    }\n\n    private RateLimitLease AttemptAcquireStableCore()\n    {\n        if (Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit) ||\n            Volatile.Read(ref _disposed) != 0)\n        {\n            return FailedLease.Instance;\n        }\n\n        // The deterministic publication-race hook is needed only once an immediate attempt can\n'''
+          new = '''        // The complete AdmissionRequest owns the reader-visible target-version transaction. Keep\n        // exhausted rejection directly in the override so the common denied path does not pay a\n        // secondary helper call; only a potentially successful acquisition reaches the hook/lock.\n        if (Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit) ||\n            Volatile.Read(ref _disposed) != 0)\n        {\n            return FailedLease.Instance;\n        }\n\n        return AttemptAcquireStableCore();\n    }\n\n    private RateLimitLease AttemptAcquireStableCore()\n    {\n        // The deterministic publication-race hook is needed only once an immediate attempt can\n'''
+          if old not in text:
+              raise SystemExit('direct reject source pattern missing')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Validate formatting and full unit suite
+        shell: bash
+        env:
+          TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: |
+          set -euxo pipefail
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
+
+      - name: Commit tested patch and remove helper
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/issue331-perf-fix-v6.yml
+          git add src/SharpLink.Server/Admission/AdmissionLimiterState.cs .github/workflows/issue331-perf-fix-v6.yml
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Keep exhausted admission reject in override'
+          git push origin HEAD:issue-331-dynamic-admission-update
