@@ -251,50 +251,58 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var started = _timeProvider.GetTimestamp();
-        var maximumDelay = _maxQueueDelay;
-        var deadlineLimitsWait = false;
-        if (deadline.HasValue && deadline.WouldExpireBeforeOrAt(maximumDelay, _timeProvider))
-        {
-            maximumDelay = deadline.GetRemaining(_timeProvider);
-            deadlineLimitsWait = true;
-        }
-        using var timeoutCancellation = maximumDelay <= TimeSpan.Zero
-            ? new CancellationTokenSource()
-            : new CancellationTokenSource(maximumDelay, _timeProvider);
-        if (maximumDelay <= TimeSpan.Zero)
-            timeoutCancellation.Cancel();
+        var queueDeadline = RpcDeadline.Create(
+            _maxQueueDelay,
+            started,
+            _timeProvider.TimestampFrequency);
+        var deadlineLimitsWait =
+            deadline.HasValue && deadline.Timestamp <= queueDeadline.Timestamp;
+        var waitDeadline = deadlineLimitsWait ? deadline : queueDeadline;
         using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
-            _draining.Token,
-            timeoutCancellation.Token);
+            _draining.Token);
 
         try
         {
             while (true)
             {
-                RateLimitLease waitedLease;
+                var waitTask = failedSlot.Limiter
+                    .AcquireAsync(1, waitCancellation.Token)
+                    .AsTask();
+                bool completedWithinDeadline;
                 try
                 {
-                    waitedLease = await failedSlot.Limiter
-                        .AcquireAsync(1, waitCancellation.Token)
-                        .ConfigureAwait(false);
+                    completedWithinDeadline = await SharpLinkTimer.WaitAsync(
+                        waitTask,
+                        waitDeadline,
+                        _timeProvider,
+                        waitCancellation.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (
                     _draining.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+
+                if (!completedWithinDeadline)
                 {
-                    // The admission timer and the server deadline scheduler intentionally race.
-                    // Preserve the deadline result when this local bounded-wait timer wins;
-                    // otherwise identical calls could surface ResourceExhausted or
-                    // DeadlineExceeded depending on scheduler timing.
+                    waitCancellation.Cancel();
+                    try
+                    {
+                        var lateLease = await waitTask.ConfigureAwait(false);
+                        lateLease.Dispose();
+                    }
+                    catch
+                    {
+                        // The bounded wait already owns the terminal result. Observe a canceled
+                        // or faulted limiter waiter without letting it replace that result.
+                    }
                     return deadlineLimitsWait
                         ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
                         : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
                 }
 
+                var waitedLease = await waitTask.ConfigureAwait(false);
                 if (!waitedLease.IsAcquired)
                 {
                     waitedLease.Dispose();
