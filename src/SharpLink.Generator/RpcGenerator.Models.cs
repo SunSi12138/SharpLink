@@ -152,6 +152,7 @@ internal enum StaticRouteConflictKind
 internal enum GeneratedCodecKind
 {
     Adapter,
+    Direct,
     Dto,
     Array,
     List,
@@ -230,6 +231,7 @@ internal readonly record struct DtoDiagnosticModel(
 internal sealed record DtoGenerationResult(
     ImmutableArray<GeneratedCodecModel> Codecs,
     ImmutableArray<GeneratedCodecModel> ContractCodecs,
+    ImmutableArray<GeneratedCodecModel> ContractManifestCodecs,
     ImmutableArray<DtoDiagnosticModel> Diagnostics,
     ImmutableArray<GeneratedEnumModel> Enums);
 
@@ -248,6 +250,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             return true;
         if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
             x.ContractCodecs.Length != y.ContractCodecs.Length ||
+            x.ContractManifestCodecs.Length != y.ContractManifestCodecs.Length ||
             x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
         {
             return false;
@@ -260,6 +263,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         for (var index = 0; index < x.ContractCodecs.Length; index++)
         {
             if (!CodecEquals(x.ContractCodecs[index], y.ContractCodecs[index]))
+                return false;
+        }
+        for (var index = 0; index < x.ContractManifestCodecs.Length; index++)
+        {
+            if (!CodecEquals(x.ContractManifestCodecs[index], y.ContractManifestCodecs[index]))
                 return false;
         }
         for (var index = 0; index < x.Diagnostics.Length; index++)
@@ -295,6 +303,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
         }
         foreach (var codec in obj.ContractCodecs)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
+        }
+        foreach (var codec in obj.ContractManifestCodecs)
         {
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
