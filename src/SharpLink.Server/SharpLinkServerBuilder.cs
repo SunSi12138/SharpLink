@@ -553,18 +553,16 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     metadata: SynchronousBuildResourceMetadata.CallerOwned("Server caller service provider"));
             }
 
-            SharpLinkAdmissionController? admissionController = null;
             var staticManifests = plan.CreateStaticManifestSnapshot();
-            if (plan.AdmissionControlOptions is not null)
-            {
-                admissionController = transaction.Own(
-                    SharpLinkAdmissionController.Create(
-                        plan.AdmissionControlOptions,
+            var admissionController = transaction.Own(
+                plan.AdmissionControlOptions is { } admissionOptions
+                    ? SharpLinkAdmissionController.Create(
+                        admissionOptions,
                         staticManifests,
-                        runtimeContext.TimeProvider),
-                    static controller => SharpLinkAsyncCleanup.DisposeSynchronously(controller),
-                    SynchronousBuildResourceMetadata.FrameworkOwned("Server admission controller"));
-            }
+                        runtimeContext.TimeProvider)
+                    : SharpLinkAdmissionController.CreateDisabled(runtimeContext.TimeProvider),
+                static controller => SharpLinkAsyncCleanup.DisposeSynchronously(controller),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Server admission state kernel"));
 
             var registrationsByContract = new Dictionary<long, ServiceRegistration>(plan.ServiceCount);
             for (var index = 0; index < plan.ServiceCount; index++)
