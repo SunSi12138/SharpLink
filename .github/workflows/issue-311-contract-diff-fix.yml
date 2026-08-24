@@ -1,0 +1,255 @@
+name: Issue 311 contract diff fix
+
+on:
+  push:
+    branches: [fix/311-codec-scope-routing]
+    paths:
+      - '.github/workflows/issue-311-contract-diff-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-24.04
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/311-codec-scope-routing
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.x
+      - name: Apply contract diff graph fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def rep(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual < count:
+                  raise RuntimeError(f"{path}: expected {count}, found {actual}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, count))
+
+          path = 'src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs'
+          rep(path,
+          '''        var standalone = new DtoAnalysisState(compilation, cancellationToken, contractMode: false).Analyze();
+          var contract = new DtoAnalysisState(compilation, cancellationToken, contractMode: true).Analyze();
+          var diagnostics = standalone.Diagnostics
+              .Concat(contract.Diagnostics)
+              .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
+              .Select(static group => group.First())
+              .ToImmutableArray();
+          var enums = standalone.Enums
+              .Concat(contract.Enums)
+              .GroupBy(static item => item.TypeName, StringComparer.Ordinal)
+              .Select(static group => group.First())
+              .OrderBy(static item => item.TypeName, StringComparer.Ordinal)
+              .ToImmutableArray();
+          return new DtoGenerationResult(standalone.Codecs, contract.Codecs, diagnostics, enums);
+          ''',
+          '''        var global = new DtoAnalysisState(compilation, cancellationToken, contractMode: false).Analyze();
+          var contract = new DtoAnalysisState(compilation, cancellationToken, contractMode: true).Analyze();
+          var contractCodecs = SelectContractScopedCodecs(global.Codecs, contract.Codecs);
+          var diagnostics = global.Diagnostics
+              .Concat(contract.Diagnostics)
+              .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
+              .Select(static group => group.First())
+              .ToImmutableArray();
+          var enums = global.Enums
+              .Concat(contract.Enums)
+              .GroupBy(static item => item.TypeName, StringComparer.Ordinal)
+              .Select(static group => group.First())
+              .OrderBy(static item => item.TypeName, StringComparer.Ordinal)
+              .ToImmutableArray();
+          return new DtoGenerationResult(global.Codecs, contractCodecs, contract.Codecs, diagnostics, enums);
+          ''')
+
+          rep(path,
+          '''    private sealed record DtoAnalysisPassResult(
+              ImmutableArray<GeneratedCodecModel> Codecs,
+              ImmutableArray<DtoDiagnosticModel> Diagnostics,
+              ImmutableArray<GeneratedEnumModel> Enums);
+          ''',
+          '''    private sealed record DtoAnalysisPassResult(
+              ImmutableArray<GeneratedCodecModel> Codecs,
+              ImmutableArray<DtoDiagnosticModel> Diagnostics,
+              ImmutableArray<GeneratedEnumModel> Enums);
+
+          private static ImmutableArray<GeneratedCodecModel> SelectContractScopedCodecs(
+              ImmutableArray<GeneratedCodecModel> globalCodecs,
+              ImmutableArray<GeneratedCodecModel> contractCodecs)
+          {
+              var globalByType = globalCodecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+              var scopedTypes = new HashSet<string>(StringComparer.Ordinal);
+
+              foreach (var codec in contractCodecs)
+              {
+                  if (!globalByType.TryGetValue(codec.TypeName, out var global) ||
+                      !HasSameCodecDefinition(global, codec))
+                  {
+                      scopedTypes.Add(codec.TypeName);
+                  }
+              }
+
+              bool changed;
+              do
+              {
+                  changed = false;
+                  foreach (var codec in contractCodecs)
+                  {
+                      if (scopedTypes.Contains(codec.TypeName))
+                          continue;
+                      if (GetCodecDependencies(codec).Any(scopedTypes.Contains))
+                          changed |= scopedTypes.Add(codec.TypeName);
+                  }
+              }
+              while (changed);
+
+              return contractCodecs
+                  .Where(codec => scopedTypes.Contains(codec.TypeName))
+                  .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
+                  .ToImmutableArray();
+          }
+
+          private static IEnumerable<string> GetCodecDependencies(GeneratedCodecModel codec)
+          {
+              if (codec.ElementType is not null)
+                  yield return codec.ElementType;
+              if (codec.KeyType is not null)
+                  yield return codec.KeyType;
+              if (codec.ValueType is not null)
+                  yield return codec.ValueType;
+              foreach (var member in codec.Members)
+              {
+                  if (member.Kind == GeneratedMemberKind.Complex)
+                      yield return member.TypeName;
+              }
+          }
+
+          private static bool HasSameCodecDefinition(GeneratedCodecModel left, GeneratedCodecModel right)
+          {
+              if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+                  !string.Equals(left.SchemaId, right.SchemaId, StringComparison.Ordinal) ||
+                  left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
+                  !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
+                  !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
+                  !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
+                  !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
+                  !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
+                  !string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal) ||
+                  !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
+                  !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
+                  left.Members.Length != right.Members.Length)
+              {
+                  return false;
+              }
+
+              for (var index = 0; index < left.Members.Length; index++)
+              {
+                  if (left.Members[index] with { Location = null } != right.Members[index] with { Location = null })
+                      return false;
+              }
+              return true;
+          }
+          ''')
+
+          rep(path,
+          '''            CollectCurrentAssemblyRoots(
+                  _compilation.Assembly.GlobalNamespace,
+                  roots,
+                  includeSerializable: !_contractMode,
+                  includeContracts: _contractMode);
+              if (_contractMode)
+                  CollectReferencedContractRoots(roots);
+          ''',
+          '''            CollectCurrentAssemblyRoots(
+                  _compilation.Assembly.GlobalNamespace,
+                  roots,
+                  includeSerializable: !_contractMode,
+                  includeContracts: true);
+              CollectReferencedContractRoots(roots);
+          ''')
+
+          path = 'src/SharpLink.Generator/RpcGenerator.Models.cs'
+          rep(path,
+          '''internal sealed record DtoGenerationResult(
+              ImmutableArray<GeneratedCodecModel> Codecs,
+              ImmutableArray<GeneratedCodecModel> ContractCodecs,
+              ImmutableArray<DtoDiagnosticModel> Diagnostics,
+              ImmutableArray<GeneratedEnumModel> Enums);
+          ''',
+          '''internal sealed record DtoGenerationResult(
+              ImmutableArray<GeneratedCodecModel> Codecs,
+              ImmutableArray<GeneratedCodecModel> ContractCodecs,
+              ImmutableArray<GeneratedCodecModel> ContractManifestCodecs,
+              ImmutableArray<DtoDiagnosticModel> Diagnostics,
+              ImmutableArray<GeneratedEnumModel> Enums);
+          ''')
+          rep(path,
+          '''        if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
+              x.ContractCodecs.Length != y.ContractCodecs.Length ||
+              x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
+          ''',
+          '''        if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
+              x.ContractCodecs.Length != y.ContractCodecs.Length ||
+              x.ContractManifestCodecs.Length != y.ContractManifestCodecs.Length ||
+              x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
+          ''')
+          rep(path,
+          '''        for (var index = 0; index < x.Diagnostics.Length; index++)
+          ''',
+          '''        for (var index = 0; index < x.ContractManifestCodecs.Length; index++)
+          {
+              if (!CodecEquals(x.ContractManifestCodecs[index], y.ContractManifestCodecs[index]))
+                  return false;
+          }
+          for (var index = 0; index < x.Diagnostics.Length; index++)
+          ''')
+          rep(path,
+          '''        foreach (var diagnostic in obj.Diagnostics)
+          ''',
+          '''        foreach (var codec in obj.ContractManifestCodecs)
+          {
+              hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
+              hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
+          }
+          foreach (var diagnostic in obj.Diagnostics)
+          ''')
+
+          path = 'src/SharpLink.Generator/RpcGenerator.cs'
+          rep(path,
+          '''                value.Left.Right.ContractCodecs,
+                  value.Left.Right.Enums,
+          ''',
+          '''                value.Left.Right.ContractManifestCodecs,
+                  value.Left.Right.Enums,
+          ''')
+          PY
+      - name: Format
+        run: dotnet format Sharplink.slnx whitespace
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+      - name: Build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Generator tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+      - name: Unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+      - name: Integration tests
+        run: dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1 --timeout 120s
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name "SunSi12138"
+          git config user.email "54728594+SunSi12138@users.noreply.github.com"
+          git add src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs src/SharpLink.Generator/RpcGenerator.Models.cs src/SharpLink.Generator/RpcGenerator.cs
+          git diff --cached --quiet && exit 0
+          git commit -m "Preserve global codecs outside Contract policy"
+          git push origin HEAD:fix/311-codec-scope-routing
