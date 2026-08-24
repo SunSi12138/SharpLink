@@ -8,10 +8,10 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkMetadata? metadata,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         => new UnaryInterceptorState<TRequest, TResponse>(
-            this, method, request, requestCodec, responseCodec, interceptors, metadata, cancellationToken).InvokeTypedAsync();
+            this, method, request, requestCodec, responseCodec, interceptors, control, cancellationToken).InvokeTypedAsync();
 
     private ValueTask InvokeOneWayInterceptedAsync<TRequest, TStreams>(
         RpcMethodDescriptor method,
@@ -19,11 +19,11 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkMetadata? metadata,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
         => new OneWayInterceptorState<TRequest, TStreams>(
-            this, method, request, requestCodec, streams, interceptors, metadata, cancellationToken).InvokeVoidAsync();
+            this, method, request, requestCodec, streams, interceptors, control, cancellationToken).InvokeVoidAsync();
 
     private ValueTask<TResponse> InvokeClientStreamingInterceptedAsync<TRequest, TResponse, TStreams>(
         RpcMethodDescriptor method,
@@ -32,11 +32,11 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkMetadata? metadata,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
         => new ClientStreamingInterceptorState<TRequest, TResponse, TStreams>(
-            this, method, request, requestCodec, responseCodec, streams, interceptors, metadata, cancellationToken).InvokeTypedAsync();
+            this, method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken).InvokeTypedAsync();
 
     private IAsyncEnumerable<TResponse> InvokeServerStreamingIntercepted<TRequest, TResponse>(
         RpcMethodDescriptor method,
@@ -85,17 +85,12 @@ internal sealed partial class SharpLinkClient
             RpcMethodDescriptor method,
             object? request,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkMetadata? metadata,
-            CancellationToken cancellationToken,
-            ResolvedCallControl? resolvedControl = null)
+            ResolvedCallControl control,
+            CancellationToken cancellationToken)
         {
             _client = client;
             _interceptors = interceptors;
-            _control = resolvedControl ?? client.ResolveCallControl(
-                metadata,
-                method.Kind == RpcMethodKind.Unary,
-                method.HasMethodTimeout,
-                method.MethodTimeout);
+            _control = control;
             _context = new SharpLinkClientInvocationContext(
                 method, request, _control.Metadata, cancellationToken);
         }
@@ -484,9 +479,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkMetadata? metadata,
+            ResolvedCallControl control,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, metadata, cancellationToken)
+            : base(client, method, request, interceptors, control, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -542,9 +537,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             TStreams streams,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkMetadata? metadata,
+            ResolvedCallControl control,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, metadata, cancellationToken)
+            : base(client, method, request, interceptors, control, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -602,9 +597,9 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
             ISharpLinkClientInterceptor[] interceptors,
-            SharpLinkMetadata? metadata,
+            ResolvedCallControl control,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, metadata, cancellationToken)
+            : base(client, method, request, interceptors, control, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -664,7 +659,7 @@ internal sealed partial class SharpLinkClient
             ISharpLinkClientInterceptor[] interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, control.Metadata, cancellationToken, control)
+            : base(client, method, request, interceptors, control, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -720,7 +715,7 @@ internal sealed partial class SharpLinkClient
             ISharpLinkClientInterceptor[] interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
-            : base(client, method, request, interceptors, control.Metadata, cancellationToken, control)
+            : base(client, method, request, interceptors, control, cancellationToken)
         {
             _method = method;
             _request = request;
@@ -802,7 +797,7 @@ internal sealed partial class SharpLinkClient
                                 moveNextTask, deadline, timeProvider, lifetimeCancellation.Token).ConfigureAwait(false))
                         {
                             deadlineWon = true;
-                            lifetimeCancellation.Cancel();
+                            TryCancelLifetime(lifetimeCancellation);
                             _ = ObserveAbandonedMoveNextAsync(moveNextTask);
                             throw CreateDeadlineExceededException();
                         }
@@ -819,7 +814,7 @@ internal sealed partial class SharpLinkClient
             }
             finally
             {
-                lifetimeCancellation.Cancel();
+                TryCancelLifetime(lifetimeCancellation);
                 try
                 {
                     var dispose = enumerator.DisposeAsync();
@@ -833,6 +828,19 @@ internal sealed partial class SharpLinkClient
                     // The deadline is already the terminal result. Disposal is best-effort for
                     // a short-circuited local enumerator that may ignore cancellation.
                 }
+            }
+        }
+
+        private static void TryCancelLifetime(CancellationTokenSource cancellation)
+        {
+            try
+            {
+                cancellation.Cancel();
+            }
+            catch
+            {
+                // Cancellation is cleanup after the logical call has selected its terminal path.
+                // User callbacks cannot replace that terminal outcome.
             }
         }
 
