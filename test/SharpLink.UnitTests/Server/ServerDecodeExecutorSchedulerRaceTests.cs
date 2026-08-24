@@ -73,6 +73,61 @@ public class ServerDecodeExecutorSchedulerRaceTests
             "multi-worker cancellation stress must reclaim scheduler metadata");
     }
 
+    [Test]
+    public async Task DisposeShouldWaitForCompatibilityWriterThatAcquiredSlotBeforePublication()
+    {
+        var executor = new ServerDecodeExecutor(workerCount: 1, queueCapacity: 1);
+        var slots = ReadPrivateField<SemaphoreSlim>(executor, "_compatibilitySlots");
+        var schedulerGate = ReadPrivateField<Lock>(executor, "_schedulerGate");
+        slots.Wait();
+
+        Task enqueue;
+        Task dispose;
+        try
+        {
+            enqueue = executor.EnqueueAsync(
+                new ServerDecodeWorkItem(_ => ValueTask.CompletedTask),
+                CancellationToken.None).AsTask();
+            Ensure(executor.QueueDepth == 1,
+                "compatibility writer must own pending depth while blocked on queue capacity");
+
+            lock (schedulerGate)
+            {
+                slots.Release();
+                Ensure(
+                    SpinWait.SpinUntil(() => slots.CurrentCount == 0, TimeSpan.FromSeconds(2)),
+                    "compatibility writer did not acquire the released slot before publication");
+
+                dispose = executor.DisposeAsync().AsTask();
+                Ensure(!dispose.IsCompleted,
+                    "dispose must remain joined to the admitted compatibility writer");
+            }
+
+            await EnsureFailsAsync<ServerDecodeExecutorClosedException>(
+                enqueue,
+                "compatibility writer crossing dispose before publication");
+            await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Ensure(executor.QueueDepth == 0,
+                "compatibility writer rollback must release pending depth before disposal completes");
+        }
+        finally
+        {
+            if (Volatile.Read(ref dispose) is null)
+                await executor.DisposeAsync();
+        }
+    }
+
+    private static T ReadPrivateField<T>(ServerDecodeExecutor executor, string name)
+    {
+        var field = typeof(ServerDecodeExecutor).GetField(
+            name,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find executor field {name}");
+        return (T)field.GetValue(executor)!;
+    }
+
     private static TaskCompletionSource NewSignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -98,6 +153,23 @@ public class ServerDecodeExecutorSchedulerRaceTests
             throw new Exception($"assert failed: {scenario} should cancel");
         }
         catch (OperationCanceledException)
+        {
+        }
+        catch (TimeoutException)
+        {
+            throw new Exception($"assert failed: {scenario} did not complete");
+        }
+    }
+
+    private static async Task EnsureFailsAsync<TException>(Task task, string scenario)
+        where TException : Exception
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
+            throw new Exception($"assert failed: {scenario} should fail");
+        }
+        catch (TException)
         {
         }
         catch (TimeoutException)
