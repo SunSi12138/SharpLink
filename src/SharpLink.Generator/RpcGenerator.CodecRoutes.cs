@@ -119,7 +119,7 @@ public partial class RpcGenerator
         private bool TrySelectContractCodecOverride(ITypeSymbol type, out AdapterRegistration? selected)
         {
             // Contract compilation has one deterministic precedence entrypoint:
-            // explicit per-type selection > assembly route > SharpLink default generation.
+            // explicit per-type Codec/Adapter selection > assembly route > SharpLink default generation.
             if (TrySelectAdapter(type, out selected))
                 return true;
             return TrySelectRouteAdapter(type, out selected);
@@ -155,11 +155,14 @@ public partial class RpcGenerator
 
         private void AddAdapterModel(ITypeSymbol type, string typeName, AdapterRegistration adapter)
         {
+            var schema = adapter.IsDirectCodec
+                ? $"direct|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}"
+                : adapter.WireFormatId;
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
                 GetCodecName(typeName, _contractMode),
-                GetSchemaId(typeName, adapter.WireFormatId),
-                GeneratedCodecKind.Adapter,
+                GetSchemaId(typeName, schema),
+                adapter.IsDirectCodec ? GeneratedCodecKind.Direct : GeneratedCodecKind.Adapter,
                 type.IsReferenceType,
                 ImmutableArray<GeneratedMemberModel>.Empty,
                 ImmutableArray<string>.Empty,
@@ -169,7 +172,7 @@ public partial class RpcGenerator
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
                 adapter.WireFormatId,
-                GetAssemblyDependencies([type]),
+                GetAssemblyDependencies([type, adapter.AdapterType]),
                 type.Locations.FirstOrDefault());
         }
 
@@ -188,13 +191,12 @@ public partial class RpcGenerator
                 _routeEligibleTypes = eligible;
             }
 
-
             return _routeEligibleTypes.Contains(type);
         }
 
         private void CollectCurrentContractRouteRoots(
-  INamespaceSymbol namespaceSymbol,
-  Dictionary<string, ITypeSymbol> roots)
+            INamespaceSymbol namespaceSymbol,
+            Dictionary<string, ITypeSymbol> roots)
         {
             foreach (var type in namespaceSymbol.GetTypeMembers())
                 CollectCurrentContractRouteRoots(type, roots);
@@ -203,8 +205,8 @@ public partial class RpcGenerator
         }
 
         private void CollectCurrentContractRouteRoots(
-  INamedTypeSymbol type,
-  Dictionary<string, ITypeSymbol> roots)
+            INamedTypeSymbol type,
+            Dictionary<string, ITypeSymbol> roots)
         {
             if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
                 CollectContractPayloadRoots(type, roots);
@@ -264,10 +266,10 @@ public partial class RpcGenerator
         }
 
         private bool CanGenerateNativeCollection(
-  ITypeSymbol type,
-  List<ITypeSymbol> stack,
-  int depth,
-  ITypeSymbol blockedRouteType)
+            ITypeSymbol type,
+            List<ITypeSymbol> stack,
+            int depth,
+            ITypeSymbol blockedRouteType)
         {
             if (depth > MaximumDepth ||
                 stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)) ||
@@ -286,10 +288,10 @@ public partial class RpcGenerator
         }
 
         private bool CanGenerateNativeDto(
-  ITypeSymbol type,
-  List<ITypeSymbol> stack,
-  int depth,
-  ITypeSymbol blockedRouteType)
+            ITypeSymbol type,
+            List<ITypeSymbol> stack,
+            int depth,
+            ITypeSymbol blockedRouteType)
         {
             if (depth > MaximumDepth ||
                 type is not INamedTypeSymbol named ||
@@ -349,10 +351,10 @@ public partial class RpcGenerator
         }
 
         private bool CanResolveContractCodecDependency(
-  ITypeSymbol type,
-  List<ITypeSymbol> stack,
-  int depth,
-  ITypeSymbol blockedRouteType)
+            ITypeSymbol type,
+            List<ITypeSymbol> stack,
+            int depth,
+            ITypeSymbol blockedRouteType)
         {
             if (depth > MaximumDepth ||
                 type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer)
@@ -360,8 +362,8 @@ public partial class RpcGenerator
                 return false;
             }
 
-            // Explicit per-type bindings are part of the default Contract codec graph and therefore
-            // can make an outer generated DTO/collection a valid Native shell.
+            // Explicit per-type Adapter/direct Codec bindings are part of the Contract policy graph
+            // and can make an outer generated DTO/collection a valid Native shell.
             if (HasResolvableExplicitAdapter(type))
                 return true;
             if (IsNonOverridableBuiltin(type) || type.IsUnmanagedType)
