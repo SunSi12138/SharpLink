@@ -2,8 +2,13 @@ using System.Threading.RateLimiting;
 
 namespace SharpLink.Server;
 
+/// <summary>
+/// Immutable admission policy/binding for one program generation. Mutable limiter, queue, permit,
+/// and partition state is owned by the stable server-scoped <see cref="AdmissionStateKernel"/>.
+/// </summary>
 internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 {
+    private readonly AdmissionStateKernel _kernel;
     private readonly AdmissionRuleRuntime? _global;
     private readonly FrozenDictionary<long, AdmissionRuleRuntime> _contracts;
     private readonly FrozenDictionary<(long ContractId, long MethodId), AdmissionRuleRuntime> _methods;
@@ -13,32 +18,59 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
     private readonly bool _queueOneWayCalls;
     private readonly TimeProvider _timeProvider;
     private readonly AdmissionPartitionPool? _partitions;
-    private readonly CancellationTokenSource _draining = new();
-    private readonly Lock _queueGate = new();
-    private int _queuedCalls;
-    private long _queuedBytes;
-    private int _activePermits;
-    private int _disposed;
-    private TaskCompletionSource<bool> _queueDrained = CompletedSignal();
-    private TaskCompletionSource<bool> _permitsDrained = CompletedSignal();
+    private readonly AdmissionRuleStateBinding[] _ruleStateBindings;
+    private readonly AdmissionPartitionStateBinding? _partitionStateBinding;
+    private readonly bool _ownsKernel;
+    private AdmissionProgram? _program;
 
     private SharpLinkAdmissionController(
-        SharpLinkAdmissionControlOptions options,
+        AdmissionStateKernel kernel,
+        int maxQueuedCalls,
+        long maxQueuedBytes,
+        TimeSpan maxQueueDelay,
+        bool queueOneWayCalls,
         AdmissionRuleRuntime? global,
         FrozenDictionary<long, AdmissionRuleRuntime> contracts,
         FrozenDictionary<(long ContractId, long MethodId), AdmissionRuleRuntime> methods,
         AdmissionPartitionPool? partitions,
-        TimeProvider timeProvider)
+        AdmissionRuleStateBinding[] ruleStateBindings,
+        AdmissionPartitionStateBinding? partitionStateBinding,
+        TimeProvider timeProvider,
+        bool ownsKernel)
     {
-        _maxQueuedCalls = options.MaxQueuedCalls;
-        _maxQueuedBytes = options.MaxQueuedBytes;
-        _maxQueueDelay = options.MaxQueueDelay;
-        _queueOneWayCalls = options.QueueOneWayCalls;
+        _kernel = kernel;
+        _maxQueuedCalls = maxQueuedCalls;
+        _maxQueuedBytes = maxQueuedBytes;
+        _maxQueueDelay = maxQueueDelay;
+        _queueOneWayCalls = queueOneWayCalls;
         _timeProvider = timeProvider;
         _global = global;
         _contracts = contracts;
         _methods = methods;
         _partitions = partitions;
+        _ruleStateBindings = ruleStateBindings;
+        _partitionStateBinding = partitionStateBinding;
+        _ownsKernel = ownsKernel;
+    }
+
+    internal static SharpLinkAdmissionController CreateDisabled(TimeProvider? timeProvider = null)
+    {
+        timeProvider ??= TimeProvider.System;
+        var kernel = new AdmissionStateKernel(timeProvider);
+        return new SharpLinkAdmissionController(
+            kernel,
+            0,
+            0,
+            TimeSpan.Zero,
+            queueOneWayCalls: false,
+            global: null,
+            FrozenDictionary<long, AdmissionRuleRuntime>.Empty,
+            FrozenDictionary<(long ContractId, long MethodId), AdmissionRuleRuntime>.Empty,
+            partitions: null,
+            [],
+            partitionStateBinding: null,
+            timeProvider,
+            ownsKernel: true);
     }
 
     internal static SharpLinkAdmissionController Create(
@@ -49,7 +81,31 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(manifests);
         timeProvider ??= TimeProvider.System;
+        var kernel = new AdmissionStateKernel(timeProvider);
+        try
+        {
+            return Create(kernel, options, manifests, timeProvider, ownsKernel: true);
+        }
+        catch
+        {
+            SharpLinkAsyncCleanup.DisposeSynchronously(kernel);
+            throw;
+        }
+    }
+
+    internal static SharpLinkAdmissionController Create(
+        AdmissionStateKernel kernel,
+        SharpLinkAdmissionControlOptions options,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        TimeProvider timeProvider,
+        bool ownsKernel)
+    {
+        ArgumentNullException.ThrowIfNull(kernel);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(manifests);
+        ArgumentNullException.ThrowIfNull(timeProvider);
         options.Validate();
+
         var contractsByType = new Dictionary<Type, SharpLinkGeneratedContractDescriptor>();
         foreach (var manifest in manifests)
         {
@@ -113,47 +169,117 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         AdmissionRuleRuntime? global = null;
         var contractRules = new Dictionary<long, AdmissionRuleRuntime>(contractOptions.Count);
         var methodRules = new Dictionary<(long, long), AdmissionRuleRuntime>(methodOptions.Count);
+        var bindings = new List<AdmissionRuleStateBinding>(1 + contractOptions.Count + methodOptions.Count);
+        AdmissionPartitionStateBinding? partitionBinding = null;
         try
         {
-            global = options.Global.HasLimit
-                ? AdmissionRuleRuntime.Create(options.Global, options.MaxQueuedCalls, "global")
-                : null;
+            if (options.Global.HasLimit)
+            {
+                var binding = kernel.AcquireRuleState(
+                    AdmissionRuleStateKey.Global(options.Global, options.MaxQueuedCalls),
+                    options.Global,
+                    options.MaxQueuedCalls,
+                    "global");
+                bindings.Add(binding);
+                global = binding.Runtime;
+            }
+
             foreach (var pair in contractOptions)
             {
-                contractRules.Add(
-                    pair.Key,
-                    AdmissionRuleRuntime.Create(pair.Value, options.MaxQueuedCalls, "contract"));
+                var binding = kernel.AcquireRuleState(
+                    AdmissionRuleStateKey.Contract(pair.Key, pair.Value, options.MaxQueuedCalls),
+                    pair.Value,
+                    options.MaxQueuedCalls,
+                    "contract");
+                bindings.Add(binding);
+                contractRules.Add(pair.Key, binding.Runtime);
             }
+
             foreach (var pair in methodOptions)
             {
-                methodRules.Add(
-                    pair.Key,
-                    AdmissionRuleRuntime.Create(pair.Value, options.MaxQueuedCalls, "method"));
-            }
-            var partitions = options.Partition is { } partition
-                ? new AdmissionPartitionPool(
-                    options.PartitionSelector!,
-                    partition,
+                var binding = kernel.AcquireRuleState(
+                    AdmissionRuleStateKey.Method(pair.Key.Item1, pair.Key.Item2, pair.Value, options.MaxQueuedCalls),
+                    pair.Value,
                     options.MaxQueuedCalls,
-                    timeProvider)
-                : null;
+                    "method");
+                bindings.Add(binding);
+                methodRules.Add(pair.Key, binding.Runtime);
+            }
+
+            AdmissionPartitionPool? partitions = null;
+            if (options.Partition is { } partition)
+            {
+                var selector = options.PartitionSelector!;
+                partitionBinding = kernel.AcquirePartitionState(
+                    AdmissionPartitionStateKey.Create(selector, partition, options.MaxQueuedCalls),
+                    selector,
+                    partition,
+                    options.MaxQueuedCalls);
+                partitions = partitionBinding.Value.Pool;
+            }
+
             return new SharpLinkAdmissionController(
-                options,
+                kernel,
+                options.MaxQueuedCalls,
+                options.MaxQueuedBytes,
+                options.MaxQueueDelay,
+                options.QueueOneWayCalls,
                 global,
                 contractRules.ToFrozenDictionary(),
                 methodRules.ToFrozenDictionary(),
                 partitions,
-                timeProvider);
+                [.. bindings],
+                partitionBinding,
+                timeProvider,
+                ownsKernel);
         }
         catch
         {
-            global?.Dispose();
-            foreach (var rule in contractRules.Values)
-                rule.Dispose();
-            foreach (var rule in methodRules.Values)
-                rule.Dispose();
+            var rollback = new SharpLinkAdmissionController(
+                kernel,
+                options.MaxQueuedCalls,
+                options.MaxQueuedBytes,
+                options.MaxQueueDelay,
+                options.QueueOneWayCalls,
+                global,
+                contractRules.ToFrozenDictionary(),
+                methodRules.ToFrozenDictionary(),
+                partitionBinding?.Pool,
+                [.. bindings],
+                partitionBinding,
+                timeProvider,
+                ownsKernel: false);
+            kernel.ReleaseUnpublishedBindings(rollback);
             throw;
         }
+    }
+
+    internal AdmissionStateKernel Kernel => _kernel;
+
+    internal AdmissionProgram? Program => Volatile.Read(ref _program);
+
+    internal bool IsEnabled
+        => _global is not null || _contracts.Count != 0 || _methods.Count != 0 || _partitions is not null;
+
+    internal IReadOnlyList<AdmissionRuleStateBinding> RuleStateBindings => _ruleStateBindings;
+
+    internal AdmissionPartitionStateBinding? PartitionStateBinding => _partitionStateBinding;
+
+    internal AdmissionRuleRuntime? GlobalStateForTests => _global;
+
+    internal AdmissionRuleRuntime? ContractStateForTests(long contractId)
+        => _contracts.GetValueOrDefault(contractId);
+
+    internal AdmissionRuleRuntime? MethodStateForTests(long contractId, long methodId)
+        => _methods.GetValueOrDefault((contractId, methodId));
+
+    internal AdmissionPartitionPool? PartitionStateForTests => _partitions;
+
+    internal void AttachProgram(AdmissionProgram program)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        if (Interlocked.CompareExchange(ref _program, program, null) is not null)
+            throw new InvalidOperationException("Admission policy binding already belongs to a program generation.");
     }
 
     internal ValueTask<AdmissionDecision> AcquireAsync(
@@ -179,7 +305,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentOutOfRangeException.ThrowIfNegative(retainedBytes);
-        if (_draining.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
+        if (_kernel.IsDraining)
             return ValueTask.FromResult(AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable));
 
         AdmissionPartitionLease? partitionLease = null;
@@ -191,7 +317,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         }
 
         var request = CreateRequest(context, partitionLease);
-        if (request.TryAcquire(this, out var lease, out var failedSlot))
+        if (request.TryAcquire(_kernel, out var lease, out var failedSlot))
             return ValueTask.FromResult(AdmissionDecision.Accept(lease!));
 
         if (!allowQueue || _maxQueuedCalls == 0)
@@ -200,7 +326,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             return ValueTask.FromResult(AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope));
         }
 
-        if (!TryReserveQueue(retainedBytes, out var queueReason))
+        if (!_kernel.TryReserveQueue(retainedBytes, _maxQueuedCalls, _maxQueuedBytes, out var queueReason))
         {
             request.Dispose();
             return ValueTask.FromResult(queueReason == "draining"
@@ -215,16 +341,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             cancellationToken);
     }
 
-    internal void StopAccepting()
-    {
-        try
-        {
-            _draining.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-    }
+    internal void StopAccepting() => _kernel.StopAccepting();
 
     private AdmissionRequest CreateRequest(
         SharpLinkAdmissionContext context,
@@ -267,7 +384,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             timeoutCancellation.Cancel();
         using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
-            _draining.Token,
+            _kernel.DrainingToken,
             timeoutCancellation.Token);
 
         try
@@ -282,16 +399,12 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                         .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (
-                    _draining.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                    _kernel.IsDraining && !cancellationToken.IsCancellationRequested)
                 {
                     return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    // The admission timer and the server deadline scheduler intentionally race.
-                    // Preserve the deadline result when this local bounded-wait timer wins;
-                    // otherwise identical calls could surface ResourceExhausted or
-                    // DeadlineExceeded depending on scheduler timing.
                     return deadlineLimitsWait
                         ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
                         : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
@@ -303,7 +416,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                     return AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
                 }
                 if (request.TryAcquireUsing(
-                        this,
+                        _kernel,
                         failedSlot.Limiter,
                         waitedLease,
                         out var lease,
@@ -315,153 +428,26 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         }
         finally
         {
-            ReleaseQueue(retainedBytes);
-            SharpLinkTelemetry.RecordAdmissionQueueDuration(
-                _timeProvider.GetElapsedTime(started));
+            _kernel.ReleaseQueue(retainedBytes);
+            SharpLinkTelemetry.RecordAdmissionQueueDuration(_timeProvider.GetElapsedTime(started));
             request.Dispose();
         }
     }
 
-    private bool TryReserveQueue(int retainedBytes, out string reason)
-    {
-        lock (_queueGate)
-        {
-            if (_draining.IsCancellationRequested)
-            {
-                reason = "draining";
-                return false;
-            }
-            if (_queuedCalls >= _maxQueuedCalls)
-            {
-                reason = "queue_count";
-                return false;
-            }
-            if (retainedBytes > _maxQueuedBytes - _queuedBytes)
-            {
-                reason = "queue_bytes";
-                return false;
-            }
-            if (_queuedCalls++ == 0)
-            {
-                _queueDrained = new TaskCompletionSource<bool>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-            _queuedBytes += retainedBytes;
-        }
-        SharpLinkTelemetry.AddAdmissionQueuedCalls(1);
-        reason = string.Empty;
-        return true;
-    }
-
-    private void ReleaseQueue(int retainedBytes)
-    {
-        TaskCompletionSource<bool>? drained = null;
-        lock (_queueGate)
-        {
-            _queuedCalls--;
-            _queuedBytes -= retainedBytes;
-            if (_queuedCalls == 0)
-                drained = _queueDrained;
-        }
-        drained?.TrySetResult(true);
-        SharpLinkTelemetry.AddAdmissionQueuedCalls(-1);
-    }
-
     internal bool TryReserveAdditionalQueuedBytes(int retainedBytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
-        lock (_queueGate)
-        {
-            if (_draining.IsCancellationRequested ||
-                retainedBytes > _maxQueuedBytes - _queuedBytes)
-            {
-                return false;
-            }
-            _queuedBytes += retainedBytes;
-            return true;
-        }
-    }
+        => _kernel.TryReserveAdditionalQueuedBytes(retainedBytes, _maxQueuedBytes);
 
     internal void ReleaseAdditionalQueuedBytes(int retainedBytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
-        lock (_queueGate)
-        {
-            _queuedBytes -= retainedBytes;
-            if (_queuedBytes < 0)
-                throw new InvalidOperationException("Admission queued byte accounting underflowed.");
-        }
-    }
+        => _kernel.ReleaseAdditionalQueuedBytes(retainedBytes);
 
-    internal void OnLeaseCreated()
-    {
-        lock (_queueGate)
-        {
-            if (_activePermits++ == 0)
-            {
-                _permitsDrained = new TaskCompletionSource<bool>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-        }
-        SharpLinkTelemetry.AddAdmissionActivePermits(1);
-    }
-
-    internal void OnLeaseDisposed()
-    {
-        TaskCompletionSource<bool>? drained = null;
-        lock (_queueGate)
-        {
-            if (--_activePermits == 0)
-                drained = _permitsDrained;
-        }
-        drained?.TrySetResult(true);
-        SharpLinkTelemetry.AddAdmissionActivePermits(-1);
-    }
-
-    internal int ActivePermits => Volatile.Read(ref _activePermits);
-    internal int QueuedCalls => Volatile.Read(ref _queuedCalls);
-    internal long QueuedBytes => Volatile.Read(ref _queuedBytes);
+    internal int ActivePermits => _kernel.ActivePermits;
+    internal int QueuedCalls => _kernel.QueuedCalls;
+    internal long QueuedBytes => _kernel.QueuedBytes;
     internal int ActivePartitions => _partitions?.Count ?? 0;
     internal bool QueueOneWayCalls => _queueOneWayCalls;
 
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-        StopAccepting();
-        while (true)
-        {
-            Task queueDrained;
-            Task permitsDrained;
-            lock (_queueGate)
-            {
-                queueDrained = _queueDrained.Task;
-                permitsDrained = _permitsDrained.Task;
-            }
-            await Task.WhenAll(queueDrained, permitsDrained).ConfigureAwait(false);
-            lock (_queueGate)
-            {
-                if (_queuedCalls == 0 && _activePermits == 0)
-                    break;
-            }
-        }
-        _global?.Dispose();
-        foreach (var rule in _contracts.Values)
-            rule.Dispose();
-        foreach (var rule in _methods.Values)
-            rule.Dispose();
-        _partitions?.Dispose();
-        _draining.Dispose();
-        await ValueTask.CompletedTask;
-    }
-
-    private static TaskCompletionSource<bool> CompletedSignal()
-    {
-        var signal = new TaskCompletionSource<bool>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        signal.SetResult(true);
-        return signal;
-    }
+    public ValueTask DisposeAsync()
+        => _ownsKernel ? _kernel.DisposeAsync() : ValueTask.CompletedTask;
 }
 
 internal readonly record struct AdmissionDecision(
@@ -484,13 +470,13 @@ internal readonly record struct AdmissionDecision(
 
 internal sealed class AdmissionLease : IDisposable
 {
-    private SharpLinkAdmissionController? _owner;
+    private AdmissionStateKernel? _owner;
     private RateLimitLease? _singleLease;
     private RateLimitLease[]? _leases;
     private AdmissionPartitionLease? _partition;
 
     internal AdmissionLease(
-        SharpLinkAdmissionController owner,
+        AdmissionStateKernel owner,
         RateLimitLease singleLease,
         AdmissionPartitionLease? partition)
     {
@@ -501,7 +487,7 @@ internal sealed class AdmissionLease : IDisposable
     }
 
     internal AdmissionLease(
-        SharpLinkAdmissionController owner,
+        AdmissionStateKernel owner,
         RateLimitLease[] leases,
         AdmissionPartitionLease? partition)
     {
@@ -538,26 +524,21 @@ internal sealed class AdmissionRequest(
         HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
 
     internal bool TryAcquire(
-        SharpLinkAdmissionController owner,
+        AdmissionStateKernel owner,
         out AdmissionLease? admissionLease,
         out AdmissionLimiterSlot failedSlot)
         => TryAcquireCore(owner, null, null, out admissionLease, out failedSlot);
 
     internal bool TryAcquireUsing(
-        SharpLinkAdmissionController owner,
+        AdmissionStateKernel owner,
         RateLimiter suppliedLimiter,
         RateLimitLease suppliedLease,
         out AdmissionLease? admissionLease,
         out AdmissionLimiterSlot failedSlot)
-        => TryAcquireCore(
-            owner,
-            suppliedLimiter,
-            suppliedLease,
-            out admissionLease,
-            out failedSlot);
+        => TryAcquireCore(owner, suppliedLimiter, suppliedLease, out admissionLease, out failedSlot);
 
     private bool TryAcquireCore(
-        SharpLinkAdmissionController owner,
+        AdmissionStateKernel owner,
         RateLimiter? suppliedLimiter,
         RateLimitLease? suppliedLease,
         out AdmissionLease? admissionLease,
@@ -662,6 +643,7 @@ internal readonly record struct AdmissionLimiterSlot(
     string Reason,
     bool RetainOnFailure);
 
+/// <summary>Kernel-owned mutable limiter state for one explicit structural rule identity.</summary>
 internal sealed class AdmissionRuleRuntime : IDisposable
 {
     private readonly AdmissionLimiterSlot[] _slots;
@@ -741,6 +723,7 @@ internal sealed class AdmissionRuleRuntime : IDisposable
     }
 }
 
+/// <summary>Kernel-owned partition namespace/state shared by compatible program generations.</summary>
 internal sealed class AdmissionPartitionPool : IDisposable
 {
     private readonly Func<SharpLinkAdmissionContext, string?> _selector;
@@ -800,7 +783,8 @@ internal sealed class AdmissionPartitionPool : IDisposable
         List<AdmissionRuleRuntime>? evicted;
         lock (_gate)
         {
-            entry.References--;
+            if (--entry.References < 0)
+                throw new InvalidOperationException("Admission partition reference count underflowed.");
             if (entry.References == 0)
             {
                 entry.IdleSince = _timeProvider.GetTimestamp();
