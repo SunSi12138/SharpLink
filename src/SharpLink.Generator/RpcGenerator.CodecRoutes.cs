@@ -210,7 +210,7 @@ public partial class RpcGenerator
         {
             var schema = adapter.IsDirectCodec
                 ? $"direct|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}"
-                : adapter.WireFormatId;
+                : $"adapter|{adapter.AdapterId}|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}";
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
                 GetCodecName(typeName, _contractMode),
