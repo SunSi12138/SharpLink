@@ -94,6 +94,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private Action<long, ushort, int>? _localAbortBytesConsumed;
     private long _localAbortRequestId;
     private ushort _localAbortStreamId;
+    private long _localAbortRetentionLeaseState;
     private int _localAbortDeliveryState;
     private int _localAbortBufferRetired;
 
@@ -234,6 +235,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _localAbortBytesConsumed = null;
         _localAbortRequestId = 0;
         _localAbortStreamId = 0;
+        Volatile.Write(ref _localAbortRetentionLeaseState, 0);
         Volatile.Write(ref _localAbortDeliveryState, 0);
         Volatile.Write(ref _localAbortBufferRetired, 0);
         Volatile.Write(ref _consumerTerminal, 0);
@@ -463,9 +465,15 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     void IStreamLocalAbortDispatcher.CompleteLocalAbort(Exception? exception)
     {
-        if (!TryClaimLocalAbort())
+        if (!TryAcquireDispatch(out var retentionLeaseState))
             return;
+        if (!TryClaimLocalAbort())
+        {
+            ReleaseDispatch(retentionLeaseState);
+            return;
+        }
 
+        Volatile.Write(ref _localAbortRetentionLeaseState, retentionLeaseState);
         _localAbortBytesConsumed = _bytesConsumed;
         _localAbortRequestId = _flowControlRequestId;
         _localAbortStreamId = _flowControlStreamId;
@@ -488,6 +496,12 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     }
 
     void IStreamLocalAbortDispatcher.RetireLocalAbortBuffer()
+    {
+        DrainLocalAbortBuffer();
+        ReleaseLocalAbortRetention();
+    }
+
+    private void DrainLocalAbortBuffer()
     {
         if (Volatile.Read(ref _consumerTerminal) != ConsumerTerminalLocalAbort ||
             Interlocked.Exchange(ref _localAbortBufferRetired, 1) != 0)
@@ -513,6 +527,13 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _localAbortBytesConsumed = null;
         _localAbortRequestId = 0;
         _localAbortStreamId = 0;
+    }
+
+    private void ReleaseLocalAbortRetention()
+    {
+        var retentionLeaseState = Interlocked.Exchange(ref _localAbortRetentionLeaseState, 0);
+        if (retentionLeaseState != 0)
+            ReleaseDispatch(retentionLeaseState);
     }
 
     private bool TryClaimLocalAbort()
@@ -1048,13 +1069,23 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     {
         try
         {
-            // A dispatch acquired before Close may have published an item or returned
-            // receive credit after DisposeAsync began. Drain only after it is quiescent.
-            var discardedBytes = 0;
-            while (TryDequeueCore(out _, out var encodedByteCount))
-                discardedBytes = checked(discardedBytes + encodedByteCount);
-            if (discardedBytes != 0)
-                NotifyBytesConsumed(discardedBytes);
+            if (Volatile.Read(ref _consumerTerminal) == ConsumerTerminalLocalAbort)
+            {
+                // A local lifetime terminal owns buffered retirement and receive-credit return.
+                // Dispose may race it after dispatch drain, so share the one-shot drain without
+                // releasing the terminal owner's retention lease.
+                DrainLocalAbortBuffer();
+            }
+            else
+            {
+                // A dispatch acquired before Close may have published an item or returned
+                // receive credit after DisposeAsync began. Drain only after it is quiescent.
+                var discardedBytes = 0;
+                while (TryDequeueCore(out _, out var encodedByteCount))
+                    discardedBytes = checked(discardedBytes + encodedByteCount);
+                if (discardedBytes != 0)
+                    NotifyBytesConsumed(discardedBytes);
+            }
             if (notifyConsumerAbandoned)
             {
                 if (_consumerAbandonedAsync is { } callback)
@@ -1366,6 +1397,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _localAbortBytesConsumed = null;
         _localAbortRequestId = 0;
         _localAbortStreamId = 0;
+        Volatile.Write(ref _localAbortRetentionLeaseState, 0);
         Volatile.Write(ref _localAbortDeliveryState, 0);
         Volatile.Write(ref _localAbortBufferRetired, 0);
         Volatile.Write(ref _dispatchState, null);
