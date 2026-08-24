@@ -283,13 +283,20 @@ internal sealed class ClientConnection :
             }
             else if (shouldSendCancel)
             {
+                var localAbort = completion.Dispatcher as IStreamLocalAbortDispatcher;
                 ValueTask drain;
                 try
                 {
+                    // Local lifetime termination is stronger than peer StreamComplete: publish
+                    // it to the dispatcher before route teardown so buffered delivery and the
+                    // terminal result arbitrate at the same dequeue boundary.
+                    localAbort?.CompleteLocalAbort(completion.Exception);
                     drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(
                         completion.RequestId,
                         0,
                         completion.Exception);
+                    if (drain.IsCompletedSuccessfully)
+                        localAbort?.RetireLocalAbortBuffer();
                 }
                 catch (Exception exception)
                 {
@@ -315,7 +322,8 @@ internal sealed class ClientConnection :
                             FinishCancellationAfterDispatchesAsync(
                                 drain,
                                 completion.RequestId,
-                                GetCancelReason(completion.Reason)),
+                                GetCancelReason(completion.Reason),
+                                localAbort),
                             "CancellationDispatchCleanup");
                     }
                     catch
@@ -350,11 +358,13 @@ internal sealed class ClientConnection :
     private async Task FinishCancellationAfterDispatchesAsync(
         ValueTask drain,
         long requestId,
-        ProtocolV2CancelReason reason)
+        ProtocolV2CancelReason reason,
+        IStreamLocalAbortDispatcher? localAbort)
     {
         try
         {
             await drain.ConfigureAwait(false);
+            localAbort?.RetireLocalAbortBuffer();
             TrySendCancel(requestId, reason);
         }
         catch (Exception exception)
