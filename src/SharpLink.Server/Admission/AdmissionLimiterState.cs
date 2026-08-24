@@ -125,15 +125,11 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             var pending = AcquireAsyncStableCore(cancellationToken, out var queued);
             var lease = await pending.ConfigureAwait(false);
 
+            // Queue waiters retain their exact FIFO position. Kernel-owned concurrency states defer
+            // every resize/release wake until the target epoch is stable, so a queued lease never
+            // comes from a transient mixed target set.
             if (queued)
-            {
-                // A queued waiter is never granted while the target epoch is odd. It therefore
-                // keeps its FIFO position across the update and any acquired lease is from a stable
-                // target set even when the version number changed while it waited.
-                if (lease.IsAcquired && versionOwner.IsConcurrencyTargetCommitInProgress)
-                    versionOwner.ReadStableConcurrencyTargetVersion();
                 return lease;
-            }
 
             if (versionOwner.IsConcurrencyTargetVersionCurrent(version))
                 return lease;
@@ -192,13 +188,13 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_disposed != 0)
                 throw new ObjectDisposedException(nameof(ResizableConcurrencyState));
             _permitLimit = permitLimit;
-            if (_targetVersionOwner?.IsConcurrencyTargetCommitInProgress == true)
+            if (_targetVersionOwner is null)
             {
-                deferGrant = _waitingCount != 0 && _active < _permitLimit;
+                granted = GrantWaitersLocked();
             }
             else
             {
-                granted = GrantWaitersLocked();
+                deferGrant = _waitingCount != 0 && _active < _permitLimit;
             }
         }
         CompleteGranted(granted);
@@ -226,7 +222,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     private void ReleasePermit()
     {
         Waiter? granted = null;
-        var deferGrant = false;
+        var grantAfterStableTarget = false;
         lock (_gate)
         {
             if (_active <= 0)
@@ -234,15 +230,27 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             _active--;
             if (_disposed == 0)
             {
-                if (_targetVersionOwner?.IsConcurrencyTargetCommitInProgress == true)
-                    deferGrant = _waitingCount != 0 && _active < _permitLimit;
-                else
+                if (_targetVersionOwner is null)
                     granted = GrantWaitersLocked();
+                else
+                    grantAfterStableTarget = _waitingCount != 0 && _active < _permitLimit;
             }
         }
         CompleteGranted(granted);
-        if (deferGrant)
-            ScheduleGrantAfterTargetCommit();
+
+        if (!grantAfterStableTarget)
+            return;
+
+        // A release may race a multi-scope target commit even when this particular state is not
+        // resized. Do not wake its waiter against an intermediate target set; wait for the stable
+        // epoch, then grant under the normal FIFO state lock.
+        _targetVersionOwner!.ReadStableConcurrencyTargetVersion();
+        lock (_gate)
+        {
+            if (_disposed == 0)
+                granted = GrantWaitersLocked();
+        }
+        CompleteGranted(granted);
     }
 
     private void ScheduleGrantAfterTargetCommit()
@@ -257,26 +265,16 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 
     private void GrantAfterTargetCommit()
     {
-        var owner = _targetVersionOwner;
-        if (owner is not null)
-            owner.ReadStableConcurrencyTargetVersion();
+        _targetVersionOwner!.ReadStableConcurrencyTargetVersion();
 
         Waiter? granted = null;
-        var reschedule = false;
         lock (_gate)
         {
             Volatile.Write(ref _grantScheduled, 0);
             if (_disposed == 0)
-            {
-                if (owner?.IsConcurrencyTargetCommitInProgress == true)
-                    reschedule = _waitingCount != 0 && _active < _permitLimit;
-                else
-                    granted = GrantWaitersLocked();
-            }
+                granted = GrantWaitersLocked();
         }
         CompleteGranted(granted);
-        if (reschedule)
-            ScheduleGrantAfterTargetCommit();
     }
 
     private Waiter? GrantWaitersLocked()
