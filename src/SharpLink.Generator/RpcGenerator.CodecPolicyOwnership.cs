@@ -113,14 +113,18 @@ public partial class RpcGenerator
             ? diagnostic.TypeName.Substring("global::".Length)
             : diagnostic.TypeName;
         var implementation = compilation.GetTypeByMetadataName(metadataName);
-        if (implementation is null || ImplementsRpcCodecAdapter(implementation) ||
-            implementation.AllInterfaces.Any(static item =>
-                item.Name == "IRpcCodec" &&
-                item.Arity == 1 &&
-                item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions"))
-        {
+        if (implementation is null)
             return diagnostic;
-        }
+
+        var implementsAdapter = implementation.AllInterfaces.Any(static item =>
+            item.Name == "IRpcCodecAdapter" &&
+            item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
+        var implementsCodec = implementation.AllInterfaces.Any(static item =>
+            item.Name == "IRpcCodec" &&
+            item.Arity == 1 &&
+            item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
+        if (implementsAdapter || implementsCodec)
+            return diagnostic;
 
         // Before direct Codec support, a plain class selected by RpcCodecAdapter meant "adapter that
         // forgot registration". Preserve that diagnostic unless WireFormatId makes direct-Codec
