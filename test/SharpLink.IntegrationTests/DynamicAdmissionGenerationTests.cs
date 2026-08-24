@@ -341,16 +341,17 @@ public class DynamicAdmissionGenerationTests
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
             var payload = Enumerable.Repeat((byte)0x2a, 16 * 1024).ToArray();
             target = harness.ClientA.Get<ICompressionService>().EchoBytesAsync(payload).AsTask();
-            await WaitUntilAsync(() => program.Controller.QueuedCalls == 1,
-                "compressed target enters admission queue before retained-budget cleanup");
-            TestService.ReleaseBlockingAdd();
-            await ObserveTerminalAsync(active);
             var failure = await CaptureFailureAsync(target);
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted } exhausted &&
                    exhausted.Message.Contains(
                        SharpLinkResourceExhaustion.ServerRetainedCompressedBytes,
                        StringComparison.Ordinal),
                 "retained compressed request budget must reject with its stable reason");
+            await WaitUntilAsync(
+                () => program.Controller.QueuedCalls == 0 && program.ActiveUses == 1,
+                "retained-budget rejection releases only the rejected generation use and queue accounting");
+            Ensure(program.DuplicateReleaseAttempts == 0,
+                "retained-budget rejection must not double-release generation use");
         }
         finally
         {
