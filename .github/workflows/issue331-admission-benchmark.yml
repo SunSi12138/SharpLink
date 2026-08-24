@@ -1,0 +1,99 @@
+name: Issue 331 Admission Benchmark Evidence
+
+on:
+  pull_request:
+    branches:
+      - issue-329-runtime-admission-toggle
+
+permissions:
+  contents: read
+
+jobs:
+  admission-benchmark:
+    if: github.head_ref == 'issue-331-dynamic-admission-update'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout reviewed #330 exact base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: c1c68580e3337bf640c5c677cce829cae592f423
+          path: base
+
+      - name: Checkout exact #331 head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p evidence
+          dotnet --info > evidence/dotnet-info.txt
+          uname -a > evidence/uname.txt
+          lscpu > evidence/cpu.txt
+          printf '%s\n' 'c1c68580e3337bf640c5c677cce829cae592f423' > evidence/base-sha.txt
+          printf '%s\n' '${{ github.event.pull_request.head.sha }}' > evidence/head-sha.txt
+
+      - name: Run reviewed-base Admission RPC benchmarks
+        working-directory: base
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionRpcBenchmarks*"
+          --exporters json markdown
+          --artifacts artifacts/issue331-base-rpc
+
+      - name: Run reviewed-base Admission controller benchmarks
+        working-directory: base
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionControllerBenchmarks*"
+          --exporters json markdown
+          --artifacts artifacts/issue331-base-controller
+
+      - name: Run exact-head Admission RPC benchmarks
+        working-directory: head
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionRpcBenchmarks*"
+          --exporters json markdown
+          --artifacts artifacts/issue331-head-rpc
+
+      - name: Run exact-head Admission controller benchmarks
+        working-directory: head
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionControllerBenchmarks*"
+          --exporters json markdown
+          --artifacts artifacts/issue331-head-controller
+
+      - name: Upload Admission benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue331-admission-benchmark-${{ github.event.pull_request.head.sha }}
+          path: |
+            evidence
+            base/artifacts/issue331-base-rpc
+            base/artifacts/issue331-base-controller
+            head/artifacts/issue331-head-rpc
+            head/artifacts/issue331-head-controller
+          if-no-files-found: warn
+          retention-days: 30
