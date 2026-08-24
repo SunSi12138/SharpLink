@@ -34,6 +34,8 @@ public partial class RpcGenerator
         {
             if (codec.Kind == GeneratedCodecKind.Adapter)
                 AppendAdapterCodecFactory(sb, codec);
+            else if (codec.Kind == GeneratedCodecKind.Direct)
+                AppendDirectCodecFactory(sb, codec);
             else if (codec.Kind == GeneratedCodecKind.Dto)
                 AppendDtoCodec(sb, codec);
             else
@@ -59,6 +61,30 @@ public partial class RpcGenerator
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(adapterScope);");
         sb.AppendLine($"            return adapterScope.CreateCodec<{model.TypeName}>();");
+        sb.AppendLine("        }");
+        sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    private static void AppendDirectCodecFactory(StringBuilder sb, GeneratedCodecModel model)
+    {
+        sb.AppendLine($"internal static class {model.CodecName}");
+        sb.AppendLine("{");
+        sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
+        sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
+        sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
+        sb.AppendLine("        public string? AdapterId => null;");
+        sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
+        sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
+        sb.AppendLine("            if (adapterScope is not null)");
+        sb.AppendLine("                throw new ArgumentException(\"Direct Codec factories do not accept an adapter scope.\", nameof(adapterScope));");
+        sb.AppendLine($"            return new {model.AdapterType}();");
         sb.AppendLine("        }");
         sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
         sb.AppendLine("    }");
