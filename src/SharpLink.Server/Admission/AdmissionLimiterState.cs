@@ -79,7 +79,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
         ValidatePermitCount(permitCount);
-        BeforeAttemptAcquireForTests?.Invoke();
 
         // The complete AdmissionRequest owns the reader-visible target-version transaction. Keep
         // this limiter's immediate path BCL-shaped and allocation-minimal; the request validates one
@@ -94,6 +93,11 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         {
             return FailedLease.Instance;
         }
+
+        // The deterministic publication-race hook is needed only once an immediate attempt can
+        // still reach the state lock. Exhausted rejection is already final and must stay on the
+        // minimal production fast path.
+        BeforeAttemptAcquireForTests?.Invoke();
 
         lock (_gate)
         {
