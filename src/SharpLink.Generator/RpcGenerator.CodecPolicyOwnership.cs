@@ -37,10 +37,16 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // Contract ownership is defined only by the delta from the Contract's default graph. This
-        // keeps no-policy Contracts on the base provider while pulling in native parents/dependencies
-        // that must close over a changed explicit/route binding.
-        var contractCodecs = SelectOwnedContractCodecs(contractDefault.Codecs, contractPolicy.Codecs);
+        // Contract ownership is defined by explicit/route selection provenance as well as the
+        // resulting definition delta. Provenance matters when an explicit binding intentionally
+        // selects the same Adapter that an intrinsic selector would choose: it is still published
+        // Contract policy and must not become runtime-overridable merely because the definitions
+        // happen to compare equal. Native parents/dependencies are then pulled into the owner graph
+        // so the changed policy remains closed over its full generated dependency graph.
+        var contractCodecs = SelectOwnedContractCodecs(
+            contractDefault.Codecs,
+            contractPolicy.Codecs,
+            contractPolicy.ContractOwnedPolicyRoots);
         var diagnostics = standalone.Diagnostics
             .Concat(contractPolicy.Diagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
@@ -65,10 +71,16 @@ public partial class RpcGenerator
 
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
         ImmutableArray<GeneratedCodecModel> contractDefault,
-        ImmutableArray<GeneratedCodecModel> contractPolicy)
+        ImmutableArray<GeneratedCodecModel> contractPolicy,
+        IReadOnlyCollection<string> policyRoots)
     {
         var defaultByType = contractDefault.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var scopedTypes = new HashSet<string>(StringComparer.Ordinal);
+        var policyTypes = contractPolicy
+            .Select(static codec => codec.TypeName)
+            .ToHashSet(StringComparer.Ordinal);
+        var scopedTypes = policyRoots
+            .Where(policyTypes.Contains)
+            .ToHashSet(StringComparer.Ordinal);
 
         foreach (var codec in contractPolicy)
         {
@@ -154,6 +166,9 @@ public partial class RpcGenerator
     private sealed partial class DtoAnalysisState
     {
         private readonly bool _selectorOnlyContractDefaults = false;
+        private readonly HashSet<string> _contractOwnedPolicyRoots = new(StringComparer.Ordinal);
+
+        internal IReadOnlyCollection<string> ContractOwnedPolicyRoots => _contractOwnedPolicyRoots;
 
         public DtoAnalysisState(
             Compilation compilation,
