@@ -33,14 +33,14 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
-          import textwrap
 
           workflow = Path('.github/workflows/issue331-review-fixes.yml').read_text()
           begin_token = "          python3 <<'PY'\n"
           end_token = "          PY\n"
           begin = workflow.index(begin_token) + len(begin_token)
           end = workflow.index(end_token, begin)
-          code = textwrap.dedent(workflow[begin:end])
+          lines = workflow[begin:end].splitlines()
+          code = "\n".join(line[10:] if line.startswith("          ") else line for line in lines) + "\n"
           exec(compile(code, 'issue331-review-fix.py', 'exec'))
           PY
 
