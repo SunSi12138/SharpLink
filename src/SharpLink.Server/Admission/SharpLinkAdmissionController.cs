@@ -742,7 +742,7 @@ internal sealed class AdmissionRequest(
     private readonly RateLimitLease?[]? _retainedLeases =
         HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
     private readonly bool _tracksConcurrencyTargetVersion =
-        HasMultipleVersionedConcurrencySlots(slots, slotCount);
+        slotCount > 1 && HasMultipleVersionedConcurrencySlots(slots, slotCount);
 
     internal bool TracksConcurrencyTargetVersion => _tracksConcurrencyTargetVersion;
 
@@ -769,39 +769,26 @@ internal sealed class AdmissionRequest(
     {
         var retainedLeases = _retainedLeases;
 
-        // Preserve the allocation-free one-slot path while validating one request-visible epoch
-        // around the whole decision. The final version read is the linearization point: an update
-        // beginning afterward sees this permit as a legitimate pre-update holder.
+        // A one-slot request cannot combine concurrency permits from different scopes, so keep
+        // the original hot path completely free of target-epoch bookkeeping. Multi-scope requests
+        // take the transaction-wide epoch path below.
         if (slotCount == 1 && retainedLeases is null && suppliedLease is null)
         {
-            while (true)
+            var singleLease = slots[0].Limiter.AttemptAcquire(1);
+            if (!singleLease.IsAcquired)
             {
-                var targetVersion = _tracksConcurrencyTargetVersion
-                    ? owner.ReadStableConcurrencyTargetVersion()
-                    : 0;
-                var singleLease = slots[0].Limiter.AttemptAcquire(1);
-                if (_tracksConcurrencyTargetVersion &&
-                    !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
-                {
-                    singleLease.Dispose();
-                    continue;
-                }
-
-                if (!singleLease.IsAcquired)
-                {
-                    singleLease.Dispose();
-                    admissionLease = null;
-                    failedSlot = slots[0];
-                    return false;
-                }
-
-                admissionLease = new AdmissionLease(
-                    owner,
-                    singleLease,
-                    Interlocked.Exchange(ref _partition, null));
-                failedSlot = default;
-                return true;
+                singleLease.Dispose();
+                admissionLease = null;
+                failedSlot = slots[0];
+                return false;
             }
+
+            admissionLease = new AdmissionLease(
+                owner,
+                singleLease,
+                Interlocked.Exchange(ref _partition, null));
+            failedSlot = default;
+            return true;
         }
 
         var leases = new RateLimitLease?[slotCount];
