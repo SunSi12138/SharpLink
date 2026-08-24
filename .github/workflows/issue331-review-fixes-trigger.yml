@@ -34,6 +34,12 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)
+
           workflow = Path('.github/workflows/issue331-review-fixes.yml').read_text()
           begin_token = "          python3 <<'PY'\n"
           end_token = "          PY\n"
@@ -42,6 +48,64 @@ jobs:
           lines = workflow[begin:end].splitlines()
           code = "\n".join(line[10:] if line.startswith("          ") else line for line in lines) + "\n"
           exec(compile(code, 'issue331-review-fix.py', 'exec'))
+
+          # Runtime publication lineage must prevent re-enable from scanning historical variants,
+          # while direct kernel/controller compatibility tests still retain the pre-existing reuse
+          # semantics before any runtime publication lineage has been established.
+          kernel_path = Path('src/SharpLink.Server/Admission/AdmissionStateKernel.cs')
+          kernel = kernel_path.read_text()
+          kernel = replace_once(
+              kernel,
+              "    private long _concurrencyTargetVersion;\n    private int _disposed;",
+              "    private long _concurrencyTargetVersion;\n    private bool _hasPublishedConcurrencyLineage;\n    private int _disposed;",
+              'runtime lineage flag')
+          kernel = replace_once(
+              kernel,
+              "            ThrowIfDisposed();\n            _publishedConcurrencyStates.Clear();\n            foreach (var binding in controller.RuleStateBindings)",
+              "            ThrowIfDisposed();\n            _hasPublishedConcurrencyLineage = true;\n            _publishedConcurrencyStates.Clear();\n            foreach (var binding in controller.RuleStateBindings)",
+              'record runtime lineage flag')
+          kernel = replace_once(
+              kernel,
+              "            _concurrencyStates.Clear();\n            _publishedConcurrencyStates.Clear();\n            _rateStates.Clear();",
+              "            _concurrencyStates.Clear();\n            _publishedConcurrencyStates.Clear();\n            _hasPublishedConcurrencyLineage = false;\n            _rateStates.Clear();",
+              'dispose runtime lineage flag')
+          start = kernel.index("    private ResizableConcurrencyState AcquireCompatibleConcurrencyLocked(")
+          end = kernel.index("    private ResizableConcurrencyState CreateConcurrencyLocked(", start)
+          kernel = kernel[:start] + '''    private ResizableConcurrencyState AcquireCompatibleConcurrencyLocked(
+        AdmissionRuleStateKey key,
+        int permitLimit)
+    {
+        if (_hasPublishedConcurrencyLineage)
+        {
+            if (_publishedConcurrencyStates.TryGetValue(key, out var published) &&
+                published.PermitLimit == permitLimit)
+            {
+                AddConcurrencyReferenceLocked(key, published);
+                return published;
+            }
+
+            // Once the server has a runtime publication lineage, absence/mismatch means the latest
+            // lineage cannot be reused. Never scan an older removed variant: create a fresh domain.
+            return CreateConcurrencyLocked(key, permitLimit);
+        }
+
+        // Before runtime publication lineage exists, preserve the established controller/kernel
+        // compatibility contract used by static generation creation and reclamation tests.
+        if (_concurrencyStates.TryGetValue(key, out var entries))
+        {
+            foreach (var entry in entries)
+            {
+                if (entry.State.PermitLimit != permitLimit)
+                    continue;
+                entry.ProgramReferences++;
+                return entry.State;
+            }
+        }
+        return CreateConcurrencyLocked(key, permitLimit);
+    }
+
+''' + kernel[end:]
+          kernel_path.write_text(kernel)
           PY
 
       - name: Restore
