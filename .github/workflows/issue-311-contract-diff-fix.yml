@@ -1,12 +1,8 @@
-name: Issue 311 final codec binding refactor v3
+name: Issue 311 final codec binding refactor v4
 
 on:
   push:
     branches: [fix/311-codec-scope-routing]
-    paths:
-      - '.github/workflows/issue-311-contract-diff-fix.yml'
-  pull_request:
-    branches: [main]
     paths:
       - '.github/workflows/issue-311-contract-diff-fix.yml'
 
@@ -14,8 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  patch-and-test:
-    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'fix/311-codec-scope-routing'
+  patch-test-commit:
     runs-on: ubuntu-24.04
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: 1
@@ -28,15 +23,18 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           dotnet-version: 10.0.x
-      - name: Apply final ownership and direct Codec binding refactor
+      - name: Apply refactor
         shell: bash
         run: |
-          python - <<'PYRUN'
+          git config user.name "SunSi12138"
+          git config user.email "54728594+SunSi12138@users.noreply.github.com"
+          set +e
+          python - <<'PYRUN' > /tmp/issue311-patch.log 2>&1
           from pathlib import Path
           import subprocess
 
           source = subprocess.check_output(
-              ['git', 'show', 'HEAD^:.github/workflows/issue-311-contract-diff-fix.yml'],
+              ['git', 'show', 'fb3d8a51e01605bcb95494dd0dd904c98c20cb83:.github/workflows/issue-311-contract-diff-fix.yml'],
               text=True)
           marker = "          python - <<'PY'\n"
           start = source.index(marker) + len(marker)
@@ -81,45 +79,52 @@ p.write_text(text)
           script += r'''
 p = Path('test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs')
 text = p.read_text()
-old = ''' + "'''" + r'''        var manifest = RunGeneratorAndGetSources(source).Single(static item =>
-            item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
-        var globalSection = manifest.Substring(
-            manifest.IndexOf("__codecs =", StringComparison.Ordinal),
-            manifest.IndexOf("__contractCodecs =", StringComparison.Ordinal) - manifest.IndexOf("__codecs =", StringComparison.Ordinal));
-        Ensure(!globalSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal),
-            "a Contract-reachable explicit binding must not be published to the global Codec registry");
-''' + "'''" + r'''
-new = ''' + "'''" + r'''        var manifest = RunGeneratorAndGetSources(source).Single(static item =>
+start = text.index('        var manifest = RunGeneratorAndGetSources(source).Single(static item =>', text.index('ExplicitPerTypeAdapterShouldOverrideAssemblyRoute'))
+end = text.index('        return Task.CompletedTask;', start)
+replacement = ''' + "'''" + r'''        var manifest = RunGeneratorAndGetSources(source).Single(static item =>
             item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         var contractSection = manifest.Substring(
             manifest.IndexOf("__contractCodecs =", StringComparison.Ordinal));
         Ensure(contractSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal),
             "a Contract-reachable explicit binding must be published into the Contract-owned Codec table");
 ''' + "'''" + r'''
-if old not in text:
-    raise RuntimeError('explicit owner-scope regression block not found')
-p.write_text(text.replace(old, new, 1))
+p.write_text(text[:start] + replacement + text[end:])
 '''
           exec(compile(script, 'issue-311-final-codec-binding.py', 'exec'), {'__name__': '__main__'})
           PYRUN
-      - name: Format
-        run: dotnet format Sharplink.slnx whitespace
-      - name: Restore
-        run: dotnet restore Sharplink.slnx
-      - name: Build
-        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-      - name: Generator tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
-      - name: Unit tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-      - name: Integration tests
-        run: dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1 --timeout 120s
-      - name: Commit refactor
-        if: github.event_name == 'push'
+          status=$?
+          cat /tmp/issue311-patch.log
+          if [ $status -ne 0 ]; then
+            cp /tmp/issue311-patch.log .github/issue-311-runner.log
+            git add .github/issue-311-runner.log
+            git commit -m "Record issue 311 runner failure"
+            git push origin HEAD:fix/311-codec-scope-routing
+            exit $status
+          fi
+      - name: Validate and commit
         shell: bash
         run: |
           git config user.name "SunSi12138"
           git config user.email "54728594+SunSi12138@users.noreply.github.com"
+          set +e
+          set -o pipefail
+          {
+            dotnet format Sharplink.slnx whitespace &&
+            dotnet restore Sharplink.slnx &&
+            dotnet build Sharplink.slnx --no-restore -c Release -v minimal &&
+            dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build &&
+            dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build &&
+            dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1 --timeout 120s
+          } 2>&1 | tee /tmp/issue311-validate.log
+          status=${PIPESTATUS[0]}
+          if [ $status -ne 0 ]; then
+            cp /tmp/issue311-validate.log .github/issue-311-runner.log
+            git add .github/issue-311-runner.log
+            git commit -m "Record issue 311 validation failure"
+            git push origin HEAD:fix/311-codec-scope-routing
+            exit $status
+          fi
+          rm -f .github/issue-311-runner.log
           git add src/SharpLink.Abstractions/Sdk/RpcCodecAdapterAttribute.cs \
                   src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs \
                   src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs \
