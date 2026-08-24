@@ -77,6 +77,7 @@ public partial class RpcGenerator
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
         sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
         sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
+        sb.AppendLine("        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Direct;");
         sb.AppendLine("        public string? AdapterId => null;");
         sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
         sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
