@@ -30,6 +30,12 @@ internal sealed class AdmissionProgram
         GenerationId = Interlocked.Increment(ref s_nextGenerationId);
         controller.AttachProgram(this);
         _kernel.RegisterProgram(this);
+
+        // Close the narrow CreateProgram-vs-Stop race where shutdown seals the kernel after the
+        // caller's pre-check but before this program registers. Stop either observes this program
+        // in its registry snapshot, or this post-registration check retires it itself.
+        if (_kernel.IsDraining)
+            Retire();
     }
 
     internal static AdmissionProgram Uninitialized { get; } = new(long.MinValue);
