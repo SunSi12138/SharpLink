@@ -1,9 +1,7 @@
 name: Issue 311 new review fixes v2
 
 on:
-  push:
-    branches:
-      - fix/311-codec-scope-routing
+  pull_request:
     paths:
       - .github/workflows/issue-311-new-review-fixes-v2.yml
 
