@@ -10,8 +10,9 @@ permissions:
 
 jobs:
   fix-review-p1s:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 50
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
@@ -27,7 +28,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Apply reviewed P1 patch
+      - name: Apply corrected reviewed P1 fixes
         shell: bash
         run: |
           python3 <<'PY'
@@ -39,38 +40,79 @@ jobs:
                   raise RuntimeError(f"{label}: expected exactly one match, found {count}")
               return text.replace(old, new, 1)
 
-          workflow = Path('.github/workflows/issue331-review-fixes.yml').read_text()
-          begin_token = "          python3 <<'PY'\n"
-          end_token = "          PY\n"
-          begin = workflow.index(begin_token) + len(begin_token)
-          end = workflow.index(end_token, begin)
-          lines = workflow[begin:end].splitlines()
-          code = "\n".join(line[10:] if line.startswith("          ") else line for line in lines) + "\n"
-          exec(compile(code, 'issue331-review-fix.py', 'exec'))
-
           kernel_path = Path('src/SharpLink.Server/Admission/AdmissionStateKernel.cs')
           kernel = kernel_path.read_text()
           kernel = replace_once(
               kernel,
-              "    private long _concurrencyTargetVersion;\n    private int _disposed;",
-              "    private long _concurrencyTargetVersion;\n    private bool _hasPublishedConcurrencyLineage;\n    private int _disposed;",
-              'runtime lineage flag')
+              "    private readonly Dictionary<AdmissionRuleStateKey, List<ConcurrencyStateEntry>> _concurrencyStates = [];\n    private readonly Dictionary<AdmissionRateStateKey, RateStateEntry> _rateStates = [];",
+              "    private readonly Dictionary<AdmissionRuleStateKey, List<ConcurrencyStateEntry>> _concurrencyStates = [];\n    private readonly Dictionary<AdmissionRuleStateKey, ResizableConcurrencyState> _publishedConcurrencyStates = [];\n    private readonly Dictionary<AdmissionRateStateKey, RateStateEntry> _rateStates = [];",
+              'published concurrency lineage field')
           kernel = replace_once(
               kernel,
-              "            ThrowIfDisposed();\n            _publishedConcurrencyStates.Clear();\n            foreach (var binding in controller.RuleStateBindings)",
-              "            ThrowIfDisposed();\n            _hasPublishedConcurrencyLineage = true;\n            _publishedConcurrencyStates.Clear();\n            foreach (var binding in controller.RuleStateBindings)",
-              'record runtime lineage flag')
+              "    private int _activePermits;\n    private int _disposed;",
+              "    private int _activePermits;\n    private long _concurrencyTargetVersion;\n    private bool _hasPublishedConcurrencyLineage;\n    private int _disposed;",
+              'target version and lineage flag')
           kernel = replace_once(
               kernel,
-              "            _concurrencyStates.Clear();\n            _publishedConcurrencyStates.Clear();\n            _rateStates.Clear();",
+              "    internal Action? BeforeReclaimedStateDisposalForTests { get; set; }\n\n    internal int QueuedCalls => Volatile.Read(ref _queuedCalls);",
+              "    internal Action? BeforeReclaimedStateDisposalForTests { get; set; }\n\n    internal Action<int, int>? AfterConcurrencyResizeForTests { get; set; }\n\n    internal Action? ConcurrencyTargetTransitionObservedForTests { get; set; }\n\n    internal int QueuedCalls => Volatile.Read(ref _queuedCalls);",
+              'target transition test seams')
+          kernel = replace_once(
+              kernel,
+              "    internal int ActivePermits => Volatile.Read(ref _activePermits);\n",
+              "    internal int ActivePermits => Volatile.Read(ref _activePermits);\n\n    internal long ReadStableConcurrencyTargetVersion()\n    {\n        var spinner = new SpinWait();\n        while (true)\n        {\n            var version = Volatile.Read(ref _concurrencyTargetVersion);\n            if ((version & 1L) == 0)\n                return version;\n            ConcurrencyTargetTransitionObservedForTests?.Invoke();\n            spinner.SpinOnce();\n        }\n    }\n\n    internal bool IsConcurrencyTargetVersionCurrent(long version)\n        => Volatile.Read(ref _concurrencyTargetVersion) == version;\n\n    internal void BeginConcurrencyTargetCommit()\n    {\n        var version = Interlocked.Increment(ref _concurrencyTargetVersion);\n        if ((version & 1L) == 0)\n            throw new InvalidOperationException(\"Admission concurrency target commit was already open.\");\n    }\n\n    internal void CompleteConcurrencyTargetCommit()\n    {\n        var version = Interlocked.Increment(ref _concurrencyTargetVersion);\n        if ((version & 1L) != 0)\n            throw new InvalidOperationException(\"Admission concurrency target commit was not open.\");\n    }\n",
+              'target version API')
+
+          marker = "    internal AdmissionProgram CreateProgram(\n"
+          lineage_method = '''    internal void RecordPublishedConcurrencyLineage(SharpLinkAdmissionController controller)
+    {
+        ArgumentNullException.ThrowIfNull(controller);
+        lock (_registryGate)
+        {
+            ThrowIfDisposed();
+            _hasPublishedConcurrencyLineage = true;
+            _publishedConcurrencyStates.Clear();
+            foreach (var binding in controller.RuleStateBindings)
+            {
+                if (binding.ConcurrencyState is not { } state)
+                    continue;
+                if (!_concurrencyStates.TryGetValue(binding.Key, out var entries))
+                    throw new InvalidOperationException("Published admission concurrency state is no longer registered.");
+
+                var registered = false;
+                foreach (var entry in entries)
+                {
+                    if (!ReferenceEquals(entry.State, state))
+                        continue;
+                    registered = true;
+                    break;
+                }
+                if (!registered)
+                    throw new InvalidOperationException("Published admission concurrency state is no longer registered.");
+                _publishedConcurrencyStates.Add(binding.Key, state);
+            }
+        }
+    }
+
+'''
+          if kernel.count(marker) != 1:
+              raise RuntimeError('CreateProgram marker mismatch')
+          kernel = kernel.replace(marker, lineage_method + marker, 1)
+          kernel = replace_once(
+              kernel,
+              "            _concurrencyStates.Clear();\n            _rateStates.Clear();",
               "            _concurrencyStates.Clear();\n            _publishedConcurrencyStates.Clear();\n            _hasPublishedConcurrencyLineage = false;\n            _rateStates.Clear();",
-              'dispose runtime lineage flag')
+              'dispose lineage clear')
+
           start = kernel.index("    private ResizableConcurrencyState AcquireCompatibleConcurrencyLocked(")
           end = kernel.index("    private ResizableConcurrencyState CreateConcurrencyLocked(", start)
           kernel = kernel[:start] + '''    private ResizableConcurrencyState AcquireCompatibleConcurrencyLocked(
         AdmissionRuleStateKey key,
         int permitLimit)
     {
+        // Pure kernel/static generation construction keeps the original compatibility semantics.
+        // Once runtime publication establishes a lineage, re-enable must never fall back to an
+        // older removed variant merely because scope + numeric target happen to match.
         if (_hasPublishedConcurrencyLineage)
         {
             if (_publishedConcurrencyStates.TryGetValue(key, out var published) &&
@@ -96,10 +138,487 @@ jobs:
     }
 
 ''' + kernel[end:]
+          kernel = replace_once(
+              kernel,
+              "                    if (entry.ProgramReferences == 0)\n                    {\n                        entries.RemoveAt(index);\n                        if (entries.Count == 0)\n                            _concurrencyStates.Remove(binding.Key);\n                        (dispose ??= []).Add(entry.State);\n                    }",
+              "                    if (entry.ProgramReferences == 0)\n                    {\n                        if (_publishedConcurrencyStates.TryGetValue(binding.Key, out var published) &&\n                            ReferenceEquals(published, entry.State))\n                        {\n                            _publishedConcurrencyStates.Remove(binding.Key);\n                        }\n                        entries.RemoveAt(index);\n                        if (entries.Count == 0)\n                            _concurrencyStates.Remove(binding.Key);\n                        (dispose ??= []).Add(entry.State);\n                    }",
+              'lineage reclamation')
+
+          plan_start = kernel.index("/// <summary>Prepared transition whose only live mutations are committed inside publication serialization.</summary>")
+          kernel = kernel[:plan_start] + '''/// <summary>Prepared transition whose only live mutations are committed inside publication serialization.</summary>
+internal sealed class AdmissionUpdatePlan
+{
+    private readonly AdmissionStateKernel _kernel;
+    private readonly AdmissionConcurrencyResize[] _resizes;
+    private int _committed;
+
+    internal AdmissionUpdatePlan(
+        AdmissionStateKernel kernel,
+        IEnumerable<AdmissionConcurrencyResize> resizes)
+    {
+        _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
+        _resizes = [.. resizes];
+        foreach (var resize in _resizes)
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resize.PermitLimit);
+    }
+
+    internal int ResizeCount => _resizes.Length;
+
+    internal void Commit(Action publish)
+    {
+        ArgumentNullException.ThrowIfNull(publish);
+        if (Interlocked.Exchange(ref _committed, 1) != 0)
+            throw new InvalidOperationException("Admission update plan was committed more than once.");
+
+        if (_resizes.Length == 0)
+        {
+            publish();
+            return;
+        }
+
+        // Odd/even target version is a seqlock visible to request acquisition. All mutable target
+        // writes and the N+1 publication pointer share one reader-visible commit boundary without
+        // taking the control-plane writer lock on the request path.
+        _kernel.BeginConcurrencyTargetCommit();
+        try
+        {
+            for (var index = 0; index < _resizes.Length; index++)
+            {
+                var resize = _resizes[index];
+                resize.State.Resize(resize.PermitLimit);
+                _kernel.AfterConcurrencyResizeForTests?.Invoke(index, _resizes.Length);
+            }
+            publish();
+        }
+        finally
+        {
+            _kernel.CompleteConcurrencyTargetCommit();
+        }
+    }
+}
+'''
           kernel_path.write_text(kernel)
+
+          controller_path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          controller = controller_path.read_text()
+          controller = replace_once(
+              controller,
+              "            updatePlan = new AdmissionUpdatePlan(resizes);",
+              "            updatePlan = new AdmissionUpdatePlan(kernel, resizes);",
+              'update plan owner')
+          request_start = controller.index("internal sealed class AdmissionRequest(")
+          request_end = controller.index("internal readonly record struct AdmissionLimiterSlot(", request_start)
+          request_class = '''internal sealed class AdmissionRequest(
+    AdmissionLimiterSlot[] slots,
+    int slotCount,
+    AdmissionPartitionLease? partition) : IDisposable
+{
+    private AdmissionPartitionLease? _partition = partition;
+    private readonly RateLimitLease?[]? _retainedLeases =
+        HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
+    private readonly bool _tracksConcurrencyTargetVersion = HasConcurrencySlot(slots, slotCount);
+
+    internal bool TryAcquire(
+        AdmissionStateKernel owner,
+        out AdmissionLease? admissionLease,
+        out AdmissionLimiterSlot failedSlot)
+        => TryAcquireCore(owner, null, null, out admissionLease, out failedSlot);
+
+    internal bool TryAcquireUsing(
+        AdmissionStateKernel owner,
+        IAdmissionLimiter suppliedLimiter,
+        RateLimitLease suppliedLease,
+        out AdmissionLease? admissionLease,
+        out AdmissionLimiterSlot failedSlot)
+        => TryAcquireCore(owner, suppliedLimiter, suppliedLease, out admissionLease, out failedSlot);
+
+    private bool TryAcquireCore(
+        AdmissionStateKernel owner,
+        IAdmissionLimiter? suppliedLimiter,
+        RateLimitLease? suppliedLease,
+        out AdmissionLease? admissionLease,
+        out AdmissionLimiterSlot failedSlot)
+    {
+        var retainedLeases = _retainedLeases;
+        var currentSuppliedLease = suppliedLease;
+        var suppliedIndex = -1;
+        if (currentSuppliedLease is not null)
+        {
+            for (var index = 0; index < slotCount; index++)
+            {
+                if (!ReferenceEquals(slots[index].Limiter, suppliedLimiter))
+                    continue;
+                suppliedIndex = index;
+                if (slots[index].RetainOnFailure)
+                    retainedLeases![index] = currentSuppliedLease;
+                break;
+            }
+            if (suppliedIndex < 0)
+            {
+                currentSuppliedLease.Dispose();
+                throw new InvalidOperationException("The supplied admission limiter is not part of this request.");
+            }
+        }
+
+        while (true)
+        {
+            var targetVersion = _tracksConcurrencyTargetVersion
+                ? owner.ReadStableConcurrencyTargetVersion()
+                : 0;
+
+            if (slotCount == 1 && retainedLeases is null && currentSuppliedLease is null)
+            {
+                var singleLease = slots[0].Limiter.AttemptAcquire(1);
+                if (!singleLease.IsAcquired)
+                {
+                    singleLease.Dispose();
+                    if (_tracksConcurrencyTargetVersion &&
+                        !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                    {
+                        continue;
+                    }
+                    admissionLease = null;
+                    failedSlot = slots[0];
+                    return false;
+                }
+                if (_tracksConcurrencyTargetVersion &&
+                    !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                {
+                    singleLease.Dispose();
+                    continue;
+                }
+                admissionLease = new AdmissionLease(
+                    owner,
+                    singleLease,
+                    Interlocked.Exchange(ref _partition, null));
+                failedSlot = default;
+                return true;
+            }
+
+            var leases = new RateLimitLease[slotCount];
+            var failedIndex = -1;
+            failedSlot = default;
+            for (var index = 0; index < slotCount; index++)
+            {
+                var lease = retainedLeases?[index] ??
+                    (index == suppliedIndex && currentSuppliedLease is not null
+                        ? currentSuppliedLease
+                        : slots[index].Limiter.AttemptAcquire(1));
+                if (!lease.IsAcquired)
+                {
+                    lease.Dispose();
+                    for (var acquired = index - 1; acquired >= 0; acquired--)
+                    {
+                        if (!ReferenceEquals(retainedLeases?[acquired], leases[acquired]))
+                            leases[acquired].Dispose();
+                    }
+                    if (currentSuppliedLease is not null &&
+                        suppliedIndex > index &&
+                        !ReferenceEquals(retainedLeases?[suppliedIndex], currentSuppliedLease))
+                    {
+                        currentSuppliedLease.Dispose();
+                    }
+                    failedIndex = index;
+                    failedSlot = slots[index];
+                    break;
+                }
+                if (slots[index].RetainOnFailure)
+                    retainedLeases![index] = lease;
+                leases[index] = lease;
+            }
+
+            if (failedIndex >= 0)
+            {
+                if (_tracksConcurrencyTargetVersion &&
+                    !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                {
+                    currentSuppliedLease = null;
+                    suppliedIndex = -1;
+                    continue;
+                }
+                admissionLease = null;
+                return false;
+            }
+
+            if (_tracksConcurrencyTargetVersion &&
+                !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
+            {
+                for (var index = slotCount - 1; index >= 0; index--)
+                {
+                    if (!ReferenceEquals(retainedLeases?[index], leases[index]))
+                        leases[index].Dispose();
+                }
+                currentSuppliedLease = null;
+                suppliedIndex = -1;
+                continue;
+            }
+
+            if (retainedLeases is not null)
+                Array.Clear(retainedLeases, 0, slotCount);
+            var ownedPartition = Interlocked.Exchange(ref _partition, null);
+            admissionLease = new AdmissionLease(owner, leases, ownedPartition);
+            failedSlot = default;
+            return true;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_retainedLeases is not null)
+            for (var index = _retainedLeases.Length - 1; index >= 0; index--)
+                Interlocked.Exchange(ref _retainedLeases[index], null)?.Dispose();
+        Interlocked.Exchange(ref _partition, null)?.Dispose();
+    }
+
+    private static bool HasRetainedSlot(AdmissionLimiterSlot[] slots, int slotCount)
+    {
+        for (var index = 0; index < slotCount; index++)
+            if (slots[index].RetainOnFailure)
+                return true;
+        return false;
+    }
+
+    private static bool HasConcurrencySlot(AdmissionLimiterSlot[] slots, int slotCount)
+    {
+        for (var index = 0; index < slotCount; index++)
+            if (slots[index].Limiter is ResizableConcurrencyState)
+                return true;
+        return false;
+    }
+}
+
+'''
+          controller = controller[:request_start] + request_class + controller[request_end:]
+          controller_path.write_text(controller)
+
+          server_path = Path('src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs')
+          server = server_path.read_text()
+          publish_start = server.index("    private AdmissionProgram? PublishAdmissionProgram(")
+          publish_end = server.index("    private AdmissionProgram? CaptureAdmissionProgram(", publish_start)
+          publish_method = '''    private AdmissionProgram? PublishAdmissionProgram(
+        AdmissionProgram? program,
+        AdmissionPublicationIntent intent,
+        AdmissionProgram? expectedSource = null,
+        AdmissionUpdatePlan? updatePlan = null)
+    {
+        var lifecycle = _admissionController ??
+            throw new InvalidOperationException("Server admission lifecycle owner is unavailable.");
+        if (program is not null && !ReferenceEquals(program.Kernel, lifecycle.Kernel))
+            throw new InvalidOperationException("Admission program belongs to a different server state kernel.");
+
+        Volatile.Read(ref s_beforeAdmissionPublicationLockForTests)?.Invoke(this, program);
+
+        AdmissionProgram previous;
+        lock (_registryGate)
+        {
+            if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            {
+                program?.Retire();
+                throw new InvalidOperationException("Admission publication is sealed because the server is stopping.");
+            }
+            if (program is { IsRetired: true })
+                throw new InvalidOperationException("A retired admission program cannot be published again.");
+
+            var replacement = program ?? AdmissionProgram.Disabled;
+            previous = ReadAdmissionPublication();
+            if (previous.IsEnabled)
+                lifecycle.Kernel.RecordPublishedConcurrencyLineage(previous.Controller);
+
+            if (intent == AdmissionPublicationIntent.Enable && previous.IsEnabled)
+            {
+                program!.Retire();
+                throw new InvalidOperationException("Admission control is already enabled.");
+            }
+            if (intent == AdmissionPublicationIntent.Disable && !previous.IsEnabled)
+                return null;
+            if (intent == AdmissionPublicationIntent.Update)
+            {
+                if (program is null || expectedSource is null || updatePlan is null)
+                    throw new InvalidOperationException("Admission update publication is incomplete.");
+                if (!previous.IsEnabled || !ReferenceEquals(previous, expectedSource))
+                {
+                    program.Retire();
+                    throw new InvalidOperationException(
+                        "Admission control changed while the update candidate was being prepared.");
+                }
+            }
+            if (ReferenceEquals(previous, replacement))
+                return previous.IsEnabled ? previous : null;
+
+            if (intent == AdmissionPublicationIntent.Update)
+            {
+                updatePlan!.Commit(() => Volatile.Write(ref _admissionProgram, replacement));
+            }
+            else
+            {
+                Volatile.Write(ref _admissionProgram, replacement);
+            }
+
+            if (replacement.IsEnabled)
+                lifecycle.Kernel.RecordPublishedConcurrencyLineage(replacement.Controller);
+            if (previous.IsEnabled)
+                previous.Retire();
+        }
+        return previous.IsEnabled ? previous : null;
+    }
+
+'''
+          server = server[:publish_start] + publish_method + server[publish_end:]
+          server_path.write_text(server)
+
+          tests_path = Path('test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs')
+          tests = tests_path.read_text()
+          insertion_marker = "    [Test]\n    public async Task InvalidCompleteCandidateShouldNotMutateCurrentState()"
+          if tests.count(insertion_marker) != 1:
+              raise RuntimeError('matrix insertion marker mismatch')
+          regression_tests = '''    [Test]
+    public async Task MultiScopeResizeShouldHaveOneReaderVisibleCommitBoundary()
+    {
+        await using var server = CreateServer();
+        var publicServer = (ISharpLinkServer)server;
+        publicServer.EnableAdmissionControl(options =>
+        {
+            options.Global.UseConcurrency(1);
+            options.AddContract(101, rule => rule.UseConcurrency(100));
+        });
+        var source = Current(server);
+        var kernel = source.Kernel;
+        var global = source.Controller.GlobalConcurrencyStateForTests!;
+        var contract = source.Controller.ContractConcurrencyStateForTests(101)!;
+        var holder = await source.Controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+        Ensure(holder.IsAcquired && global.ActiveCount == 1 && contract.ActiveCount == 1,
+            "generation N must occupy the old Global limit before the cross-scope resize");
+
+        using var firstResize = new ManualResetEventSlim();
+        using var releaseResize = new ManualResetEventSlim();
+        using var readerObserved = new ManualResetEventSlim();
+        kernel.AfterConcurrencyResizeForTests = (index, total) =>
+        {
+            if (index != 0 || total != 2)
+                return;
+            firstResize.Set();
+            releaseResize.Wait();
+        };
+        kernel.ConcurrencyTargetTransitionObservedForTests = () => readerObserved.Set();
+
+        try
+        {
+            var updateTask = Task.Run(() => publicServer.UpdateAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(100);
+                options.AddContract(101, rule => rule.UseConcurrency(1));
+            }));
+            Ensure(firstResize.Wait(TimeSpan.FromSeconds(5)),
+                "test must stop the writer after Global grows and before Contract shrinks");
+            Ensure(global.PermitLimit == 100 && contract.PermitLimit == 100,
+                "barrier must expose the intentionally mixed physical targets to the test");
+
+            var requestTask = Task.Run(async () => await source.Controller.AcquireAsync(
+                CreateContext(), 1, false, CancellationToken.None));
+            Ensure(readerObserved.Wait(TimeSpan.FromSeconds(5)),
+                "request must observe that the target epoch is in transition");
+            Ensure(!requestTask.IsCompleted,
+                "request must not enter while physical target states are mixed");
+
+            releaseResize.Set();
+            await updateTask.WaitAsync(TimeSpan.FromSeconds(5));
+            var decision = await requestTask.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(!decision.IsAcquired && decision.Reason == "concurrency",
+                "after the atomic target commit the Contract target of one must reject behind the holder");
+        }
+        finally
+        {
+            releaseResize.Set();
+            kernel.AfterConcurrencyResizeForTests = null;
+            kernel.ConcurrencyTargetTransitionObservedForTests = null;
+            holder.Lease?.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task DisableReenableShouldReuseMostRecentlyPublishedReaddedConcurrencyLineage()
+    {
+        await using var server = CreateServer();
+        var publicServer = (ISharpLinkServer)server;
+        publicServer.EnableAdmissionControl(options =>
+        {
+            options.Global.UseConcurrency(8);
+            options.AddContract(101, rule => rule.UseConcurrency(1));
+        });
+        var original = Current(server);
+        var oldContract = original.Controller.ContractConcurrencyStateForTests(101)!;
+        var originalUse = original.TryAcquireUse();
+        Ensure(originalUse, "test must retain the old removed Contract lineage");
+
+        try
+        {
+            publicServer.UpdateAdmissionControl(options => options.Global.UseConcurrency(8));
+            publicServer.UpdateAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(8);
+                options.AddContract(101, rule => rule.UseConcurrency(1));
+            });
+            var readded = Current(server);
+            var newContract = readded.Controller.ContractConcurrencyStateForTests(101)!;
+            Ensure(!ReferenceEquals(oldContract, newContract),
+                "remove then re-add must create the newer Contract lineage B");
+
+            var readdedUse = readded.TryAcquireUse();
+            Ensure(readdedUse, "test must retain lineage B across Disable");
+            AdmissionDecision holder = default;
+            try
+            {
+                holder = await readded.Controller.AcquireAsync(
+                    CreateContext(), 1, false, CancellationToken.None);
+                Ensure(holder.IsAcquired && newContract.ActiveCount == 1,
+                    "lineage B must own its sole Contract permit before Disable");
+
+                publicServer.DisableAdmissionControl();
+                publicServer.EnableAdmissionControl(options =>
+                {
+                    options.Global.UseConcurrency(8);
+                    options.AddContract(101, rule => rule.UseConcurrency(1));
+                });
+                var reenabled = Current(server);
+                var selected = reenabled.Controller.ContractConcurrencyStateForTests(101)!;
+                Ensure(ReferenceEquals(newContract, selected),
+                    "re-enable must bind to the most recently published Contract lineage B, not historical A");
+
+                var blocked = await reenabled.Controller.AcquireAsync(
+                    CreateContext(), 1, false, CancellationToken.None);
+                Ensure(!blocked.IsAcquired && blocked.Reason == "concurrency" &&
+                       newContract.ActiveCount == 1,
+                    "the active B holder must constrain the re-enabled generation to the configured limit of one");
+
+                holder.Lease!.Dispose();
+                holder = default;
+                var recovered = await reenabled.Controller.AcquireAsync(
+                    CreateContext(), 1, false, CancellationToken.None);
+                Ensure(recovered.IsAcquired,
+                    "re-enabled generation must recover only after the retained B holder releases");
+                recovered.Lease!.Dispose();
+            }
+            finally
+            {
+                holder.Lease?.Dispose();
+                if (readdedUse)
+                    readded.ReleaseUse();
+            }
+        }
+        finally
+        {
+            if (originalUse)
+                original.ReleaseUse();
+        }
+    }
+
+'''
+          tests = tests.replace(insertion_marker, regression_tests + insertion_marker, 1)
+          tests_path.write_text(tests)
           PY
 
-      - name: Restore and format
+      - name: Restore and normalize formatting
         run: |
           dotnet restore Sharplink.slnx
           dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
@@ -110,37 +629,39 @@ jobs:
           git diff --check
           unexpected="$(git diff --name-only | grep -Ev '^(src/SharpLink.Server/Admission/AdmissionStateKernel.cs|src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs|src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs|test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs)$' || true)"
           test -z "$unexpected" || { printf 'Unexpected changed paths:\n%s\n' "$unexpected"; exit 1; }
+          git diff --stat
 
       - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
       - name: Atomic multi-scope regression
         run: >-
-          timeout 40s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
-          -c Release --no-build -- --maximum-parallel-tests 1 --timeout 15s
+          timeout 45s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Release --no-build -- --maximum-parallel-tests 1 --timeout 20s
           --treenode-filter "/*/*/AdmissionDynamicUpdateMatrixTests/MultiScopeResizeShouldHaveOneReaderVisibleCommitBoundary"
 
       - name: Re-enable lineage regression
         run: >-
-          timeout 40s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
-          -c Release --no-build -- --maximum-parallel-tests 1 --timeout 15s
+          timeout 45s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Release --no-build -- --maximum-parallel-tests 1 --timeout 20s
           --treenode-filter "/*/*/AdmissionDynamicUpdateMatrixTests/DisableReenableShouldReuseMostRecentlyPublishedReaddedConcurrencyLineage"
 
-      - name: Unit tests
+      - name: Full Unit tests
         run: >-
-          timeout 120s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
-          -c Release --no-build -- --timeout 30s
+          timeout 180s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Release --no-build -- --timeout 45s
 
       - name: Commit and push reviewed fixes
         shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/SharpLink.Server/Admission/AdmissionStateKernel.cs src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs
-          git commit -m "Address issue 331 review feedback (Actions ${GITHUB_RUN_ID})"
-          mkdir -p artifacts/review-evidence
-          git rev-parse HEAD | tee artifacts/review-evidence/head-sha.txt
-          printf '%s\n' "$GITHUB_RUN_ID" > artifacts/review-evidence/run-id.txt
+          git add \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs
+          git commit -m "Address issue 331 review feedback (Actions run $GITHUB_RUN_ID)"
           git push origin HEAD:issue-331-dynamic-admission-update
 
       - name: Prepare reviewed base worktree
@@ -148,23 +669,37 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin c1c68580e3337bf640c5c677cce829cae592f423
           git worktree add /tmp/issue331-reviewed-base c1c68580e3337bf640c5c677cce829cae592f423
-          mkdir -p artifacts/review-base-rpc artifacts/review-base-controller artifacts/review-head-rpc artifacts/review-head-controller
+          mkdir -p artifacts/review-base-rpc artifacts/review-base-controller artifacts/review-head-rpc artifacts/review-head-controller artifacts/review-evidence
+          printf '%s\n' "$GITHUB_RUN_ID" > artifacts/review-evidence/run-id.txt
+          git rev-parse HEAD > artifacts/review-evidence/head-sha.txt
           printf '%s\n' c1c68580e3337bf640c5c677cce829cae592f423 > artifacts/review-evidence/base-sha.txt
 
       - name: Benchmark reviewed base RPC
-        run: dotnet run -c Release --project /tmp/issue331-reviewed-base/test/SharpLink.Benchmarks -- --filter "*AdmissionRpcBenchmarks*" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/artifacts/review-base-rpc"
+        run: >-
+          dotnet run -c Release --project /tmp/issue331-reviewed-base/test/SharpLink.Benchmarks --
+          --filter "*AdmissionRpcBenchmarks*" --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-base-rpc"
 
       - name: Benchmark reviewed base controller
-        run: dotnet run -c Release --project /tmp/issue331-reviewed-base/test/SharpLink.Benchmarks -- --filter "*AdmissionControllerBenchmarks*" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/artifacts/review-base-controller"
+        run: >-
+          dotnet run -c Release --project /tmp/issue331-reviewed-base/test/SharpLink.Benchmarks --
+          --filter "*AdmissionControllerBenchmarks*" --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-base-controller"
 
       - name: Benchmark review-fixed head RPC
-        run: dotnet run -c Release --project test/SharpLink.Benchmarks -- --filter "*AdmissionRpcBenchmarks*" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/artifacts/review-head-rpc"
+        run: >-
+          dotnet run -c Release --project test/SharpLink.Benchmarks --
+          --filter "*AdmissionRpcBenchmarks*" --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-head-rpc"
 
       - name: Benchmark review-fixed head controller
-        run: dotnet run -c Release --project test/SharpLink.Benchmarks -- --filter "*AdmissionControllerBenchmarks*" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/artifacts/review-head-controller"
+        run: >-
+          dotnet run -c Release --project test/SharpLink.Benchmarks --
+          --filter "*AdmissionControllerBenchmarks*" --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-head-controller"
 
       - name: Upload review evidence
-        if: success()
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: issue331-review-fix-evidence-${{ github.run_id }}
@@ -174,16 +709,18 @@ jobs:
             artifacts/review-base-controller
             artifacts/review-head-rpc
             artifacts/review-head-controller
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
 
-      - name: Record repair failure for diagnosis
+      - name: Publish failure marker
         if: failure()
         shell: bash
         run: |
+          git reset --hard HEAD
+          mkdir -p .github
+          printf 'run_id=%s\nhead=%s\n' "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" > .github/issue331-repair-failed.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          printf 'run_id=%s\nlocal_head=%s\n' "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" > .github/issue331-review-fix-failure.txt
-          git add .github/issue331-review-fix-failure.txt
-          git commit -m "Record issue 331 repair failure (Actions ${GITHUB_RUN_ID})" || true
+          git add .github/issue331-repair-failed.txt
+          git commit -m "Record issue 331 repair failure run $GITHUB_RUN_ID" || true
           git push origin HEAD:issue-331-dynamic-admission-update || true
