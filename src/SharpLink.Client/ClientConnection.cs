@@ -163,29 +163,47 @@ internal sealed class ClientConnection :
         IAsyncEnumerable<T> stream,
         CancellationToken cancellationToken = default)
     {
-        if (!PendingCalls.Contains(requestId))
+        ArgumentNullException.ThrowIfNull(stream);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
+        await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
         try
         {
-            await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
+            while (true)
             {
+                // MoveNextAsync is user-code re-entry. Claim progress before invoking it so an
+                // already-terminal/expired call cannot execute another producer side effect.
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!PendingCalls.TryAcceptProducerProgress(requestId))
                     throw new SharpLinkException(
                         SharpLinkErrorCode.DeadlineExceeded,
                         "RPC deadline exceeded during client stream production.");
-                await Session.SendStreamChunkAsync(
+
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    break;
+
+                await Session.SendClientStreamChunkAsync(
                     requestId,
                     streamId,
-                    item,
+                    enumerator.Current,
+                    deadline,
+                    _timeProvider,
                     cancellationToken).ConfigureAwait(false);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (!PendingCalls.TryAcceptProducerProgress(requestId))
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DeadlineExceeded,
                     "RPC deadline exceeded before client stream completion.");
-            Session.SendStreamCompleteAsync(requestId, streamId);
+            Session.SendClientStreamComplete(
+                requestId,
+                streamId,
+                deadline,
+                _timeProvider,
+                cancellationToken);
         }
         catch (Exception exception)
         {
@@ -195,9 +213,21 @@ internal sealed class ClientConnection :
                     SharpLinkErrorCode.Internal,
                     "Internal client stream error.",
                     exception);
-                Session.SendStreamErrorAsync(requestId, streamId, protocolError);
+                Session.SendClientStreamError(
+                    requestId,
+                    streamId,
+                    protocolError,
+                    deadline,
+                    _timeProvider,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The owning pending call already selected a terminal result. Error-form
+                // StreamComplete is cleanup and cannot publish after that terminal.
             }
             catch (SharpLinkException sendException) when (sendException.Code is
+                SharpLinkErrorCode.DeadlineExceeded or
                 SharpLinkErrorCode.ConnectionClosed or
                 SharpLinkErrorCode.ResourceExhausted or
                 SharpLinkErrorCode.Unavailable)
