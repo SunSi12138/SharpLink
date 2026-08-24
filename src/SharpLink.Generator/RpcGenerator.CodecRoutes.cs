@@ -124,8 +124,28 @@ public partial class RpcGenerator
             // Contract compilation has one deterministic precedence entrypoint:
             // explicit per-type Codec/Adapter selection > assembly route > SharpLink default generation.
             if (TrySelectAdapter(type, out selected))
+            {
+                if (selected is not null && HasExplicitContractBinding(type))
+                    _contractOwnedPolicyRoots.Add(GetTypeName(type));
                 return true;
-            return TrySelectRouteAdapter(type, out selected);
+            }
+
+            if (!TrySelectRouteAdapter(type, out selected))
+                return false;
+            if (selected is not null)
+                _contractOwnedPolicyRoots.Add(GetTypeName(type));
+            return true;
+        }
+
+        private bool HasExplicitContractBinding(ITypeSymbol type)
+        {
+            foreach (var attribute in type.GetAttributes())
+            {
+                if (IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute"))
+                    return true;
+            }
+
+            return _assemblyBindings.ContainsKey(NormalizeAdapterTarget(type));
         }
 
         private bool TrySelectSelectorAdapter(ITypeSymbol type, out AdapterRegistration? selected)
@@ -288,6 +308,11 @@ public partial class RpcGenerator
 
         private bool IsNativeCodecType(ITypeSymbol type)
         {
+            // Enums do not have a generic shared native Codec in the runtime. Top-level enum and
+            // Nullable<Enum> resolution otherwise falls through to UnsafeBlitCodec<T>, so classify
+            // them as Unmanaged until/unless a deterministic enum Codec becomes a runtime builtin.
+            if (IsEnumOrNullableEnum(type))
+                return false;
             if (IsNonOverridableBuiltin(type))
                 return true;
             if (TryGetCollection(type, out _, out _, out _, out _))
@@ -296,6 +321,16 @@ public partial class RpcGenerator
                 return false;
 
             return CanGenerateNativeDto(type, [], 0, type);
+        }
+
+        private static bool IsEnumOrNullableEnum(ITypeSymbol type)
+        {
+            if (type.TypeKind == TypeKind.Enum)
+                return true;
+            return type is INamedTypeSymbol named &&
+                   named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+                   named.TypeArguments.Length == 1 &&
+                   named.TypeArguments[0].TypeKind == TypeKind.Enum;
         }
 
         private bool CanGenerateNativeCollection(
