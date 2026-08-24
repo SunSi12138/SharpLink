@@ -26,7 +26,7 @@ internal sealed class ServerRuntimeComposition
         ServerServiceCleanup serviceCleanup,
         IServiceProvider serviceProvider,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
-        SharpLinkAdmissionController? admissionController,
+        SharpLinkAdmissionController admissionController,
         ServerConnectionAdmission connectionAdmission,
         ServerShutdownPlan shutdownPlan,
         FrameworkTaskSupervisor frameworkTasks)
@@ -47,6 +47,7 @@ internal sealed class ServerRuntimeComposition
         ArgumentNullException.ThrowIfNull(staticManifests);
         ShutdownPlan = shutdownPlan ?? throw new ArgumentNullException(nameof(shutdownPlan));
         FrameworkTasks = frameworkTasks ?? throw new ArgumentNullException(nameof(frameworkTasks));
+        AdmissionController = admissionController ?? throw new ArgumentNullException(nameof(admissionController));
 
         _interceptors = [.. interceptors];
         for (var index = 0; index < staticManifests.Count; index++)
@@ -57,7 +58,7 @@ internal sealed class ServerRuntimeComposition
         Authenticator = authenticator;
         AuthenticationRequired = authenticationRequired;
         RpcSessionFlushOptions = rpcSessionFlushOptions;
-        AdmissionProgram = admissionController is null ? null : new AdmissionProgram(admissionController);
+        AdmissionProgram = admissionController.IsEnabled ? new AdmissionProgram(admissionController) : null;
         ConnectionAdmission = connectionAdmission ?? throw new ArgumentNullException(nameof(connectionAdmission));
     }
 
@@ -93,7 +94,7 @@ internal sealed class ServerRuntimeComposition
 
     internal AdmissionProgram? AdmissionProgram { get; }
 
-    internal SharpLinkAdmissionController? AdmissionController => AdmissionProgram?.Controller;
+    internal SharpLinkAdmissionController AdmissionController { get; }
 
     internal ServerConnectionAdmission ConnectionAdmission { get; }
 
