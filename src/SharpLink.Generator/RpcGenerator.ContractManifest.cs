@@ -155,7 +155,7 @@ public partial class RpcGenerator
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more payload or DTO member entries are missing a non-empty wireFormatId",
+                            "one or more payload, DTO member, or Codec entries are missing required wire/Codec identity metadata",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -684,11 +684,21 @@ public partial class RpcGenerator
             if (!baselineCodecs.TryGetValue(type, out var oldCodec) ||
                 !currentCodecs.TryGetValue(type, out var newCodec) ||
                 string.IsNullOrWhiteSpace(oldCodec.Kind) ||
-                string.IsNullOrWhiteSpace(newCodec.Kind) ||
-                string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal))
+                string.IsNullOrWhiteSpace(newCodec.Kind))
             {
                 continue;
             }
+
+            var kindChanged = !string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal);
+            var selectedImplementationKind =
+                string.Equals(oldCodec.Kind, GeneratedCodecKind.Adapter.ToString(), StringComparison.Ordinal) ||
+                string.Equals(oldCodec.Kind, GeneratedCodecKind.Direct.ToString(), StringComparison.Ordinal) ||
+                string.Equals(newCodec.Kind, GeneratedCodecKind.Adapter.ToString(), StringComparison.Ordinal) ||
+                string.Equals(newCodec.Kind, GeneratedCodecKind.Direct.ToString(), StringComparison.Ordinal);
+            var schemaChanged = selectedImplementationKind &&
+                                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
+            if (!kindChanged && !schemaChanged)
+                continue;
 
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
@@ -876,7 +886,9 @@ public partial class RpcGenerator
            manifest.Codecs.All(static codec =>
                codec is not null &&
                !string.IsNullOrWhiteSpace(codec.Type) &&
-               !string.IsNullOrWhiteSpace(codec.WireFormatId)) &&
+               !string.IsNullOrWhiteSpace(codec.WireFormatId) &&
+               !string.IsNullOrWhiteSpace(codec.Kind) &&
+               !string.IsNullOrWhiteSpace(codec.SchemaId)) &&
            manifest.Enums.All(static item => item is not null) &&
            manifest.Unions.All(static union =>
                union is not null && union.Cases is not null && union.Cases.All(static item => item is not null)) &&
