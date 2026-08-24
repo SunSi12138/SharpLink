@@ -77,6 +77,50 @@ public sealed class RouteAdapter : TestRouteAdapterBase
     }
 
     [Test]
+    public Task IntrinsicSelectorAdapterShouldRemainInDefaultProvider()
+    {
+        var source = AddAssemblyAttributes(BuildRouteSource("""
+[System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Struct)]
+public sealed class BaselineSelectorAttribute : System.Attribute
+{
+}
+
+[BaselineSelector]
+public sealed class SelectorPayload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ISelectorBaselineContract : SharpLink.Sdk.IService
+{
+    ValueTask<SelectorPayload> Echo(SelectorPayload value, CancellationToken cancellationToken);
+}
+
+public sealed class SelectorAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "selector.baseline/v1";
+    public override string WireFormatId => "selector-baseline-wire/v1";
+}
+"""),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SelectorAdapter), \"selector.baseline/v1\", \"selector-baseline-wire/v1\", SelectorAttributeType = typeof(BaselineSelectorAttribute))]");
+
+        var sources = RunGeneratorAndGetSources(source);
+        var manifest = sources.Single(static item => item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+        var globalStart = manifest.IndexOf("__codecs =", StringComparison.Ordinal);
+        var contractStart = manifest.IndexOf("__contractCodecs =", StringComparison.Ordinal);
+        Ensure(globalStart >= 0 && contractStart > globalStart,
+            "generated manifest must expose separate global/default and Contract-owned Codec tables");
+        var globalSection = manifest.Substring(globalStart, contractStart - globalStart);
+        var contractSection = manifest.Substring(contractStart);
+        Ensure(globalSection.Contains("selector.baseline/v1", StringComparison.Ordinal),
+            "an intrinsic selector Adapter is part of the default generated provider so runtime UseCodec<T> can still override it");
+        Ensure(!contractSection.Contains("selector.baseline/v1", StringComparison.Ordinal),
+            "an intrinsic selector Adapter must not be mistaken for owner-specific Contract policy");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ExplicitAdapterThatOverridesRouteShouldRemainContractOwned()
     {
         var thirdParty = CreateMetadataReference(

@@ -15,7 +15,8 @@ public partial class RpcGenerator
             compilation,
             cancellationToken,
             contractMode: true,
-            applyCodecPolicy: false).Analyze();
+            applyCodecPolicy: true,
+            collectOwnerPolicy: false).Analyze();
         var contractPolicy = new DtoAnalysisState(
             compilation,
             cancellationToken,
@@ -23,10 +24,11 @@ public partial class RpcGenerator
             applyCodecPolicy: true).Analyze();
 
         // The global/default registry contains the normal generated graph. Contract-default models
-        // are published so a no-policy Contract can resolve native DTO/collection Codecs, while
-        // RpcCodecProvider still gives an explicitly configured runtime Codec precedence. For a
-        // dual-role [RpcSerializable] Contract payload, the Contract-default definition wins in the
-        // shared graph so an explicit static Contract policy never leaks into standalone resolution.
+        // preserve intrinsic type-level/selector Adapter choices while omitting owner-specific
+        // assembly bindings and routes. Publishing that graph keeps the established runtime UseCodec
+        // precedence for no-owner-policy Contracts. For a dual-role [RpcSerializable] Contract payload,
+        // the Contract-default definition wins in the shared graph so an explicit static Contract policy
+        // never leaks into standalone resolution.
         var globalByType = standalone.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in contractDefault.Codecs)
             globalByType[codec.TypeName] = codec;
@@ -146,5 +148,28 @@ public partial class RpcGenerator
             Kind = DtoDiagnosticKind.AdapterRegistrationInvalid,
             Detail = $"selected Adapter '{diagnostic.TypeName}' has no valid RpcCodecAdapterRegistration"
         };
+    }
+
+    private sealed partial class DtoAnalysisState
+    {
+        public DtoAnalysisState(
+            Compilation compilation,
+            CancellationToken cancellationToken,
+            bool contractMode,
+            bool applyCodecPolicy,
+            bool collectOwnerPolicy)
+        {
+            _compilation = compilation;
+            _cancellationToken = cancellationToken;
+            _contractMode = contractMode;
+            _applyCodecPolicy = applyCodecPolicy;
+            _allowedAssemblyNames = ResolveReferenceAssemblyNames(compilation);
+            _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
+            CollectAdapterRegistrations();
+            if (collectOwnerPolicy)
+                CollectAssemblyBindings();
+            if (_contractMode && collectOwnerPolicy)
+                CollectAssemblyRoutes();
+        }
     }
 }
