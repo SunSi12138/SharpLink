@@ -1,10 +1,11 @@
-name: Issue 311 final codec binding refactor v5
+name: Issue 311 final codec binding refactor v6
 
 on:
   push:
     branches: [fix/311-codec-scope-routing]
     paths:
       - '.github/workflows/issue-311-contract-diff-fix.yml'
+      - '.github/issue-311-trigger.txt'
   pull_request:
     branches: [main]
     paths:
@@ -31,8 +32,6 @@ jobs:
       - name: Apply refactor
         shell: bash
         run: |
-          git config user.name "SunSi12138"
-          git config user.email "54728594+SunSi12138@users.noreply.github.com"
           set +e
           python - <<'PYRUN' > /tmp/issue311-patch.log 2>&1
           from pathlib import Path
@@ -99,9 +98,7 @@ p.write_text(text[:start] + replacement + text[end:])
           PYRUN
           status=$?
           cat /tmp/issue311-patch.log
-          if [ $status -ne 0 ]; then
-            exit $status
-          fi
+          exit $status
       - name: Format
         run: dotnet format Sharplink.slnx whitespace
       - name: Restore
@@ -119,7 +116,6 @@ p.write_text(text[:start] + replacement + text[end:])
         run: |
           git config user.name "SunSi12138"
           git config user.email "54728594+SunSi12138@users.noreply.github.com"
-          rm -f .github/issue-311-runner.log
           git add src/SharpLink.Abstractions/Sdk/RpcCodecAdapterAttribute.cs \
                   src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs \
                   src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs \
