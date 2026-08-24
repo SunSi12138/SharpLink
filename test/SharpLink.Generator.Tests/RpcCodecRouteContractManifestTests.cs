@@ -49,6 +49,52 @@ public sealed class RouteAdapter : TestRouteAdapterBase
     }
 
     [Test]
+    public Task EnumRequestFramingShouldFollowItsFinalCodecSelection()
+    {
+        const string contract = """
+public enum RouteState : int
+{
+    Ready = 1
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IEnumRouteContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(RouteState value, CancellationToken cancellationToken);
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.enum-framing/v1";
+    public override string WireFormatId => "sharplink-native/v1";
+}
+""";
+        const string registration =
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.enum-framing/v1\", \"sharplink-native/v1\")]";
+        var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
+        var unmanagedSource = AddAssemblyAttributes(
+            BuildRouteSource(contract),
+            registration,
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(RouteAdapter))]");
+        var nativeOnlySource = AddAssemblyAttributes(
+            BuildRouteSource(contract),
+            registration,
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+
+        var baselineRequest = GetFirstRequestValue(RunContractGenerator(baselineSource).Json);
+        var unmanagedRequest = GetFirstRequestValue(RunContractGenerator(unmanagedSource).Json);
+        var nativeOnlyRequest = GetFirstRequestValue(RunContractGenerator(nativeOnlySource).Json);
+
+        Ensure(baselineRequest["wireType"]!.GetValue<string>() == "Fixed4",
+            "an unrouted enum request must retain its underlying Fixed4 field path");
+        Ensure(unmanagedRequest["wireType"]!.GetValue<string>() == "LengthDelimited",
+            "an enum selected by the Unmanaged route must use its final Codec and length-delimited framing");
+        Ensure(nativeOnlyRequest["wireType"]!.GetValue<string>() == "Fixed4",
+            "an unrelated Native route must not globally disable inline framing for an Unmanaged enum");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task NativeRouteOnDtoShouldBeWireBreakWhenWireFormatIdIsUnchanged()
     {
         const string contract = """
@@ -120,6 +166,60 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         var compared = RunContractGenerator(routedSource, baseline.Json);
         Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
             $"changing a direct collection from native generated List Codec to a routed Adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NestedAdapterIdentityChangeShouldBeWireBreakWhenWireFormatIdIsUnchanged()
+    {
+        const string contract = """
+public sealed class Inner
+{
+    public int Value { get; set; }
+}
+
+public sealed class Envelope
+{
+    public System.Collections.Generic.List<Inner> Items { get; set; } = new();
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface INestedCodecIdentityContract : SharpLink.Sdk.IService
+{
+    ValueTask<Envelope> Echo(Envelope value, CancellationToken cancellationToken);
+}
+
+public sealed class AdapterA : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.nested-a/v1";
+    public override string WireFormatId => "route.nested-wire/v1";
+}
+
+public sealed class AdapterB : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.nested-b/v1";
+    public override string WireFormatId => "route.nested-wire/v1";
+}
+""";
+        const string registrations = """
+[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterA), "route.nested-a/v1", "route.nested-wire/v1")]
+[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterB), "route.nested-b/v1", "route.nested-wire/v1")]
+""";
+        var baselineSource = AddAssemblyAttributes(
+            BuildRouteSource(contract),
+            registrations,
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(Inner), typeof(AdapterA))]");
+        var changedSource = AddAssemblyAttributes(
+            BuildRouteSource(contract),
+            registrations,
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(Inner), typeof(AdapterB))]");
+
+        var baseline = RunContractGenerator(baselineSource);
+        var compared = RunContractGenerator(changedSource, baseline.Json);
+        Ensure(compared.Diagnostics.Any(static diagnostic =>
+                diagnostic.Id == "SHARPLINK030" &&
+                diagnostic.GetMessage().Contains("nested Codec selection changed", StringComparison.Ordinal)),
+            $"changing a nested Adapter identity must be a wire break even when WireFormatId is unchanged. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
