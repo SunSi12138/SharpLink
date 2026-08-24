@@ -401,8 +401,9 @@ public sealed class SharpLinkMultiClusterClientBuilder
         IReadOnlyDictionary<Assembly, SharpLinkClusterKey> assemblyOwners)
         => assemblyOwners.TryGetValue(manifest.OwnerAssembly, out var owner) && owner == cluster;
 
-    // A dependency can contribute codecs to multiple slots, but proxy descriptors become
-    // visible only when its contract-owning assembly is explicitly routed to that slot.
+    // A dependency can contribute globally published generated Codecs to multiple slots, but proxy
+    // descriptors and Contract-owned policy become visible only when its Contract-owning assembly is
+    // explicitly routed to that slot. Hidden Contracts therefore must not instantiate policy scopes.
     private sealed class DependencyManifestView(ISharpLinkGeneratedAssemblyManifest source)
         : ISharpLinkGeneratedAssemblyManifest
     {
@@ -414,7 +415,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => source.Codecs;
-        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => source.ContractCodecs;
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [];
         public IReadOnlyList<string> Dependencies => source.Dependencies;
     }
 
