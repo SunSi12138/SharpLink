@@ -10,6 +10,7 @@ namespace SharpLink.Server;
 internal sealed class ResizableConcurrencyState : RateLimiter
 {
     private readonly Lock _gate = new();
+    private readonly AdmissionStateKernel? _targetVersionOwner;
     private Waiter? _waiterHead;
     private Waiter? _waiterTail;
     private int _waitingCount;
@@ -17,10 +18,13 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     private int _active;
     private int _disposed;
 
-    internal ResizableConcurrencyState(int permitLimit)
+    internal ResizableConcurrencyState(
+        int permitLimit,
+        AdmissionStateKernel? targetVersionOwner = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(permitLimit);
         _permitLimit = permitLimit;
+        _targetVersionOwner = targetVersionOwner;
     }
 
     internal int PermitLimit
@@ -57,7 +61,35 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
         ValidatePermitCount(permitCount);
+        var versionOwner = _targetVersionOwner;
+        if (versionOwner is null)
+            return AttemptAcquireStableCore();
 
+        while (true)
+        {
+            // Do not begin a new immediate concurrency decision while a multi-state target commit
+            // is physically between resizes. A permit acquired just before an update remains valid
+            // by the no-preemption rule; only a failed decision that overlapped the commit retries.
+            var version = versionOwner.ReadStableConcurrencyTargetVersion();
+            var lease = AttemptAcquireStableCore();
+            if (versionOwner.IsConcurrencyTargetVersionCurrent(version))
+                return lease;
+
+            if (lease.IsAcquired)
+            {
+                // The permit itself is a legitimate in-flight holder and survives target shrink.
+                // Keep it, but do not expose it to the caller until the complete target set and
+                // publication pointer are stable again.
+                versionOwner.ReadStableConcurrencyTargetVersion();
+                return lease;
+            }
+
+            lease.Dispose();
+        }
+    }
+
+    private RateLimitLease AttemptAcquireStableCore()
+    {
         // Match the BCL ConcurrencyLimiter hot-path shape: obvious exhaustion does not need the
         // state lock. A stale permissive read only falls through to the locked recheck; a failure
         // linearizes while active is at or above the observed target.
@@ -86,6 +118,30 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         CancellationToken cancellationToken)
     {
         ValidatePermitCount(permitCount);
+        var versionOwner = _targetVersionOwner;
+        if (versionOwner is null)
+            return AcquireAsyncStableCore(cancellationToken);
+        return AcquireVersionAwareAsync(versionOwner, cancellationToken);
+    }
+
+    private async ValueTask<RateLimitLease> AcquireVersionAwareAsync(
+        AdmissionStateKernel versionOwner,
+        CancellationToken cancellationToken)
+    {
+        // Queue residency has already been authorized by the outer kernel queue bound. Waiting for
+        // an in-progress target commit here neither creates a second queue authority nor changes
+        // FIFO order: an already queued waiter keeps its place and an acquired permit is retained.
+        var version = versionOwner.ReadStableConcurrencyTargetVersion();
+        var lease = await AcquireAsyncStableCore(cancellationToken).ConfigureAwait(false);
+        if (!lease.IsAcquired || versionOwner.IsConcurrencyTargetVersionCurrent(version))
+            return lease;
+
+        versionOwner.ReadStableConcurrencyTargetVersion();
+        return lease;
+    }
+
+    private ValueTask<RateLimitLease> AcquireAsyncStableCore(CancellationToken cancellationToken)
+    {
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled<RateLimitLease>(cancellationToken);
 
