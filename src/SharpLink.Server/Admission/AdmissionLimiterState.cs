@@ -57,6 +57,16 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
         ValidatePermitCount(permitCount);
+
+        // Match the BCL ConcurrencyLimiter hot-path shape: obvious exhaustion does not need the
+        // state lock. A stale permissive read only falls through to the locked recheck; a failure
+        // linearizes while active is at or above the observed target.
+        if (Volatile.Read(ref _disposed) != 0 ||
+            Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit))
+        {
+            return FailedLease.Instance;
+        }
+
         lock (_gate)
         {
             if (_disposed != 0)
