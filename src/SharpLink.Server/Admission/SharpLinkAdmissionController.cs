@@ -687,7 +687,7 @@ internal sealed class AdmissionLease : IDisposable
 {
     private AdmissionStateKernel? _owner;
     private RateLimitLease? _singleLease;
-    private RateLimitLease[]? _leases;
+    private RateLimitLease?[]? _leases;
     private AdmissionPartitionLease? _partition;
 
     internal AdmissionLease(
@@ -703,7 +703,7 @@ internal sealed class AdmissionLease : IDisposable
 
     internal AdmissionLease(
         AdmissionStateKernel owner,
-        RateLimitLease[] leases,
+        RateLimitLease?[] leases,
         AdmissionPartitionLease? partition)
     {
         _owner = owner;
@@ -737,6 +737,8 @@ internal sealed class AdmissionRequest(
     private AdmissionPartitionLease? _partition = partition;
     private readonly RateLimitLease?[]? _retainedLeases =
         HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
+    private readonly bool _tracksConcurrencyTargetVersion =
+        HasVersionedConcurrencySlot(slots, slotCount);
 
     internal bool TryAcquire(
         AdmissionStateKernel owner,
@@ -759,80 +761,151 @@ internal sealed class AdmissionRequest(
         out AdmissionLease? admissionLease,
         out AdmissionLimiterSlot failedSlot)
     {
-        if (slotCount == 1 && _retainedLeases is null && suppliedLease is null)
+        var retainedLeases = _retainedLeases;
+
+        // Preserve the allocation-free one-slot path while validating one request-visible epoch
+        // around the whole decision. The final version read is the linearization point: an update
+        // beginning afterward sees this permit as a legitimate pre-update holder.
+        if (slotCount == 1 && retainedLeases is null && suppliedLease is null)
         {
-            var singleLease = slots[0].Limiter.AttemptAcquire(1);
-            if (!singleLease.IsAcquired)
+            while (true)
             {
-                singleLease.Dispose();
-                admissionLease = null;
-                failedSlot = slots[0];
-                return false;
+                var targetVersion = _tracksConcurrencyTargetVersion
+                    ? owner.ReadStableConcurrencyTargetVersion()
+                    : 0;
+                var singleLease = slots[0].Limiter.AttemptAcquire(1);
+                if (_tracksConcurrencyTargetVersion &&
+                    !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                {
+                    singleLease.Dispose();
+                    continue;
+                }
+
+                if (!singleLease.IsAcquired)
+                {
+                    singleLease.Dispose();
+                    admissionLease = null;
+                    failedSlot = slots[0];
+                    return false;
+                }
+
+                admissionLease = new AdmissionLease(
+                    owner,
+                    singleLease,
+                    Interlocked.Exchange(ref _partition, null));
+                failedSlot = default;
+                return true;
             }
-            admissionLease = new AdmissionLease(
-                owner,
-                singleLease,
-                Interlocked.Exchange(ref _partition, null));
-            failedSlot = default;
-            return true;
         }
 
-        var retainedLeases = _retainedLeases;
-        var leases = new RateLimitLease[slotCount];
+        var leases = new RateLimitLease?[slotCount];
+        var currentSuppliedLimiter = suppliedLimiter;
+        var currentSuppliedLease = suppliedLease;
         var suppliedIndex = -1;
-        if (suppliedLease is not null)
+        if (currentSuppliedLease is not null)
         {
             for (var index = 0; index < slotCount; index++)
             {
-                if (!ReferenceEquals(slots[index].Limiter, suppliedLimiter))
+                if (!ReferenceEquals(slots[index].Limiter, currentSuppliedLimiter))
                     continue;
                 suppliedIndex = index;
                 if (slots[index].RetainOnFailure)
-                    retainedLeases![index] = suppliedLease;
+                    retainedLeases![index] = currentSuppliedLease;
                 break;
             }
             if (suppliedIndex < 0)
             {
-                suppliedLease.Dispose();
+                currentSuppliedLease.Dispose();
                 throw new InvalidOperationException("The supplied admission limiter is not part of this request.");
             }
         }
 
-        for (var index = 0; index < slotCount; index++)
+        while (true)
         {
-            var lease = retainedLeases?[index] ??
-                (index == suppliedIndex
-                    ? suppliedLease!
-                    : slots[index].Limiter.AttemptAcquire(1));
-            if (!lease.IsAcquired)
+            var targetVersion = _tracksConcurrencyTargetVersion
+                ? owner.ReadStableConcurrencyTargetVersion()
+                : 0;
+
+            // A queued concurrency permit is granted under a particular complete target epoch. If
+            // its continuation did not resume until after a later update, it cannot be combined with
+            // slots from the new epoch; release it and reacquire/requeue under the current policy.
+            if (currentSuppliedLease is not null &&
+                currentSuppliedLimiter is ResizableConcurrencyState suppliedConcurrency &&
+                suppliedConcurrency.TracksTargetVersion &&
+                !suppliedConcurrency.IsLeaseFromTargetVersion(currentSuppliedLease, targetVersion))
             {
-                lease.Dispose();
-                for (var acquired = index - 1; acquired >= 0; acquired--)
+                currentSuppliedLease.Dispose();
+                currentSuppliedLease = null;
+                currentSuppliedLimiter = null;
+                suppliedIndex = -1;
+            }
+
+            var failedIndex = -1;
+            failedSlot = default;
+            for (var index = 0; index < slotCount; index++)
+            {
+                var lease = retainedLeases?[index] ??
+                    (index == suppliedIndex && currentSuppliedLease is not null
+                        ? currentSuppliedLease
+                        : slots[index].Limiter.AttemptAcquire(1));
+
+                if (!lease.IsAcquired)
                 {
-                    if (!ReferenceEquals(retainedLeases?[acquired], leases[acquired]))
-                        leases[acquired].Dispose();
+                    lease.Dispose();
+                    DisposeAttemptLeases(leases, index, retainedLeases);
+                    if (currentSuppliedLease is not null &&
+                        suppliedIndex > index &&
+                        !ReferenceEquals(retainedLeases?[suppliedIndex], currentSuppliedLease))
+                    {
+                        currentSuppliedLease.Dispose();
+                    }
+                    failedIndex = index;
+                    failedSlot = slots[index];
+                    break;
                 }
-                if (suppliedLease is not null &&
-                    suppliedIndex > index &&
-                    !ReferenceEquals(retainedLeases?[suppliedIndex], suppliedLease))
+
+                if (slots[index].RetainOnFailure)
+                    retainedLeases![index] = lease;
+                leases[index] = lease;
+            }
+
+            if (failedIndex >= 0)
+            {
+                if (_tracksConcurrencyTargetVersion &&
+                    !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
                 {
-                    suppliedLease.Dispose();
+                    ResetSuppliedConcurrency(
+                        ref currentSuppliedLimiter,
+                        ref currentSuppliedLease,
+                        ref suppliedIndex);
+                    continue;
                 }
+
                 admissionLease = null;
-                failedSlot = slots[index];
                 return false;
             }
-            if (slots[index].RetainOnFailure)
-                retainedLeases![index] = lease;
-            leases[index] = lease;
-        }
 
-        if (retainedLeases is not null)
-            Array.Clear(retainedLeases, 0, slotCount);
-        var ownedPartition = Interlocked.Exchange(ref _partition, null);
-        admissionLease = new AdmissionLease(owner, leases, ownedPartition);
-        failedSlot = default;
-        return true;
+            // This check spans the complete Global / Contract / Method acquisition, not one limiter
+            // at a time. Any cross-epoch combination is still tentative here, so dispose every
+            // unretained lease and retry. Unchanged rate leases intentionally remain retained.
+            if (_tracksConcurrencyTargetVersion &&
+                !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
+            {
+                DisposeAttemptLeases(leases, slotCount, retainedLeases);
+                ResetSuppliedConcurrency(
+                    ref currentSuppliedLimiter,
+                    ref currentSuppliedLease,
+                    ref suppliedIndex);
+                continue;
+            }
+
+            if (retainedLeases is not null)
+                Array.Clear(retainedLeases, 0, slotCount);
+            var ownedPartition = Interlocked.Exchange(ref _partition, null);
+            admissionLease = new AdmissionLease(owner, leases, ownedPartition);
+            failedSlot = default;
+            return true;
+        }
     }
 
     public void Dispose()
@@ -843,11 +916,51 @@ internal sealed class AdmissionRequest(
         Interlocked.Exchange(ref _partition, null)?.Dispose();
     }
 
+    private static void DisposeAttemptLeases(
+        RateLimitLease?[] leases,
+        int count,
+        RateLimitLease?[]? retainedLeases)
+    {
+        for (var index = count - 1; index >= 0; index--)
+        {
+            var lease = leases[index];
+            leases[index] = null;
+            if (lease is not null && !ReferenceEquals(retainedLeases?[index], lease))
+                lease.Dispose();
+        }
+    }
+
+    private static void ResetSuppliedConcurrency(
+        ref IAdmissionLimiter? suppliedLimiter,
+        ref RateLimitLease? suppliedLease,
+        ref int suppliedIndex)
+    {
+        if (suppliedLimiter is not ResizableConcurrencyState concurrency ||
+            !concurrency.TracksTargetVersion)
+        {
+            return;
+        }
+
+        suppliedLimiter = null;
+        suppliedLease = null;
+        suppliedIndex = -1;
+    }
+
     private static bool HasRetainedSlot(AdmissionLimiterSlot[] slots, int slotCount)
     {
         for (var index = 0; index < slotCount; index++)
             if (slots[index].RetainOnFailure)
                 return true;
+        return false;
+    }
+
+    private static bool HasVersionedConcurrencySlot(AdmissionLimiterSlot[] slots, int slotCount)
+    {
+        for (var index = 0; index < slotCount; index++)
+        {
+            if (slots[index].Limiter is ResizableConcurrencyState { TracksTargetVersion: true })
+                return true;
+        }
         return false;
     }
 }
