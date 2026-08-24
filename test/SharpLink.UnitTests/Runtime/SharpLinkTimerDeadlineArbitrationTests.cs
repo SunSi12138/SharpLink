@@ -23,6 +23,82 @@ public class SharpLinkTimerDeadlineArbitrationTests
     }
 
     [Test]
+    public async Task TaskWaitShouldLetExpiredDeadlineWinLaterSuccess()
+    {
+        var provider = new ManualTimeProvider();
+        var owner = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+        var wait = SharpLinkTimer.WaitAsync(
+            owner.Task, deadline, provider, CancellationToken.None).AsTask();
+
+        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
+        owner.SetResult();
+
+        Ensure(!await wait,
+            "a source task that succeeds after the deadline must not replace deadline expiry");
+    }
+
+    [Test]
+    public async Task TaskWaitShouldLetExpiredDeadlineWinLaterFault()
+    {
+        var provider = new ManualTimeProvider();
+        var owner = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+        var wait = SharpLinkTimer.WaitAsync(
+            owner.Task, deadline, provider, CancellationToken.None).AsTask();
+
+        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
+        owner.SetException(new InvalidOperationException("late fault"));
+
+        Ensure(!await wait,
+            "a source task that faults after the deadline must not replace deadline expiry");
+    }
+
+    [Test]
+    public async Task TaskWaitShouldLetExpiredDeadlineWinLaterSourceCancellation()
+    {
+        var provider = new ManualTimeProvider();
+        var owner = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+        var wait = SharpLinkTimer.WaitAsync(
+            owner.Task, deadline, provider, CancellationToken.None).AsTask();
+
+        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
+        owner.SetCanceled();
+
+        Ensure(!await wait,
+            "a source task canceled after the deadline must not replace deadline expiry");
+    }
+
+    [Test]
+    public async Task TaskWaitShouldPreserveSourceFaultBeforeDeadline()
+    {
+        var provider = new ManualTimeProvider();
+        var owner = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var expected = new InvalidOperationException("source won");
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+        var wait = SharpLinkTimer.WaitAsync(
+            owner.Task, deadline, provider, CancellationToken.None).AsTask();
+
+        owner.SetException(expected);
+
+        try
+        {
+            _ = await wait;
+            throw new Exception("expected source fault");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(ReferenceEquals(exception, expected),
+                "a source fault before the deadline must remain the terminal outcome");
+        }
+    }
+
+    [Test]
     public async Task SemaphoreWaitShouldLetExpiredDeadlineWinLaterCallerCancellation()
     {
         var provider = new ManualTimeProvider();
