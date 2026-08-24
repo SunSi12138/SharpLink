@@ -17,11 +17,12 @@ public partial class RpcGenerator
             contractMode: true,
             applyCodecPolicy: true,
             selectorOnlyContractDefault: true).Analyze();
-        var contractPolicy = new DtoAnalysisState(
+        var contractPolicyState = new DtoAnalysisState(
             compilation,
             cancellationToken,
             contractMode: true,
-            applyCodecPolicy: true).Analyze();
+            applyCodecPolicy: true);
+        var contractPolicy = contractPolicyState.Analyze();
 
         // The global/default registry contains the normal generated graph. Contract-default models
         // preserve registered selector-attribute Adapter choices while omitting explicit
@@ -46,7 +47,7 @@ public partial class RpcGenerator
         var contractCodecs = SelectOwnedContractCodecs(
             contractDefault.Codecs,
             contractPolicy.Codecs,
-            contractPolicy.ContractOwnedPolicyRoots);
+            contractPolicyState.ContractOwnedPolicyRoots);
         var diagnostics = standalone.Diagnostics
             .Concat(contractPolicy.Diagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
@@ -75,12 +76,15 @@ public partial class RpcGenerator
         IReadOnlyCollection<string> policyRoots)
     {
         var defaultByType = contractDefault.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var policyTypes = contractPolicy
-            .Select(static codec => codec.TypeName)
-            .ToHashSet(StringComparer.Ordinal);
-        var scopedTypes = policyRoots
-            .Where(policyTypes.Contains)
-            .ToHashSet(StringComparer.Ordinal);
+        var policyTypes = new HashSet<string>(
+            contractPolicy.Select(static codec => codec.TypeName),
+            StringComparer.Ordinal);
+        var scopedTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var policyRoot in policyRoots)
+        {
+            if (policyTypes.Contains(policyRoot))
+                scopedTypes.Add(policyRoot);
+        }
 
         foreach (var codec in contractPolicy)
         {
