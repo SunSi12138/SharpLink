@@ -1,5 +1,7 @@
 using System.Buffers;
+using System.Collections.Generic;
 using System.IO.Pipelines;
+using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -34,7 +36,7 @@ public class GeneratedServerPublicationDeadlineTests
         Exception? failure = null;
 
         using (SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
-                   session.SessionId,
+                   session.Id,
                    authentication: null,
                    deadline,
                    timeProvider)))
