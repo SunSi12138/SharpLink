@@ -8,6 +8,38 @@ public sealed class AdmissionRuntimeControlRaceTests
 {
     [Test]
     [NotInParallel]
+    public async Task PartialCandidateConstructionFailureShouldReleaseAcquiredBindings()
+    {
+        await using var server = CreateServer();
+        var publicServer = (ISharpLinkServer)server;
+        var kernel = server.AdmissionStateKernelForTests!;
+
+        try
+        {
+            AdmissionProgram.BeforeProgramAttachForTests = static () =>
+                throw new CandidateConstructionException();
+
+            var failure = CaptureFailure(() => publicServer.EnableAdmissionControl(options =>
+                options.Global.UseConcurrency(1)));
+
+            Ensure(failure is CandidateConstructionException,
+                "deterministic construction fault must escape unchanged");
+            Ensure(server.CurrentAdmissionProgramForTests is null,
+                "partial candidate failure must not publish");
+            Ensure(kernel.LiveProgramCount == 0 && kernel.RetiredProgramCount == 0 &&
+                   kernel.RuleStateCount == 0 && kernel.PartitionStateCount == 0 &&
+                   kernel.QueuedCalls == 0 && kernel.QueuedBytes == 0 &&
+                   kernel.ActivePermits == 0,
+                "partial candidate failure must release every acquired binding and accounting entry");
+        }
+        finally
+        {
+            AdmissionProgram.BeforeProgramAttachForTests = null;
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task DisableRacingStopShouldNotDeadlockOrPublishAfterSeal()
     {
         await using var server = CreateServer();
@@ -96,5 +128,9 @@ public sealed class AdmissionRuntimeControlRaceTests
     {
         if (!condition)
             throw new Exception($"assert failed: {scenario}");
+    }
+
+    private sealed class CandidateConstructionException : Exception
+    {
     }
 }
