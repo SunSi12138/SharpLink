@@ -81,11 +81,10 @@ public class ServerDecodeExecutorSchedulerRaceTests
         var schedulerGate = ReadPrivateField<Lock>(executor, "_schedulerGate");
         slots.Wait();
 
-        Task enqueue;
-        Task dispose;
+        Task? dispose = null;
         try
         {
-            enqueue = executor.EnqueueAsync(
+            var enqueue = executor.EnqueueAsync(
                 new ServerDecodeWorkItem(_ => ValueTask.CompletedTask),
                 CancellationToken.None).AsTask();
             Ensure(executor.QueueDepth == 1,
@@ -113,8 +112,10 @@ public class ServerDecodeExecutorSchedulerRaceTests
         }
         finally
         {
-            if (Volatile.Read(ref dispose) is null)
+            if (dispose is null)
                 await executor.DisposeAsync();
+            else if (!dispose.IsCompleted)
+                await dispose;
         }
     }
 
