@@ -5,7 +5,7 @@ namespace SharpLink.Runtime;
 /// terminal result. Unlike peer StreamComplete, this boundary must stop buffered user-visible
 /// delivery immediately while preserving receive-credit accounting for discarded items.
 /// </summary>
-internal interface IStreamLocalAbortDispatcher : IStreamDispatcher
+internal interface IStreamLocalAbortDispatcher
 {
     void CompleteLocalAbort(Exception? exception);
 
