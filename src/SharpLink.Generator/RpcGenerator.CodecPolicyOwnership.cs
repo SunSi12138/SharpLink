@@ -22,17 +22,25 @@ public partial class RpcGenerator
             contractMode: true,
             applyCodecPolicy: true).Analyze();
 
-        // Contract-reachable types keep their default/native Codec in the global provider even when
-        // the same source type is also [RpcSerializable]. Compile-time Contract policy is an owner
-        // delta and must not replace runtime/default provider configuration for that CLR type.
+        // Only true standalone publication belongs in the context-global generated registry. A type
+        // that is both [RpcSerializable] and Contract-reachable keeps its default/native standalone
+        // binding there; Contract-only default codecs stay implicit so runtime UseCodec<T> keeps its
+        // established no-policy precedence.
         var globalByType = standalone.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in contractDefault.Codecs)
-            globalByType[codec.TypeName] = codec;
+        {
+            if (globalByType.ContainsKey(codec.TypeName))
+                globalByType[codec.TypeName] = codec;
+        }
         var globalCodecs = globalByType.Values
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        var contractCodecs = SelectOwnedContractCodecs(globalCodecs, contractPolicy.Codecs);
+        // Contract ownership is defined by the delta from the Contract's default graph, not by
+        // whether the type happens to be globally published. This leaves no-policy Contracts on the
+        // base provider while pulling in native parents/dependencies that must close over a changed
+        // explicit/route binding.
+        var contractCodecs = SelectOwnedContractCodecs(contractDefault.Codecs, contractPolicy.Codecs);
         var diagnostics = standalone.Diagnostics
             .Concat(contractPolicy.Diagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
@@ -56,16 +64,16 @@ public partial class RpcGenerator
     }
 
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
-        ImmutableArray<GeneratedCodecModel> globalCodecs,
+        ImmutableArray<GeneratedCodecModel> contractDefault,
         ImmutableArray<GeneratedCodecModel> contractPolicy)
     {
-        var globalByType = globalCodecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+        var defaultByType = contractDefault.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         var scopedTypes = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var codec in contractPolicy)
         {
-            if (!globalByType.TryGetValue(codec.TypeName, out var global) ||
-                !HasSameCodecDefinition(global, codec))
+            if (!defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) ||
+                !HasSameCodecDefinition(defaultCodec, codec))
             {
                 scopedTypes.Add(codec.TypeName);
             }
