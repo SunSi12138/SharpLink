@@ -32,6 +32,10 @@ public partial class RpcGenerator : IIncrementalGenerator
         var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
                 AnalyzeGeneratedCodecsWithPolicyOwnership(compilation, ct))
             .WithComparer(DtoGenerationResultComparer.Instance);
+        var boundInterfaces = interfaces
+            .Combine(generatedCodecs)
+            .Select(static (value, _) => BindFinalCodecSelections(value.Left, value.Right))
+            .Where(static model => model is not null);
 
         var services = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
@@ -268,7 +272,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        context.RegisterSourceOutput(interfaces, (spc, model) =>
+        context.RegisterSourceOutput(boundInterfaces, (spc, model) =>
         {
             var proxy = GenerateProxy(model!);
             spc.AddSource(GetProxyHintName(model!), SourceText.From(proxy, Encoding.UTF8));
@@ -311,7 +315,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        var manifest = interfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
+        var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
             var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs, value.Right.ContractCodecs);
@@ -323,7 +327,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        var contractManifestModels = interfaces.Collect()
+        var contractManifestModels = boundInterfaces.Collect()
             .Combine(services.Collect())
             .Combine(generatedCodecs)
             .Combine(unions.Collect())
