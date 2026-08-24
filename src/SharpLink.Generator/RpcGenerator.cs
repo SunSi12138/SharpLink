@@ -30,7 +30,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Where(m => m != null);
 
         var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
-                AnalyzeGeneratedCodecs(compilation, ct))
+                AnalyzeGeneratedCodecsWithPolicyOwnership(compilation, ct))
             .WithComparer(DtoGenerationResultComparer.Instance);
 
         var services = context.SyntaxProvider.ForAttributeWithMetadataName(
