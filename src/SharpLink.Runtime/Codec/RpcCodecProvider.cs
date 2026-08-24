@@ -332,12 +332,12 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                          .ThenBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
             {
                 ValidateFactory(factory);
-                if (factory.AdapterId is null)
+                if (factory.Kind != RpcGeneratedCodecFactoryKind.Adapter)
                     continue;
 
                 var adapter = factory.Adapter!;
                 ValidateAdapter(factory, adapter);
-                if (scopeByAdapterId.TryGetValue(factory.AdapterId, out var existing))
+                if (scopeByAdapterId.TryGetValue(factory.AdapterId!, out var existing))
                 {
                     if (existing.Adapter.GetType() != adapter.GetType() ||
                         !string.Equals(existing.WireFormatId, factory.WireFormatId, StringComparison.Ordinal))
@@ -351,7 +351,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                 var scope = adapter.CreateScope() ?? throw new InvalidOperationException(
                     $"Adapter '{factory.AdapterId}' returned a null scope.");
                 scopes.Add(scope);
-                scopeByAdapterId.Add(factory.AdapterId,
+                scopeByAdapterId.Add(factory.AdapterId!,
                     new AdapterScopeRegistration(adapter, factory.WireFormatId, scope));
             }
 
@@ -374,9 +374,9 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                 foreach (var factory in factories.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
                 {
                     IRpcCodec? preparedCodec = null;
-                    if (factory.AdapterId is not null)
+                    if (factory.Kind == RpcGeneratedCodecFactoryKind.Adapter)
                     {
-                        var scope = scopeByAdapterId[factory.AdapterId].Scope;
+                        var scope = scopeByAdapterId[factory.AdapterId!].Scope;
                         preparedCodec = factory.Create(provider, scope) ?? throw new InvalidOperationException(
                             $"Generated Codec factory for '{factory.TargetType.FullName}' returned null.");
                         ValidateCodec(factory, preparedCodec);
@@ -419,20 +419,40 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         ArgumentNullException.ThrowIfNull(factory.TargetType);
         ArgumentException.ThrowIfNullOrWhiteSpace(factory.SchemaId);
         ArgumentException.ThrowIfNullOrWhiteSpace(factory.WireFormatId);
-        if (factory.AdapterId is null)
+
+        switch (factory.Kind)
         {
-            if (factory.Adapter is not null ||
-                !string.Equals(factory.WireFormatId, "sharplink-native/v1", StringComparison.Ordinal))
-            {
+            case RpcGeneratedCodecFactoryKind.Native:
+                if (factory.AdapterId is not null ||
+                    factory.Adapter is not null ||
+                    !string.Equals(factory.WireFormatId, "sharplink-native/v1", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Native Codec factory for '{factory.TargetType.FullName}' has invalid adapter or wire-format metadata.");
+                }
+                return;
+
+            case RpcGeneratedCodecFactoryKind.Direct:
+                if (factory.AdapterId is not null || factory.Adapter is not null)
+                {
+                    throw new InvalidOperationException(
+                        $"Direct Codec factory for '{factory.TargetType.FullName}' cannot declare adapter metadata.");
+                }
+                return;
+
+            case RpcGeneratedCodecFactoryKind.Adapter:
+                ArgumentException.ThrowIfNullOrWhiteSpace(factory.AdapterId);
+                if (factory.Adapter is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Adapter Codec factory for '{factory.TargetType.FullName}' has no adapter instance.");
+                }
+                return;
+
+            default:
                 throw new InvalidOperationException(
-                    $"Native Codec factory for '{factory.TargetType.FullName}' has invalid adapter metadata.");
-            }
-            return;
+                    $"Codec factory for '{factory.TargetType.FullName}' has unknown factory kind '{factory.Kind}'.");
         }
-        ArgumentException.ThrowIfNullOrWhiteSpace(factory.AdapterId);
-        if (factory.Adapter is null)
-            throw new InvalidOperationException(
-                $"Adapter Codec factory for '{factory.TargetType.FullName}' has no adapter instance.");
     }
 
     private static void ValidateAdapter(IRpcGeneratedCodecFactory factory, IRpcCodecAdapter adapter)
