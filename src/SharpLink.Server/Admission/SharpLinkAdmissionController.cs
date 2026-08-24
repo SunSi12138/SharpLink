@@ -105,66 +105,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(manifests);
         ArgumentNullException.ThrowIfNull(timeProvider);
         options.Validate();
-
-        var contractsByType = new Dictionary<Type, SharpLinkGeneratedContractDescriptor>();
-        foreach (var manifest in manifests)
-        {
-            foreach (var contract in manifest.Contracts)
-                contractsByType.TryAdd(contract.ContractType, contract);
-        }
-
-        var contractOptions = new Dictionary<long, SharpLinkAdmissionRuleOptions>();
-        var methodOptions = new Dictionary<(long, long), SharpLinkAdmissionRuleOptions>();
-        foreach (var registration in options.Rules)
-        {
-            var contractId = registration.ContractId;
-            SharpLinkGeneratedContractDescriptor? contract = null;
-            if (registration.ContractType is { } contractType)
-            {
-                if (!contractsByType.TryGetValue(contractType, out contract))
-                    throw new InvalidOperationException(
-                        $"Generated contract '{contractType.FullName}' required by admission control was not found.");
-                contractId = contract.ContractId;
-            }
-            if (contractId is null or 0)
-                throw new InvalidOperationException("Admission contract identity was not resolved.");
-
-            if (registration.MethodName is null && registration.MethodId is null)
-            {
-                if (!contractOptions.TryAdd(contractId.Value, registration.Rule))
-                {
-                    throw new InvalidOperationException(
-                        $"Admission control has duplicate rules for contract {contractId.Value}.");
-                }
-                continue;
-            }
-
-            var methodId = registration.MethodId;
-            if (registration.MethodName is { } methodName)
-            {
-                contract ??= contractsByType.Values.FirstOrDefault(candidate => candidate.ContractId == contractId.Value);
-                if (contract is null)
-                    throw new InvalidOperationException(
-                        $"Generated contract {contractId.Value} required to resolve method '{methodName}' was not found.");
-                var matches = contract.Methods.Where(method =>
-                    string.Equals(method.Name, methodName, StringComparison.Ordinal)).ToArray();
-                if (matches.Length != 1)
-                {
-                    throw new InvalidOperationException(matches.Length == 0
-                        ? $"Generated method '{contract.ContractName}.{methodName}' was not found."
-                        : $"Generated method name '{contract.ContractName}.{methodName}' is ambiguous; configure stable IDs instead.");
-                }
-                methodId = matches[0].MethodId;
-            }
-            if (methodId is null or 0)
-                throw new InvalidOperationException("Admission method identity was not resolved.");
-            var key = (contractId.Value, methodId.Value);
-            if (!methodOptions.TryAdd(key, registration.Rule))
-            {
-                throw new InvalidOperationException(
-                    $"Admission control has duplicate rules for method {key.Item1}/{key.Item2}.");
-            }
-        }
+        ResolveRuleOptions(options, manifests, out var contractOptions, out var methodOptions);
 
         AdmissionRuleRuntime? global = null;
         var contractRules = new Dictionary<long, AdmissionRuleRuntime>(contractOptions.Count);
@@ -176,9 +117,8 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             if (options.Global.HasLimit)
             {
                 var binding = kernel.AcquireRuleState(
-                    AdmissionRuleStateKey.Global(options.Global, options.MaxQueuedCalls),
+                    AdmissionRuleStateKey.Global,
                     options.Global,
-                    options.MaxQueuedCalls,
                     "global");
                 bindings.Add(binding);
                 global = binding.Runtime;
@@ -187,9 +127,8 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             foreach (var pair in contractOptions)
             {
                 var binding = kernel.AcquireRuleState(
-                    AdmissionRuleStateKey.Contract(pair.Key, pair.Value, options.MaxQueuedCalls),
+                    AdmissionRuleStateKey.Contract(pair.Key),
                     pair.Value,
-                    options.MaxQueuedCalls,
                     "contract");
                 bindings.Add(binding);
                 contractRules.Add(pair.Key, binding.Runtime);
@@ -198,9 +137,8 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             foreach (var pair in methodOptions)
             {
                 var binding = kernel.AcquireRuleState(
-                    AdmissionRuleStateKey.Method(pair.Key.Item1, pair.Key.Item2, pair.Value, options.MaxQueuedCalls),
+                    AdmissionRuleStateKey.Method(pair.Key.Item1, pair.Key.Item2),
                     pair.Value,
-                    options.MaxQueuedCalls,
                     "method");
                 bindings.Add(binding);
                 methodRules.Add(pair.Key, binding.Runtime);
@@ -211,10 +149,9 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             {
                 var selector = options.PartitionSelector!;
                 partitionBinding = kernel.AcquirePartitionState(
-                    AdmissionPartitionStateKey.Create(selector, partition, options.MaxQueuedCalls),
+                    AdmissionPartitionStateKey.Create(selector, partition),
                     selector,
-                    partition,
-                    options.MaxQueuedCalls);
+                    partition);
                 partitions = partitionBinding.Value.Pool;
             }
 
@@ -254,6 +191,119 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         }
     }
 
+    internal static SharpLinkAdmissionController CreateUpdate(
+        AdmissionStateKernel kernel,
+        SharpLinkAdmissionController source,
+        SharpLinkAdmissionControlOptions options,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        TimeProvider timeProvider,
+        out AdmissionUpdatePlan updatePlan)
+    {
+        ArgumentNullException.ThrowIfNull(kernel);
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(manifests);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        options.Validate();
+        ResolveRuleOptions(options, manifests, out var contractOptions, out var methodOptions);
+
+        // Reject every out-of-slice transition before candidate bindings can affect live state.
+        ValidateUpdateTransition(source, options, contractOptions, methodOptions);
+
+        AdmissionRuleRuntime? global = null;
+        var contractRules = new Dictionary<long, AdmissionRuleRuntime>(contractOptions.Count);
+        var methodRules = new Dictionary<(long, long), AdmissionRuleRuntime>(methodOptions.Count);
+        var bindings = new List<AdmissionRuleStateBinding>(1 + contractOptions.Count + methodOptions.Count);
+        var resizes = new List<AdmissionConcurrencyResize>();
+        AdmissionPartitionStateBinding? partitionBinding = null;
+        try
+        {
+            if (options.Global.HasLimit)
+            {
+                var binding = kernel.AcquireRuleStateForUpdate(
+                    AdmissionRuleStateKey.Global,
+                    options.Global,
+                    source._global,
+                    "global",
+                    resizes);
+                bindings.Add(binding);
+                global = binding.Runtime;
+            }
+
+            foreach (var pair in contractOptions)
+            {
+                source._contracts.TryGetValue(pair.Key, out var sourceRuntime);
+                var binding = kernel.AcquireRuleStateForUpdate(
+                    AdmissionRuleStateKey.Contract(pair.Key),
+                    pair.Value,
+                    sourceRuntime,
+                    "contract",
+                    resizes);
+                bindings.Add(binding);
+                contractRules.Add(pair.Key, binding.Runtime);
+            }
+
+            foreach (var pair in methodOptions)
+            {
+                source._methods.TryGetValue(pair.Key, out var sourceRuntime);
+                var binding = kernel.AcquireRuleStateForUpdate(
+                    AdmissionRuleStateKey.Method(pair.Key.Item1, pair.Key.Item2),
+                    pair.Value,
+                    sourceRuntime,
+                    "method",
+                    resizes);
+                bindings.Add(binding);
+                methodRules.Add(pair.Key, binding.Runtime);
+            }
+
+            AdmissionPartitionPool? partitions = null;
+            if (options.Partition is { } partition)
+            {
+                var selector = options.PartitionSelector!;
+                partitionBinding = kernel.AcquirePartitionState(
+                    AdmissionPartitionStateKey.Create(selector, partition),
+                    selector,
+                    partition);
+                partitions = partitionBinding.Value.Pool;
+            }
+
+            updatePlan = new AdmissionUpdatePlan(resizes);
+            return new SharpLinkAdmissionController(
+                kernel,
+                options.MaxQueuedCalls,
+                options.MaxQueuedBytes,
+                options.MaxQueueDelay,
+                options.QueueOneWayCalls,
+                global,
+                contractRules.ToFrozenDictionary(),
+                methodRules.ToFrozenDictionary(),
+                partitions,
+                [.. bindings],
+                partitionBinding,
+                timeProvider,
+                ownsKernel: false);
+        }
+        catch
+        {
+            var rollback = new SharpLinkAdmissionController(
+                kernel,
+                options.MaxQueuedCalls,
+                options.MaxQueuedBytes,
+                options.MaxQueueDelay,
+                options.QueueOneWayCalls,
+                global,
+                contractRules.ToFrozenDictionary(),
+                methodRules.ToFrozenDictionary(),
+                partitionBinding?.Pool,
+                [.. bindings],
+                partitionBinding,
+                timeProvider,
+                ownsKernel: false);
+            kernel.ReleaseUnpublishedBindings(rollback);
+            throw;
+        }
+    }
+
     internal AdmissionStateKernel Kernel => _kernel;
 
     internal AdmissionProgram? Program => Volatile.Read(ref _program);
@@ -265,15 +315,31 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 
     internal AdmissionPartitionStateBinding? PartitionStateBinding => _partitionStateBinding;
 
-    internal AdmissionRuleRuntime? GlobalStateForTests => _global;
+    // Preserve the existing tests' notion of shared state while the production binding is now a
+    // per-program immutable wrapper around independently owned concurrency/rate components.
+    internal object? GlobalStateForTests => _global?.SharedStateForTests;
 
-    internal AdmissionRuleRuntime? ContractStateForTests(long contractId)
-        => _contracts.GetValueOrDefault(contractId);
+    internal object? ContractStateForTests(long contractId)
+        => _contracts.GetValueOrDefault(contractId)?.SharedStateForTests;
 
-    internal AdmissionRuleRuntime? MethodStateForTests(long contractId, long methodId)
-        => _methods.GetValueOrDefault((contractId, methodId));
+    internal object? MethodStateForTests(long contractId, long methodId)
+        => _methods.GetValueOrDefault((contractId, methodId))?.SharedStateForTests;
+
+    internal ResizableConcurrencyState? GlobalConcurrencyStateForTests => _global?.ConcurrencyState;
+
+    internal AdmissionRateState? GlobalRateStateForTests => _global?.RateState;
+
+    internal ResizableConcurrencyState? ContractConcurrencyStateForTests(long contractId)
+        => _contracts.GetValueOrDefault(contractId)?.ConcurrencyState;
+
+    internal ResizableConcurrencyState? MethodConcurrencyStateForTests(long contractId, long methodId)
+        => _methods.GetValueOrDefault((contractId, methodId))?.ConcurrencyState;
 
     internal AdmissionPartitionPool? PartitionStateForTests => _partitions;
+
+    internal int MaxQueuedCallsForTests => _maxQueuedCalls;
+    internal long MaxQueuedBytesForTests => _maxQueuedBytes;
+    internal TimeSpan MaxQueueDelayForTests => _maxQueueDelay;
 
     internal void AttachProgram(AdmissionProgram program)
     {
@@ -343,6 +409,8 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             return ValueTask.FromResult(AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope));
         }
 
+        // This reservation is the sole queue-admission authority. Only after it succeeds may this
+        // Request enter any concurrency/rate/partition underlying async waiter.
         if (!_kernel.TryReserveQueue(retainedBytes, _maxQueuedCalls, _maxQueuedBytes, out var queueReason))
         {
             request.Dispose();
@@ -465,6 +533,136 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 
     public ValueTask DisposeAsync()
         => _ownsKernel ? _kernel.DisposeAsync() : ValueTask.CompletedTask;
+
+    private static void ResolveRuleOptions(
+        SharpLinkAdmissionControlOptions options,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        out Dictionary<long, SharpLinkAdmissionRuleOptions> contractOptions,
+        out Dictionary<(long, long), SharpLinkAdmissionRuleOptions> methodOptions)
+    {
+        var contractsByType = new Dictionary<Type, SharpLinkGeneratedContractDescriptor>();
+        foreach (var manifest in manifests)
+        {
+            foreach (var contract in manifest.Contracts)
+                contractsByType.TryAdd(contract.ContractType, contract);
+        }
+
+        contractOptions = [];
+        methodOptions = [];
+        foreach (var registration in options.Rules)
+        {
+            var contractId = registration.ContractId;
+            SharpLinkGeneratedContractDescriptor? contract = null;
+            if (registration.ContractType is { } contractType)
+            {
+                if (!contractsByType.TryGetValue(contractType, out contract))
+                    throw new InvalidOperationException(
+                        $"Generated contract '{contractType.FullName}' required by admission control was not found.");
+                contractId = contract.ContractId;
+            }
+            if (contractId is null or 0)
+                throw new InvalidOperationException("Admission contract identity was not resolved.");
+
+            if (registration.MethodName is null && registration.MethodId is null)
+            {
+                if (!contractOptions.TryAdd(contractId.Value, registration.Rule))
+                {
+                    throw new InvalidOperationException(
+                        $"Admission control has duplicate rules for contract {contractId.Value}.");
+                }
+                continue;
+            }
+
+            var methodId = registration.MethodId;
+            if (registration.MethodName is { } methodName)
+            {
+                contract ??= contractsByType.Values.FirstOrDefault(candidate => candidate.ContractId == contractId.Value);
+                if (contract is null)
+                    throw new InvalidOperationException(
+                        $"Generated contract {contractId.Value} required to resolve method '{methodName}' was not found.");
+                var matches = contract.Methods.Where(method =>
+                    string.Equals(method.Name, methodName, StringComparison.Ordinal)).ToArray();
+                if (matches.Length != 1)
+                {
+                    throw new InvalidOperationException(matches.Length == 0
+                        ? $"Generated method '{contract.ContractName}.{methodName}' was not found."
+                        : $"Generated method name '{contract.ContractName}.{methodName}' is ambiguous; configure stable IDs instead.");
+                }
+                methodId = matches[0].MethodId;
+            }
+            if (methodId is null or 0)
+                throw new InvalidOperationException("Admission method identity was not resolved.");
+            var key = (contractId.Value, methodId.Value);
+            if (!methodOptions.TryAdd(key, registration.Rule))
+            {
+                throw new InvalidOperationException(
+                    $"Admission control has duplicate rules for method {key.Item1}/{key.Item2}.");
+            }
+        }
+    }
+
+    private static void ValidateUpdateTransition(
+        SharpLinkAdmissionController source,
+        SharpLinkAdmissionControlOptions options,
+        IReadOnlyDictionary<long, SharpLinkAdmissionRuleOptions> contractOptions,
+        IReadOnlyDictionary<(long, long), SharpLinkAdmissionRuleOptions> methodOptions)
+    {
+        ValidateRateTransition("global", source._global, options.Global);
+
+        foreach (var sourcePair in source._contracts)
+        {
+            contractOptions.TryGetValue(sourcePair.Key, out var candidate);
+            ValidateRateTransition($"contract {sourcePair.Key}", sourcePair.Value, candidate);
+        }
+        foreach (var candidatePair in contractOptions)
+        {
+            if (!source._contracts.ContainsKey(candidatePair.Key))
+                ValidateRateTransition($"contract {candidatePair.Key}", null, candidatePair.Value);
+        }
+
+        foreach (var sourcePair in source._methods)
+        {
+            methodOptions.TryGetValue(sourcePair.Key, out var candidate);
+            ValidateRateTransition(
+                $"method {sourcePair.Key.ContractId}/{sourcePair.Key.MethodId}",
+                sourcePair.Value,
+                candidate);
+        }
+        foreach (var candidatePair in methodOptions)
+        {
+            if (!source._methods.ContainsKey(candidatePair.Key))
+            {
+                ValidateRateTransition(
+                    $"method {candidatePair.Key.Item1}/{candidatePair.Key.Item2}",
+                    null,
+                    candidatePair.Value);
+            }
+        }
+
+        AdmissionPartitionStateKey? candidatePartition = options.Partition is { } partition
+            ? AdmissionPartitionStateKey.Create(options.PartitionSelector!, partition)
+            : null;
+        var sourcePartition = source._partitionStateBinding?.Key;
+        if (sourcePartition != candidatePartition)
+        {
+            throw new InvalidOperationException(
+                "Partition admission configuration updates are not supported by this Dynamic Admission slice.");
+        }
+    }
+
+    private static void ValidateRateTransition(
+        string scope,
+        AdmissionRuleRuntime? source,
+        SharpLinkAdmissionRuleOptions? candidate)
+    {
+        var sourceDefinition = source?.RateDefinition ?? default;
+        var candidateDefinition = AdmissionRateStateDefinition.Create(candidate?.RateLimit);
+        if (sourceDefinition != candidateDefinition)
+        {
+            throw new InvalidOperationException(
+                $"Rate admission configuration updates are not supported for {scope} by this Dynamic Admission slice.");
+        }
+    }
 }
 
 internal readonly record struct AdmissionDecision(
@@ -548,7 +746,7 @@ internal sealed class AdmissionRequest(
 
     internal bool TryAcquireUsing(
         AdmissionStateKernel owner,
-        RateLimiter suppliedLimiter,
+        IAdmissionLimiter suppliedLimiter,
         RateLimitLease suppliedLease,
         out AdmissionLease? admissionLease,
         out AdmissionLimiterSlot failedSlot)
@@ -556,7 +754,7 @@ internal sealed class AdmissionRequest(
 
     private bool TryAcquireCore(
         AdmissionStateKernel owner,
-        RateLimiter? suppliedLimiter,
+        IAdmissionLimiter? suppliedLimiter,
         RateLimitLease? suppliedLease,
         out AdmissionLease? admissionLease,
         out AdmissionLimiterSlot failedSlot)
@@ -655,76 +853,70 @@ internal sealed class AdmissionRequest(
 }
 
 internal readonly record struct AdmissionLimiterSlot(
-    RateLimiter Limiter,
+    IAdmissionLimiter Limiter,
     string Scope,
     string Reason,
     bool RetainOnFailure);
 
-/// <summary>Kernel-owned mutable limiter state for one explicit structural rule identity.</summary>
+/// <summary>Immutable per-program rule binding over independently owned stable component state.</summary>
 internal sealed class AdmissionRuleRuntime : IDisposable
 {
     private readonly AdmissionLimiterSlot[] _slots;
+    private readonly bool _ownsStates;
 
-    private AdmissionRuleRuntime(AdmissionLimiterSlot[] slots) => _slots = slots;
+    private AdmissionRuleRuntime(
+        ResizableConcurrencyState? concurrency,
+        AdmissionRateState? rate,
+        string scope,
+        bool ownsStates)
+    {
+        ConcurrencyState = concurrency;
+        RateState = rate;
+        _ownsStates = ownsStates;
+        var slotCount = (concurrency is null ? 0 : 1) + (rate is null ? 0 : 1);
+        _slots = new AdmissionLimiterSlot[slotCount];
+        var index = 0;
+        if (concurrency is not null)
+            _slots[index++] = new AdmissionLimiterSlot(concurrency, scope, "concurrency", RetainOnFailure: false);
+        if (rate is not null)
+            _slots[index] = new AdmissionLimiterSlot(rate, scope, "rate", RetainOnFailure: true);
+    }
 
     internal int SlotCount => _slots.Length;
 
-    internal static AdmissionRuleRuntime Create(
+    internal ResizableConcurrencyState? ConcurrencyState { get; }
+
+    internal AdmissionRateState? RateState { get; }
+
+    internal AdmissionRateStateDefinition RateDefinition => RateState?.Definition ?? default;
+
+    internal object? SharedStateForTests => (object?)ConcurrencyState ?? RateState;
+
+    internal static AdmissionRuleRuntime CreateBound(
+        ResizableConcurrencyState? concurrency,
+        AdmissionRateState? rate,
+        string scope)
+        => new(concurrency, rate, scope, ownsStates: false);
+
+    internal static AdmissionRuleRuntime CreateOwned(
         SharpLinkAdmissionRuleOptions options,
-        int queueLimit,
         string scope)
     {
-        var slots = new List<AdmissionLimiterSlot>(2);
-        if (options.Concurrency is { } concurrency)
+        var concurrency = options.Concurrency is { } concurrencyOptions
+            ? new ResizableConcurrencyState(concurrencyOptions.PermitLimit)
+            : null;
+        AdmissionRateState? rate = null;
+        try
         {
-            slots.Add(new AdmissionLimiterSlot(
-                new ConcurrencyLimiter(new ConcurrencyLimiterOptions
-                {
-                    PermitLimit = concurrency.PermitLimit,
-                    QueueLimit = queueLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                }),
-                scope,
-                "concurrency",
-                RetainOnFailure: false));
+            rate = options.RateLimit is not null ? AdmissionRateState.Create(options) : null;
+            return new AdmissionRuleRuntime(concurrency, rate, scope, ownsStates: true);
         }
-
-        RateLimiter? rateLimiter = options.RateLimit switch
+        catch
         {
-            SharpLinkTokenBucketLimitOptions tokenBucket => new TokenBucketRateLimiter(
-                new TokenBucketRateLimiterOptions
-                {
-                    TokenLimit = tokenBucket.TokenLimit,
-                    TokensPerPeriod = tokenBucket.TokensPerPeriod,
-                    ReplenishmentPeriod = tokenBucket.ReplenishmentPeriod,
-                    AutoReplenishment = true,
-                    QueueLimit = queueLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                }),
-            SharpLinkFixedWindowLimitOptions fixedWindow => new FixedWindowRateLimiter(
-                new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = fixedWindow.PermitLimit,
-                    Window = fixedWindow.Window,
-                    AutoReplenishment = true,
-                    QueueLimit = queueLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                }),
-            SharpLinkSlidingWindowLimitOptions slidingWindow => new SlidingWindowRateLimiter(
-                new SlidingWindowRateLimiterOptions
-                {
-                    PermitLimit = slidingWindow.PermitLimit,
-                    Window = slidingWindow.Window,
-                    SegmentsPerWindow = slidingWindow.SegmentsPerWindow,
-                    AutoReplenishment = true,
-                    QueueLimit = queueLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                }),
-            _ => null
-        };
-        if (rateLimiter is not null)
-            slots.Add(new AdmissionLimiterSlot(rateLimiter, scope, "rate", RetainOnFailure: true));
-        return new AdmissionRuleRuntime(slots.ToArray());
+            concurrency?.Dispose();
+            rate?.Dispose();
+            throw;
+        }
     }
 
     internal void AppendTo(AdmissionLimiterSlot[] destination, ref int count)
@@ -735,8 +927,10 @@ internal sealed class AdmissionRuleRuntime : IDisposable
 
     public void Dispose()
     {
-        foreach (var slot in _slots)
-            slot.Limiter.Dispose();
+        if (!_ownsStates)
+            return;
+        ConcurrencyState?.Dispose();
+        RateState?.Dispose();
     }
 }
 
@@ -745,7 +939,6 @@ internal sealed class AdmissionPartitionPool : IDisposable
 {
     private readonly Func<SharpLinkAdmissionContext, string?> _selector;
     private readonly SharpLinkPartitionAdmissionOptions _options;
-    private readonly int _queueLimit;
     private readonly TimeProvider _timeProvider;
     private readonly Lock _gate = new();
     private readonly Dictionary<AdmissionPartitionKey, AdmissionPartitionEntry> _entries = [];
@@ -754,12 +947,10 @@ internal sealed class AdmissionPartitionPool : IDisposable
     internal AdmissionPartitionPool(
         Func<SharpLinkAdmissionContext, string?> selector,
         SharpLinkPartitionAdmissionOptions options,
-        int queueLimit,
         TimeProvider timeProvider)
     {
         _selector = selector;
         _options = options.CloneValidated();
-        _queueLimit = queueLimit;
         _timeProvider = timeProvider;
     }
 
@@ -784,7 +975,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 if (_entries.Count >= _options.MaxPartitions)
                     return null;
                 entry = new AdmissionPartitionEntry(
-                    AdmissionRuleRuntime.Create(_options, _queueLimit, "partition"));
+                    AdmissionRuleRuntime.CreateOwned(_options, "partition"));
                 _entries.Add(key, entry);
                 SharpLinkTelemetry.AddAdmissionActivePartitions(1);
             }
