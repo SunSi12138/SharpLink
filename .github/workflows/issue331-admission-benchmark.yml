@@ -44,25 +44,45 @@ jobs:
           printf '%s\n' 'c1c68580e3337bf640c5c677cce829cae592f423' > evidence/base-sha.txt
           printf '%s\n' '${{ github.event.pull_request.head.sha }}' > evidence/head-sha.txt
 
-      - name: Run reviewed-base Admission benchmarks
+      - name: Run reviewed-base Admission RPC benchmarks
         working-directory: base
         run: >-
           dotnet run -c Release
           --project test/SharpLink.Benchmarks
           --
-          --filter "*Admission*"
+          --filter "*AdmissionRpcBenchmarks*"
           --exporters json markdown
-          --artifacts artifacts/issue331-base
+          --artifacts artifacts/issue331-base-rpc
 
-      - name: Run exact-head Admission benchmarks
+      - name: Run reviewed-base Admission controller benchmarks
+        working-directory: base
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionControllerBenchmarks*"
+          --exporters json markdown
+          --artifacts artifacts/issue331-base-controller
+
+      - name: Run exact-head Admission RPC benchmarks
         working-directory: head
         run: >-
           dotnet run -c Release
           --project test/SharpLink.Benchmarks
           --
-          --filter "*Admission*"
+          --filter "*AdmissionRpcBenchmarks*"
           --exporters json markdown
-          --artifacts artifacts/issue331-head
+          --artifacts artifacts/issue331-head-rpc
+
+      - name: Run exact-head Admission controller benchmarks
+        working-directory: head
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionControllerBenchmarks*"
+          --exporters json markdown
+          --artifacts artifacts/issue331-head-controller
 
       - name: Upload Admission benchmark evidence
         if: always()
@@ -71,7 +91,9 @@ jobs:
           name: issue331-admission-benchmark-${{ github.event.pull_request.head.sha }}
           path: |
             evidence
-            base/artifacts/issue331-base
-            head/artifacts/issue331-head
+            base/artifacts/issue331-base-rpc
+            base/artifacts/issue331-base-controller
+            head/artifacts/issue331-head-rpc
+            head/artifacts/issue331-head-controller
           if-no-files-found: warn
           retention-days: 30
