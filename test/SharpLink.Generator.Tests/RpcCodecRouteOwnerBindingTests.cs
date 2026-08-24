@@ -106,6 +106,9 @@ public sealed class SelectorAdapter : TestRouteAdapterBase
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SelectorAdapter), \"selector.baseline/v1\", \"selector-baseline-wire/v1\", SelectorAttributeType = typeof(BaselineSelectorAttribute))]");
 
         var sources = RunGeneratorAndGetSources(source);
+        var generated = string.Join("\n", sources);
+        Ensure(generated.Contains("selector.baseline/v1", StringComparison.Ordinal),
+            "the selector Adapter must be selected for the payload");
         var manifest = sources.Single(static item => item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         var globalStart = manifest.IndexOf("__codecs =", StringComparison.Ordinal);
         var contractStart = manifest.IndexOf("__contractCodecs =", StringComparison.Ordinal);
@@ -113,9 +116,9 @@ public sealed class SelectorAdapter : TestRouteAdapterBase
             "generated manifest must expose separate global/default and Contract-owned Codec tables");
         var globalSection = manifest.Substring(globalStart, contractStart - globalStart);
         var contractSection = manifest.Substring(contractStart);
-        Ensure(globalSection.Contains("selector.baseline/v1", StringComparison.Ordinal),
-            "an intrinsic selector Adapter is part of the default generated provider so runtime UseCodec<T> can still override it");
-        Ensure(!contractSection.Contains("selector.baseline/v1", StringComparison.Ordinal),
+        Ensure(globalSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal),
+            "an intrinsic selector Adapter factory must stay in the default generated provider so runtime UseCodec<T> can still override it");
+        Ensure(!contractSection.Contains("__SharpLinkGeneratedContractPolicyCodec_", StringComparison.Ordinal),
             "an intrinsic selector Adapter must not be mistaken for owner-specific Contract policy");
         return Task.CompletedTask;
     }
