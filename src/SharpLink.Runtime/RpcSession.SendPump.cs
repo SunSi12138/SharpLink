@@ -272,9 +272,10 @@ internal sealed partial class RpcSession
                         // WriteFrame/FlushAsync must still release the frame and complete its
                         // flush waiter through the terminal ReleaseBatch in the finally block.
                         pending.Add(frame);
+                        var hasTimeBudget = HasTimeBudget(frame);
                         if (!deferWrites)
                         {
-                            if (HasTimeBudget(frame))
+                            if (hasTimeBudget)
                                 deferWrites = true;
                             else
                             {
@@ -284,7 +285,12 @@ internal sealed partial class RpcSession
                         }
                         bytesAccumulated += frame.Length;
 
-                        if (frame.ForceFlush ||
+                        // A deadline-bearing Request is a publication boundary. Its private
+                        // monotonic timestamp is converted only after its output span/copy has
+                        // completed, and no later frame may perform local work before the flush
+                        // that publishes that budget snapshot.
+                        if (hasTimeBudget ||
+                            frame.ForceFlush ||
                             _flushMode == FlushMode.LowLatency ||
                             bytesAccumulated >= _flushSizeThreshold)
                         {
@@ -435,6 +441,12 @@ internal sealed partial class RpcSession
             var budgetOffset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
             var deadlineTimestamp = BinaryPrimitives.ReadInt64LittleEndian(
                 source.Slice(budgetOffset, sizeof(long)));
+
+            // GetSpan/copy are still local pre-publication work and may be supplied by a
+            // custom PipeWriter. Finish that work before sampling the remaining budget so
+            // it cannot silently extend the peer's lifetime.
+            var destination = _output.GetSpan(source.Length);
+            source.CopyTo(destination);
             var remaining = RpcDeadline.GetRemaining(
                 deadlineTimestamp,
                 _timeProvider.GetTimestamp(),
@@ -443,8 +455,6 @@ internal sealed partial class RpcSession
                 return false;
 
             SharpLinkTelemetry.RecordSentBytes(source.Length);
-            var destination = _output.GetSpan(source.Length);
-            source.CopyTo(destination);
             BinaryPrimitives.WriteInt64LittleEndian(
                 destination.Slice(budgetOffset, sizeof(long)),
                 remaining.Ticks);
