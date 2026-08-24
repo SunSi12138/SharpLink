@@ -15,29 +15,89 @@ namespace SharpLink.Benchmarks;
 public class AdmissionRpcBenchmarks
 {
     private BenchmarkEnvironment _disabled = null!;
-    private BenchmarkEnvironment _immediate = null!;
+    private BenchmarkEnvironment _buildTimeImmediate = null!;
+    private BenchmarkEnvironment _runtimeImmediate = null!;
+    private BenchmarkEnvironment _afterConcurrencyResize = null!;
+    private BenchmarkEnvironment _afterQueuePolicyUpdates = null!;
 
     [GlobalSetup]
     public async Task Setup()
     {
         _disabled = await BenchmarkEnvironment.CreateAsync();
-        _immediate = await BenchmarkEnvironment.CreateAsync(
+        _buildTimeImmediate = await BenchmarkEnvironment.CreateAsync(
             configureServer: builder => builder.UseAdmissionControl(
                 options => options.Global.UseConcurrency(1024)));
+        _runtimeImmediate = await BenchmarkEnvironment.CreateAsync(
+            configureBuiltServer: server => server.EnableAdmissionControl(
+                options => options.Global.UseConcurrency(1024)));
+        _afterConcurrencyResize = await BenchmarkEnvironment.CreateAsync(
+            configureBuiltServer: server =>
+            {
+                server.EnableAdmissionControl(options => options.Global.UseConcurrency(1024));
+                for (var index = 0; index < 64; index++)
+                {
+                    var permitLimit = (index & 1) == 0 ? 2048 : 1024;
+                    server.UpdateAdmissionControl(options =>
+                        options.Global.UseConcurrency(permitLimit));
+                }
+            });
+        _afterQueuePolicyUpdates = await BenchmarkEnvironment.CreateAsync(
+            configureBuiltServer: server =>
+            {
+                server.EnableAdmissionControl(options => ConfigureQueuePolicy(options, 128, 1024 * 1024, 1));
+                for (var index = 0; index < 64; index++)
+                {
+                    var expanded = (index & 1) == 0;
+                    server.UpdateAdmissionControl(options => ConfigureQueuePolicy(
+                        options,
+                        expanded ? 256 : 128,
+                        expanded ? 2 * 1024 * 1024 : 1024 * 1024,
+                        expanded ? 2 : 1));
+                }
+            });
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
         await _disabled.DisposeAsync();
-        await _immediate.DisposeAsync();
+        await _buildTimeImmediate.DisposeAsync();
+        await _runtimeImmediate.DisposeAsync();
+        await _afterConcurrencyResize.DisposeAsync();
+        await _afterQueuePolicyUpdates.DisposeAsync();
     }
 
     [Benchmark(Baseline = true)]
     public ValueTask<int> Disabled() => _disabled.Rpc.AddAsync(10, 20);
 
     [Benchmark]
-    public ValueTask<int> ImmediatePermit() => _immediate.Rpc.AddAsync(10, 20);
+    public ValueTask<int> BuildTimeEnabledImmediatePermit()
+        => _buildTimeImmediate.Rpc.AddAsync(10, 20);
+
+    [Benchmark]
+    public ValueTask<int> RuntimeEnabledImmediatePermit()
+        => _runtimeImmediate.Rpc.AddAsync(10, 20);
+
+    [Benchmark]
+    public ValueTask<int> SteadyStateAfterRepeatedConcurrencyResize()
+        => _afterConcurrencyResize.Rpc.AddAsync(10, 20);
+
+    [Benchmark]
+    public ValueTask<int> SteadyStateAfterRepeatedQueuePolicyUpdates()
+        => _afterQueuePolicyUpdates.Rpc.AddAsync(10, 20);
+
+    private static void ConfigureQueuePolicy(
+        SharpLinkAdmissionControlOptions options,
+        int maxQueuedCalls,
+        long maxQueuedBytes,
+        int maxQueueDelaySeconds)
+    {
+        options.Global.UseConcurrency(1024);
+        options.MaxQueuedCalls = maxQueuedCalls;
+        options.MaxQueuedBytes = maxQueuedBytes;
+        options.MaxQueueDelay = TimeSpan.FromSeconds(maxQueueDelaySeconds);
+        options.QueueOneWayCalls = (maxQueuedCalls & 1) == 0;
+    }
 }
 
 [MemoryDiagnoser]
