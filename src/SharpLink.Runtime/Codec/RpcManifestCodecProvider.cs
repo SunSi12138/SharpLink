@@ -133,8 +133,15 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
         if (ReferenceEquals(registration.Owner, _owner))
             return true;
         var dependencyIdentity = registration.Owner.Manifest.OwnerAssembly.FullName;
-        return dependencyIdentity is not null &&
-               _owner.Manifest.Dependencies.Contains(dependencyIdentity, StringComparer.Ordinal);
+        if (dependencyIdentity is null)
+            return false;
+        var dependencies = _owner.Manifest.Dependencies;
+        for (var index = 0; index < dependencies.Count; index++)
+        {
+            if (string.Equals(dependencies[index], dependencyIdentity, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
     }
 
     private bool IsPublishedGeneratedCandidate<T>(
