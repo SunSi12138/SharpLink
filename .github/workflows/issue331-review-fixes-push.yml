@@ -131,12 +131,24 @@ jobs:
           timeout 120s dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
           -c Release --no-build -- --timeout 30s
 
+      - name: Commit and push reviewed fixes
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/SharpLink.Server/Admission/AdmissionStateKernel.cs src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs
+          git commit -m "Address issue 331 review feedback (Actions ${GITHUB_RUN_ID})"
+          mkdir -p artifacts/review-evidence
+          git rev-parse HEAD | tee artifacts/review-evidence/head-sha.txt
+          printf '%s\n' "$GITHUB_RUN_ID" > artifacts/review-evidence/run-id.txt
+          git push origin HEAD:issue-331-dynamic-admission-update
+
       - name: Prepare reviewed base worktree
         shell: bash
         run: |
           git fetch --no-tags --depth=1 origin c1c68580e3337bf640c5c677cce829cae592f423
           git worktree add /tmp/issue331-reviewed-base c1c68580e3337bf640c5c677cce829cae592f423
-          mkdir -p artifacts/review-base-rpc artifacts/review-base-controller artifacts/review-head-rpc artifacts/review-head-controller artifacts/review-evidence
+          mkdir -p artifacts/review-base-rpc artifacts/review-base-controller artifacts/review-head-rpc artifacts/review-head-controller
           printf '%s\n' c1c68580e3337bf640c5c677cce829cae592f423 > artifacts/review-evidence/base-sha.txt
 
       - name: Benchmark reviewed base RPC
@@ -151,18 +163,8 @@ jobs:
       - name: Benchmark review-fixed head controller
         run: dotnet run -c Release --project test/SharpLink.Benchmarks -- --filter "*AdmissionControllerBenchmarks*" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/artifacts/review-head-controller"
 
-      - name: Commit and push reviewed fixes
-        shell: bash
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/SharpLink.Server/Admission/AdmissionStateKernel.cs src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs
-          git commit -m "Address issue 331 review feedback"
-          git rev-parse HEAD | tee artifacts/review-evidence/head-sha.txt
-          git push origin HEAD:issue-331-dynamic-admission-update
-
       - name: Upload review evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: issue331-review-fix-evidence-${{ github.run_id }}
@@ -172,5 +174,16 @@ jobs:
             artifacts/review-base-controller
             artifacts/review-head-rpc
             artifacts/review-head-controller
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
+
+      - name: Record repair failure for diagnosis
+        if: failure()
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          printf 'run_id=%s\nlocal_head=%s\n' "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" > .github/issue331-review-fix-failure.txt
+          git add .github/issue331-review-fix-failure.txt
+          git commit -m "Record issue 331 repair failure (Actions ${GITHUB_RUN_ID})" || true
+          git push origin HEAD:issue-331-dynamic-admission-update || true
