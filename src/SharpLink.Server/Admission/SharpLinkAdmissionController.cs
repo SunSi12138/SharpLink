@@ -281,19 +281,19 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 catch (OperationCanceledException) when (
                     _draining.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    await DisposeLateLimiterLeaseAsync(waitTask).ConfigureAwait(false);
+                    ObserveLateLimiterLease(waitTask);
                     return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    await DisposeLateLimiterLeaseAsync(waitTask).ConfigureAwait(false);
+                    ObserveLateLimiterLease(waitTask);
                     throw;
                 }
 
                 if (!completedWithinDeadline)
                 {
                     waitCancellation.Cancel();
-                    await DisposeLateLimiterLeaseAsync(waitTask).ConfigureAwait(false);
+                    ObserveLateLimiterLease(waitTask);
                     return deadlineLimitsWait
                         ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
                         : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
@@ -325,18 +325,30 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         }
     }
 
-    private static async ValueTask DisposeLateLimiterLeaseAsync(Task<RateLimitLease> waitTask)
+    private static void ObserveLateLimiterLease(Task<RateLimitLease> waitTask)
     {
-        try
+        if (waitTask.IsCompleted)
         {
-            var lateLease = await waitTask.ConfigureAwait(false);
-            lateLease.Dispose();
+            DisposeCompletedLimiterLease(waitTask);
+            return;
         }
-        catch
+
+        _ = waitTask.ContinueWith(
+            static completed => DisposeCompletedLimiterLease(completed),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private static void DisposeCompletedLimiterLease(Task<RateLimitLease> waitTask)
+    {
+        if (waitTask.Status == TaskStatus.RanToCompletion)
         {
-            // The admission wait already owns the terminal result. Observe a canceled or
-            // faulted limiter waiter without letting it replace that result.
+            waitTask.Result.Dispose();
+            return;
         }
+
+        _ = waitTask.Exception;
     }
 
     private bool TryReserveQueue(int retainedBytes, out string reason)
