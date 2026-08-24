@@ -408,7 +408,8 @@ internal sealed partial class SharpLinkServer
                     requestId,
                     decision,
                     oneWay: false,
-                    connection.ConnectionToken).ConfigureAwait(false);
+                    callState: callState,
+                    cancellationToken: connection.ConnectionToken).ConfigureAwait(false);
                 return;
             }
 
@@ -482,8 +483,17 @@ internal sealed partial class SharpLinkServer
         long requestId,
         AdmissionDecision decision,
         bool oneWay,
+        ServerCallCancellationState? callState = null,
         CancellationToken cancellationToken = default)
     {
+        if (!oneWay && callState is not null && !callState.TryClaimResponse())
+        {
+            return session.SendRpcErrorWithBackpressureAsync(
+                requestId,
+                MapServerCancellationException(callState, callState.Deadline),
+                cancellationToken);
+        }
+
         var scope = decision.Scope ?? "server";
         var reason = decision.Reason ?? "unknown";
         var resourceExhaustionReason = GetAdmissionResourceExhaustionReason(reason);
@@ -513,6 +523,22 @@ internal sealed partial class SharpLinkServer
         return session.SendRpcErrorWithBackpressureAsync(
             requestId,
             rejection,
+            cancellationToken);
+    }
+
+    private ValueTask PublishAdmissionError(
+        RpcSession session,
+        long requestId,
+        ServerCallCancellationState callState,
+        SharpLinkException admissionError,
+        CancellationToken cancellationToken)
+    {
+        var terminalError = callState.TryClaimResponse()
+            ? admissionError
+            : MapServerCancellationException(callState, callState.Deadline);
+        return session.SendRpcErrorWithBackpressureAsync(
+            requestId,
+            terminalError,
             cancellationToken);
     }
 

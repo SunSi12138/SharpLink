@@ -101,14 +101,17 @@ internal sealed partial class SharpLinkServer
                 ValueTask responseSend;
                 try
                 {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
+                    responseSend = PublishAdmissionError(
+                        session,
                         requestId,
+                        admittedCallState,
                         new SharpLinkException(
                             SharpLinkErrorCode.Internal,
                             "The admission partition selector failed.",
                             exception),
                         connection.ConnectionToken);
-                    SharpLinkTelemetry.RecordAdmissionRejected("partition", "partition_selector");
+                    if (admittedCallState.Reason == ServerCallCancellationReason.Completed)
+                        SharpLinkTelemetry.RecordAdmissionRejected("partition", "partition_selector");
                 }
                 finally
                 {
@@ -147,7 +150,8 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         decision,
                         oneWay: false,
-                        connection.ConnectionToken);
+                        callState: admittedCallState,
+                        cancellationToken: connection.ConnectionToken);
                 }
                 finally
                 {
