@@ -9,6 +9,8 @@ namespace SharpLink.Server;
 /// </summary>
 internal sealed class ResizableConcurrencyState : RateLimiter
 {
+    private const long UnversionedTarget = long.MinValue;
+
     private readonly Lock _gate = new();
     private readonly AdmissionStateKernel? _targetVersionOwner;
     private Waiter? _waiterHead;
@@ -16,7 +18,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     private int _waitingCount;
     private int _permitLimit;
     private int _active;
-    private int _grantScheduled;
     private int _disposed;
 
     internal ResizableConcurrencyState(
@@ -55,35 +56,39 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         }
     }
 
+    internal bool TracksTargetVersion => _targetVersionOwner is not null;
+
+    /// <summary>Deterministic test seam before an immediate acquisition inspects this state.</summary>
+    internal Action? BeforeAttemptAcquireForTests { get; set; }
+
+    /// <summary>
+    /// Deterministic test seam after a stable grant version is read but before the state lock is
+    /// acquired. Production grant correctness must survive an update starting in this interval.
+    /// </summary>
+    internal Action? AfterStableGrantVersionReadForTests { get; set; }
+
     public override TimeSpan? IdleDuration => null;
 
     public override RateLimiterStatistics? GetStatistics() => null;
 
+    internal bool IsLeaseFromTargetVersion(RateLimitLease lease, long targetVersion)
+        => lease is ConcurrencyLease concurrencyLease &&
+           ReferenceEquals(concurrencyLease.State, this) &&
+           concurrencyLease.TargetVersion == targetVersion;
+
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
         ValidatePermitCount(permitCount);
-        var versionOwner = _targetVersionOwner;
-        if (versionOwner is null)
-            return AttemptAcquireStableCore();
+        BeforeAttemptAcquireForTests?.Invoke();
 
-        while (true)
-        {
-            var version = versionOwner.ReadStableConcurrencyTargetVersion();
-            var lease = AttemptAcquireStableCore();
-            if (versionOwner.IsConcurrencyTargetVersionCurrent(version))
-                return lease;
-
-            // This lease has not escaped to the request yet. If it overlapped the target commit,
-            // discard it and retry so transient mixed targets cannot become an admitted holder.
-            lease.Dispose();
-        }
+        // The complete AdmissionRequest owns the reader-visible target-version transaction. Keep
+        // this limiter's immediate path BCL-shaped and allocation-minimal; the request validates one
+        // stable epoch across every Global / Contract / Method slot before exposing the lease set.
+        return AttemptAcquireStableCore();
     }
 
     private RateLimitLease AttemptAcquireStableCore()
     {
-        // Match the BCL ConcurrencyLimiter hot-path shape: obvious exhaustion does not need the
-        // state lock. A stale permissive read only falls through to the locked recheck; a failure
-        // linearizes while active is at or above the observed target.
         if (Volatile.Read(ref _disposed) != 0 ||
             Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit))
         {
@@ -100,7 +105,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 return FailedLease.Instance;
 
             _active++;
-            return new ConcurrencyLease(this);
+            return new ConcurrencyLease(this, UnversionedTarget);
         }
     }
 
@@ -109,43 +114,69 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         CancellationToken cancellationToken)
     {
         ValidatePermitCount(permitCount);
-        var versionOwner = _targetVersionOwner;
-        if (versionOwner is null)
-            return AcquireAsyncStableCore(cancellationToken, out _);
-        return AcquireVersionAwareAsync(versionOwner, cancellationToken);
-    }
-
-    private async ValueTask<RateLimitLease> AcquireVersionAwareAsync(
-        AdmissionStateKernel versionOwner,
-        CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            var version = versionOwner.ReadStableConcurrencyTargetVersion();
-            var pending = AcquireAsyncStableCore(cancellationToken, out var queued);
-            var lease = await pending.ConfigureAwait(false);
-
-            // Queue waiters retain their exact FIFO position. Kernel-owned concurrency states defer
-            // every resize/release wake until the target epoch is stable, so a queued lease never
-            // comes from a transient mixed target set.
-            if (queued)
-                return lease;
-
-            if (versionOwner.IsConcurrencyTargetVersionCurrent(version))
-                return lease;
-
-            lease.Dispose();
-        }
-    }
-
-    private ValueTask<RateLimitLease> AcquireAsyncStableCore(
-        CancellationToken cancellationToken,
-        out bool queued)
-    {
-        queued = false;
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled<RateLimitLease>(cancellationToken);
 
+        var versionOwner = _targetVersionOwner;
+        if (versionOwner is null)
+            return AcquireAsyncUnversioned(cancellationToken);
+
+        while (true)
+        {
+            var targetVersion = versionOwner.ReadStableConcurrencyTargetVersion();
+            Waiter? waiter = null;
+            RateLimitLease? immediateLease = null;
+
+            lock (_gate)
+            {
+                if (_disposed != 0)
+                    return ValueTask.FromResult<RateLimitLease>(FailedLease.Instance);
+
+                if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                    continue;
+
+                if (_waitingCount == 0 && _active < _permitLimit)
+                {
+                    _active++;
+                    immediateLease = new ConcurrencyLease(this, targetVersion);
+
+                    // If the writer opened an epoch after the first check but before the permit was
+                    // committed, roll this unexposed permit back and retry under a complete policy.
+                    if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                    {
+                        immediateLease.Dispose();
+                        immediateLease = null;
+                        continue;
+                    }
+                }
+                else
+                {
+                    // Queue membership itself is policy-neutral and survives target changes. The
+                    // eventual grant is version-tagged and atomically authorized below.
+                    waiter = new Waiter(this, cancellationToken);
+                    EnqueueWaiterLocked(waiter);
+                }
+            }
+
+            if (immediateLease is not null)
+                return ValueTask.FromResult(immediateLease);
+
+            if (waiter is null)
+                continue;
+
+            if (cancellationToken.CanBeCanceled)
+            {
+                var registration = cancellationToken.UnsafeRegister(
+                    static state => ((Waiter)state!).Owner.CancelWaiter((Waiter)state!),
+                    waiter);
+                waiter.SetRegistration(registration);
+            }
+            return new ValueTask<RateLimitLease>(waiter.Task);
+        }
+    }
+
+    private ValueTask<RateLimitLease> AcquireAsyncUnversioned(CancellationToken cancellationToken)
+    {
         Waiter waiter;
         lock (_gate)
         {
@@ -155,12 +186,12 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_waitingCount == 0 && _active < _permitLimit)
             {
                 _active++;
-                return ValueTask.FromResult<RateLimitLease>(new ConcurrencyLease(this));
+                return ValueTask.FromResult<RateLimitLease>(
+                    new ConcurrencyLease(this, UnversionedTarget));
             }
 
             waiter = new Waiter(this, cancellationToken);
             EnqueueWaiterLocked(waiter);
-            queued = true;
         }
 
         if (cancellationToken.CanBeCanceled)
@@ -174,33 +205,31 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     }
 
     /// <summary>
-    /// Commits a prevalidated target. Existing holders remain valid. Increasing capacity grants the
-    /// oldest eligible queued Requests immediately after the complete target commit becomes stable;
-    /// shrinking waits for natural releases.
+    /// Commits a prevalidated target. Existing holders remain valid. Kernel-owned states never
+    /// grant here because Update keeps the shared epoch odd across every physical resize and the
+    /// N+1 publication; CompleteConcurrencyTargetCommit performs the synchronous FIFO wake.
     /// </summary>
     internal void Resize(int permitLimit)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(permitLimit);
         Waiter? granted = null;
-        var deferGrant = false;
         lock (_gate)
         {
             if (_disposed != 0)
                 throw new ObjectDisposedException(nameof(ResizableConcurrencyState));
             _permitLimit = permitLimit;
             if (_targetVersionOwner is null)
-            {
-                granted = GrantWaitersLocked();
-            }
-            else
-            {
-                deferGrant = _waitingCount != 0 && _active < _permitLimit;
-            }
+                granted = GrantWaitersLocked(UnversionedTarget);
         }
         CompleteGranted(granted);
-        if (deferGrant)
-            ScheduleGrantAfterTargetCommit();
     }
+
+    /// <summary>
+    /// Flushes capacity after the complete shared target epoch is stable. This is synchronous so an
+    /// enabled increase has updated ActiveCount / FIFO waiter ownership before Update returns.
+    /// </summary>
+    internal void GrantWaitersAfterTargetCommit()
+        => GrantWaitersForStableTarget();
 
     protected override void Dispose(bool disposing)
     {
@@ -221,77 +250,134 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 
     private void ReleasePermit()
     {
-        Waiter? granted = null;
-        var grantAfterStableTarget = false;
         lock (_gate)
         {
             if (_active <= 0)
                 throw new InvalidOperationException("Admission concurrency permit count underflowed.");
             _active--;
-            if (_disposed == 0)
+            if (_disposed != 0)
+                return;
+        }
+
+        // A release can race an update even when this state is not resized. Its waiter grant must
+        // therefore use the same stable-version authorization as the post-update flush.
+        GrantWaitersForStableTarget();
+    }
+
+    private void GrantWaitersForStableTarget()
+    {
+        var versionOwner = _targetVersionOwner;
+        if (versionOwner is null)
+        {
+            Waiter? granted;
+            lock (_gate)
             {
-                if (_targetVersionOwner is null)
-                    granted = GrantWaitersLocked();
-                else
-                    grantAfterStableTarget = _waitingCount != 0 && _active < _permitLimit;
+                if (_disposed != 0)
+                    return;
+                granted = GrantWaitersLocked(UnversionedTarget);
             }
-        }
-        CompleteGranted(granted);
-
-        if (!grantAfterStableTarget)
+            CompleteGranted(granted);
             return;
-
-        // A release may race a multi-scope target commit even when this particular state is not
-        // resized. Do not wake its waiter against an intermediate target set; wait for the stable
-        // epoch, then grant under the normal FIFO state lock.
-        _targetVersionOwner!.ReadStableConcurrencyTargetVersion();
-        lock (_gate)
-        {
-            if (_disposed == 0)
-                granted = GrantWaitersLocked();
         }
-        CompleteGranted(granted);
-    }
 
-    private void ScheduleGrantAfterTargetCommit()
-    {
-        if (Interlocked.Exchange(ref _grantScheduled, 1) != 0)
+        while (true)
+        {
+            var targetVersion = versionOwner.ReadStableConcurrencyTargetVersion();
+            AfterStableGrantVersionReadForTests?.Invoke();
+
+            Waiter? granted = null;
+            var retry = false;
+            lock (_gate)
+            {
+                if (_disposed != 0)
+                    return;
+
+                // Close the read-even -> lock window: an update that opened after the first read
+                // invalidates this grant attempt before any waiter is removed from FIFO.
+                if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                {
+                    retry = true;
+                }
+                else
+                {
+                    granted = GrantWaitersLocked(targetVersion);
+
+                    // Close the lock -> grant window as well. If the writer opened the epoch while
+                    // permits were being assigned, restore every waiter to the exact FIFO prefix and
+                    // retry after the complete policy becomes stable. If the writer starts after
+                    // this check, this check is the grant's linearization point under the old epoch.
+                    if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
+                    {
+                        RollbackGrantedWaitersLocked(granted);
+                        granted = null;
+                        retry = true;
+                    }
+                }
+            }
+
+            if (retry)
+                continue;
+
+            CompleteGranted(granted);
             return;
-        ThreadPool.UnsafeQueueUserWorkItem(
-            static state => state.GrantAfterTargetCommit(),
-            this,
-            preferLocal: false);
-    }
-
-    private void GrantAfterTargetCommit()
-    {
-        _targetVersionOwner!.ReadStableConcurrencyTargetVersion();
-
-        Waiter? granted = null;
-        lock (_gate)
-        {
-            Volatile.Write(ref _grantScheduled, 0);
-            if (_disposed == 0)
-                granted = GrantWaitersLocked();
         }
-        CompleteGranted(granted);
     }
 
-    private Waiter? GrantWaitersLocked()
+    private Waiter? GrantWaitersLocked(long targetVersion)
     {
         Waiter? grantedHead = null;
         Waiter? grantedTail = null;
         while (_active < _permitLimit && _waiterHead is not null)
         {
             var waiter = DequeueWaiterLocked();
+            waiter.GrantTargetVersion = targetVersion;
             _active++;
             if (grantedTail is null)
                 grantedHead = waiter;
             else
+            {
                 grantedTail.Next = waiter;
+                waiter.Previous = grantedTail;
+            }
             grantedTail = waiter;
         }
         return grantedHead;
+    }
+
+    private void RollbackGrantedWaitersLocked(Waiter? granted)
+    {
+        if (granted is null)
+            return;
+
+        var count = 0;
+        Waiter? tail = null;
+        for (var waiter = granted; waiter is not null; waiter = waiter.Next)
+        {
+            waiter.IsQueued = true;
+            waiter.Previous = tail;
+            waiter.GrantTargetVersion = UnversionedTarget;
+            tail = waiter;
+            count++;
+        }
+
+        if (tail is null)
+            return;
+
+        if (_waiterHead is null)
+        {
+            _waiterTail = tail;
+        }
+        else
+        {
+            tail.Next = _waiterHead;
+            _waiterHead.Previous = tail;
+        }
+        granted.Previous = null;
+        _waiterHead = granted;
+        _waitingCount += count;
+        _active -= count;
+        if (_active < 0)
+            throw new InvalidOperationException("Admission concurrency permit rollback underflowed.");
     }
 
     private void CancelWaiter(Waiter waiter)
@@ -373,8 +459,9 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         while (granted is not null)
         {
             var next = granted.Next;
+            granted.Previous = null;
             granted.Next = null;
-            granted.CompleteGranted(this);
+            granted.CompleteGranted(this, granted.GrantTargetVersion);
             granted = next;
         }
     }
@@ -384,6 +471,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         while (failed is not null)
         {
             var next = failed.Next;
+            failed.Previous = null;
             failed.Next = null;
             failed.CompleteFailed();
             failed = next;
@@ -409,6 +497,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         internal Waiter? Previous { get; set; }
         internal Waiter? Next { get; set; }
         internal bool IsQueued { get; set; }
+        internal long GrantTargetVersion { get; set; } = UnversionedTarget;
 
         internal void SetRegistration(CancellationTokenRegistration registration)
         {
@@ -417,12 +506,12 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 registration.Dispose();
         }
 
-        internal void CompleteGranted(ResizableConcurrencyState state)
+        internal void CompleteGranted(ResizableConcurrencyState state, long targetVersion)
         {
             if (Interlocked.Exchange(ref _completed, 1) != 0)
                 return;
             _registration.Dispose();
-            TrySetResult(new ConcurrencyLease(state));
+            TrySetResult(new ConcurrencyLease(state, targetVersion));
         }
 
         internal void CompleteCanceled()
@@ -442,9 +531,14 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         }
     }
 
-    private sealed class ConcurrencyLease(ResizableConcurrencyState owner) : RateLimitLease
+    private sealed class ConcurrencyLease(
+        ResizableConcurrencyState state,
+        long targetVersion) : RateLimitLease
     {
-        private ResizableConcurrencyState? _owner = owner;
+        private ResizableConcurrencyState? _owner = state;
+
+        internal ResizableConcurrencyState State { get; } = state;
+        internal long TargetVersion { get; } = targetVersion;
 
         public override bool IsAcquired => true;
 
