@@ -390,7 +390,7 @@ public interface IGraphService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task AdapterIdentityChangeWithStableWireFormatShouldRemainCompatible()
+    public Task AdapterIdentityChangeWithStableWireFormatShouldBeRejected()
     {
         var baselineSource = AdapterContractSource();
         var baseline = RunContractGenerator(baselineSource).Json;
@@ -400,8 +400,8 @@ public interface IGraphService : SharpLink.Sdk.IService
 
         var changed = RunContractGenerator(changedSource, baseline);
 
-        Ensure(!changed.Diagnostics.Any(IsCompatibilityDiagnostic),
-            $"Adapter implementation and ID changes are compatible when wireFormatId is stable. Diagnostics: {FormatDiagnostics(changed.Diagnostics)}");
+        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"Adapter implementation and ID changes must compare SchemaId even when wireFormatId is stable. Diagnostics: {FormatDiagnostics(changed.Diagnostics)}");
         return Task.CompletedTask;
     }
 
