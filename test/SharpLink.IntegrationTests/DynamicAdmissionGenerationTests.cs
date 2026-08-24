@@ -76,8 +76,8 @@ public class DynamicAdmissionGenerationTests
         var held = await original.Controller.AcquireAsync(
             CreateAdmissionContext(), 1, allowQueue: false, CancellationToken.None);
         Ensure(held.IsAcquired, "test must occupy generation N");
-        var replacementController = CreateController(options => options.Global.UseConcurrency(1));
-        var replacement = new AdmissionProgram(replacementController);
+        var replacement = harness.Server.CreateAdmissionProgramForTests(
+            options => options.Global.UseConcurrency(2));
         AdmissionProgram? captured = null;
         var hookCount = 0;
 
@@ -111,9 +111,8 @@ public class DynamicAdmissionGenerationTests
         finally
         {
             SharpLinkServer.AfterAdmissionCaptureForTests = null;
-            harness.Server.PublishAdmissionProgramForTests(original);
+            harness.Server.PublishAdmissionProgramForTests(null);
             held.Lease?.Dispose();
-            await replacementController.DisposeAsync();
         }
     }
 
@@ -125,9 +124,9 @@ public class DynamicAdmissionGenerationTests
     {
         TestService.ResetNotify();
         await using var harness = await Harness.CreateAsync();
-        var replacementController = CreateController(options => options.Global.UseConcurrency(1));
-        var replacement = new AdmissionProgram(replacementController);
-        var held = await replacementController.AcquireAsync(
+        var replacement = harness.Server.CreateAdmissionProgramForTests(
+            options => options.Global.UseConcurrency(1));
+        var held = await replacement.Controller.AcquireAsync(
             CreateAdmissionContext(), 1, allowQueue: false, CancellationToken.None);
         Ensure(held.IsAcquired, "test must occupy the replacement enabled generation");
         AdmissionProgram? captured = replacement;
@@ -173,7 +172,6 @@ public class DynamicAdmissionGenerationTests
             SharpLinkServer.AfterAdmissionCaptureForTests = null;
             harness.Server.PublishAdmissionProgramForTests(null);
             held.Lease?.Dispose();
-            await replacementController.DisposeAsync();
         }
     }
 
@@ -509,14 +507,6 @@ public class DynamicAdmissionGenerationTests
         Ensure(await harness.ClientA.Get<ITestService>().AddAsync(20, 22) == 42,
             "successful admitted request result");
         await AssertProgramReleasedAsync(program, "successful request terminal cleanup");
-    }
-
-    private static SharpLinkAdmissionController CreateController(
-        Action<SharpLinkAdmissionControlOptions> configure)
-    {
-        var options = new SharpLinkAdmissionControlOptions();
-        configure(options);
-        return SharpLinkAdmissionController.Create(options, []);
     }
 
     private static SharpLinkAdmissionContext CreateAdmissionContext()
