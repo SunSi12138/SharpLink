@@ -168,9 +168,9 @@ internal sealed class ClientConnection :
         if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
-        await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
         try
         {
+            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
             while (true)
             {
                 // MoveNextAsync is user-code re-entry. Claim progress before invoking it so an
