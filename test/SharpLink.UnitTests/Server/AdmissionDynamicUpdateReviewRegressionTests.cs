@@ -8,27 +8,129 @@ namespace SharpLink.UnitTests.Server;
 public sealed class AdmissionDynamicUpdateReviewRegressionTests
 {
     [Test]
-    public async Task MultiScopeResizeShouldHaveOneReaderVisibleCommitBoundary()
+    public async Task MultiScopeRequestShouldNotCombineLeasesAcrossTargetEpochs()
     {
+        const int requestCount = 8;
         await using var server = CreateServer();
         var publicServer = (ISharpLinkServer)server;
         publicServer.EnableAdmissionControl(options =>
         {
-            options.Global.UseConcurrency(1);
-            options.AddContract(101, rule => rule.UseConcurrency(100));
+            options.Global.UseConcurrency(100);
+            options.AddContract(101, rule => rule.UseConcurrency(1));
         });
+
+        var source = Current(server);
+        var sourceUse = source.TryAcquireUse();
+        Ensure(sourceUse, "test must retain generation N while requests straddle publication");
+        var global = source.Controller.GlobalConcurrencyStateForTests!;
+        var contract = source.Controller.ContractConcurrencyStateForTests(101)!;
+        using var allAtContract = new CountdownEvent(requestCount);
+        using var releaseContract = new ManualResetEventSlim();
+        var arrivals = 0;
+        contract.BeforeAttemptAcquireForTests = () =>
+        {
+            var arrival = Interlocked.Increment(ref arrivals);
+            if (arrival > requestCount)
+                return;
+            allAtContract.Signal();
+            releaseContract.Wait();
+        };
+
+        AdmissionDecision[] decisions = [];
+        try
+        {
+            var requests = new Task<AdmissionDecision>[requestCount];
+            for (var index = 0; index < requests.Length; index++)
+            {
+                requests[index] = Task.Run(async () => await source.Controller.AcquireAsync(
+                    CreateContext(), 1, false, CancellationToken.None));
+            }
+
+            Ensure(allAtContract.Wait(TimeSpan.FromSeconds(5)),
+                "every request must acquire Global under N and stop immediately before Contract");
+            Ensure(global.ActiveCount == requestCount && contract.ActiveCount == 0,
+                "barrier must reproduce the cross-slot prefix acquired under N");
+
+            // N = Global 100 / Contract 1 -> N+1 = Global 1 / Contract 100. A per-limiter
+            // epoch check allows all request prefixes to keep N's Global permits and then acquire
+            // N+1's Contract permits. The request-level transaction must instead roll back every
+            // cross-epoch prefix and retry the complete slot set under one stable target version.
+            publicServer.UpdateAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.AddContract(101, rule => rule.UseConcurrency(100));
+            });
+            Ensure(global.PermitLimit == 1 && contract.PermitLimit == 100,
+                "generation N+1 must be fully published before the Contract barrier opens");
+
+            contract.BeforeAttemptAcquireForTests = null;
+            releaseContract.Set();
+            decisions = await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(5));
+
+            var acquired = 0;
+            var rejected = 0;
+            foreach (var decision in decisions)
+            {
+                if (decision.IsAcquired)
+                    acquired++;
+                else if (decision.Reason == "concurrency")
+                    rejected++;
+            }
+            Ensure(acquired == 1 && rejected == requestCount - 1,
+                "a request may linearize only to complete N or complete N+1; the cross-epoch combination must not admit all prefixes");
+            Ensure(global.ActiveCount == 1 && contract.ActiveCount == 1,
+                "only the single N+1 request may own the final Global/Contract capacity");
+        }
+        finally
+        {
+            contract.BeforeAttemptAcquireForTests = null;
+            releaseContract.Set();
+            foreach (var decision in decisions)
+                decision.Lease?.Dispose();
+            if (sourceUse)
+                source.ReleaseUse();
+        }
+
+        Ensure(global.ActiveCount == 0 && contract.ActiveCount == 0,
+            "cross-epoch regression must leave both shared concurrency states drained");
+    }
+
+    [Test]
+    public async Task QueuedGrantShouldRecheckEpochUnderLimiterLock()
+    {
+        await using var server = CreateServer();
+        var publicServer = (ISharpLinkServer)server;
+        publicServer.EnableAdmissionControl(options => ConfigureQueuedScopes(
+            options,
+            globalConcurrency: 1,
+            contractConcurrency: 2));
+
         var source = Current(server);
         var kernel = source.Kernel;
         var global = source.Controller.GlobalConcurrencyStateForTests!;
         var contract = source.Controller.ContractConcurrencyStateForTests(101)!;
         var holder = await source.Controller.AcquireAsync(
-            CreateContext(), 1, false, CancellationToken.None);
-        Ensure(holder.IsAcquired && global.ActiveCount == 1 && contract.ActiveCount == 1,
-            "generation N must occupy the old Global limit before the cross-scope resize");
+            CreateContext(), 1, true, CancellationToken.None);
+        var queued = source.Controller.AcquireAsync(
+            CreateContext(), 1, true, CancellationToken.None).AsTask();
+        await WaitUntilAsync(
+            () => kernel.QueuedCalls == 1 && global.WaitingCount == 1,
+            "second request must own the outer queue reservation and wait on Global");
 
+        using var grantVersionRead = new ManualResetEventSlim();
+        using var allowGrantLock = new ManualResetEventSlim();
+        using var grantObservedOdd = new ManualResetEventSlim();
         using var firstResize = new ManualResetEventSlim();
         using var releaseResize = new ManualResetEventSlim();
-        using var readerObserved = new ManualResetEventSlim();
+        var blockGrantOnce = 0;
+        global.AfterStableGrantVersionReadForTests = () =>
+        {
+            if (Interlocked.Exchange(ref blockGrantOnce, 1) != 0)
+                return;
+            grantVersionRead.Set();
+            allowGrantLock.Wait();
+        };
+        kernel.ConcurrencyTargetTransitionObservedForTests = () => grantObservedOdd.Set();
         kernel.AfterConcurrencyResizeForTests = (index, total) =>
         {
             if (index != 0 || total != 2)
@@ -36,40 +138,58 @@ public sealed class AdmissionDynamicUpdateReviewRegressionTests
             firstResize.Set();
             releaseResize.Wait();
         };
-        kernel.ConcurrencyTargetTransitionObservedForTests = () => readerObserved.Set();
 
         try
         {
-            var updateTask = Task.Run(() => publicServer.UpdateAdmissionControl(options =>
-            {
-                options.Global.UseConcurrency(100);
-                options.AddContract(101, rule => rule.UseConcurrency(1));
-            }));
-            Ensure(firstResize.Wait(TimeSpan.FromSeconds(5)),
-                "test must stop the writer after Global grows and before Contract shrinks");
-            Ensure(global.PermitLimit == 100 && contract.PermitLimit == 100,
-                "barrier must expose the intentionally mixed physical targets to the test");
+            var releaseHolder = Task.Run(() => holder.Lease!.Dispose());
+            Ensure(grantVersionRead.Wait(TimeSpan.FromSeconds(5)),
+                "release must read a stable grant epoch before it enters the Global limiter lock");
 
-            var requestTask = Task.Run(async () => await source.Controller.AcquireAsync(
-                CreateContext(), 1, false, CancellationToken.None));
-            Ensure(readerObserved.Wait(TimeSpan.FromSeconds(5)),
-                "request must observe that the concurrency target epoch is in transition");
-            Ensure(!requestTask.IsCompleted,
-                "request must not enter while physical target states are mixed");
+            var update = Task.Run(() => publicServer.UpdateAdmissionControl(options => ConfigureQueuedScopes(
+                options,
+                globalConcurrency: 2,
+                contractConcurrency: 1)));
+            Ensure(firstResize.Wait(TimeSpan.FromSeconds(5)),
+                "writer must open the epoch and stop after Global resize but before Contract resize");
+            Ensure(global.PermitLimit == 2 && contract.PermitLimit == 2,
+                "test must expose the physical mixed target interval");
+
+            // The original bug read even, then another writer opened odd before this lock. The
+            // second version read under the limiter lock must reject that stale authorization and
+            // leave the FIFO waiter resident until the complete policy becomes stable.
+            allowGrantLock.Set();
+            Ensure(grantObservedOdd.Wait(TimeSpan.FromSeconds(5)),
+                "grant path must notice that its previously read epoch became stale");
+            Ensure(!queued.IsCompleted && global.WaitingCount == 1,
+                "queued lease must not escape while the target set is physically mixed");
 
             releaseResize.Set();
-            await updateTask.WaitAsync(TimeSpan.FromSeconds(5));
-            var decision = await requestTask.WaitAsync(TimeSpan.FromSeconds(5));
-            Ensure(!decision.IsAcquired && decision.Reason == "concurrency",
-                "after the atomic target commit the Contract target of one must reject behind the holder");
+            await update.WaitAsync(TimeSpan.FromSeconds(5));
+            await releaseHolder.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Ensure(global.PermitLimit == 2 && contract.PermitLimit == 1,
+                "update must publish the complete N+1 target set");
+            Ensure(global.WaitingCount == 0 && global.ActiveCount == 1,
+                "post-commit flush must synchronously transfer the newly available Global permit to the oldest waiter before Update returns");
+
+            var admitted = await queued.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(admitted.IsAcquired && contract.ActiveCount == 1,
+                "the queued request may complete only after its versioned Global grant composes with N+1 Contract");
+            admitted.Lease!.Dispose();
         }
         finally
         {
+            allowGrantLock.Set();
             releaseResize.Set();
-            kernel.AfterConcurrencyResizeForTests = null;
+            global.AfterStableGrantVersionReadForTests = null;
             kernel.ConcurrencyTargetTransitionObservedForTests = null;
+            kernel.AfterConcurrencyResizeForTests = null;
             holder.Lease?.Dispose();
         }
+
+        Ensure(kernel.QueuedCalls == 0 && kernel.QueuedBytes == 0 &&
+               global.ActiveCount == 0 && contract.ActiveCount == 0,
+            "queued grant race regression must drain queue and concurrency accounting exactly");
     }
 
     [Test]
@@ -161,6 +281,32 @@ public sealed class AdmissionDynamicUpdateReviewRegressionTests
 
     private static SharpLinkAdmissionContext CreateContext()
         => new(101, 202, RpcMethodKind.Unary, "dynamic-update-review", null, null, null);
+
+    private static void ConfigureQueuedScopes(
+        SharpLinkAdmissionControlOptions options,
+        int globalConcurrency,
+        int contractConcurrency)
+    {
+        options.Global.UseConcurrency(globalConcurrency);
+        options.AddContract(101, rule => rule.UseConcurrency(contractConcurrency));
+        options.MaxQueuedCalls = 1;
+        options.MaxQueuedBytes = 1024;
+        options.MaxQueueDelay = TimeSpan.FromMinutes(1);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string scenario)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (!condition())
+                await Task.Delay(10, timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new Exception($"assert failed: {scenario}");
+        }
+    }
 
     private static void Ensure(bool condition, string scenario)
     {
