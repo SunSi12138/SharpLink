@@ -121,13 +121,13 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private static void ValidateGeneratedManifestCompatibility(ISharpLinkGeneratedAssemblyManifest manifest)
     {
         if (manifest.ApiVersion == SharpLinkGeneratedManifestVersions.Api &&
-  manifest.ProtocolVersion == SharpLinkGeneratedManifestVersions.Protocol)
+            manifest.ProtocolVersion == SharpLinkGeneratedManifestVersions.Protocol)
         {
             return;
         }
         throw new InvalidOperationException(
-  $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
-  $"API={manifest.ApiVersion}, Protocol={manifest.ProtocolVersion}, Generator={manifest.GeneratorVersion}.");
+            $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
+            $"API={manifest.ApiVersion}, Protocol={manifest.ProtocolVersion}, Generator={manifest.GeneratorVersion}.");
     }
 
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedCodecSnapshot()
@@ -148,16 +148,13 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             if (!_manifestRegistrations.Add(registration))
                 return;
             var provider = RpcGeneratedCodecResolver.GetProvider(registration);
-            if (ReferenceEquals(provider, registration.BaseProvider))
-                return;
             if (!_manifestCodecProviders.TryAdd(
                     registration.Manifest.OwnerAssembly,
                     provider))
-
             {
                 _manifestRegistrations.Remove(registration);
                 throw new InvalidOperationException(
-                    $"A manifest-scoped Codec provider for assembly '{registration.Manifest.OwnerAssembly.FullName}' is already registered in this runtime context.");
+                    $"A manifest-owned Codec provider for assembly '{registration.Manifest.OwnerAssembly.FullName}' is already registered in this runtime context.");
             }
         }
     }
@@ -173,11 +170,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            foreach (var registration in _manifestRegistrations)
-            {
-                if (ReferenceEquals(registration.Manifest.OwnerAssembly, ownerAssembly))
-                    return registration.ContractCodecProvider;
-            }
+            if (_manifestCodecProviders.TryGetValue(ownerAssembly, out var provider))
+                return provider;
         }
 
         var loadedPolicyOwner = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
@@ -191,11 +185,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            foreach (var registration in _manifestRegistrations)
-            {
-                if (ReferenceEquals(registration.Manifest.OwnerAssembly, ownerAssembly))
-                    return registration.ContractCodecProvider;
-            }
+            if (_manifestCodecProviders.TryGetValue(ownerAssembly, out var provider))
+                return provider;
         }
 
         throw new InvalidOperationException(
@@ -226,9 +217,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         lock (_registrationGate)
         {
             _manifestRegistrations.Remove(registration);
-            if (registration.HasContractCodecs)
-                _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
-
+            _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
         }
         registration.Dispose();
     }
