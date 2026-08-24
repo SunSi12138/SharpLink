@@ -229,7 +229,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             {
                 // Exact-source validation has already won the writer. Keep the reader-visible epoch
                 // odd across every physical target resize and the N+1 pointer write. Request paths
-                // never take this writer lock; concurrency states retry/defer while the epoch is odd.
+                // never take this writer lock; the complete request validates one stable epoch.
                 lifecycle.Kernel.BeginConcurrencyTargetCommit();
                 try
                 {
@@ -240,6 +240,12 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
                 {
                     lifecycle.Kernel.CompleteConcurrencyTargetCommit();
                 }
+
+                // Resizes intentionally do not grant while the epoch is odd. Flush the final
+                // generation synchronously after the N+1 pointer and complete target set are stable,
+                // so an increase wakes its oldest waiter before UpdateAdmissionControl returns.
+                foreach (var binding in replacement.Controller.RuleStateBindings)
+                    binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();
             }
             else
             {
