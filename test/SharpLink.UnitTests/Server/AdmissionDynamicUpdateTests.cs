@@ -802,7 +802,7 @@ public sealed class AdmissionDynamicUpdateTests
             throw new Exception($"assert failed: {scenario}");
     }
 
-    private enum RateKind
+    public enum RateKind
     {
         TokenBucket,
         FixedWindow,
