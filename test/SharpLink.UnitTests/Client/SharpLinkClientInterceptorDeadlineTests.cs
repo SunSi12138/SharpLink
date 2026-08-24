@@ -1,7 +1,8 @@
+using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
-using System.Buffers.Binary;
 using SharpLink.Client;
 using SharpLink.Sdk;
 using SharpLink.UnitTests.Runtime;
@@ -44,6 +45,46 @@ public class SharpLinkClientInterceptorDeadlineTests
             "a short-circuit path must not emit a request");
     }
 
+    [Test]
+    public async Task TelemetryStartShouldConsumeTheAlreadyFrozenLogicalDeadline()
+    {
+        var clock = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(clock);
+                builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
+            });
+        await client.ConnectAsync();
+
+        var advanced = 0;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => ReferenceEquals(source, SharpLinkTelemetry.ClientActivitySource),
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = static (ref ActivityCreationOptions<string> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStarted = _ =>
+            {
+                if (Interlocked.Exchange(ref advanced, 1) == 0)
+                    clock.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(3));
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var invocation = InvokeUnary(client).AsTask();
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var budgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
+        Ensure(budgetTicks == TimeSpan.FromSeconds(2).Ticks,
+            "telemetry callbacks must consume the deadline frozen at logical invocation entry");
+
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId), 42);
+        Ensure(await invocation == 42, "telemetry-frozen response");
+    }
 
     [Test]
     public async Task ShortCircuitStreamPendingMoveNextShouldBeInterruptedAtFrozenDeadline()
@@ -141,7 +182,6 @@ public class SharpLinkClientInterceptorDeadlineTests
             return exception;
         }
     }
-
 
     private sealed class BlockingStreamShortCircuitInterceptor : ISharpLinkClientInterceptor
     {
