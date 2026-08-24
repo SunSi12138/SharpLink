@@ -303,7 +303,7 @@ internal sealed class AdmissionRateState : IAdmissionLimiter, IDisposable
     internal static AdmissionRateState Create(SharpLinkAdmissionRuleOptions options)
     {
         var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
-        var limiter = options.RateLimit switch
+        RateLimiter limiter = options.RateLimit switch
         {
             SharpLinkTokenBucketLimitOptions tokenBucket => new TokenBucketRateLimiter(
                 new TokenBucketRateLimiterOptions
