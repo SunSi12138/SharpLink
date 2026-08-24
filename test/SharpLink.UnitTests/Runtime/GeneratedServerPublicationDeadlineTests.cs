@@ -8,13 +8,13 @@ public class GeneratedServerPublicationDeadlineTests
     [Test]
     public async Task UnsizedChunkShouldBeRejectedWhenSerializationCrossesDeadline()
         => await AssertSerializationCrossingDeadlineDoesNotPublishAsync(
-            new AdvancingIntCodec,
+            static timeProvider => new AdvancingIntCodec(timeProvider),
             "unsized");
 
     [Test]
     public async Task SizedChunkShouldBeRejectedWhenSerializationCrossesDeadline()
         => await AssertSerializationCrossingDeadlineDoesNotPublishAsync(
-            new AdvancingSizedIntCodec,
+            static timeProvider => new AdvancingSizedIntCodec(timeProvider),
             "sized");
 
     private static async Task AssertSerializationCrossingDeadlineDoesNotPublishAsync(
