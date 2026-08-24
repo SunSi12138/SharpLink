@@ -36,6 +36,9 @@ internal sealed partial class SharpLinkServer
 
     internal AdmissionStateKernel? AdmissionStateKernelForTests => _admissionController?.Kernel;
 
+    internal AdmissionProgram? CaptureAdmissionProgramForTests(long requestId = 0)
+        => CaptureAdmissionProgram(requestId);
+
     internal AdmissionProgram CreateAdmissionProgramForTests(
         Action<SharpLinkAdmissionControlOptions> configure)
     {
