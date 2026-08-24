@@ -138,16 +138,17 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 if (_waitingCount == 0 && _active < _permitLimit)
                 {
                     _active++;
-                    immediateLease = new ConcurrencyLease(this, targetVersion);
 
-                    // If the writer opened an epoch after the first check but before the permit was
-                    // committed, roll this unexposed permit back and retry under a complete policy.
+                    // Close the version-check -> counter-mutation window while still holding the
+                    // state lock. Roll back the unexposed counter directly rather than disposing a
+                    // lease and recursively entering the same lock.
                     if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
                     {
-                        immediateLease.Dispose();
-                        immediateLease = null;
+                        _active--;
                         continue;
                     }
+
+                    immediateLease = new ConcurrencyLease(this, targetVersion);
                 }
                 else
                 {
@@ -207,7 +208,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     /// <summary>
     /// Commits a prevalidated target. Existing holders remain valid. Kernel-owned states never
     /// grant here because Update keeps the shared epoch odd across every physical resize and the
-    /// N+1 publication; CompleteConcurrencyTargetCommit performs the synchronous FIFO wake.
+    /// N+1 publication; the publication path performs the synchronous FIFO wake once stable.
     /// </summary>
     internal void Resize(int permitLimit)
     {
@@ -292,8 +293,11 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 if (_disposed != 0)
                     return;
 
-                // Close the read-even -> lock window: an update that opened after the first read
-                // invalidates this grant attempt before any waiter is removed from FIFO.
+                // This second read closes the even-read -> state-lock window reported in review.
+                // If a writer opened the target epoch before this point, do not dequeue anything.
+                // If it opens after this point, this check is the grant's old-policy linearization
+                // point; the writer cannot resize this state until the state lock is released, and
+                // the complete AdmissionRequest still validates one epoch across all of its slots.
                 if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
                 {
                     retry = true;
@@ -301,17 +305,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 else
                 {
                     granted = GrantWaitersLocked(targetVersion);
-
-                    // Close the lock -> grant window as well. If the writer opened the epoch while
-                    // permits were being assigned, restore every waiter to the exact FIFO prefix and
-                    // retry after the complete policy becomes stable. If the writer starts after
-                    // this check, this check is the grant's linearization point under the old epoch.
-                    if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
-                    {
-                        RollbackGrantedWaitersLocked(granted);
-                        granted = null;
-                        retry = true;
-                    }
                 }
             }
 
@@ -335,49 +328,10 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (grantedTail is null)
                 grantedHead = waiter;
             else
-            {
                 grantedTail.Next = waiter;
-                waiter.Previous = grantedTail;
-            }
             grantedTail = waiter;
         }
         return grantedHead;
-    }
-
-    private void RollbackGrantedWaitersLocked(Waiter? granted)
-    {
-        if (granted is null)
-            return;
-
-        var count = 0;
-        Waiter? tail = null;
-        for (var waiter = granted; waiter is not null; waiter = waiter.Next)
-        {
-            waiter.IsQueued = true;
-            waiter.Previous = tail;
-            waiter.GrantTargetVersion = UnversionedTarget;
-            tail = waiter;
-            count++;
-        }
-
-        if (tail is null)
-            return;
-
-        if (_waiterHead is null)
-        {
-            _waiterTail = tail;
-        }
-        else
-        {
-            tail.Next = _waiterHead;
-            _waiterHead.Previous = tail;
-        }
-        granted.Previous = null;
-        _waiterHead = granted;
-        _waitingCount += count;
-        _active -= count;
-        if (_active < 0)
-            throw new InvalidOperationException("Admission concurrency permit rollback underflowed.");
     }
 
     private void CancelWaiter(Waiter waiter)
@@ -459,7 +413,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         while (granted is not null)
         {
             var next = granted.Next;
-            granted.Previous = null;
             granted.Next = null;
             granted.CompleteGranted(this, granted.GrantTargetVersion);
             granted = next;
@@ -471,7 +424,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         while (failed is not null)
         {
             var next = failed.Next;
-            failed.Previous = null;
             failed.Next = null;
             failed.CompleteFailed();
             failed = next;
