@@ -89,40 +89,48 @@ internal static class SharpLinkTimer
             if (deadline.IsExpired(timeProvider))
                 return false;
             if (task.IsCompleted)
-            {
-                await task.ConfigureAwait(false);
-                return true;
-            }
+                return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
 
             var timeout = deadline.GetRemaining(timeProvider);
             var slice = timeout > MaximumDelay ? MaximumDelay : timeout;
             try
             {
                 await task.WaitAsync(slice, timeProvider, cancellationToken).ConfigureAwait(false);
-                return true;
+                return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
             }
-            catch (TimeoutException)
-            {
-                if (task.IsCompleted)
-                {
-                    await task.ConfigureAwait(false);
-                    return true;
-                }
-                if (deadline.IsExpired(timeProvider))
-                    return false;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (TimeoutException) when (!task.IsCompleted)
             {
                 if (deadline.IsExpired(timeProvider))
                     return false;
+            }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested && !task.IsCompleted)
+            {
+                if (deadline.IsExpired(timeProvider))
+                    return false;
+                throw;
+            }
+            catch
+            {
                 if (task.IsCompleted)
-                {
-                    await task.ConfigureAwait(false);
-                    return true;
-                }
+                    return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
                 throw;
             }
         }
+    }
+
+    private static async ValueTask<bool> ClaimTaskCompletionAsync(
+        Task task,
+        RpcDeadline deadline,
+        TimeProvider timeProvider)
+    {
+        // Task.WaitAsync forwards source success, faults, and cancellation directly. Re-arbitrate
+        // every source terminal outcome at one boundary before observing/rethrowing it so a source
+        // task that becomes terminal after the RPC deadline cannot replace DeadlineExceeded.
+        if (deadline.IsExpired(timeProvider))
+            return false;
+        await task.ConfigureAwait(false);
+        return true;
     }
 
     internal static async ValueTask<bool> WaitAsync(
