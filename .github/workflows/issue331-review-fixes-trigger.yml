@@ -64,8 +64,30 @@ jobs:
       - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
+      - name: Atomic multi-scope regression
+        run: >-
+          timeout 40s dotnet test
+          --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Release --no-build --
+          --maximum-parallel-tests 1
+          --timeout 15s
+          --treenode-filter "/*/*/AdmissionDynamicUpdateMatrixTests/MultiScopeResizeShouldHaveOneReaderVisibleCommitBoundary"
+
+      - name: Re-enable lineage regression
+        run: >-
+          timeout 40s dotnet test
+          --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Release --no-build --
+          --maximum-parallel-tests 1
+          --timeout 15s
+          --treenode-filter "/*/*/AdmissionDynamicUpdateMatrixTests/DisableReenableShouldReuseMostRecentlyPublishedReaddedConcurrencyLineage"
+
       - name: Unit tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+        run: >-
+          timeout 120s dotnet test
+          --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Release --no-build --
+          --timeout 30s
 
       - name: Prepare reviewed base worktree
         shell: bash
