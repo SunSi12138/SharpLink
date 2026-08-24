@@ -1,4 +1,4 @@
-name: Issue 311 new review fixes v3
+name: Issue 311 contract codec binding refactor
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   patch-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -27,35 +27,342 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Apply corrected review fixes
+      - name: Apply contract codec binding refactor
         run: |
-          python - <<'PYRUN'
+          python - <<'PY'
           from pathlib import Path
+          import re
 
-          source = Path('.github/workflows/issue-311-new-review-fixes-v2.yml').read_text()
-          marker = "          python - <<'PY'\n"
-          start = source.index(marker) + len(marker)
-          end = source.index("\n          PY\n", start)
-          raw = source[start:end]
-          lines = raw.splitlines()
-          first = next(line for line in lines if line.strip())
-          indent = len(first) - len(first.lstrip())
-          prefix = ' ' * indent
-          script = '\n'.join(line[indent:] if line.startswith(prefix) else line for line in lines)
-          script = script.replace(
-              '    using System.Linq;\n    using System.Reflection;',
-              '    using System.Collections.Generic;\n    using System.Linq;\n    using System.Reflection;')
-          exec(compile(script, 'issue-311-new-review-fixes-v3.py', 'exec'), {'__name__': '__main__'})
-          PYRUN
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          def rep(path, old, new, count=1):
+              text = read(path)
+              actual = text.count(old)
+              if actual < count:
+                  raise RuntimeError(f"{path}: expected at least {count} occurrences, found {actual}: {old[:120]!r}")
+              write(path, text.replace(old, new, count))
+
+          def sub(path, pattern, replacement, count=1, flags=0):
+              text = read(path)
+              updated, actual = re.subn(pattern, replacement, text, count=count, flags=flags)
+              if actual != count:
+                  raise RuntimeError(f"{path}: regex expected {count}, found {actual}: {pattern[:120]!r}")
+              write(path, updated)
+
+          # Generator: analyze standalone and Contract codec graphs independently.
+          path = 'src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs'
+          rep(path,
+          '''    private static DtoGenerationResult AnalyzeGeneratedCodecs(\n        Compilation compilation,\n        CancellationToken cancellationToken)\n        => new DtoAnalysisState(compilation, cancellationToken).Analyze();\n''',
+          '''    private static DtoGenerationResult AnalyzeGeneratedCodecs(\n        Compilation compilation,\n        CancellationToken cancellationToken)\n    {\n        var standalone = new DtoAnalysisState(compilation, cancellationToken, contractMode: false).Analyze();\n        var contract = new DtoAnalysisState(compilation, cancellationToken, contractMode: true).Analyze();\n        var diagnostics = standalone.Diagnostics\n            .Concat(contract.Diagnostics)\n            .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))\n            .Select(static group => group.First())\n            .ToImmutableArray();\n        var enums = standalone.Enums\n            .Concat(contract.Enums)\n            .GroupBy(static item => item.TypeName, StringComparer.Ordinal)\n            .Select(static group => group.First())\n            .OrderBy(static item => item.TypeName, StringComparer.Ordinal)\n            .ToImmutableArray();\n        return new DtoGenerationResult(standalone.Codecs, contract.Codecs, diagnostics, enums);\n    }\n\n    private sealed record DtoAnalysisPassResult(\n        ImmutableArray<GeneratedCodecModel> Codecs,\n        ImmutableArray<DtoDiagnosticModel> Diagnostics,\n        ImmutableArray<GeneratedEnumModel> Enums);\n''')
+          rep(path,
+              '        private readonly CancellationToken _cancellationToken;\n',
+              '        private readonly CancellationToken _cancellationToken;\n        private readonly bool _contractMode;\n')
+          rep(path,
+          '''        public DtoAnalysisState(Compilation compilation, CancellationToken cancellationToken)\n        {\n            _compilation = compilation;\n            _cancellationToken = cancellationToken;\n''',
+          '''        public DtoAnalysisState(Compilation compilation, CancellationToken cancellationToken, bool contractMode)\n        {\n            _compilation = compilation;\n            _cancellationToken = cancellationToken;\n            _contractMode = contractMode;\n''')
+          rep(path,
+              '            CollectAssemblyRoutes();\n',
+              '            if (_contractMode)\n                CollectAssemblyRoutes();\n')
+          rep(path,
+          '''            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);\n            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots);\n            CollectReferencedContractRoots(roots);\n\n            foreach (var root in roots.OrderBy(static pair => pair.Key, StringComparer.Ordinal))\n            {\n                _cancellationToken.ThrowIfCancellationRequested();\n                Visit(root.Value, [], 0);\n            }\n\n            return new DtoGenerationResult(\n                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),\n                _diagnostics.ToImmutableArray(),\n                _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());\n''',
+          '''            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);\n            CollectCurrentAssemblyRoots(\n                _compilation.Assembly.GlobalNamespace,\n                roots,\n                includeSerializable: !_contractMode,\n                includeContracts: _contractMode);\n            if (_contractMode)\n                CollectReferencedContractRoots(roots);\n\n            foreach (var root in roots.OrderBy(static pair => pair.Key, StringComparer.Ordinal))\n            {\n                _cancellationToken.ThrowIfCancellationRequested();\n                Visit(root.Value, [], 0);\n            }\n\n            return new DtoAnalysisPassResult(\n                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),\n                _diagnostics.ToImmutableArray(),\n                _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());\n''')
+          rep(path,
+          '''        private void CollectCurrentAssemblyRoots(\n            INamespaceSymbol namespaceSymbol,\n            Dictionary<string, ITypeSymbol> roots)\n        {\n            foreach (var type in namespaceSymbol.GetTypeMembers())\n                CollectCurrentAssemblyRoots(type, roots);\n            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())\n                CollectCurrentAssemblyRoots(nestedNamespace, roots);\n        }\n\n        private void CollectCurrentAssemblyRoots(\n            INamedTypeSymbol type,\n            Dictionary<string, ITypeSymbol> roots)\n        {\n            if (HasAttribute(type, "SharpLink.Sdk", "RpcSerializableAttribute"))\n                AddRoot(roots, type);\n            if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))\n                CollectContractPayloadRoots(type, roots);\n\n            foreach (var nested in type.GetTypeMembers())\n                CollectCurrentAssemblyRoots(nested, roots);\n        }\n''',
+          '''        private void CollectCurrentAssemblyRoots(\n            INamespaceSymbol namespaceSymbol,\n            Dictionary<string, ITypeSymbol> roots,\n            bool includeSerializable,\n            bool includeContracts)\n        {\n            foreach (var type in namespaceSymbol.GetTypeMembers())\n                CollectCurrentAssemblyRoots(type, roots, includeSerializable, includeContracts);\n            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())\n                CollectCurrentAssemblyRoots(nestedNamespace, roots, includeSerializable, includeContracts);\n        }\n\n        private void CollectCurrentAssemblyRoots(\n            INamedTypeSymbol type,\n            Dictionary<string, ITypeSymbol> roots,\n            bool includeSerializable,\n            bool includeContracts)\n        {\n            if (includeSerializable && HasAttribute(type, "SharpLink.Sdk", "RpcSerializableAttribute"))\n                AddRoot(roots, type);\n            if (includeContracts && type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))\n                CollectContractPayloadRoots(type, roots);\n\n            foreach (var nested in type.GetTypeMembers())\n                CollectCurrentAssemblyRoots(nested, roots, includeSerializable, includeContracts);\n        }\n''')
+          rep(path,
+          '''            if (TrySelectContractCodecOverride(type, out var selectedAdapter))\n            {\n                if (selectedAdapter is not null)\n                    AddAdapterModel(type, typeName, selectedAdapter);\n                return;\n            }\n''',
+          '''            var hasSelectedOverride = _contractMode\n                ? TrySelectContractCodecOverride(type, out var selectedAdapter)\n                : TrySelectAdapter(type, out selectedAdapter);\n            if (hasSelectedOverride)\n            {\n                if (selectedAdapter is not null)\n                    AddAdapterModel(type, typeName, selectedAdapter);\n                return;\n            }\n''')
+          text = read(path).replace('GetCodecName(typeName),', 'GetCodecName(typeName, _contractMode),')
+          text = text.replace(
+              '        private static string GetCodecName(string typeName)\n            => "__SharpLinkGeneratedCodec_" + ComputeHash(typeName).ToString("X16", InvariantCulture);',
+              '        private static string GetCodecName(string typeName, bool contractMode)\n            => "__SharpLinkGeneratedCodec_" + ComputeHash((contractMode ? "contract|" : "standalone|") + typeName).ToString("X16", InvariantCulture);')
+          write(path, text)
+
+          path = 'src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs'
+          rep(path,
+              '        private readonly HashSet<ITypeSymbol> _manifestScopedSelections = new(SymbolEqualityComparer.Default);\n',
+              '')
+          rep(path, '            _manifestScopedSelections.Add(type);\n', '')
+          text = read(path).replace('GetCodecName(typeName),', 'GetCodecName(typeName, _contractMode),')
+          text = text.replace(',\n                IsManifestScoped: _manifestScopedSelections.Remove(type));', ');')
+          write(path, text)
+
+          path = 'src/SharpLink.Generator/RpcGenerator.Models.cs'
+          rep(path,
+          '''    ImmutableArray<string> AssemblyDependencies,\n    Location? Location,\n    bool IsManifestScoped = false);\n''',
+          '''    ImmutableArray<string> AssemblyDependencies,\n    Location? Location);\n''')
+          rep(path,
+          '''internal sealed record DtoGenerationResult(\n    ImmutableArray<GeneratedCodecModel> Codecs,\n    ImmutableArray<DtoDiagnosticModel> Diagnostics,\n    ImmutableArray<GeneratedEnumModel> Enums);\n''',
+          '''internal sealed record DtoGenerationResult(\n    ImmutableArray<GeneratedCodecModel> Codecs,\n    ImmutableArray<GeneratedCodecModel> ContractCodecs,\n    ImmutableArray<DtoDiagnosticModel> Diagnostics,\n    ImmutableArray<GeneratedEnumModel> Enums);\n''')
+          rep(path,
+              '        if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||\n            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)',
+              '        if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||\n            x.ContractCodecs.Length != y.ContractCodecs.Length ||\n            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)')
+          rep(path,
+          '''        for (var index = 0; index < x.Diagnostics.Length; index++)\n''',
+          '''        for (var index = 0; index < x.ContractCodecs.Length; index++)\n        {\n            if (!CodecEquals(x.ContractCodecs[index], y.ContractCodecs[index]))\n                return false;\n        }\n        for (var index = 0; index < x.Diagnostics.Length; index++)\n''')
+          rep(path,
+          '''            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));\n            hash = unchecked(hash * 31 + codec.IsManifestScoped.GetHashCode());\n        }\n        foreach (var diagnostic in obj.Diagnostics)\n''',
+          '''            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));\n        }\n        foreach (var codec in obj.ContractCodecs)\n        {\n            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));\n            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));\n        }\n        foreach (var diagnostic in obj.Diagnostics)\n''')
+          rep(path, '            left.IsManifestScoped != right.IsManifestScoped ||\n', '')
+
+          path = 'src/SharpLink.Generator/RpcGenerator.cs'
+          rep(path,
+          '''            if (!result.Codecs.IsDefaultOrEmpty)\n            {\n                spc.AddSource(\n                    "SharpLink.GeneratedCodecs.g.cs",\n                    SourceText.From(GenerateCodecs(result.Codecs), Encoding.UTF8));\n            }\n''',
+          '''            if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)\n            {\n                spc.AddSource(\n                    "SharpLink.GeneratedCodecs.g.cs",\n                    SourceText.From(GenerateCodecs(result.Codecs.AddRange(result.ContractCodecs)), Encoding.UTF8));\n            }\n''')
+          rep(path,
+              '            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs);',
+              '            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs, value.Right.ContractCodecs);')
+          rep(path,
+              '                value.Left.Right.Codecs,\n                value.Left.Right.Enums,',
+              '                value.Left.Right.ContractCodecs,\n                value.Left.Right.Enums,')
+
+          path = 'src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs'
+          rep(path,
+          '''        ImmutableArray<RpcServiceModel?> services,\n        ImmutableArray<GeneratedCodecModel> codecs)\n''',
+          '''        ImmutableArray<RpcServiceModel?> services,\n        ImmutableArray<GeneratedCodecModel> codecs,\n        ImmutableArray<GeneratedCodecModel> contractCodecs)\n''')
+          rep(path,
+              '        if (contracts.Length == 0 && serviceModels.Length == 0 && codecs.IsDefaultOrEmpty)\n            return string.Empty;',
+              '        if (contracts.Length == 0 && serviceModels.Length == 0 && codecs.IsDefaultOrEmpty && contractCodecs.IsDefaultOrEmpty)\n            return string.Empty;')
+          rep(path,
+          '''        var ownerType = contracts.Length != 0\n            ? contracts[0].FullName\n            : serviceModels.Length != 0 ? serviceModels[0].ServiceFullName : codecs[0].TypeName;\n''',
+          '''        var ownerType = contracts.Length != 0\n            ? contracts[0].FullName\n            : serviceModels.Length != 0\n                ? serviceModels[0].ServiceFullName\n                : !codecs.IsDefaultOrEmpty ? codecs[0].TypeName : contractCodecs[0].TypeName;\n''')
+          rep(path,
+              '            .Concat(codecs.SelectMany(static codec => codec.AssemblyDependencies))\n',
+              '            .Concat(codecs.SelectMany(static codec => codec.AssemblyDependencies))\n            .Concat(contractCodecs.SelectMany(static codec => codec.AssemblyDependencies))\n')
+          rep(path,
+              '        var compileTimeDescriptor = BuildCompileTimeDescriptor(contracts, serviceModels, codecs);',
+              '        var compileTimeDescriptor = BuildCompileTimeDescriptor(contracts, serviceModels, codecs, contractCodecs);')
+          rep(path,
+          '''        AppendCodecManifestArray(sb, codecs);\n        AppendManifestScopedCodecTargets(sb, codecs);\n''',
+          '''        AppendCodecManifestArray(sb, codecs);\n        AppendContractCodecManifestArray(sb, contractCodecs);\n''')
+          rep(path,
+          '''        sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyCodecs = Array.AsReadOnly(__codecs);");\n        sb.AppendLine("    private static readonly IReadOnlyList<Type> __readOnlyManifestScopedCodecTargets = Array.AsReadOnly(__manifestScopedCodecTargets);");\n        sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");\n        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");\n        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");\n        sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");\n        sb.AppendLine("    public IReadOnlyList<Type> ManifestScopedCodecTargets => __readOnlyManifestScopedCodecTargets;");\n        sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");\n''',
+          '''        sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyCodecs = Array.AsReadOnly(__codecs);");\n        sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyContractCodecs = Array.AsReadOnly(__contractCodecs);");\n        sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");\n        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");\n        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");\n        sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");\n        sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => __readOnlyContractCodecs;");\n        sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");\n''')
+          rep(path,
+              '            sb.AppendLine($"            static channel => new {GetGeneratedContractTypeName(contract, "Proxy")}(channel),");\n            sb.AppendLine($"            static () => new {GetGeneratedContractTypeName(contract, "Stub")}()),");',
+              '            sb.AppendLine($"            static (channel, codecs) => new {GetGeneratedContractTypeName(contract, "Proxy")}(channel, codecs),");\n            sb.AppendLine($"            static codecs => new {GetGeneratedContractTypeName(contract, "Stub")}(codecs)),");')
+          sub(path,
+              r'''    private static void AppendManifestScopedCodecTargets\(\n        StringBuilder sb,\n        ImmutableArray<GeneratedCodecModel> codecs\)\n    \{.*?\n    \}\n\n    private static string BuildCompileTimeDescriptor''',
+              '''    private static void AppendContractCodecManifestArray(\n        StringBuilder sb,\n        ImmutableArray<GeneratedCodecModel> codecs)\n    {\n        sb.AppendLine("    private static readonly IRpcGeneratedCodecFactory[] __contractCodecs = new IRpcGeneratedCodecFactory[]");\n        sb.AppendLine("    {");\n        foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))\n            sb.AppendLine($"        new {codec.CodecName}.Factory(),");\n        sb.AppendLine("    };");\n    }\n\n    private static string BuildCompileTimeDescriptor''',
+              flags=re.S)
+          rep(path,
+          '''        RpcInterfaceModel[] contracts,\n        RpcServiceModel[] services,\n        ImmutableArray<GeneratedCodecModel> codecs)\n''',
+          '''        RpcInterfaceModel[] contracts,\n        RpcServiceModel[] services,\n        ImmutableArray<GeneratedCodecModel> codecs,\n        ImmutableArray<GeneratedCodecModel> contractCodecs)\n''')
+          rep(path,
+          '''        foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))\n            sb.Append("D:").Append(codec.TypeName).Append(':').Append(codec.SchemaId).Append(';');\n        return sb.ToString();\n''',
+          '''        foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))\n            sb.Append("D:").Append(codec.TypeName).Append(':').Append(codec.SchemaId).Append(';');\n        foreach (var codec in contractCodecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))\n            sb.Append("K:").Append(codec.TypeName).Append(':').Append(codec.SchemaId).Append(';');\n        return sb.ToString();\n''')
+
+          # Generated manifest API: separate global and Contract codec bindings; factories receive owner provider.
+          path = 'src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs'
+          rep(path,
+          '''public sealed record SharpLinkGeneratedContractDescriptor(\n    Type ContractType,\n    string ContractName,\n    long ContractId,\n    string Fingerprint,\n    IReadOnlyList<SharpLinkGeneratedMethodDescriptor> Methods,\n    Func<IRpcChannel, object> ProxyFactory,\n    Func<IRpcStub> StubFactory);\n''',
+          '''public sealed record SharpLinkGeneratedContractDescriptor(\n    Type ContractType,\n    string ContractName,\n    long ContractId,\n    string Fingerprint,\n    IReadOnlyList<SharpLinkGeneratedMethodDescriptor> Methods,\n    Func<IRpcChannel, IRpcCodecProvider, object> ProxyFactory,\n    Func<IRpcCodecProvider, IRpcStub> StubFactory)\n{\n    /// <summary>Compatibility constructor for descriptors that do not own a Contract-specific Codec graph.</summary>\n    public SharpLinkGeneratedContractDescriptor(\n        Type contractType,\n        string contractName,\n        long contractId,\n        string fingerprint,\n        IReadOnlyList<SharpLinkGeneratedMethodDescriptor> methods,\n        Func<IRpcChannel, object> proxyFactory,\n        Func<IRpcStub> stubFactory)\n        : this(\n            contractType,\n            contractName,\n            contractId,\n            fingerprint,\n            methods,\n            (channel, _) => proxyFactory(channel),\n            _ => stubFactory())\n    {\n    }\n}\n''')
+          rep(path,
+          '''    /// <summary>\n    /// Gets generated Codec targets selected by an assembly-level route. These targets are\n    /// resolved only for artifacts owned by this manifest and are not published as context-global bindings.\n    /// </summary>\n    IReadOnlyList<Type> ManifestScopedCodecTargets => Array.Empty<Type>();\n''',
+          '''    /// <summary>\n    /// Gets Codec factories used only by RPC Contracts owned by this manifest. These bindings\n    /// are resolved through the Contract owner provider and are never published globally.\n    /// </summary>\n    IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => Array.Empty<IRpcGeneratedCodecFactory>();\n''')
+
+          path = 'src/SharpLink.Abstractions/IRpcRuntimeContext.cs'
+          rep(path, 'namespace SharpLink.Abstractions;\n', 'using System.Reflection;\n\nnamespace SharpLink.Abstractions;\n')
+          rep(path,
+          '''}\n\n/// <summary>Resolves codecs without relying on process-wide mutable configuration.</summary>\npublic interface IRpcCodecProvider\n''',
+          '''}\n\n/// <summary>Resolves the immutable Codec provider owned by one generated RPC Contract assembly.</summary>\npublic interface IRpcContractCodecProviderResolver\n{\n    /// <summary>Gets the Codec provider bound to <paramref name="ownerAssembly"/>.</summary>\n    IRpcCodecProvider GetContractCodecProvider(Assembly ownerAssembly);\n}\n\n/// <summary>Resolves codecs without relying on process-wide mutable configuration.</summary>\npublic interface IRpcCodecProvider\n''')
+
+          path = 'src/SharpLink.Abstractions/IRpcStub.cs'
+          rep(path,
+          '''    /// <summary>Binds the Codec provider selected for this generated Contract owner.</summary>\n    /// <param name="codecs">The construction-time Codec provider for this stub registration.</param>\n    void BindCodecProvider(IRpcCodecProvider codecs)\n    {\n    }\n\n''', '')
+
+          path = 'src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs'
+          rep(path,
+          '''        sb.AppendLine($"    public {model.Name}_Proxy(IRpcChannel channel)");\n        sb.AppendLine("    {");\n        sb.AppendLine("        ArgumentNullException.ThrowIfNull(channel);");\n        sb.AppendLine("        _channel = channel;");\n        sb.AppendLine($"        var __codecs = RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof({model.FullName}).Assembly);");\n''',
+          '''        sb.AppendLine($"    public {model.Name}_Proxy(IRpcChannel channel)");\n        sb.AppendLine($"        : this(channel, RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof({model.FullName}).Assembly))");\n        sb.AppendLine("    {");\n        sb.AppendLine("    }");\n        sb.AppendLine();\n        sb.AppendLine($"    internal {model.Name}_Proxy(IRpcChannel channel, IRpcCodecProvider __codecs)");\n        sb.AppendLine("    {");\n        sb.AppendLine("        ArgumentNullException.ThrowIfNull(channel);");\n        sb.AppendLine("        ArgumentNullException.ThrowIfNull(__codecs);");\n        sb.AppendLine("        _channel = channel;");\n''')
+
+          path = 'src/SharpLink.Generator/RpcGenerator.StubEmitter.cs'
+          rep(path, '        AppendStubCodecBinding(sb, model.Methods);\n', '        AppendStubCodecBinding(sb, model);\n')
+          rep(path,
+          '''    private static void AppendStubCodecBinding(StringBuilder sb, EquatableArray<RpcMethodModel> methods)\n    {\n        sb.AppendLine("    public void BindCodecProvider(IRpcCodecProvider codecs)");\n        sb.AppendLine("    {");\n        sb.AppendLine("        ArgumentNullException.ThrowIfNull(codecs);");\n        foreach (var method in methods)\n''',
+          '''    private static void AppendStubCodecBinding(StringBuilder sb, RpcInterfaceModel model)\n    {\n        sb.AppendLine($"    internal {model.Name}_Stub(IRpcCodecProvider codecs)");\n        sb.AppendLine("    {");\n        sb.AppendLine("        ArgumentNullException.ThrowIfNull(codecs);");\n        foreach (var method in model.Methods)\n''')
+
+          # Runtime registration: ContractCodecs is a separate map, never part of the global registry.
+          path = 'src/SharpLink.Runtime/Codec/RpcCodecProvider.cs'
+          rep(path,
+              '        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> allCodecs,\n        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs,',
+              '        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> contractCodecs,\n        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs,')
+          rep(path, '        AllCodecs = allCodecs;\n', '        ContractCodecs = contractCodecs;\n')
+          rep(path,
+          '''    /// <summary>Gets every Codec owned by this manifest, including assembly-routed targets.</summary>\n    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> AllCodecs { get; }\n''',
+          '''    /// <summary>Gets Codec bindings visible only to RPC Contracts owned by this manifest.</summary>\n    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> ContractCodecs { get; }\n''')
+          rep(path,
+              '    internal bool HasManifestScopedCodecs => Manifest.ManifestScopedCodecTargets.Count != 0;\n',
+              '    internal bool HasContractCodecs => ContractCodecs.Count != 0;\n')
+          rep(path, '            if (!HasManifestScopedCodecs)\n', '            if (!HasContractCodecs)\n')
+          sub(path,
+              r'''            var scopeByAdapterId = new Dictionary<string, AdapterScopeRegistration>\(StringComparer.Ordinal\);.*?            return registration;''',
+          '''            var scopeByAdapterId = new Dictionary<string, AdapterScopeRegistration>(StringComparer.Ordinal);\n            var allFactories = manifest.Codecs.Concat(manifest.ContractCodecs).ToArray();\n            foreach (var factory in allFactories.OrderBy(static factory => factory.AdapterId, StringComparer.Ordinal)\n                         .ThenBy(static factory => factory.WireFormatId, StringComparer.Ordinal)\n                         .ThenBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))\n            {\n                ValidateFactory(factory);\n                if (factory.AdapterId is null)\n                    continue;\n\n                var adapter = factory.Adapter!;\n                ValidateAdapter(factory, adapter);\n                if (scopeByAdapterId.TryGetValue(factory.AdapterId, out var existing))\n                {\n                    if (existing.Adapter.GetType() != adapter.GetType() ||\n                        !string.Equals(existing.WireFormatId, factory.WireFormatId, StringComparison.Ordinal))\n                    {\n                        throw new InvalidOperationException(\n                            $"Adapter '{factory.AdapterId}' has inconsistent implementation or wire-format metadata in manifest '{manifest.OwnerAssembly.FullName}'.");\n                    }\n                    continue;\n                }\n\n                var scope = adapter.CreateScope() ?? throw new InvalidOperationException(\n                    $"Adapter '{factory.AdapterId}' returned a null scope.");\n                scopes.Add(scope);\n                scopeByAdapterId.Add(factory.AdapterId,\n                    new AdapterScopeRegistration(adapter, factory.WireFormatId, scope));\n            }\n\n            var ownerBox = new OwnerBox();\n            var publishedCodecs = CreateRegistrations(manifest.Codecs);\n            var contractCodecs = CreateRegistrations(manifest.ContractCodecs);\n            var registration = new RpcGeneratedManifestRegistration(\n                manifest,\n                contractCodecs,\n                publishedCodecs,\n                provider,\n                [.. scopes]);\n            ownerBox.Value = registration;\n            return registration;\n\n            Dictionary<Type, RpcGeneratedCodecRegistration> CreateRegistrations(\n                IReadOnlyList<IRpcGeneratedCodecFactory> factories)\n            {\n                var registrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();\n                foreach (var factory in factories.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))\n                {\n                    IRpcCodec? preparedCodec = null;\n                    if (factory.AdapterId is not null)\n                    {\n                        var scope = scopeByAdapterId[factory.AdapterId].Scope;\n                        preparedCodec = factory.Create(provider, scope) ?? throw new InvalidOperationException(\n                            $"Generated Codec factory for '{factory.TargetType.FullName}' returned null.");\n                        ValidateCodec(factory, preparedCodec);\n                    }\n                    if (!registrations.TryAdd(\n                            factory.TargetType,\n                            new RpcGeneratedCodecRegistration(ownerBox, factory, preparedCodec)))\n                    {\n                        throw new InvalidOperationException(\n                            $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}' in one binding scope.");\n                    }\n                }\n                return registrations;\n            }''',
+              flags=re.S)
+
+          path = 'src/SharpLink.Runtime/Codec/RpcManifestCodecProvider.cs'
+          rep(path,
+          '''        return runtimeContext is SharpLinkRuntimeContext sharpLinkContext\n  ? sharpLinkContext.GetManifestCodecProvider(ownerAssembly)\n  : runtimeContext.Codecs;\n''',
+          '''        if (runtimeContext is IRpcContractCodecProviderResolver resolver)\n            return resolver.GetContractCodecProvider(ownerAssembly);\n        throw new NotSupportedException(\n            $"Runtime context '{runtimeContext.GetType().FullName}' must implement {nameof(IRpcContractCodecProviderResolver)} to construct generated Contract artifacts.");\n''')
+          rep(path, '_owner.AllCodecs.TryGetValue(targetType, out var registration)', '_owner.ContractCodecs.TryGetValue(targetType, out var registration)')
+
+          path = 'src/SharpLink.Runtime/SharpLinkRuntimeContext.cs'
+          rep(path,
+              'public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable',
+              'public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCodecProviderResolver, IDisposable')
+          rep(path,
+          '''                foreach (var pair in owner.Codecs)\n                {\n                    if (IsManifestScoped(owner.Manifest, pair.Key))\n                        continue;\n''',
+          '''                foreach (var pair in owner.Codecs)\n                {\n''')
+          rep(path, '        ValidateManifestScopedCodecTargets(manifest);\n', '')
+          sub(path,
+              r'''    internal void PublishGeneratedCodecs\(IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations\)\n    \{.*?\n    \}\n\n    internal void AdoptGeneratedManifest''',
+          '''    internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)\n    {\n        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);\n        ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);\n    }\n\n    internal void AdoptGeneratedManifest''',
+              flags=re.S)
+          rep(path,
+          '''    internal IRpcCodecProvider GetManifestCodecProvider(System.Reflection.Assembly ownerAssembly)\n    {\n''',
+          '''    IRpcCodecProvider IRpcContractCodecProviderResolver.GetContractCodecProvider(System.Reflection.Assembly ownerAssembly)\n        => GetManifestCodecProvider(ownerAssembly);\n\n    internal IRpcCodecProvider GetManifestCodecProvider(System.Reflection.Assembly ownerAssembly)\n    {\n''')
+          rep(path, '            if (registration.HasManifestScopedCodecs)\n', '            if (registration.HasContractCodecs)\n')
+          sub(path,
+              r'''\n    private static bool IsManifestScoped\(.*?\n    \}\n\n    // This process-wide fallback''',
+              '\n    // This process-wide fallback',
+              flags=re.S)
+
+          # Registry-owned Proxy/Stub construction injects the Contract provider directly.
+          path = 'src/SharpLink.Client/SharpLinkClient.cs'
+          rep(path,
+              '        _proxies = BuildStaticProxySnapshot(_staticManifests);\n',
+              '        _proxies = BuildStaticProxySnapshot(_staticManifests, _runtimeContext);\n')
+
+          path = 'src/SharpLink.Client/SharpLinkClient.Lifecycle.cs'
+          rep(path,
+              '            return (T)registration.Descriptor.ProxyFactory(channel);\n',
+              '            return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);\n')
+
+          path = 'src/SharpLink.Client/SharpLinkClient.Assemblies.cs'
+          rep(path,
+          '''    private static FrozenDictionary<Type, ClientProxyRegistration> BuildStaticProxySnapshot(\n        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)\n''',
+          '''    private static FrozenDictionary<Type, ClientProxyRegistration> BuildStaticProxySnapshot(\n        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,\n        SharpLinkRuntimeContext runtimeContext)\n''')
+          rep(path,
+              '                registrations.Add(contract.ContractType, new ClientProxyRegistration(contract, null));\n',
+              '                registrations.Add(contract.ContractType, new ClientProxyRegistration(\n                    contract,\n                    null,\n                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, manifest.OwnerAssembly)));\n')
+          rep(path,
+              '            var registration = new ClientProxyRegistration(contract, module);\n',
+              '            var registration = new ClientProxyRegistration(\n                contract,\n                module,\n                RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration));\n')
+          rep(path,
+          '''    private sealed record ClientProxyRegistration(\n        SharpLinkGeneratedContractDescriptor Descriptor,\n        SharpLinkDynamicModule? Module);\n''',
+          '''    private sealed record ClientProxyRegistration(\n        SharpLinkGeneratedContractDescriptor Descriptor,\n        SharpLinkDynamicModule? Module,\n        IRpcCodecProvider Codecs);\n''')
+
+          path = 'src/SharpLink.Server/SharpLinkServerBuilder.cs'
+          rep(path,
+              '            var definitions = BuildServiceDefinitions(manifests, serviceProvider);\n',
+              '            var definitions = BuildServiceDefinitions(manifests, serviceProvider, runtimeContext);\n')
+          rep(path,
+          '''            foreach (var pair in definitions)\n            {\n                pair.Value.Stub.BindCodecProvider(\n                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, pair.Value.ContractType.Assembly));\n                var registration = pair.Value.Build(serviceProvider);\n''',
+          '''            foreach (var pair in definitions)\n            {\n                var registration = pair.Value.Build(serviceProvider);\n''')
+          rep(path,
+          '''    private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(\n        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,\n        IServiceProvider serviceProvider)\n''',
+          '''    private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(\n        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,\n        IServiceProvider serviceProvider,\n        SharpLinkRuntimeContext runtimeContext)\n''')
+          text = read(path).replace(
+              'contract.Descriptor.StubFactory(),',
+              'contract.Descriptor.StubFactory(RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.Manifest.OwnerAssembly)),')
+          write(path, text)
+
+          path = 'src/SharpLink.Server/SharpLinkServer.Assemblies.cs'
+          rep(path,
+          '''                var stub = contract.Contract.StubFactory();\n                var stubCodecs = ReferenceEquals(contract.Manifest.OwnerAssembly, incoming.OwnerAssembly)\n          ? RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration)\n          : RpcGeneratedCodecResolver.GetProvider(_runtimeContext, contract.Manifest.OwnerAssembly);\n\n                stub.BindCodecProvider(stubCodecs);\n''',
+          '''                var stubCodecs = ReferenceEquals(contract.Manifest.OwnerAssembly, incoming.OwnerAssembly)\n                    ? RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration)\n                    : RpcGeneratedCodecResolver.GetProvider(_runtimeContext, contract.Manifest.OwnerAssembly);\n                var stub = contract.Contract.StubFactory(stubCodecs);\n''')
+
+          path = 'src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs'
+          rep(path,
+          '''        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => source.Codecs;\n        public IReadOnlyList<Type> ManifestScopedCodecTargets => source.ManifestScopedCodecTargets;\n        public IReadOnlyList<string> Dependencies => source.Dependencies;\n''',
+          '''        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => source.Codecs;\n        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => source.ContractCodecs;\n        public IReadOnlyList<string> Dependencies => source.Dependencies;\n''')
+
+          path = 'src/SharpLink.Runtime/SharpLinkDynamicModule.cs'
+          rep(path,
+              '            manifest.Codecs is null || manifest.Dependencies is null)',
+              '            manifest.Codecs is null || manifest.ContractCodecs is null || manifest.Dependencies is null)')
+
+          # Contract manifest v2 requires codec kind/schema identity; legacy v1 baselines must be regenerated.
+          path = 'src/SharpLink.Generator/RpcGenerator.ContractManifest.cs'
+          rep(path, '    private const int ContractManifestFormatVersion = 1;\n', '    private const int ContractManifestFormatVersion = 2;\n')
+
+          # Update owner-scoping regressions to the new ContractCodecs model.
+          path = 'test/SharpLink.UnitTests/Runtime/RpcManifestCodecProviderTests.cs'
+          rep(path,
+          '''            Codecs =\n            [\n                new NativeFactory<Envelope>(static provider => new EnvelopeCodec(provider), "nested-envelope-native"),\n                new NativeFactory<List<Point>>(static provider => new PointListCodec(provider), "nested-list-native"),\n                new RoutedPointFactory(new PointAdapter(routedPoint))\n            ];\n''',
+          '''            ContractCodecs =\n            [\n                new NativeFactory<Envelope>(static provider => new EnvelopeCodec(provider), "nested-envelope-native"),\n                new NativeFactory<List<Point>>(static provider => new PointListCodec(provider), "nested-list-native"),\n                new RoutedPointFactory(new PointAdapter(routedPoint))\n            ];\n''')
+          rep(path,
+          '''        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }\n        public IReadOnlyList<Type> ManifestScopedCodecTargets => [typeof(Point)];\n        public IReadOnlyList<string> Dependencies => [];\n''',
+          '''        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];\n        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; }\n        public IReadOnlyList<string> Dependencies => [];\n''')
+          insert = '''\n    [Test]\n    public void ContractOwnedCodecBindingsShouldCoexistForSameClrType()\n    {\n        var ownerA = typeof(RpcManifestCodecProviderTests).Assembly;\n        var ownerB = typeof(SharpLinkRuntimeContext).Assembly;\n        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);\n        var codecA = new NamedContractCodec("A");\n        var codecB = new NamedContractCodec("B");\n        var registrationA = context.PrepareGeneratedManifest(new ContractCodecManifest(ownerA, codecA, "contract-a"));\n        var registrationB = context.PrepareGeneratedManifest(new ContractCodecManifest(ownerB, codecB, "contract-b"));\n        context.AdoptGeneratedManifest(registrationA);\n        context.AdoptGeneratedManifest(registrationB);\n\n        Ensure(ReferenceEquals(RpcGeneratedCodecResolver.GetProvider(context, ownerA).GetCodec<ContractValue>(), codecA),\n            "Contract owner A must resolve its own binding for the shared CLR type");\n        Ensure(ReferenceEquals(RpcGeneratedCodecResolver.GetProvider(context, ownerB).GetCodec<ContractValue>(), codecB),\n            "Contract owner B must resolve its own binding for the shared CLR type");\n        var global = context.Codecs.GetCodec<ContractValue>();\n        Ensure(!ReferenceEquals(global, codecA) && !ReferenceEquals(global, codecB),\n            "Contract-owned bindings must never be published to the global Type -> Codec registry");\n    }\n\n    [Test]\n    public void CustomRuntimeMustExposeContractCodecResolution()\n    {\n        try\n        {\n            _ = RpcGeneratedCodecResolver.GetProvider(\n                new CustomRuntimeContext(),\n                typeof(RpcManifestCodecProviderTests).Assembly);\n        }\n        catch (NotSupportedException exception)\n        {\n            Ensure(exception.Message.Contains(nameof(IRpcContractCodecProviderResolver), StringComparison.Ordinal),\n                "custom runtimes must receive a deterministic owner-resolution requirement");\n            return;\n        }\n\n        throw new Exception("Expected a custom IRpcRuntimeContext without owner resolution to be rejected.");\n    }\n'''
+          rep(path, '    [Test]\n    public void RuntimeContextBuildShouldRejectPreviousGeneratedManifestApi()\n', insert + '\n    [Test]\n    public void RuntimeContextBuildShouldRejectPreviousGeneratedManifestApi()\n')
+          rep(path,
+              '    private readonly record struct NoRouteValue(int Value);\n',
+              '    private readonly record struct NoRouteValue(int Value);\n    private readonly record struct ContractValue(int Value);\n')
+          append_types = '''\n    private sealed class NamedContractCodec(string name) : IRpcCodec<ContractValue>\n    {\n        internal string Name { get; } = name;\n        public void Serialize(in ContractValue value, IBufferWriter<byte> buffer) { }\n        public ContractValue Deserialize(in ReadOnlySequence<byte> buffer) => default;\n    }\n\n    private sealed class ContractCodecManifest(Assembly ownerAssembly, NamedContractCodec codec, string schemaId)\n        : ISharpLinkGeneratedAssemblyManifest\n    {\n        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;\n        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;\n        public string GeneratorVersion => "contract-codec-test";\n        public Assembly OwnerAssembly { get; } = ownerAssembly;\n        public string CompileTimeDescriptor => schemaId;\n        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];\n        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];\n        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];\n        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } =\n            [new NativeFactory<ContractValue>(_ => codec, schemaId)];\n        public IReadOnlyList<string> Dependencies => [];\n    }\n\n    private sealed class CustomRuntimeContext : IRpcRuntimeContext\n    {\n        public IRpcCodecProvider Codecs { get; } = new ThrowingCodecProvider();\n        public IRpcBufferWriterPool Buffers { get; } = new ThrowingBufferPool();\n    }\n\n    private sealed class ThrowingCodecProvider : IRpcCodecProvider\n    {\n        public IRpcCodec<T> GetCodec<T>() => throw new NotSupportedException();\n    }\n\n    private sealed class ThrowingBufferPool : IRpcBufferWriterPool\n    {\n        public IRpcByteBufferWriter Rent() => throw new NotSupportedException();\n        public IRpcByteBufferWriter Rent(int maxWrittenBytes) => throw new NotSupportedException();\n        public void Return(IRpcByteBufferWriter writer) { }\n    }\n'''
+          rep(path, '\n    private sealed class NestedRouteManifest : ISharpLinkGeneratedAssemblyManifest\n', append_types + '\n    private sealed class NestedRouteManifest : ISharpLinkGeneratedAssemblyManifest\n')
+
+          path = 'test/SharpLink.UnitTests/Client/RpcCodecRouteMultiClusterTests.cs'
+          rep(path,
+              '        Ensure(view.Codecs.Count == 1 && view.Codecs[0].TargetType == typeof(ScopedPayload),\n            "the dependency view must retain the routed generated Codec factory");\n        Ensure(view.ManifestScopedCodecTargets.Count == 1 &&\n               view.ManifestScopedCodecTargets[0] == typeof(ScopedPayload),\n            "the dependency view must retain owner-scoped route metadata instead of publishing the Codec globally");',
+              '        Ensure(view.Codecs.Count == 0,\n            "the dependency view must not republish a Contract-owned Codec globally");\n        Ensure(view.ContractCodecs.Count == 1 && view.ContractCodecs[0].TargetType == typeof(ScopedPayload),\n            "the dependency view must retain the Contract-owned Codec binding");')
+          rep(path,
+          '''        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [new ScopedFactory()];\n        public IReadOnlyList<Type> ManifestScopedCodecTargets => [typeof(ScopedPayload)];\n        public IReadOnlyList<string> Dependencies => [];\n''',
+          '''        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];\n        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [new ScopedFactory()];\n        public IReadOnlyList<string> Dependencies => [];\n''')
+
+          path = 'test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs'
+          insert = '''\n    [Test]\n    public Task RpcSerializableContractPayloadShouldKeepIndependentBindings()\n    {\n        var source = AddAssemblyAttributes(BuildRouteSource("""\n[SharpLink.Sdk.RpcSerializable]\npublic sealed class Payload\n{\n    public int Value { get; set; }\n}\n\n[SharpLink.Sdk.RpcContract]\npublic interface IDualRoleContract : SharpLink.Sdk.IService\n{\n    ValueTask<Payload> Echo(Payload value, CancellationToken cancellationToken);\n}\n\npublic sealed class RouteAdapter : TestRouteAdapterBase\n{\n    public override string AdapterId => "route.dual-role/v1";\n    public override string WireFormatId => "route-dual-role-wire/v1";\n}\n"""),\n            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\\"route.dual-role/v1\\\", \\\"route-dual-role-wire/v1\\\")]",\n            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");\n\n        var sources = RunGeneratorAndGetSources(source);\n        var generated = string.Join("\\n", sources);\n        Ensure(generated.Split("TargetType => typeof(global::Payload)", StringSplitOptions.None).Length - 1 == 2,\n            "dual-role Payload must have independent standalone-native and Contract-routed factories");\n        var manifest = sources.Single(static item => item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));\n        Ensure(manifest.Contains("ContractCodecs => __readOnlyContractCodecs", StringComparison.Ordinal),\n            "generated manifest must expose a separate Contract Codec binding table");\n        return Task.CompletedTask;\n    }\n'''
+          rep(path, '    private static string BuildRouteSource(string contract)\n', insert + '\n    private static string BuildRouteSource(string contract)\n')
+          rep(path,
+              '        Ensure(!generated.Contains("route-wire/v1", StringComparison.Ordinal),\n            "the losing route must not enter the generated manifest for the explicitly bound type");\n',
+              '        Ensure(!generated.Contains("route-wire/v1", StringComparison.Ordinal),\n            "the losing route must not enter the generated manifest for the explicitly bound type");\n        var manifest = RunGeneratorAndGetSources(source).Single(static item =>\n            item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));\n        var globalSection = manifest.Substring(\n            manifest.IndexOf("__codecs =", StringComparison.Ordinal),\n            manifest.IndexOf("__contractCodecs =", StringComparison.Ordinal) - manifest.IndexOf("__codecs =", StringComparison.Ordinal));\n        Ensure(!globalSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal),\n            "a Contract-reachable explicit binding must not be published to the global Codec registry");\n')
+
+          path = 'test/SharpLink.Generator.Tests/RpcCodecRouteContractManifestTests.cs'
+          insert = '''\n    [Test]\n    public Task LegacyCollectionBaselineWithoutCodecKindShouldRequireRegeneration()\n    {\n        const string contract = """\npublic sealed class NativeItem\n{\n    public int Value { get; set; }\n}\n\n[SharpLink.Sdk.RpcContract]\npublic interface ILegacyCollectionContract : SharpLink.Sdk.IService\n{\n    ValueTask<System.Collections.Generic.List<NativeItem>> Echo(\n        System.Collections.Generic.List<NativeItem> value,\n        CancellationToken cancellationToken);\n}\n\npublic sealed class RouteAdapter : TestRouteAdapterBase\n{\n    public override string AdapterId => "route.legacy-collection/v1";\n    public override string WireFormatId => "sharplink-native/v1";\n}\n""";\n        const string registration =\n            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \\\"route.legacy-collection/v1\\\", \\\"sharplink-native/v1\\\")]";\n        var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);\n        var routedSource = AddAssemblyAttributes(\n            BuildRouteSource(contract),\n            registration,\n            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");\n\n        var baselineNode = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(baselineSource).Json)!.AsObject();\n        baselineNode["version"] = 1;\n        foreach (var codec in baselineNode["codecs"]!.AsArray().Select(static item => item!.AsObject()))\n        {\n            codec.Remove("kind");\n            codec.Remove("schemaId");\n        }\n        var compared = RunContractGenerator(routedSource, baselineNode.ToJsonString());\n        Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK025"),\n            $"legacy format-1 baselines without codec kind/schema identity must require regeneration. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");\n        return Task.CompletedTask;\n    }\n'''
+          rep(path, '    private static System.Text.Json.Nodes.JsonObject GetFirstRequestValue(string json)\n', insert + '\n    private static System.Text.Json.Nodes.JsonObject GetFirstRequestValue(string json)\n')
+
+          # No stale runtime binding API should remain in source.
+          for root in ('src',):
+              hits = []
+              for file in Path(root).rglob('*.cs'):
+                  text = file.read_text()
+                  if 'ManifestScopedCodecTargets' in text or 'BindCodecProvider(' in text:
+                      hits.append(str(file))
+              if hits:
+                  raise RuntimeError('stale ownership APIs remain: ' + ', '.join(hits))
+          PY
 
       - name: Format changed files
         run: >-
           dotnet format Sharplink.slnx whitespace --include
           src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs
+          src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs
+          src/SharpLink.Generator/RpcGenerator.Models.cs
+          src/SharpLink.Generator/RpcGenerator.cs
+          src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs
+          src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs
+          src/SharpLink.Generator/RpcGenerator.StubEmitter.cs
           src/SharpLink.Generator/RpcGenerator.ContractManifest.cs
+          src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs
+          src/SharpLink.Abstractions/IRpcRuntimeContext.cs
+          src/SharpLink.Abstractions/IRpcStub.cs
+          src/SharpLink.Runtime/Codec/RpcCodecProvider.cs
+          src/SharpLink.Runtime/Codec/RpcManifestCodecProvider.cs
+          src/SharpLink.Runtime/SharpLinkRuntimeContext.cs
+          src/SharpLink.Runtime/SharpLinkDynamicModule.cs
+          src/SharpLink.Client/SharpLinkClient.cs
+          src/SharpLink.Client/SharpLinkClient.Lifecycle.cs
+          src/SharpLink.Client/SharpLinkClient.Assemblies.cs
           src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs
+          src/SharpLink.Server/SharpLinkServerBuilder.cs
+          src/SharpLink.Server/SharpLinkServer.Assemblies.cs
           test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs
           test/SharpLink.Generator.Tests/RpcCodecRouteContractManifestTests.cs
+          test/SharpLink.UnitTests/Runtime/RpcManifestCodecProviderTests.cs
           test/SharpLink.UnitTests/Client/RpcCodecRouteMultiClusterTests.cs
 
       - name: Restore
@@ -70,17 +377,11 @@ jobs:
       - name: Unit tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
-      - name: Commit fixes
+      - name: Commit refactor
         run: |
           git config user.name "SunSi12138"
           git config user.email "54728594+SunSi12138@users.noreply.github.com"
-          git add \
-            src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs \
-            src/SharpLink.Generator/RpcGenerator.ContractManifest.cs \
-            src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs \
-            test/SharpLink.Generator.Tests/RpcCodecRouteTests.cs \
-            test/SharpLink.Generator.Tests/RpcCodecRouteContractManifestTests.cs \
-            test/SharpLink.UnitTests/Client/RpcCodecRouteMultiClusterTests.cs
+          git add src test
           git diff --cached --check
-          git commit -m "Address latest codec routing review feedback"
+          git commit -m "Separate Contract codec bindings from global codecs"
           git push origin HEAD:fix/311-codec-scope-routing
