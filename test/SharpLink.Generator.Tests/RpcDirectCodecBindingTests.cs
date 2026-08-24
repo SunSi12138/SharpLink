@@ -181,8 +181,8 @@ public interface IDualRoleDirectContract : SharpLink.Sdk.IService
 
     private static string BuildDirectCodecSource(string contract)
         => BuildSource(contract).Replace(
-            "        public RpcCodecAdapterAttribute(Type targetType, Type adapterType) { }\n    }",
-            "        public RpcCodecAdapterAttribute(Type targetType, Type adapterType) { }\n        public string? WireFormatId { get; set; }\n    }",
+            "public RpcCodecAdapterAttribute(Type targetType, Type adapterType) { }",
+            "public RpcCodecAdapterAttribute(Type targetType, Type adapterType) { }\n        public string? WireFormatId { get; set; }",
             StringComparison.Ordinal);
 
     private static string BuildDirectCodecRouteSource(string contract)

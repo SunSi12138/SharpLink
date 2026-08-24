@@ -118,11 +118,44 @@ public partial class RpcGenerator
 
         private bool TrySelectContractCodecOverride(ITypeSymbol type, out AdapterRegistration? selected)
         {
+            if (_selectorOnlyContractDefaults)
+                return TrySelectSelectorAdapter(type, out selected);
+
             // Contract compilation has one deterministic precedence entrypoint:
             // explicit per-type Codec/Adapter selection > assembly route > SharpLink default generation.
             if (TrySelectAdapter(type, out selected))
                 return true;
             return TrySelectRouteAdapter(type, out selected);
+        }
+
+        private bool TrySelectSelectorAdapter(ITypeSymbol type, out AdapterRegistration? selected)
+        {
+            selected = null;
+            foreach (var attribute in type.GetAttributes())
+            {
+                if (attribute.AttributeClass is not { } attributeClass ||
+                    !_adaptersBySelector.TryGetValue(attributeClass, out var candidate))
+                {
+                    continue;
+                }
+
+                if (selected is null)
+                {
+                    selected = candidate;
+                    continue;
+                }
+
+                if (AdapterRegistrationsEqual(selected, candidate))
+                    continue;
+
+                // The full Contract-policy pass reports the conflict. The selector-only default pass
+                // only needs to avoid publishing an arbitrary default binding.
+                selected = null;
+                _failed.Add(GetTypeName(type));
+                return true;
+            }
+
+            return selected is not null;
         }
 
         private bool TrySelectRouteAdapter(ITypeSymbol type, out AdapterRegistration? selected)

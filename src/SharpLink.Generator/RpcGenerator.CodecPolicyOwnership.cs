@@ -16,7 +16,7 @@ public partial class RpcGenerator
             cancellationToken,
             contractMode: true,
             applyCodecPolicy: true,
-            collectOwnerPolicy: false).Analyze();
+            selectorOnlyContractDefault: true).Analyze();
         var contractPolicy = new DtoAnalysisState(
             compilation,
             cancellationToken,
@@ -24,11 +24,12 @@ public partial class RpcGenerator
             applyCodecPolicy: true).Analyze();
 
         // The global/default registry contains the normal generated graph. Contract-default models
-        // preserve intrinsic type-level/selector Adapter choices while omitting owner-specific
-        // assembly bindings and routes. Publishing that graph keeps the established runtime UseCodec
-        // precedence for no-owner-policy Contracts. For a dual-role [RpcSerializable] Contract payload,
-        // the Contract-default definition wins in the shared graph so an explicit static Contract policy
-        // never leaks into standalone resolution.
+        // preserve registered selector-attribute Adapter choices while omitting explicit
+        // RpcCodecAdapter bindings and assembly routes. Selector attributes are intrinsic serializer
+        // opt-ins and remain in the base provider so runtime UseCodec<T> keeps its established
+        // precedence. For a dual-role [RpcSerializable] Contract payload, the Contract-default
+        // definition wins in the shared graph so explicit static Contract policy never leaks into
+        // standalone resolution.
         var globalByType = standalone.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in contractDefault.Codecs)
             globalByType[codec.TypeName] = codec;
@@ -152,23 +153,26 @@ public partial class RpcGenerator
 
     private sealed partial class DtoAnalysisState
     {
+        private readonly bool _selectorOnlyContractDefaults = false;
+
         public DtoAnalysisState(
             Compilation compilation,
             CancellationToken cancellationToken,
             bool contractMode,
             bool applyCodecPolicy,
-            bool collectOwnerPolicy)
+            bool selectorOnlyContractDefault)
         {
             _compilation = compilation;
             _cancellationToken = cancellationToken;
             _contractMode = contractMode;
             _applyCodecPolicy = applyCodecPolicy;
+            _selectorOnlyContractDefaults = selectorOnlyContractDefault;
             _allowedAssemblyNames = ResolveReferenceAssemblyNames(compilation);
             _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
             CollectAdapterRegistrations();
-            if (collectOwnerPolicy)
+            if (!selectorOnlyContractDefault)
                 CollectAssemblyBindings();
-            if (_contractMode && collectOwnerPolicy)
+            if (_contractMode && !selectorOnlyContractDefault)
                 CollectAssemblyRoutes();
         }
     }
