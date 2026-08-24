@@ -32,6 +32,8 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
 
     internal bool IsDraining => _draining.IsCancellationRequested || Volatile.Read(ref _disposed) != 0;
 
+    internal Action? BeforeReclaimedStateDisposalForTests { get; set; }
+
     internal int QueuedCalls => Volatile.Read(ref _queuedCalls);
 
     internal long QueuedBytes => Volatile.Read(ref _queuedBytes);
@@ -165,7 +167,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
 
     internal void TryReclaimProgram(AdmissionProgram program)
     {
-        if (!program.TryMarkReclaimed())
+        if (!program.TryBeginReclaim())
             return;
 
         List<IDisposable>? dispose = null;
@@ -173,14 +175,19 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         lock (_registryGate)
         {
             if (!_programs.Remove(program))
-                return;
+                throw new InvalidOperationException("Admission program reclamation lost its registered program.");
             _retiredPrograms.Remove(program);
             ReleaseBindingsLocked(program.Controller, ref dispose);
             if (_programs.Count == 0)
                 programsDrained = _programsDrained;
         }
-        programsDrained?.TrySetResult(true);
+
+        if (dispose is { Count: > 0 })
+            BeforeReclaimedStateDisposalForTests?.Invoke();
         DisposeStates(dispose);
+        program.Controller.DetachReclaimedState(program);
+        program.CompleteReclaim();
+        programsDrained?.TrySetResult(true);
     }
 
     internal void ReleaseUnpublishedBindings(SharpLinkAdmissionController controller)

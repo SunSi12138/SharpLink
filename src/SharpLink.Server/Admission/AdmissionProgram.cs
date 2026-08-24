@@ -15,7 +15,7 @@ internal sealed class AdmissionProgram
     private readonly AdmissionStateKernel? _kernel;
     private int _useState;
     private int _duplicateReleaseAttempts;
-    private int _reclaimed;
+    private int _reclaimState;
     private int _reclaimCount;
 
     private AdmissionProgram(long sentinelGenerationId)
@@ -58,7 +58,7 @@ internal sealed class AdmissionProgram
 
     internal bool IsRetired => (Volatile.Read(ref _useState) & RetiredMask) != 0;
 
-    internal bool IsReclaimed => Volatile.Read(ref _reclaimed) != 0;
+    internal bool IsReclaimed => Volatile.Read(ref _reclaimState) == 2;
 
     internal int ReclaimCount => Volatile.Read(ref _reclaimCount);
 
@@ -135,13 +135,17 @@ internal sealed class AdmissionProgram
         }
     }
 
-    internal bool TryMarkReclaimed()
+    internal bool TryBeginReclaim()
     {
         if (!IsRetired || ActiveUses != 0)
             return false;
-        if (Interlocked.CompareExchange(ref _reclaimed, 1, 0) != 0)
-            return false;
+        return Interlocked.CompareExchange(ref _reclaimState, 1, 0) == 0;
+    }
+
+    internal void CompleteReclaim()
+    {
+        if (Interlocked.CompareExchange(ref _reclaimState, 2, 1) != 1)
+            throw new InvalidOperationException("Admission program reclamation did not own the completion transition.");
         Interlocked.Increment(ref _reclaimCount);
-        return true;
     }
 }

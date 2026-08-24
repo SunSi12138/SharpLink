@@ -9,17 +9,17 @@ namespace SharpLink.Server;
 internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 {
     private readonly AdmissionStateKernel _kernel;
-    private readonly AdmissionRuleRuntime? _global;
-    private readonly FrozenDictionary<long, AdmissionRuleRuntime> _contracts;
-    private readonly FrozenDictionary<(long ContractId, long MethodId), AdmissionRuleRuntime> _methods;
+    private AdmissionRuleRuntime? _global;
+    private FrozenDictionary<long, AdmissionRuleRuntime> _contracts;
+    private FrozenDictionary<(long ContractId, long MethodId), AdmissionRuleRuntime> _methods;
     private readonly int _maxQueuedCalls;
     private readonly long _maxQueuedBytes;
     private readonly TimeSpan _maxQueueDelay;
     private readonly bool _queueOneWayCalls;
     private readonly TimeProvider _timeProvider;
-    private readonly AdmissionPartitionPool? _partitions;
-    private readonly AdmissionRuleStateBinding[] _ruleStateBindings;
-    private readonly AdmissionPartitionStateBinding? _partitionStateBinding;
+    private AdmissionPartitionPool? _partitions;
+    private AdmissionRuleStateBinding[] _ruleStateBindings;
+    private AdmissionPartitionStateBinding? _partitionStateBinding;
     private readonly bool _ownsKernel;
     private AdmissionProgram? _program;
 
@@ -280,6 +280,23 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(program);
         if (Interlocked.CompareExchange(ref _program, program, null) is not null)
             throw new InvalidOperationException("Admission policy binding already belongs to a program generation.");
+    }
+
+    internal void DetachReclaimedState(AdmissionProgram program)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        if (!ReferenceEquals(Interlocked.CompareExchange(ref _program, null, program), program))
+        {
+            throw new InvalidOperationException(
+                "Admission program/controller ownership was not intact during reclamation.");
+        }
+
+        _global = null;
+        _contracts = FrozenDictionary<long, AdmissionRuleRuntime>.Empty;
+        _methods = FrozenDictionary<(long ContractId, long MethodId), AdmissionRuleRuntime>.Empty;
+        _partitions = null;
+        _ruleStateBindings = [];
+        _partitionStateBinding = null;
     }
 
     internal ValueTask<AdmissionDecision> AcquireAsync(
