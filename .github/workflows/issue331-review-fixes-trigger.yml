@@ -1,0 +1,140 @@
+name: Issue 331 Review Fix Trigger
+
+on:
+  pull_request:
+    branches:
+      - issue-329-runtime-admission-toggle
+
+permissions:
+  contents: write
+
+jobs:
+  fix-review-p1s:
+    if: github.head_ref == 'issue-331-dynamic-admission-update'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-331-dynamic-admission-update
+          fetch-depth: 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Apply reviewed P1 patch from checked-in repair script
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/issue331-review-fixes.yml').read_text()
+          begin_token = "          python3 <<'PY'\n"
+          end_token = "          PY\n"
+          begin = workflow.index(begin_token) + len(begin_token)
+          end = workflow.index(end_token, begin)
+          code = textwrap.dedent(workflow[begin:end])
+          exec(compile(code, 'issue331-review-fix.py', 'exec'))
+          PY
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Normalize formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+
+      - name: Guard repair scope
+        shell: bash
+        run: |
+          git diff --check
+          unexpected="$(git diff --name-only | grep -Ev '^(src/SharpLink.Server/Admission/AdmissionStateKernel.cs|src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs|src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs|test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs)$' || true)"
+          if [ -n "$unexpected" ]; then
+            printf 'Unexpected changed paths:\n%s\n' "$unexpected"
+            exit 1
+          fi
+          git diff --stat
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Prepare reviewed base worktree
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin c1c68580e3337bf640c5c677cce829cae592f423
+          git worktree add /tmp/issue331-reviewed-base c1c68580e3337bf640c5c677cce829cae592f423
+          mkdir -p artifacts/review-base-rpc artifacts/review-base-controller artifacts/review-head-rpc artifacts/review-head-controller artifacts/review-evidence
+          printf '%s\n' c1c68580e3337bf640c5c677cce829cae592f423 > artifacts/review-evidence/base-sha.txt
+
+      - name: Benchmark reviewed base RPC
+        run: >-
+          dotnet run -c Release
+          --project /tmp/issue331-reviewed-base/test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionRpcBenchmarks*"
+          --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-base-rpc"
+
+      - name: Benchmark reviewed base controller
+        run: >-
+          dotnet run -c Release
+          --project /tmp/issue331-reviewed-base/test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionControllerBenchmarks*"
+          --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-base-controller"
+
+      - name: Benchmark review-fixed head RPC
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionRpcBenchmarks*"
+          --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-head-rpc"
+
+      - name: Benchmark review-fixed head controller
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.Benchmarks
+          --
+          --filter "*AdmissionControllerBenchmarks*"
+          --exporters json markdown
+          --artifacts "$GITHUB_WORKSPACE/artifacts/review-head-controller"
+
+      - name: Commit and push reviewed fixes
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs
+          git commit -m "Address issue 331 review feedback"
+          git rev-parse HEAD | tee artifacts/review-evidence/head-sha.txt
+          git push origin HEAD:issue-331-dynamic-admission-update
+
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue331-review-fix-evidence-${{ github.run_id }}
+          path: |
+            artifacts/review-evidence
+            artifacts/review-base-rpc
+            artifacts/review-base-controller
+            artifacts/review-head-rpc
+            artifacts/review-head-controller
+          if-no-files-found: warn
+          retention-days: 30
