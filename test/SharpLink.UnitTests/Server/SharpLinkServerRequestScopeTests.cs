@@ -50,13 +50,12 @@ public class SharpLinkServerRequestScopeTests
         var stub = new ControlledStub(RpcMethodKind.OneWay, asynchronous: true);
         await using var harness = new DispatchHarness(loggerFactory, stub);
 
+        ValueTask dispatch;
         using (harness.BeginRequestScope(requestId))
-            harness.DispatchOneWay(requestId);
+            dispatch = harness.DispatchOneWay(requestId);
 
         stub.Fail(new InvalidOperationException("issue-248-oneway"));
-        await YieldUntilAsync(
-            () => loggerFactory.Logs.Any(static entry => entry.Message == "One-way RPC dispatch failed."),
-            "one-way failure log was not observed");
+        await dispatch;
 
         var log = loggerFactory.Logs.Single(entry => entry.Message == "One-way RPC dispatch failed.");
         await Assert.That(log.RequestIds.Length).IsEqualTo(1);
@@ -96,16 +95,16 @@ public class SharpLinkServerRequestScopeTests
         await using var firstHarness = new DispatchHarness(loggerFactory, firstStub);
         await using var secondHarness = new DispatchHarness(loggerFactory, secondStub);
 
+        ValueTask firstDispatch;
         using (firstHarness.BeginRequestScope(firstRequestId))
-            firstHarness.DispatchOneWay(firstRequestId);
+            firstDispatch = firstHarness.DispatchOneWay(firstRequestId);
+        ValueTask secondDispatch;
         using (secondHarness.BeginRequestScope(secondRequestId))
-            secondHarness.DispatchOneWay(secondRequestId);
+            secondDispatch = secondHarness.DispatchOneWay(secondRequestId);
 
         secondStub.Fail(new InvalidOperationException("issue-248-second"));
         firstStub.Fail(new InvalidOperationException("issue-248-first"));
-        await YieldUntilAsync(
-            () => loggerFactory.Logs.Count(static entry => entry.Message == "One-way RPC dispatch failed.") == 2,
-            "parallel one-way failure logs were not observed");
+        await Task.WhenAll(firstDispatch.AsTask(), secondDispatch.AsTask());
 
         var logs = loggerFactory.Logs
             .Where(static entry => entry.Message == "One-way RPC dispatch failed.")
@@ -128,7 +127,7 @@ public class SharpLinkServerRequestScopeTests
         for (var i = 0; i < requestCount; i++)
         {
             using (harness.BeginRequestScope(1_000L + i))
-                harness.DispatchOneWay(1_000L + i);
+                _ = harness.DispatchOneWay(1_000L + i);
         }
 
         var snapshot = loggerFactory.Snapshot();
@@ -169,16 +168,19 @@ public class SharpLinkServerRequestScopeTests
         var stub = new ControlledStub(RpcMethodKind.OneWay, isAsync);
         await using var harness = new DispatchHarness(loggerFactory, stub);
 
+        ValueTask dispatch;
         using (harness.BeginRequestScope(requestId))
-            harness.DispatchOneWay(requestId);
+            dispatch = harness.DispatchOneWay(requestId);
 
         if (isAsync)
             stub.Complete();
+        await dispatch;
 
-        await YieldUntilAsync(
-            () => harness.Connection.ActiveCalls == 0 &&
-                  loggerFactory.RequestScopeDisposeCount == loggerFactory.RequestScopeBeginCount,
-            "one-way RequestId scopes did not all dispose");
+        if (harness.Connection.ActiveCalls != 0 ||
+            loggerFactory.RequestScopeDisposeCount != loggerFactory.RequestScopeBeginCount)
+        {
+            throw new Exception("one-way RequestId scopes did not all dispose");
+        }
         return loggerFactory.Snapshot();
     }
 
@@ -394,8 +396,8 @@ public class SharpLinkServerRequestScopeTests
                 false
             ])!;
 
-        internal void DispatchOneWay(long requestId)
-            => DispatchOneWayMethod.Invoke(Server,
+        internal ValueTask DispatchOneWay(long requestId)
+            => (ValueTask)DispatchOneWayMethod.Invoke(Server,
             [
                 Connection,
                 requestId,
@@ -406,7 +408,7 @@ public class SharpLinkServerRequestScopeTests
                 null,
                 false,
                 0
-            ]);
+            ])!;
 
         internal Task Observe(ValueTask dispatchTask, long requestId)
             => (Task)AwaitDispatchMethod.Invoke(Server, [dispatchTask, requestId])!;
