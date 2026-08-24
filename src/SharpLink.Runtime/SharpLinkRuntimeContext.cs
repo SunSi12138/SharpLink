@@ -168,13 +168,38 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     internal IRpcCodecProvider GetManifestCodecProvider(System.Reflection.Assembly ownerAssembly)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ArgumentNullException.ThrowIfNull(ownerAssembly);
+
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            return _manifestCodecProviders.TryGetValue(ownerAssembly, out var provider)
-                ? provider
-                : Codecs;
+            foreach (var registration in _manifestRegistrations)
+            {
+                if (ReferenceEquals(registration.Manifest.OwnerAssembly, ownerAssembly))
+                    return registration.ContractCodecProvider;
+            }
         }
+
+        var loadedPolicyOwner = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
+            ReferenceEquals(manifest.OwnerAssembly, ownerAssembly) &&
+            manifest.ContractCodecs.Count != 0);
+        if (!loadedPolicyOwner)
+            return Codecs;
+
+        // Adoption can race with the catalog observation for dynamic modules. Recheck before
+        // failing so an owner that became known concurrently resolves through its canonical provider.
+        lock (_registrationGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            foreach (var registration in _manifestRegistrations)
+            {
+                if (ReferenceEquals(registration.Manifest.OwnerAssembly, ownerAssembly))
+                    return registration.ContractCodecProvider;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Generated Contract owner '{ownerAssembly.FullName}' has Contract-owned Codec policy but its manifest was not adopted by this SharpLink runtime context. Rebuild the client/server runtime after loading the Contract assembly.");
     }
 
     internal RpcGeneratedCodecRegistration? FindGeneratedCodec(
