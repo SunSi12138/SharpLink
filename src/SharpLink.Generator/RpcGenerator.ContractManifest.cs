@@ -317,6 +317,8 @@ public partial class RpcGenerator
             {
                 Type = RemoveGlobalPrefix(codec.TypeName),
                 WireFormatId = codec.WireFormatId,
+                Kind = codec.Kind.ToString(),
+                SchemaId = codec.SchemaId,
                 SourceLocation = codec.Location
             });
         }
@@ -662,29 +664,75 @@ public partial class RpcGenerator
             }
         }
 
+
         var baselineDtoNames = new HashSet<string>(
-  baseline.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
+            baseline.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
         var currentDtoNames = new HashSet<string>(
-  current.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
-        var baselineCodecTypes = new HashSet<string>(
-  baseline.Codecs.Select(static codec => codec.Type), StringComparer.Ordinal);
-        var currentCodecTypes = new HashSet<string>(
-  current.Codecs.Select(static codec => codec.Type), StringComparer.Ordinal);
-        foreach (var oldDto in baseline.Dtos)
+            current.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
+        var baselineCodecs = baseline.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
+        var currentCodecs = current.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
+        var directlyDescribedCodecTypes = new HashSet<string>(
+            baseline.Contracts
+                .SelectMany(static contract => contract.Methods)
+                .SelectMany(static method => method.Request.Append(method.Response))
+                .Select(static value => value.Type)
+                .Concat(baseline.Dtos.SelectMany(static dto => dto.Members).Select(static member => member.Type)),
+            StringComparer.Ordinal);
+
+        foreach (var type in directlyDescribedCodecTypes)
         {
-            if (currentDtoNames.Contains(oldDto.Name) || !currentCodecTypes.Contains(oldDto.Name))
+            if (!baselineCodecs.TryGetValue(type, out var oldCodec) ||
+                !currentCodecs.TryGetValue(type, out var newCodec) ||
+                string.IsNullOrWhiteSpace(oldCodec.Kind) ||
+                string.IsNullOrWhiteSpace(newCodec.Kind) ||
+                string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal))
+            {
                 continue;
+            }
+
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
-                current.Codecs.FirstOrDefault(codec => codec.Type == oldDto.Name)?.SourceLocation,
+                newCodec.SourceLocation,
+                type,
+                $"direct Codec selection changed from {oldCodec.Kind}/{oldCodec.SchemaId ?? "unknown"} to {newCodec.Kind}/{newCodec.SchemaId ?? "unknown"}",
+                "restore the previous generated Codec selection or publish a new RPC payload type"));
+        }
+
+        // Legacy format-1 baselines emitted before Kind/SchemaId still use DTO membership
+        // as the fallback codec-kind signal so their stored fingerprints remain valid.
+        foreach (var oldDto in baseline.Dtos)
+        {
+            if (currentDtoNames.Contains(oldDto.Name) ||
+                !currentCodecs.TryGetValue(oldDto.Name, out var currentCodec))
+            {
+                continue;
+            }
+            if (baselineCodecs.TryGetValue(oldDto.Name, out var baselineCodec) &&
+                !string.IsNullOrWhiteSpace(baselineCodec.Kind) &&
+                !string.IsNullOrWhiteSpace(currentCodec.Kind))
+            {
+                continue;
+            }
+            diagnostics.Add(Change(
+                ContractCompatibilityKind.WireType,
+                currentCodec.SourceLocation,
                 oldDto.Name,
                 "Codec selection changed from a SharpLink native DTO to a non-DTO Codec",
                 "restore the native DTO Codec or publish a new RPC payload type"));
         }
         foreach (var newDto in current.Dtos)
         {
-            if (baselineDtoNames.Contains(newDto.Name) || !baselineCodecTypes.Contains(newDto.Name))
+            if (baselineDtoNames.Contains(newDto.Name) ||
+                !baselineCodecs.TryGetValue(newDto.Name, out var baselineCodec))
+            {
                 continue;
+            }
+            if (currentCodecs.TryGetValue(newDto.Name, out var currentCodec) &&
+                !string.IsNullOrWhiteSpace(baselineCodec.Kind) &&
+                !string.IsNullOrWhiteSpace(currentCodec.Kind))
+            {
+                continue;
+            }
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
                 newDto.SourceLocation,
@@ -693,14 +741,6 @@ public partial class RpcGenerator
                 "restore the previous Codec selection or publish a new RPC payload type"));
         }
 
-        var directlyDescribedCodecTypes = new HashSet<string>(
-            baseline.Contracts
-                .SelectMany(static contract => contract.Methods)
-                .SelectMany(static method => method.Request.Append(method.Response))
-                .Select(static value => value.Type)
-                .Concat(baseline.Dtos.SelectMany(static dto => dto.Members).Select(static member => member.Type)),
-            StringComparer.Ordinal);
-        var currentCodecs = current.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
         foreach (var oldCodec in baseline.Codecs)
         {
             if (directlyDescribedCodecTypes.Contains(oldCodec.Type) ||
@@ -1061,6 +1101,8 @@ internal static class __SharpLinkContractManifest
     {
         public string Type { get; set; } = string.Empty;
         public string WireFormatId { get; set; } = string.Empty;
+        public string? Kind { get; set; }
+        public string? SchemaId { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
 

@@ -387,6 +387,37 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         return Task.CompletedTask;
     }
 
+
+    [Test]
+    public Task ManagedRouteShouldNotCaptureDynamicPayload()
+    {
+        var source = AddAssemblyAttributes(BuildRouteSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IDynamicRouteContract : SharpLink.Sdk.IService
+{
+    ValueTask<dynamic> Echo(dynamic value, CancellationToken cancellationToken);
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.dynamic/v1";
+    public override string WireFormatId => "route-dynamic-wire/v1";
+}
+"""),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.dynamic/v1\", \"route-dynamic-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
+
+        var diagnostics = RunGenerator(source);
+        Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK009"),
+            "dynamic payloads must retain the SharpLink unsupported diagnostic instead of being routed");
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("CreateCodec<dynamic>()", StringComparison.Ordinal),
+            "dynamic must not enter a routed Codec factory");
+        Ensure(!generated.Contains("typeof(dynamic)", StringComparison.Ordinal),
+            "generated manifests must not contain illegal typeof(dynamic)");
+        return Task.CompletedTask;
+    }
+
     private static string BuildRouteSource(string contract)
         => BuildSource(contract) + """
 

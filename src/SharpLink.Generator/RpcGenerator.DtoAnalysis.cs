@@ -318,6 +318,13 @@ public partial class RpcGenerator
                 _failed.Add(typeName);
                 return;
             }
+            if (type.TypeKind == TypeKind.Dynamic)
+            {
+                Report(DtoDiagnosticKind.Unsupported, type,
+                    "dynamic values cannot be represented by generated Codec or RPC artifacts; use a concrete closed payload type");
+                _failed.Add(typeName);
+                return;
+            }
             if (TrySelectContractCodecOverride(type, out var selectedAdapter))
             {
                 if (selectedAdapter is not null)
