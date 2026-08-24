@@ -306,9 +306,13 @@ public sealed class AdmissionRuntimeControlTests
             throw new Exception($"assert failed: {scenario}");
     }
 
-    private sealed class TestConfigurationException : Exception;
+    private sealed class TestConfigurationException : Exception
+    {
+    }
 
-    private interface IMissingAdmissionContract : IService;
+    private interface IMissingAdmissionContract : IService
+    {
+    }
 
     private sealed class UnsupportedServer : ISharpLinkServer
     {
