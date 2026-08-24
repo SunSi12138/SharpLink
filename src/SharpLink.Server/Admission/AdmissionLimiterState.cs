@@ -88,8 +88,8 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 
     private RateLimitLease AttemptAcquireStableCore()
     {
-        if (Volatile.Read(ref _disposed) != 0 ||
-            Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit))
+        if (Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit) ||
+            Volatile.Read(ref _disposed) != 0)
         {
             return FailedLease.Instance;
         }
