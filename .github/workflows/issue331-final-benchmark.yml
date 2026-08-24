@@ -70,4 +70,4 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-# Refresh after tested single-scope epoch/allocation optimization.
+# Refresh after restoring the exact single-slot admission fast path.
