@@ -19,6 +19,55 @@ public class GeneratedServerPublicationDeadlineTests
             static timeProvider => new AdvancingSizedIntCodec(timeProvider),
             "sized");
 
+    [Test]
+    public async Task DeadlineCancellationCallbackFailureShouldNotReplaceDeadlineTerminal()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "generated-deadline-cancellation-callback",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ServerOptions());
+        var timeProvider = new ManualTimeProvider();
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
+        var stream = new ThrowingCancellationStream();
+        Exception? failure = null;
+
+        using (SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
+                   session.Id,
+                   authentication: null,
+                   deadline,
+                   timeProvider)))
+        {
+            var pump = new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
+                74,
+                0,
+                stream,
+                new AdvancingIntCodec(timeProvider),
+                payloadNullable: false,
+                contractId: 101,
+                methodId: 202,
+                CancellationToken.None).AsTask();
+
+            timeProvider.Advance(TimeSpan.FromSeconds(1));
+            try
+            {
+                await pump;
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        }
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "a throwing user cancellation callback must not replace the deadline terminal");
+
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+    }
+
     private static async Task AssertSerializationCrossingDeadlineDoesNotPublishAsync(
         Func<ManualTimeProvider, IRpcCodec<int>> codecFactory,
         string path)
@@ -110,6 +159,33 @@ public class GeneratedServerPublicationDeadlineTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class ThrowingCancellationStream : IAsyncEnumerable<int>, IAsyncEnumerator<int>
+    {
+        private readonly TaskCompletionSource<bool> _moveNext = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private CancellationTokenRegistration _registration;
+
+        public int Current => 0;
+
+        public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            _registration = cancellationToken.Register(() =>
+            {
+                _moveNext.TrySetCanceled(cancellationToken);
+                throw new InvalidOperationException("user cancellation callback failure");
+            });
+            return this;
+        }
+
+        public ValueTask<bool> MoveNextAsync() => new(_moveNext.Task);
+
+        public ValueTask DisposeAsync()
+        {
+            _registration.Dispose();
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class AdvancingIntCodec(ManualTimeProvider timeProvider) : IRpcCodec<int>
