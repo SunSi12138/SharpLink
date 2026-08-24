@@ -281,22 +281,19 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 catch (OperationCanceledException) when (
                     _draining.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
+                    await DisposeLateLimiterLeaseAsync(waitTask).ConfigureAwait(false);
                     return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    await DisposeLateLimiterLeaseAsync(waitTask).ConfigureAwait(false);
+                    throw;
                 }
 
                 if (!completedWithinDeadline)
                 {
                     waitCancellation.Cancel();
-                    try
-                    {
-                        var lateLease = await waitTask.ConfigureAwait(false);
-                        lateLease.Dispose();
-                    }
-                    catch
-                    {
-                        // The bounded wait already owns the terminal result. Observe a canceled
-                        // or faulted limiter waiter without letting it replace that result.
-                    }
+                    await DisposeLateLimiterLeaseAsync(waitTask).ConfigureAwait(false);
                     return deadlineLimitsWait
                         ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
                         : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
@@ -325,6 +322,20 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             SharpLinkTelemetry.RecordAdmissionQueueDuration(
                 _timeProvider.GetElapsedTime(started));
             request.Dispose();
+        }
+    }
+
+    private static async ValueTask DisposeLateLimiterLeaseAsync(Task<RateLimitLease> waitTask)
+    {
+        try
+        {
+            var lateLease = await waitTask.ConfigureAwait(false);
+            lateLease.Dispose();
+        }
+        catch
+        {
+            // The admission wait already owns the terminal result. Observe a canceled or
+            // faulted limiter waiter without letting it replace that result.
         }
     }
 
