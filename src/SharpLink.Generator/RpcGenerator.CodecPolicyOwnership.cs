@@ -22,24 +22,21 @@ public partial class RpcGenerator
             contractMode: true,
             applyCodecPolicy: true).Analyze();
 
-        // Only true standalone publication belongs in the context-global generated registry. A type
-        // that is both [RpcSerializable] and Contract-reachable keeps its default/native standalone
-        // binding there; Contract-only default codecs stay implicit so runtime UseCodec<T> keeps its
-        // established no-policy precedence.
+        // The global/default registry contains the normal generated graph. Contract-default models
+        // are published so a no-policy Contract can resolve native DTO/collection Codecs, while
+        // RpcCodecProvider still gives an explicitly configured runtime Codec precedence. For a
+        // dual-role [RpcSerializable] Contract payload, the Contract-default definition wins in the
+        // shared graph so an explicit static Contract policy never leaks into standalone resolution.
         var globalByType = standalone.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in contractDefault.Codecs)
-        {
-            if (globalByType.ContainsKey(codec.TypeName))
-                globalByType[codec.TypeName] = codec;
-        }
+            globalByType[codec.TypeName] = codec;
         var globalCodecs = globalByType.Values
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // Contract ownership is defined by the delta from the Contract's default graph, not by
-        // whether the type happens to be globally published. This leaves no-policy Contracts on the
-        // base provider while pulling in native parents/dependencies that must close over a changed
-        // explicit/route binding.
+        // Contract ownership is defined only by the delta from the Contract's default graph. This
+        // keeps no-policy Contracts on the base provider while pulling in native parents/dependencies
+        // that must close over a changed explicit/route binding.
         var contractCodecs = SelectOwnedContractCodecs(contractDefault.Codecs, contractPolicy.Codecs);
         var diagnostics = standalone.Diagnostics
             .Concat(contractPolicy.Diagnostics)
