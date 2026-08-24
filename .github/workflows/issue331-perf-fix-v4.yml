@@ -48,11 +48,14 @@ jobs:
 
       - name: Validate formatting and full unit suite
         shell: bash
+        env:
+          TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
         run: |
           set -euxo pipefail
-          dotnet restore SharpLink.slnx
-          dotnet format SharpLink.slnx --no-restore --verify-no-changes
-          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Debug --no-restore --logger 'console;verbosity=minimal'
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
 
       - name: Commit tested patch and remove helper
         shell: bash
