@@ -3,22 +3,11 @@ using System.Threading.RateLimiting;
 namespace SharpLink.Server;
 
 /// <summary>
-/// Minimal limiter surface used by the Admission composite. Async waiting is only entered after the
-/// server-scoped kernel has reserved exactly one outer queue slot for the Request.
-/// </summary>
-internal interface IAdmissionLimiter
-{
-    RateLimitLease AttemptAcquire(int permitCount);
-
-    ValueTask<RateLimitLease> AcquireAsync(int permitCount, CancellationToken cancellationToken);
-}
-
-/// <summary>
 /// Stable concurrency state whose target may be changed without replacing active holders or queued
 /// waiters. The state is shared by every overlapping program generation that binds the same logical
 /// concurrency component.
 /// </summary>
-internal sealed class ResizableConcurrencyState : IAdmissionLimiter, IDisposable
+internal sealed class ResizableConcurrencyState : RateLimiter
 {
     private readonly Lock _gate = new();
     private readonly LinkedList<Waiter> _waiters = [];
@@ -59,7 +48,11 @@ internal sealed class ResizableConcurrencyState : IAdmissionLimiter, IDisposable
         }
     }
 
-    public RateLimitLease AttemptAcquire(int permitCount)
+    public override TimeSpan? IdleDuration => null;
+
+    public override RateLimiterStatistics? GetStatistics() => null;
+
+    protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
         ValidatePermitCount(permitCount);
         lock (_gate)
@@ -76,7 +69,7 @@ internal sealed class ResizableConcurrencyState : IAdmissionLimiter, IDisposable
         }
     }
 
-    public ValueTask<RateLimitLease> AcquireAsync(
+    protected override ValueTask<RateLimitLease> AcquireAsyncCore(
         int permitCount,
         CancellationToken cancellationToken)
     {
@@ -84,7 +77,7 @@ internal sealed class ResizableConcurrencyState : IAdmissionLimiter, IDisposable
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled<RateLimitLease>(cancellationToken);
 
-        Waiter? waiter = null;
+        Waiter waiter;
         lock (_gate)
         {
             if (_disposed != 0)
@@ -125,8 +118,11 @@ internal sealed class ResizableConcurrencyState : IAdmissionLimiter, IDisposable
         CompleteGranted(granted);
     }
 
-    public void Dispose()
+    protected override void Dispose(bool disposing)
     {
+        if (!disposing)
+            return;
+
         List<Waiter>? failed = null;
         lock (_gate)
         {
@@ -287,7 +283,7 @@ internal sealed class ResizableConcurrencyState : IAdmissionLimiter, IDisposable
 /// <summary>Stable immutable-configuration rate state. Its BCL waiter capacity is fixed at the
 /// maximum representable outer call bound; actual residency is authorized only by the kernel queue
 /// reservation made before Admission calls AcquireAsync.</summary>
-internal sealed class AdmissionRateState : IAdmissionLimiter, IDisposable
+internal sealed class AdmissionRateState : RateLimiter
 {
     private const int InnerQueueLimit = int.MaxValue;
     private readonly RateLimiter _limiter;
@@ -339,10 +335,21 @@ internal sealed class AdmissionRateState : IAdmissionLimiter, IDisposable
         return new AdmissionRateState(limiter, definition);
     }
 
-    public RateLimitLease AttemptAcquire(int permitCount) => _limiter.AttemptAcquire(permitCount);
+    public override TimeSpan? IdleDuration => _limiter.IdleDuration;
 
-    public ValueTask<RateLimitLease> AcquireAsync(int permitCount, CancellationToken cancellationToken)
+    public override RateLimiterStatistics? GetStatistics() => _limiter.GetStatistics();
+
+    protected override RateLimitLease AttemptAcquireCore(int permitCount)
+        => _limiter.AttemptAcquire(permitCount);
+
+    protected override ValueTask<RateLimitLease> AcquireAsyncCore(
+        int permitCount,
+        CancellationToken cancellationToken)
         => _limiter.AcquireAsync(permitCount, cancellationToken);
 
-    public void Dispose() => _limiter.Dispose();
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            _limiter.Dispose();
+    }
 }
