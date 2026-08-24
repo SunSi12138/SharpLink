@@ -84,41 +84,65 @@ internal static class SharpLinkTimer
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(timeProvider);
+        if (deadline.IsExpired(timeProvider))
+            return false;
+        if (task.IsCompleted)
+        {
+            await task.ConfigureAwait(false);
+            return true;
+        }
+
+        var completionClaim = ClaimTaskCompletion(task, deadline, timeProvider);
         while (true)
         {
+            if (completionClaim.IsCompleted)
+                return await completionClaim.ConfigureAwait(false);
             if (deadline.IsExpired(timeProvider))
                 return false;
-            if (task.IsCompleted)
-            {
-                await task.ConfigureAwait(false);
-                return true;
-            }
 
             var timeout = deadline.GetRemaining(timeProvider);
             var slice = timeout > MaximumDelay ? MaximumDelay : timeout;
             try
             {
-                await task.WaitAsync(slice, timeProvider, cancellationToken).ConfigureAwait(false);
-                return true;
+                return await completionClaim
+                    .WaitAsync(slice, timeProvider, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
-                if (task.IsCompleted)
-                {
-                    await task.ConfigureAwait(false);
-                    return true;
-                }
+                if (completionClaim.IsCompleted)
+                    return await completionClaim.ConfigureAwait(false);
                 if (deadline.IsExpired(timeProvider))
                     return false;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                if (completionClaim.IsCompleted)
+                    return await completionClaim.ConfigureAwait(false);
                 if (deadline.IsExpired(timeProvider))
                     return false;
                 throw;
             }
         }
     }
+
+    private static Task<bool> ClaimTaskCompletion(
+        Task task,
+        RpcDeadline deadline,
+        TimeProvider timeProvider)
+        => task.ContinueWith(
+            static (completed, state) =>
+            {
+                var claim = (TaskDeadlineClaimState)state!;
+                if (claim.Deadline.IsExpired(claim.TimeProvider))
+                    return false;
+                completed.GetAwaiter().GetResult();
+                return true;
+            },
+            new TaskDeadlineClaimState(deadline, timeProvider),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     internal static async ValueTask<bool> WaitAsync(
         Task task,
@@ -274,5 +298,13 @@ internal static class SharpLinkTimer
             RpcDeadline.FromTimestamp(deadline),
             timeProvider,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private sealed class TaskDeadlineClaimState(
+        RpcDeadline deadline,
+        TimeProvider timeProvider)
+    {
+        public RpcDeadline Deadline { get; } = deadline;
+        public TimeProvider TimeProvider { get; } = timeProvider;
     }
 }
