@@ -229,7 +229,6 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     internal void ReleaseQueue(int retainedBytes)
     {
         TaskCompletionSource<bool>? drained = null;
-        var shouldReclaim = false;
         lock (_accountingGate)
         {
             if (--_queuedCalls < 0)
@@ -238,15 +237,10 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             if (_queuedBytes < 0)
                 throw new InvalidOperationException("Admission queued byte accounting underflowed.");
             if (_queuedCalls == 0)
-            {
                 drained = _queueDrained;
-                shouldReclaim = _activePermits == 0;
-            }
         }
         drained?.TrySetResult(true);
         SharpLinkTelemetry.AddAdmissionQueuedCalls(-1);
-        if (shouldReclaim)
-            ReclaimUnreferencedStatesIfIdle();
     }
 
     internal bool TryReserveAdditionalQueuedBytes(int retainedBytes, long maxQueuedBytes)
@@ -288,21 +282,15 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     internal void OnLeaseDisposed()
     {
         TaskCompletionSource<bool>? drained = null;
-        var shouldReclaim = false;
         lock (_accountingGate)
         {
             if (--_activePermits < 0)
                 throw new InvalidOperationException("Admission active permit accounting underflowed.");
             if (_activePermits == 0)
-            {
                 drained = _permitsDrained;
-                shouldReclaim = _queuedCalls == 0;
-            }
         }
         drained?.TrySetResult(true);
         SharpLinkTelemetry.AddAdmissionActivePermits(-1);
-        if (shouldReclaim)
-            ReclaimUnreferencedStatesIfIdle();
     }
 
     /// <summary>Shutdown-only cancellation. Ordinary program retirement never calls this method.</summary>
@@ -384,7 +372,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             }
             if (--entry.ProgramReferences < 0)
                 throw new InvalidOperationException("Admission rule state reference count underflowed.");
-            if (entry.ProgramReferences == 0 && !HasOutstandingActivity())
+            if (entry.ProgramReferences == 0)
             {
                 _ruleStates.Remove(binding.Key);
                 (dispose ??= []).Add(entry.Runtime);
@@ -397,38 +385,13 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         {
             if (--partitionEntry.ProgramReferences < 0)
                 throw new InvalidOperationException("Admission partition state reference count underflowed.");
-            if (partitionEntry.ProgramReferences == 0 && !HasOutstandingActivity())
+            if (partitionEntry.ProgramReferences == 0)
             {
                 _partitionStates.Remove(partitionBinding.Key);
                 (dispose ??= []).Add(partitionEntry.Pool);
             }
         }
     }
-
-    private void ReclaimUnreferencedStatesIfIdle()
-    {
-        if (HasOutstandingActivity())
-            return;
-
-        List<IDisposable>? dispose = null;
-        lock (_registryGate)
-        {
-            foreach (var pair in _ruleStates.Where(static pair => pair.Value.ProgramReferences == 0).ToArray())
-            {
-                _ruleStates.Remove(pair.Key);
-                (dispose ??= []).Add(pair.Value.Runtime);
-            }
-            foreach (var pair in _partitionStates.Where(static pair => pair.Value.ProgramReferences == 0).ToArray())
-            {
-                _partitionStates.Remove(pair.Key);
-                (dispose ??= []).Add(pair.Value.Pool);
-            }
-        }
-        DisposeStates(dispose);
-    }
-
-    private bool HasOutstandingActivity()
-        => Volatile.Read(ref _queuedCalls) != 0 || Volatile.Read(ref _activePermits) != 0;
 
     private void ThrowIfDisposed()
     {
