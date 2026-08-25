@@ -33,7 +33,8 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         var streams = new ProbeClientStreams(probe);
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
-        var emissionBlocked = transport.Connection.BlockNextOutputBufferRequest();
+        transport.Connection.RunOnNextOutputBufferRequest(
+            () => timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
         var invocation = channel.InvokeOneWayAsync(
             method,
             in request,
@@ -41,16 +42,6 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             in streams,
             metadata: null,
             cancellationToken: default).AsTask();
-
-        try
-        {
-            await emissionBlocked.WaitAsync(TimeSpan.FromSeconds(2));
-            timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
-        }
-        finally
-        {
-            transport.Connection.ReleaseBlockedOutputBufferRequest();
-        }
 
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
