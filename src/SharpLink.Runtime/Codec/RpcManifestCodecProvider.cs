@@ -27,6 +27,7 @@ public static class RpcGeneratedCodecResolver
     internal static IRpcCodecProvider GetProvider(RpcGeneratedManifestRegistration registration)
     {
         ArgumentNullException.ThrowIfNull(registration);
+        registration.ThrowIfDisposed();
         return OwnerProviders.GetValue(
             registration,
             static owner => new RpcManifestCodecProvider(owner, owner.BaseProvider));
@@ -51,6 +52,7 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
 
     public IRpcCodec<T> GetCodec<T>()
     {
+        _owner.ThrowIfDisposed();
         var targetType = typeof(T);
         if (_owner.ContractCodecs.TryGetValue(targetType, out var policyRegistration))
             return ResolveOwned<T>(targetType, policyRegistration);
@@ -66,7 +68,7 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
 
             if (_runtimeProvider is not null &&
                 _runtimeProvider.CreateGeneratedRegistrationSnapshot().TryGetValue(targetType, out var dependency) &&
-                IsGeneratedDependencyAllowed(dependency))
+                IsGeneratedDependencyAllowed(targetType, dependency))
             {
                 return ResolveOwned<T>(targetType, dependency);
             }
@@ -80,61 +82,42 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
                 $"Codec for '{targetType.FullName}' is not part of the compile-time Codec graph owned by '{_owner.Manifest.OwnerAssembly.FullName}'.");
         }
 
-        // No-policy Contracts preserve the established explicit runtime UseCodec<T> precedence,
-        // but their generated/default Codec instances still belong to this manifest generation.
-        // Do not borrow an equivalent generated Adapter/native instance from an unrelated module.
-        if (!_owner.Codecs.TryGetValue(targetType, out var defaultRegistration))
-            return _fallback.GetCodec<T>();
+        // A no-policy Contract preserves only an *explicit* runtime UseCodec<T> override. Resolver
+        // fallback, UnsafeBlit and an equivalent globally-published generated registration are not
+        // explicit policy and therefore cannot replace this generation's own generated/default
+        // binding. Construct owner-generated parents against this provider as well so their nested
+        // dependencies cannot borrow another module generation's disposable Adapter scope.
+        if (_runtimeProvider is not null && _runtimeProvider.TryGetExplicitCodec<T>(out var explicitCodec))
+            return explicitCodec;
 
-        if (_runtimeProvider is null)
-        {
-            try
-            {
-                return _fallback.GetCodec<T>();
-            }
-            catch (NotSupportedException)
-            {
-                return ResolveOwned<T>(targetType, defaultRegistration);
-            }
-        }
+        if (_owner.Codecs.TryGetValue(targetType, out var defaultRegistration))
+            return ResolveOwned<T>(targetType, defaultRegistration);
 
-        var snapshot = _runtimeProvider.CreateGeneratedRegistrationSnapshot();
-        if (!snapshot.TryGetValue(targetType, out var publishedRegistration))
-        {
-            try
-            {
-                return _fallback.GetCodec<T>();
-            }
-            catch (NotSupportedException)
-            {
-                return ResolveOwned<T>(targetType, defaultRegistration);
-            }
-        }
-
-        var candidate = _fallback.GetCodec<T>();
-        if (ReferenceEquals(publishedRegistration.Owner, _owner))
-            return candidate;
-        if (!IsPublishedGeneratedCandidate(publishedRegistration, candidate))
-            return candidate; // explicit runtime Codec won over the published generated registration.
-
-        return ResolveOwned<T>(targetType, defaultRegistration);
+        return _fallback.GetCodec<T>();
     }
 
     private IRpcCodec<T> ResolveOwned<T>(Type targetType, RpcGeneratedCodecRegistration registration)
     {
+        _owner.ThrowIfDisposed();
         var codec = _resolved.GetOrAdd(
             targetType,
             _ => registration.GetCodec(this));
+        _owner.ThrowIfDisposed();
         return Cast<T>(codec, targetType);
     }
 
-    private bool IsGeneratedDependencyAllowed(RpcGeneratedCodecRegistration registration)
+    private bool IsGeneratedDependencyAllowed(
+        Type targetType,
+        RpcGeneratedCodecRegistration registration)
     {
         if (ReferenceEquals(registration.Owner, _owner))
             return true;
-        var dependencyIdentity = registration.Owner.Manifest.OwnerAssembly.FullName;
-        if (dependencyIdentity is null)
+
+        var dependencyAssembly = registration.Owner.Manifest.OwnerAssembly;
+        var dependencyIdentity = dependencyAssembly.FullName;
+        if (dependencyIdentity is null || !IsTargetOwnedByDependency(targetType, dependencyAssembly))
             return false;
+
         var dependencies = _owner.Manifest.Dependencies;
         for (var index = 0; index < dependencies.Count; index++)
         {
@@ -144,14 +127,20 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
         return false;
     }
 
-    private bool IsPublishedGeneratedCandidate<T>(
-        RpcGeneratedCodecRegistration registration,
-        IRpcCodec<T> candidate)
+    private static bool IsTargetOwnedByDependency(Type targetType, Assembly dependencyAssembly)
     {
-        var generated = registration.GetCodec(_fallback);
-        return registration.Factory.Kind == RpcGeneratedCodecFactoryKind.Adapter
-            ? ReferenceEquals(generated, candidate)
-            : generated.GetType() == candidate.GetType();
+        if (ReferenceEquals(targetType.Assembly, dependencyAssembly))
+            return true;
+        if (targetType.IsArray)
+            return IsTargetOwnedByDependency(targetType.GetElementType()!, dependencyAssembly);
+        if (!targetType.IsGenericType)
+            return false;
+        foreach (var argument in targetType.GetGenericArguments())
+        {
+            if (IsTargetOwnedByDependency(argument, dependencyAssembly))
+                return true;
+        }
+        return false;
     }
 
     private static IRpcCodec<T> Cast<T>(IRpcCodec codec, Type targetType)
