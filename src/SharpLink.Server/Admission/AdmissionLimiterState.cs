@@ -81,22 +81,14 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     {
         ValidatePermitCount(permitCount);
 
-        // All state transitions that can change a final fast rejection publish this single bit
-        // under _gate. One acquire read therefore observes a coherent reject decision without
-        // independently sampling _active / _permitLimit / _disposed outside their lock.
         if (Volatile.Read(ref _fastRejectUnavailable) != 0)
-        {
             return FailedLease.Instance;
-        }
 
         return AttemptAcquireStableCore();
     }
 
     private RateLimitLease AttemptAcquireStableCore()
     {
-        // The deterministic publication-race hook is needed only once an immediate attempt can
-        // still reach the state lock. Exhausted rejection is already final and must stay on the
-        // minimal production fast path.
         BeforeAttemptAcquireForTests?.Invoke();
 
         lock (_gate)
@@ -104,7 +96,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_disposed != 0)
                 return FailedLease.Instance;
 
-            // Do not let a new immediate caller barge ahead of an already queued Request.
             if (_waitingCount != 0 || _active >= _permitLimit)
                 return FailedLease.Instance;
 
@@ -216,11 +207,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         return new ValueTask<RateLimitLease>(waiter.Task);
     }
 
-    /// <summary>
-    /// Commits a prevalidated target. Existing holders remain valid. Kernel-owned states never
-    /// grant here because Update keeps the shared epoch odd across every physical resize and the
-    /// N+1 publication; the publication path performs the synchronous FIFO wake once stable.
-    /// </summary>
     internal void Resize(int permitLimit)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(permitLimit);
@@ -237,10 +223,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         CompleteGranted(granted, UnversionedTarget);
     }
 
-    /// <summary>
-    /// Flushes capacity after the complete shared target epoch is stable. This is synchronous so an
-    /// enabled increase has updated ActiveCount / FIFO waiter ownership before Update returns.
-    /// </summary>
     internal void GrantWaitersAfterTargetCommit()
         => GrantWaitersForStableTarget();
 
@@ -274,8 +256,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 return;
         }
 
-        // A release can race an update even when this state is not resized. Its waiter grant must
-        // therefore use the same stable-version authorization as the post-update flush.
         GrantWaitersForStableTarget();
     }
 
@@ -308,11 +288,6 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 if (_disposed != 0)
                     return;
 
-                // This second read closes the even-read -> state-lock window reported in review.
-                // If a writer opened the target epoch before this point, do not dequeue anything.
-                // If it opens after this point, this check is the grant's old-policy linearization
-                // point; the writer cannot resize this state until the state lock is released, and
-                // the complete AdmissionRequest still validates one epoch across all of its slots.
                 if (!versionOwner.IsConcurrencyTargetVersionCurrent(targetVersion))
                 {
                     retry = true;
@@ -565,76 +540,58 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     }
 }
 
-/// <summary>Stable immutable-configuration rate state. Its BCL waiter capacity is fixed at the
-/// maximum representable outer call bound; actual residency is authorized only by the kernel queue
-/// reservation made before Admission calls AcquireAsync.</summary>
+/// <summary>
+/// One immutable rate-policy generation over a SharpLink-owned dynamic state. Changed policies get
+/// a new instance; unchanged policies keep sharing the exact same instance and waiter queue.
+/// </summary>
 internal sealed class AdmissionRateState : RateLimiter
 {
-    private const int InnerQueueLimit = int.MaxValue;
-    private readonly RateLimiter _limiter;
+    private readonly AdmissionDynamicRateState _state;
 
-    private AdmissionRateState(RateLimiter limiter, AdmissionRateStateDefinition definition)
-    {
-        _limiter = limiter;
-        Definition = definition;
-    }
+    private AdmissionRateState(AdmissionDynamicRateState state)
+        => _state = state;
 
-    internal AdmissionRateStateDefinition Definition { get; }
+    internal AdmissionRateStateDefinition Definition => _state.Definition;
 
-    internal static AdmissionRateState Create(SharpLinkAdmissionRuleOptions options)
+    internal AdmissionRateTransitionLineage Lineage => _state.Lineage;
+
+    internal int WaitingCount => _state.WaitingCount;
+
+    internal long TransitionDebtForDiagnostics => _state.TransitionDebtForDiagnostics;
+
+    internal long TransitionBarrierExpiryForDiagnostics => _state.TransitionBarrierExpiryForDiagnostics;
+
+    internal static AdmissionRateState Create(
+        SharpLinkAdmissionRuleOptions options,
+        TimeProvider timeProvider,
+        AdmissionRateState? transitionSource = null)
     {
         var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
-        RateLimiter limiter = options.RateLimit switch
-        {
-            SharpLinkTokenBucketLimitOptions tokenBucket => new TokenBucketRateLimiter(
-                new TokenBucketRateLimiterOptions
-                {
-                    TokenLimit = tokenBucket.TokenLimit,
-                    TokensPerPeriod = tokenBucket.TokensPerPeriod,
-                    ReplenishmentPeriod = tokenBucket.ReplenishmentPeriod,
-                    AutoReplenishment = true,
-                    QueueLimit = InnerQueueLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                }),
-            SharpLinkFixedWindowLimitOptions fixedWindow => new FixedWindowRateLimiter(
-                new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = fixedWindow.PermitLimit,
-                    Window = fixedWindow.Window,
-                    AutoReplenishment = true,
-                    QueueLimit = InnerQueueLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                }),
-            SharpLinkSlidingWindowLimitOptions slidingWindow => new SlidingWindowRateLimiter(
-                new SlidingWindowRateLimiterOptions
-                {
-                    PermitLimit = slidingWindow.PermitLimit,
-                    Window = slidingWindow.Window,
-                    SegmentsPerWindow = slidingWindow.SegmentsPerWindow,
-                    AutoReplenishment = true,
-                    QueueLimit = InnerQueueLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                }),
-            _ => throw new InvalidOperationException("Admission rate state requires one rate policy.")
-        };
-        return new AdmissionRateState(limiter, definition);
+        var state = new AdmissionDynamicRateState(
+            definition,
+            timeProvider,
+            transitionSource?.Lineage);
+        return new AdmissionRateState(state);
     }
 
-    public override TimeSpan? IdleDuration => _limiter.IdleDuration;
+    internal void CommitTransitionTo(AdmissionRateState? target)
+        => _state.CommitTransitionTo(target?._state);
 
-    public override RateLimiterStatistics? GetStatistics() => _limiter.GetStatistics();
+    public override TimeSpan? IdleDuration => null;
+
+    public override RateLimiterStatistics? GetStatistics() => null;
 
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
-        => _limiter.AttemptAcquire(permitCount);
+        => _state.AttemptAcquire(permitCount);
 
     protected override ValueTask<RateLimitLease> AcquireAsyncCore(
         int permitCount,
         CancellationToken cancellationToken)
-        => _limiter.AcquireAsync(permitCount, cancellationToken);
+        => _state.AcquireAsync(permitCount, cancellationToken);
 
     protected override void Dispose(bool disposing)
     {
         if (disposing)
-            _limiter.Dispose();
+            _state.Dispose();
     }
 }
