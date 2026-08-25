@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
@@ -34,6 +33,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         var streams = new ProbeClientStreams(probe);
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
+        var emissionBlocked = transport.Connection.BlockNextOutputBufferRequest();
         var invocation = channel.InvokeOneWayAsync(
             method,
             in request,
@@ -42,29 +42,25 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             metadata: null,
             cancellationToken: default).AsTask();
 
-        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
+        try
+        {
+            await emissionBlocked.WaitAsync(TimeSpan.FromSeconds(2));
+            timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            transport.Connection.ReleaseBlockedOutputBufferRequest();
+        }
 
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "an initial OneWay client-stream Request that expires in the send queue must fail locally");
+            "an initial OneWay client-stream Request that expires at the emission boundary must fail locally");
         Ensure(!probe.Started,
             "the OneWay client-stream producer must not start until its owning Request survives emission");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
                 ProtocolV2FrameType.StreamData,
                 TimeSpan.FromMilliseconds(50)),
             "no orphan OneWay StreamData may be emitted after the owning Request is dropped");
-    }
-
-    private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
-    {
-        var connections = (ClientConnection[])(typeof(SharpLinkClient).GetField(
-                "_readyConnections",
-                BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(client) ?? throw new Exception("cannot find ready connection selection snapshot"));
-        Ensure(connections.Length == 1, "expected exactly one ready connection");
-        return connections[0];
     }
 
     private static async Task<SharpLinkException> CaptureSharpLinkExceptionAsync(Task operation)
