@@ -42,6 +42,69 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
     }
 
     [Test]
+    public async Task LocalAbortShouldWaitForOwnedBufferedPublication()
+    {
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(default, Int32Codec.Instance);
+        var creditedBytes = 0;
+        var deliveryEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseDelivery = new ManualResetEventSlim();
+        dispatcher.SetBytesConsumedCallback(
+            (_, _, bytes) =>
+            {
+                deliveryEntered.TrySetResult();
+                if (!releaseDelivery.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("buffered delivery publication was not released");
+                Interlocked.Add(ref creditedBytes, bytes);
+            },
+            requestId: 73,
+            streamId: 0);
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        await dispatcher.DispatchAsync(Encode(41));
+
+        var delivery = Task.Run(async () =>
+            await enumerator.MoveNextAsync().ConfigureAwait(false));
+        await deliveryEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var terminal = new SharpLinkException(
+            SharpLinkErrorCode.DeadlineExceeded,
+            "test deadline");
+        var localAbort = (IStreamLocalAbortDispatcher)dispatcher;
+        var abortStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var abort = Task.Run(() =>
+        {
+            abortStarted.TrySetResult();
+            localAbort.CompleteLocalAbort(terminal);
+        });
+        await abortStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(TimeSpan.FromMilliseconds(50));
+        var abortWaitedForPublication = !abort.IsCompleted;
+
+        releaseDelivery.Set();
+        var delivered = await delivery.WaitAsync(TimeSpan.FromSeconds(2));
+        await abort.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(abortWaitedForPublication,
+            "a local terminal must not complete while an owned item is still publishing Current or receive credit");
+        Ensure(delivered && enumerator.Current == 41,
+            "the item that acquired publication ownership first must finish before the local terminal wins");
+        Ensure(Volatile.Read(ref creditedBytes) == 4,
+            "the winning delivery must publish its receive credit exactly once");
+
+        var failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "the local terminal must close every delivery after the already-owned item");
+
+        localAbort.RetireLocalAbortBuffer();
+        Ensure(Volatile.Read(ref creditedBytes) == 4,
+            "retirement must not return credit twice for an item that already published");
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+    }
+
+    [Test]
     public async Task LocalAbortCleanupRetentionShouldOutliveEarlyConsumerDispose()
     {
         PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
