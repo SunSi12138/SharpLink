@@ -77,9 +77,15 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         throw new AggregateException(cleanupFailures);
     }
 
+    /// <summary>Gets an isolated copy of the frozen runtime options.</summary>
     public SharpLinkRuntimeOptions Options => _options.CloneValidated();
+
+    /// <inheritdoc />
     public IRpcCodecProvider Codecs { get; }
+
+    /// <summary>Gets the context-owned packet writer pool.</summary>
     public SharpLinkBufferWriterPool Buffers { get; }
+
     IRpcBufferWriterPool IRpcRuntimeContext.Buffers => Buffers;
     internal RuntimeConcurrencyOptions Concurrency { get; }
     internal SharpLinkProtocolOptions Protocol => _options.Protocol;
@@ -250,6 +256,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         }
     }
 
+    /// <summary>Releases context-owned Codec registrations, Adapter scopes, and pooled buffers.</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -293,6 +300,7 @@ public sealed class SharpLinkRuntimeContextBuilder
     private readonly Dictionary<Type, IRpcCodec> _codecs = [];
     private Func<Type, IRpcCodec?>? _resolver;
 
+    /// <summary>Configures runtime and protocol limits.</summary>
     public SharpLinkRuntimeContextBuilder Configure(Action<SharpLinkRuntimeOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
@@ -300,6 +308,7 @@ public sealed class SharpLinkRuntimeContextBuilder
         return this;
     }
 
+    /// <summary>Configures the context-owned writer pool.</summary>
     public SharpLinkRuntimeContextBuilder ConfigureBufferPool(Action<BufferWriterPoolOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
@@ -307,6 +316,7 @@ public sealed class SharpLinkRuntimeContextBuilder
         return this;
     }
 
+    /// <summary>Configures striped state containers created by this context.</summary>
     public SharpLinkRuntimeContextBuilder ConfigureStateStores(Action<RuntimeConcurrencyOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
@@ -314,12 +324,14 @@ public sealed class SharpLinkRuntimeContextBuilder
         return this;
     }
 
+    /// <summary>Sets the optional fallback Codec resolver for this context.</summary>
     public SharpLinkRuntimeContextBuilder UseCodecResolver(Func<Type, IRpcCodec?>? resolver)
     {
         _resolver = resolver;
         return this;
     }
 
+    /// <summary>Registers an explicit Codec in this context.</summary>
     public SharpLinkRuntimeContextBuilder AddCodec<T>(IRpcCodec<T> codec)
     {
         ArgumentNullException.ThrowIfNull(codec);
@@ -330,6 +342,7 @@ public sealed class SharpLinkRuntimeContextBuilder
         return this;
     }
 
+    /// <summary>Validates and freezes a new runtime context.</summary>
     public SharpLinkRuntimeContext Build()
         => Build(SharpLinkGeneratedAssemblyCatalog.CreateSnapshot());
 
