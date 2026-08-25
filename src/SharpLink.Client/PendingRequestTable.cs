@@ -72,8 +72,10 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _slotAvailable;
     private readonly ITimer _deadlineTimer;
+    private readonly Lock _deadlineGate = new();
     private long _nextId;
-    private long _approximateEarliestDeadline = long.MaxValue;
+    private long _approximateEarliestDeadline;
+    private bool _hasApproximateEarliestDeadline;
     private int _deadlineScanRunning;
     private int _activeSlots;
     private int _waiterCount;
@@ -780,7 +782,7 @@ internal sealed class PendingRequestTable : IDisposable
         _owner.OnPendingCallRegistered();
         call.MarkRegistered();
         if (call.Deadline.HasValue)
-            UpdateEarliestDeadline(call.Deadline.Timestamp);
+            UpdateEarliestDeadline(call.Deadline);
         if (call.CancellationToken.IsCancellationRequested)
             TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
     }
@@ -1000,23 +1002,23 @@ internal sealed class PendingRequestTable : IDisposable
         return id != 0 ? id : Interlocked.Increment(ref _nextId);
     }
 
-    private void UpdateEarliestDeadline(long deadlineTimestamp)
+    private void UpdateEarliestDeadline(RpcDeadline deadline)
     {
-        while (true)
+        lock (_deadlineGate)
         {
-            var current = Volatile.Read(ref _approximateEarliestDeadline);
-            if (current <= deadlineTimestamp)
+            if (Volatile.Read(ref _disposed) != 0)
                 return;
-            if (Interlocked.CompareExchange(
-                    ref _approximateEarliestDeadline,
-                    deadlineTimestamp,
-                    current) != current)
+
+            if (_hasApproximateEarliestDeadline)
             {
-                continue;
+                var current = RpcDeadline.FromTimestamp(_approximateEarliestDeadline);
+                if (current.IsEarlierOrEqual(deadline, _timeProvider.GetTimestamp()))
+                    return;
             }
 
-            ReconcileDeadlineTimer();
-            return;
+            _approximateEarliestDeadline = deadline.Timestamp;
+            _hasApproximateEarliestDeadline = true;
+            ArmDeadlineTimer(deadline.Timestamp);
         }
     }
 
@@ -1030,24 +1032,24 @@ internal sealed class PendingRequestTable : IDisposable
 
         try
         {
-            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
+            lock (_deadlineGate)
+                _hasApproximateEarliestDeadline = false;
             var slots = Volatile.Read(ref _slots);
             if (slots is null)
                 return;
 
-            var now = _timeProvider.GetTimestamp();
             for (var index = 0; index < slots.Length; index++)
             {
                 var call = Volatile.Read(ref slots[index]);
                 if (call is null || !call.Deadline.HasValue)
                     continue;
-                if (call.Deadline.Timestamp <= now)
+                if (call.Deadline.IsExpired(_timeProvider))
                 {
                     TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
                 }
                 else
                 {
-                    UpdateEarliestDeadline(call.Deadline.Timestamp);
+                    UpdateEarliestDeadline(call.Deadline);
                 }
             }
         }
@@ -1060,16 +1062,19 @@ internal sealed class PendingRequestTable : IDisposable
 
     private void ReconcileDeadlineTimer()
     {
-        while (Volatile.Read(ref _disposed) == 0)
+        long next = 0;
+        var hasNext = false;
+        lock (_deadlineGate)
         {
-            var next = Volatile.Read(ref _approximateEarliestDeadline);
-            if (next == long.MaxValue)
-                return;
-
-            ArmDeadlineTimer(next);
-            if (Volatile.Read(ref _approximateEarliestDeadline) == next)
-                return;
+            if (Volatile.Read(ref _disposed) == 0 && _hasApproximateEarliestDeadline)
+            {
+                next = _approximateEarliestDeadline;
+                hasNext = true;
+            }
         }
+
+        if (hasNext)
+            ArmDeadlineTimer(next);
     }
 
     private void ArmDeadlineTimer(long deadlineTimestamp)
