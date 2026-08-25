@@ -11,6 +11,7 @@ internal enum ClientConnectionState : byte
 internal sealed class ClientConnection :
     IPendingCallOwner,
     IRpcClientStreamSink,
+    IStreamConsumerDeliveryGate,
     IAsyncDisposable
 {
     private readonly SharpLinkClient _client;
@@ -94,6 +95,9 @@ internal sealed class ClientConnection :
 
     public Func<long, IStreamDispatchState?, ValueTask> ConsumerAbandonedCallback
         => _consumerAbandonedCallback;
+
+    bool IStreamConsumerDeliveryGate.TryAcceptStreamDelivery(long requestId)
+        => PendingCalls.TryAcceptStreamData(requestId);
 
     internal bool ShouldLogLateResponse(out int suppressedCount)
         => _lateResponseLogLimiter.ShouldLog(_timeProvider.GetTimestamp(), out suppressedCount);
