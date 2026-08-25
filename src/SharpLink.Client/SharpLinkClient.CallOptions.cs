@@ -21,22 +21,34 @@ internal sealed partial class SharpLinkClient
                 : null;
 
         var timeProvider = _runtimeContext.TimeProvider;
-        var deadlineAnchor = timeProvider.GetTimestamp();
+        var localAnchor = timeProvider.GetTimestamp();
+        var deadline = selectedTimeout is { } timeout
+            ? RpcDeadline.Create(timeout, localAnchor, timeProvider.TimestampFrequency)
+            : default;
+
         var ambientCall = SharpLinkCallContext.Current;
         if (ambientCall is not null &&
             ambientCall.LocalRpcDeadline.HasValue &&
             ambientCall.DeadlineTimeProvider is { } inheritedTimeProvider)
         {
+            // Reading a parent deadline can itself consume time. Project the remaining parent
+            // lifetime from a fresh child-clock sample taken after that read; anchoring it back at
+            // local invocation entry would double-charge the projection work. The local policy,
+            // however, remains anchored at logical invocation entry so that same work still ages
+            // the child's own timeout normally.
             var inheritedRemaining = ambientCall.LocalRpcDeadline.GetRemaining(inheritedTimeProvider);
             if (inheritedRemaining <= TimeSpan.Zero)
                 throw CreateDeadlineExceededException();
-            if (selectedTimeout is null || inheritedRemaining < selectedTimeout.Value)
-                selectedTimeout = inheritedRemaining;
+
+            var inheritedAnchor = timeProvider.GetTimestamp();
+            var inheritedDeadline = RpcDeadline.Create(
+                inheritedRemaining,
+                inheritedAnchor,
+                timeProvider.TimestampFrequency);
+            if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, inheritedAnchor))
+                deadline = inheritedDeadline;
         }
 
-        var deadline = selectedTimeout is { } timeout
-            ? RpcDeadline.Create(timeout, deadlineAnchor, timeProvider.TimestampFrequency)
-            : default;
         if (deadline.IsExpired(timeProvider))
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
