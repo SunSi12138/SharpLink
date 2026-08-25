@@ -9,19 +9,7 @@ public interface IRpcGeneratedServerBridge
     /// Claims one boundary at which framework code is about to re-enter user code for a request.
     /// Throws the already-selected call terminal when user code may no longer run.
     /// </summary>
-    void EnsureUserCodeEntry(long requestId)
-    {
-        // Runtime-only bridge users do not own the Server call-state map. They can still enforce
-        // the frozen monotonic deadline carried by the ambient generated invocation context.
-        if (SharpLinkCallContext.Current is { } context &&
-            context.DeadlineTimeProvider is { } timeProvider &&
-            context.LocalRpcDeadline.IsExpired(timeProvider))
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.DeadlineExceeded,
-                "Request deadline exceeded.");
-        }
-    }
+    void EnsureUserCodeEntry(long requestId);
 
     /// <summary>Creates and atomically registers one typed inbound request stream.</summary>
     IAsyncEnumerable<T> CreateInboundStream<T>(
