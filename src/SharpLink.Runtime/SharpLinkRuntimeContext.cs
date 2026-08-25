@@ -335,7 +335,7 @@ public sealed class SharpLinkRuntimeContextBuilder
     public SharpLinkRuntimeContextBuilder AddCodec<T>(IRpcCodec<T> codec)
     {
         ArgumentNullException.ThrowIfNull(codec);
-        if (SharedRpcCodec<T>.Instance is not null)
+        if (BuiltinRpcCodecs.TryGet(typeof(T), out _))
             throw new InvalidOperationException($"The built-in codec for '{typeof(T).FullName}' is immutable and cannot be replaced.");
         if (!_codecs.TryAdd(typeof(T), codec))
             throw new InvalidOperationException($"A codec for '{typeof(T)}' is already registered in this context builder.");
