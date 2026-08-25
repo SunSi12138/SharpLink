@@ -17,7 +17,8 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     private readonly ArrayPool<ServerCallCancellationLease> _snapshotPool;
     private readonly ITimer _timer;
     private readonly Lock _deadlineGate = new();
-    private long _approximateEarliestDeadline;
+    private RpcDeadline _approximateEarliestDeadline;
+    private long _deadlineRevision;
     private bool _hasApproximateEarliestDeadline;
     private int _scanRunning;
     private int _disposed;
@@ -75,17 +76,20 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
             if (Volatile.Read(ref _disposed) != 0)
                 return;
 
-            if (_hasApproximateEarliestDeadline)
+            if (_hasApproximateEarliestDeadline &&
+                _approximateEarliestDeadline.IsEarlierOrEqual(
+                    deadline,
+                    _timeProvider.GetTimestamp()))
             {
-                var current = RpcDeadline.FromTimestamp(_approximateEarliestDeadline);
-                if (current.IsEarlierOrEqual(deadline, _timeProvider.GetTimestamp()))
-                    return;
+                return;
             }
 
-            _approximateEarliestDeadline = deadline.Timestamp;
+            _approximateEarliestDeadline = deadline;
             _hasApproximateEarliestDeadline = true;
-            ArmDeadlineTimer(deadline.Timestamp);
+            _deadlineRevision++;
         }
+
+        ReconcileDeadlineTimer();
     }
 
     private void ScanExpiredDeadlines()
@@ -99,7 +103,11 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         try
         {
             lock (_deadlineGate)
+            {
+                _approximateEarliestDeadline = default;
                 _hasApproximateEarliestDeadline = false;
+                _deadlineRevision++;
+            }
             var activeHint = Math.Min(_maxCalls, _calls.Count);
             if (activeHint == 0)
                 return;
@@ -145,18 +153,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         finally
         {
             Volatile.Write(ref _scanRunning, 0);
-            long next = 0;
-            var hasNext = false;
-            lock (_deadlineGate)
-            {
-                if (Volatile.Read(ref _disposed) == 0 && _hasApproximateEarliestDeadline)
-                {
-                    next = _approximateEarliestDeadline;
-                    hasNext = true;
-                }
-            }
-            if (hasNext)
-                ArmDeadlineTimer(next);
+            ReconcileDeadlineTimer();
         }
     }
 
@@ -215,15 +212,40 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     private void ScheduleInvariantRetry()
         => UpdateEarliestDeadline(RpcDeadline.Create(TimeSpan.FromSeconds(1), _timeProvider));
 
-    private void ArmDeadlineTimer(long deadlineTimestamp)
+    private void ReconcileDeadlineTimer()
+    {
+        while (Volatile.Read(ref _disposed) == 0)
+        {
+            RpcDeadline next;
+            long revision;
+            lock (_deadlineGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0 || !_hasApproximateEarliestDeadline)
+                    return;
+                next = _approximateEarliestDeadline;
+                revision = _deadlineRevision;
+            }
+
+            ArmDeadlineTimer(next);
+
+            lock (_deadlineGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0 ||
+                    !_hasApproximateEarliestDeadline ||
+                    revision == _deadlineRevision)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    private void ArmDeadlineTimer(RpcDeadline deadline)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var delay = RpcDeadline.GetRemaining(
-            deadlineTimestamp,
-            _timeProvider.GetTimestamp(),
-            _timeProvider.TimestampFrequency);
+        var delay = deadline.GetRemaining(_timeProvider);
         if (delay > SharpLinkTimer.MaximumDelay)
             delay = SharpLinkTimer.MaximumDelay;
         try
