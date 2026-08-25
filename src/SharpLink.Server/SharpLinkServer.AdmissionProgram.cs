@@ -200,6 +200,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             {
                 lifecycle.Kernel.RecordPublishedConcurrencyLineage(previous.Controller);
                 lifecycle.Kernel.RecordPublishedRateLineage(previous.Controller);
+                lifecycle.Kernel.RecordPublishedPartitionLineage(previous.Controller);
             }
 
             if (intent == AdmissionPublicationIntent.Enable && previous.IsEnabled)
@@ -223,7 +224,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             if (ReferenceEquals(previous, replacement))
                 return previous.IsEnabled ? previous : null;
 
-            if (intent == AdmissionPublicationIntent.Update && updatePlan!.ResizeCount != 0)
+            if (intent == AdmissionPublicationIntent.Update && updatePlan!.RequiresTargetCommit)
             {
                 lifecycle.Kernel.BeginConcurrencyTargetCommit();
                 try
@@ -236,8 +237,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
                     lifecycle.Kernel.CompleteConcurrencyTargetCommit();
                 }
 
-                foreach (var binding in replacement.Controller.RuleStateBindings)
-                    binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();
+                replacement.Controller.GrantConcurrencyWaitersAfterTargetCommit();
             }
             else
             {
@@ -250,6 +250,13 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             {
                 lifecycle.Kernel.RecordPublishedConcurrencyLineage(replacement.Controller);
                 lifecycle.Kernel.RecordPublishedRateLineage(replacement.Controller);
+                lifecycle.Kernel.RecordPublishedPartitionLineage(replacement.Controller);
+            }
+            else if (intent == AdmissionPublicationIntent.Update)
+            {
+                // An update cannot publish Disabled today, but keep current-lineage semantics explicit
+                // if that invariant changes in a future slice.
+                lifecycle.Kernel.RecordPublishedPartitionLineage(replacement.Controller);
             }
             if (previous.IsEnabled)
                 previous.Retire();
