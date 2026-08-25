@@ -347,7 +347,9 @@ internal sealed class AdmissionDynamicRateState : IDisposable
     private void RecordLegacyGrantLocked(long now, long sourceExpiry)
     {
         _transitionDebt = SaturatingAdd(_transitionDebt, 1);
-        var targetExpiry = SaturatingAdd(now, GetBarrierHorizonTimestampTicks(1));
+        var targetExpiry = SaturatingAdd(
+            now,
+            GetBarrierHorizonTimestampTicks(_transitionDebt));
         _transitionDebtExpiry = Math.Max(
             _transitionDebtExpiry,
             Math.Max(sourceExpiry, targetExpiry));
