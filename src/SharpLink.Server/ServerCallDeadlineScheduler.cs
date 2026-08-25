@@ -16,7 +16,9 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     private readonly TimeProvider _timeProvider;
     private readonly ArrayPool<ServerCallCancellationLease> _snapshotPool;
     private readonly ITimer _timer;
-    private long _approximateEarliestDeadline = long.MaxValue;
+    private readonly Lock _deadlineGate = new();
+    private long _approximateEarliestDeadline;
+    private bool _hasApproximateEarliestDeadline;
     private int _scanRunning;
     private int _disposed;
 
@@ -56,7 +58,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     {
         ArgumentNullException.ThrowIfNull(call);
         if (call.Deadline.HasValue)
-            UpdateEarliestDeadline(call.Deadline.Timestamp);
+            UpdateEarliestDeadline(call.Deadline);
     }
 
     public void Dispose()
@@ -66,23 +68,23 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         _timer.Dispose();
     }
 
-    private void UpdateEarliestDeadline(long deadlineTimestamp)
+    private void UpdateEarliestDeadline(RpcDeadline deadline)
     {
-        while (Volatile.Read(ref _disposed) == 0)
+        lock (_deadlineGate)
         {
-            var current = Volatile.Read(ref _approximateEarliestDeadline);
-            if (current <= deadlineTimestamp)
+            if (Volatile.Read(ref _disposed) != 0)
                 return;
-            if (Interlocked.CompareExchange(
-                    ref _approximateEarliestDeadline,
-                    deadlineTimestamp,
-                    current) != current)
+
+            if (_hasApproximateEarliestDeadline)
             {
-                continue;
+                var current = RpcDeadline.FromTimestamp(_approximateEarliestDeadline);
+                if (current.IsEarlierOrEqual(deadline, _timeProvider.GetTimestamp()))
+                    return;
             }
 
-            ArmDeadlineTimer(deadlineTimestamp);
-            return;
+            _approximateEarliestDeadline = deadline.Timestamp;
+            _hasApproximateEarliestDeadline = true;
+            ArmDeadlineTimer(deadline.Timestamp);
         }
     }
 
@@ -96,7 +98,8 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
 
         try
         {
-            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
+            lock (_deadlineGate)
+                _hasApproximateEarliestDeadline = false;
             var activeHint = Math.Min(_maxCalls, _calls.Count);
             if (activeHint == 0)
                 return;
@@ -142,8 +145,17 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         finally
         {
             Volatile.Write(ref _scanRunning, 0);
-            var next = Volatile.Read(ref _approximateEarliestDeadline);
-            if (next != long.MaxValue)
+            long next = 0;
+            var hasNext = false;
+            lock (_deadlineGate)
+            {
+                if (Volatile.Read(ref _disposed) == 0 && _hasApproximateEarliestDeadline)
+                {
+                    next = _approximateEarliestDeadline;
+                    hasNext = true;
+                }
+            }
+            if (hasNext)
                 ArmDeadlineTimer(next);
         }
     }
@@ -177,7 +189,6 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         ServerCallCancellationLease[] snapshot,
         int count)
     {
-        var now = _timeProvider.GetTimestamp();
         for (var index = 0; index < count; index++)
         {
             var callLease = snapshot[index];
@@ -189,10 +200,10 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
                 var deadline = call.Deadline;
                 if (!deadline.HasValue)
                     continue;
-                if (deadline.Timestamp <= now)
+                if (deadline.IsExpired(_timeProvider))
                     call.TryCancel(ServerCallCancellationReason.DeadlineExceeded);
                 else
-                    UpdateEarliestDeadline(deadline.Timestamp);
+                    UpdateEarliestDeadline(deadline);
             }
             finally
             {
@@ -202,13 +213,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     }
 
     private void ScheduleInvariantRetry()
-    {
-        var now = _timeProvider.GetTimestamp();
-        var frequency = _timeProvider.TimestampFrequency;
-        UpdateEarliestDeadline(now > long.MaxValue - frequency
-            ? long.MaxValue
-            : now + frequency);
-    }
+        => UpdateEarliestDeadline(RpcDeadline.Create(TimeSpan.FromSeconds(1), _timeProvider));
 
     private void ArmDeadlineTimer(long deadlineTimestamp)
     {
