@@ -21,9 +21,8 @@ public static class RpcGeneratedCodecResolver
             $"Runtime context '{runtimeContext.GetType().FullName}' must implement {nameof(IRpcContractCodecProviderResolver)} to construct generated Contract artifacts.");
     }
 
-    // Compatibility bridge for API-4 generated source while the API-5 generator switches its
-    // public proxy constructor to Contract Type lookup. SharpLink-owned contexts can still resolve
-    // the assembly generation; custom runtimes must use the Contract-aware overload.
+    /// <summary>Gets the Codec provider for an API-4 generated Contract owner assembly.</summary>
+    /// <remarks>API-5 generated source resolves by Contract Type instead.</remarks>
     public static IRpcCodecProvider GetProvider(
         IRpcRuntimeContext runtimeContext,
         Assembly ownerAssembly)
