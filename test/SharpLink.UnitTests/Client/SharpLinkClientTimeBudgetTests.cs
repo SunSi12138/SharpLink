@@ -88,32 +88,33 @@ public class SharpLinkClientTimeBudgetTests
     }
 
     [Test]
-    public async Task InheritedTimeBudgetHandoffDelayShouldConsumeChildLifetime()
+    public async Task InheritedTimeBudgetHandoffDelayShouldNotBeDoubleCounted()
     {
-        var childTimeProvider = new ManualTimeProvider();
-        var parentTimeProvider = new HandoffParentTimeProvider(childTimeProvider);
-        var parentDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(6), parentTimeProvider);
-        parentTimeProvider.Advance(TimeSpan.FromSeconds(2));
+        var timeProvider = new HandoffTimeProvider();
+        var parentDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(6), timeProvider);
+        timeProvider.Advance(TimeSpan.FromSeconds(2));
         using var scope = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
             "parent",
             null,
             parentDeadline,
-            parentTimeProvider));
+            timeProvider));
 
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
             {
-                builder.UseTimeProvider(childTimeProvider);
+                builder.UseTimeProvider(timeProvider);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
             });
         await client.ConnectAsync();
 
-        // Simulate a deschedule/handoff delay precisely while the parent remaining budget is sampled.
-        // The child timestamp must already have been anchored, so these three seconds are consumed
-        // instead of being re-added after the parent reports four seconds remaining.
-        parentTimeProvider.AdvanceChildOnNextTimestampRead(TimeSpan.FromSeconds(3));
+        // ResolveCallControl first samples the local-policy anchor, then asks the inherited
+        // deadline for its remaining lifetime. Advance the one shared monotonic clock on that
+        // second read: the parent is now at t=5 with one second left. Projecting that one second
+        // from the fresh t=5 child sample must preserve the parent's t=6 boundary; anchoring it
+        // back at t=2 would incorrectly expire three seconds early.
+        timeProvider.AdvanceOnTimestampRead(2, TimeSpan.FromSeconds(3));
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
@@ -126,7 +127,7 @@ public class SharpLinkClientTimeBudgetTests
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
 
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(1),
-            "delay between child anchoring and inherited-budget sampling must consume the child lifetime");
+            "the inherited cap must equal the parent's current remaining lifetime, without double-counting the handoff delay");
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
         Ensure(await invocation == 0, "inherited handoff response");
     }
@@ -284,26 +285,35 @@ public class SharpLinkClientTimeBudgetTests
         }
     }
 
-    private sealed class HandoffParentTimeProvider(ManualTimeProvider childTimeProvider) : TimeProvider
+    private sealed class HandoffTimeProvider : TimeProvider
     {
         private long _timestamp;
-        private long _childAdvanceTicks;
+        private long _advanceTicks;
+        private int _readsUntilAdvance;
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
         public override long GetTimestamp()
         {
-            var childAdvanceTicks = Interlocked.Exchange(ref _childAdvanceTicks, 0);
-            if (childAdvanceTicks != 0)
-                childTimeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromTicks(childAdvanceTicks));
+            if (Volatile.Read(ref _readsUntilAdvance) > 0 &&
+                Interlocked.Decrement(ref _readsUntilAdvance) == 0)
+            {
+                var advanceTicks = Interlocked.Exchange(ref _advanceTicks, 0);
+                if (advanceTicks != 0)
+                    Interlocked.Add(ref _timestamp, advanceTicks);
+            }
             return Volatile.Read(ref _timestamp);
         }
 
         internal void Advance(TimeSpan elapsed)
             => Interlocked.Add(ref _timestamp, elapsed.Ticks);
 
-        internal void AdvanceChildOnNextTimestampRead(TimeSpan elapsed)
-            => Volatile.Write(ref _childAdvanceTicks, elapsed.Ticks);
+        internal void AdvanceOnTimestampRead(int readNumber, TimeSpan elapsed)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(readNumber);
+            Volatile.Write(ref _advanceTicks, elapsed.Ticks);
+            Volatile.Write(ref _readsUntilAdvance, readNumber);
+        }
     }
 
     private sealed class EmptyManifest : ISharpLinkGeneratedAssemblyManifest
