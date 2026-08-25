@@ -35,7 +35,6 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
         GeneratorVersion = generatorVersion ?? throw new ArgumentNullException(nameof(generatorVersion));
     }
 
-
     /// <summary>Creates a self-describing manifest locator with an exact generated ABI identity.</summary>
     /// <param name="manifestType">A generated manifest type with a public parameterless constructor.</param>
     /// <param name="apiVersion">The generated API version.</param>
@@ -145,7 +144,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 4;
 
     /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
-    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";
+    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v2";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;
