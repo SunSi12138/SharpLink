@@ -59,7 +59,7 @@ internal readonly struct RpcDeadline
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(timeBudget, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timestampFrequency, 0);
-        ValidateFiniteBudget(timeBudget, timestampFrequency);
+        timeBudget = NormalizeFiniteBudget(timeBudget, timestampFrequency);
         var timestamp = timeBudget == TimeSpan.Zero
             ? timestampNow
             : SharpLinkTime.AddDuration(timestampNow, timeBudget, timestampFrequency);
@@ -131,25 +131,41 @@ internal readonly struct RpcDeadline
         return _timeBudget - elapsed;
     }
 
-    private static void ValidateFiniteBudget(TimeSpan timeBudget, long timestampFrequency)
+    private static TimeSpan NormalizeFiniteBudget(TimeSpan timeBudget, long timestampFrequency)
     {
         if (timeBudget == TimeSpan.Zero)
-            return;
+            return timeBudget;
 
         // A 64-bit timestamp alone cannot recover how many complete counter rings elapsed between
-        // observations. Use the standard modular-clock contract: every finite RPC lifetime must
-        // fit strictly inside one half ring, where elapsed/ordering remains unambiguous. On normal
-        // Stopwatch-backed providers this bound is centuries; it only rejects pathological custom
-        // clocks whose frequency would let a supported call span an ambiguous counter interval.
+        // observations. Use the standard modular-clock contract: every ordinary finite RPC
+        // lifetime must fit strictly inside one half ring, where elapsed/ordering remains
+        // unambiguous. TimeSpan.MaxValue is the existing public "far future" saturation value;
+        // preserve that API contract by saturating it to the largest unambiguous budget for the
+        // supplied provider instead of rejecting it. On normal Stopwatch-backed providers that
+        // remains many millennia; pathological high-frequency providers still cannot create a
+        // multi-ring finite deadline.
         var numerator = (UInt128)(ulong)timeBudget.Ticks * (ulong)timestampFrequency;
         var denominator = (UInt128)TimeSpan.TicksPerSecond;
         var timestampDelta = (numerator + denominator - 1) / denominator;
-        if (timestampDelta >= TimestampHalfRing)
+        if (timestampDelta < TimestampHalfRing)
+            return timeBudget;
+
+        if (timeBudget == TimeSpan.MaxValue)
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(timeBudget),
-                "The finite RPC lifetime must fit within half of the TimeProvider timestamp counter ring.");
+            var maximumTicks = ((TimestampHalfRing - 1) * denominator) /
+                (ulong)timestampFrequency;
+            if (maximumTicks == 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeBudget),
+                    "The TimeProvider timestamp frequency cannot represent a positive finite RPC lifetime.");
+            }
+            return TimeSpan.FromTicks((long)maximumTicks);
         }
+
+        throw new ArgumentOutOfRangeException(
+            nameof(timeBudget),
+            "The finite RPC lifetime must fit within half of the TimeProvider timestamp counter ring.");
     }
 
     internal static TimeSpan GetRemaining(
