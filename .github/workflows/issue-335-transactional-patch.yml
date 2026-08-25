@@ -1,0 +1,374 @@
+name: Issue 335 Transactional Patch
+
+on:
+  push:
+    branches:
+      - issue-335-dynamic-admission-partition-update
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Apply reviewed transactional patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          text = path.read_text()
+
+          replacements = []
+
+          replacements.append((
+          '''    internal Action? AfterKeyResolvedBeforeEntryLockForTests { get; set; }
+
+    internal AdmissionPartitionUpdate PrepareUpdate(SharpLinkPartitionAdmissionOptions options)
+''',
+          '''    internal Action? AfterKeyResolvedBeforeEntryLockForTests { get; set; }
+
+    internal Action? BeforeUpdateMutationForTests { get; set; }
+
+    internal AdmissionPartitionUpdate PrepareUpdate(SharpLinkPartitionAdmissionOptions options)
+'''))
+
+          replacements.append((
+          '''    internal void CommitUpdate(SharpLinkPartitionAdmissionOptions targetOptions)
+    {
+        ArgumentNullException.ThrowIfNull(targetOptions);
+        var target = targetOptions.CloneValidated();
+        List<IDisposable>? dispose = null;
+        List<PreparedEntryTransition>? prepared = null;
+
+        lock (_gate)
+        {
+            if (_disposed != 0)
+                throw new ObjectDisposedException(nameof(AdmissionPartitionPool));
+
+            try
+            {
+                prepared = new List<PreparedEntryTransition>(_entries.Count);
+                foreach (var entry in _entries.Values)
+                    prepared.Add(PrepareEntryTransitionLocked(entry, target));
+            }
+            catch
+            {
+                DisposePreparedTransitions(prepared);
+                throw;
+            }
+
+            // Everything above this point is fallible preparation only. From here the target objects
+            // are complete and validated, so the live namespace can be changed as one pool-gate epoch.
+            _options = target;
+            foreach (var transition in prepared)
+            {
+                if (transition.Source.Rate is { } sourceRate &&
+                    !ReferenceEquals(sourceRate, transition.TargetRate))
+                {
+                    sourceRate.CommitTransitionTo(transition.TargetRate);
+                }
+
+                if (transition.ResizePermitLimit is { } permitLimit)
+                    transition.Source.Concurrency!.Resize(permitLimit);
+
+                if (transition.TargetGeneration is { } targetGeneration)
+                {
+                    transition.Source.Retired = true;
+                    transition.Entry.Current = targetGeneration;
+                    transition.Entry.Generations.Add(targetGeneration);
+                }
+            }
+
+            foreach (var entry in _entries.Values)
+                CollectRetiredGenerationsLocked(entry, ref dispose);
+            CollectIdleEntriesLocked(
+                _timeProvider.GetTimestamp(),
+                stopAfterOne: false,
+                ref dispose);
+        }
+
+        DisposeStates(dispose);
+    }
+''',
+          '''    internal void CommitUpdate(SharpLinkPartitionAdmissionOptions targetOptions)
+    {
+        ArgumentNullException.ThrowIfNull(targetOptions);
+        var target = targetOptions.CloneValidated();
+        List<IDisposable>? dispose = null;
+        List<PreparedEntryTransition>? prepared = null;
+
+        lock (_gate)
+        {
+            if (_disposed != 0)
+                throw new ObjectDisposedException(nameof(AdmissionPartitionPool));
+
+            try
+            {
+                prepared = new List<PreparedEntryTransition>(_entries.Count);
+                var generationCount = 0;
+                foreach (var entry in _entries.Values)
+                {
+                    var transition = PrepareEntryTransitionLocked(entry, target);
+                    prepared.Add(transition);
+                    generationCount = checked(generationCount +
+                        (transition.TargetGenerations?.Count ?? entry.Generations.Count));
+                }
+
+                // Retired-generation cleanup can add at most one concurrency and one rate state per
+                // runtime generation. Reserve that storage before the first live target mutation.
+                dispose = new List<IDisposable>(checked(generationCount * 2));
+                BeforeUpdateMutationForTests?.Invoke();
+            }
+            catch
+            {
+                DisposePreparedTransitions(prepared);
+                throw;
+            }
+
+            // Everything above this point is fallible preparation only. Target generation lists and
+            // cleanup capacity are already allocated, so the live namespace changes as one gate epoch.
+            _options = target;
+            foreach (var transition in prepared)
+            {
+                if (transition.Source.Rate is { } sourceRate &&
+                    !ReferenceEquals(sourceRate, transition.TargetRate))
+                {
+                    sourceRate.CommitTransitionTo(transition.TargetRate);
+                }
+
+                if (transition.ResizePermitLimit is { } permitLimit)
+                    transition.Source.Concurrency!.Resize(permitLimit);
+
+                if (transition.TargetGeneration is { } targetGeneration)
+                {
+                    transition.Source.Retired = true;
+                    transition.Entry.Current = targetGeneration;
+                    transition.Entry.Generations = transition.TargetGenerations!;
+                }
+            }
+
+            foreach (var entry in _entries.Values)
+                CollectRetiredGenerationsLocked(entry, ref dispose);
+
+            // Idle eligibility is preserved by the historical timestamp and the new target timeout.
+            // Reclamation remains opportunistic on the next acquire/release rather than allocating
+            // key/disposal work after the live policy mutation.
+        }
+
+        DisposeStates(dispose);
+    }
+'''))
+
+          replacements.append((
+          '''    internal void GrantConcurrencyWaitersAfterTargetCommit()
+    {
+        ResizableConcurrencyState[] states;
+        lock (_gate)
+        {
+            var unique = new HashSet<ResizableConcurrencyState>(ReferenceEqualityComparer.Instance);
+            foreach (var entry in _entries.Values)
+                foreach (var generation in entry.Generations)
+                    if (generation.Concurrency is { } concurrency)
+                        unique.Add(concurrency);
+            states = [.. unique];
+        }
+
+        foreach (var state in states)
+            state.GrantWaitersAfterTargetCommit();
+    }
+''',
+          '''    internal void GrantConcurrencyWaitersAfterTargetCommit()
+    {
+        lock (_gate)
+        {
+            foreach (var entry in _entries.Values)
+            {
+                foreach (var generation in entry.Generations)
+                    generation.Concurrency?.GrantWaitersAfterTargetCommit();
+            }
+        }
+    }
+'''))
+
+          replacements.append((
+          '''            AdmissionPartitionRuntimeGeneration? targetGeneration = null;
+            if (!ReferenceEquals(source.Concurrency, targetConcurrency) ||
+                !ReferenceEquals(source.Rate, targetRate))
+            {
+                targetGeneration = new AdmissionPartitionRuntimeGeneration(
+                    AdmissionRuleRuntime.CreateBound(targetConcurrency, targetRate, "partition"),
+                    targetConcurrency,
+                    targetRate);
+            }
+
+            return new PreparedEntryTransition(
+                entry,
+                source,
+                targetGeneration,
+                targetRate,
+                resizePermitLimit,
+                createdConcurrency,
+                createdRate);
+''',
+          '''            AdmissionPartitionRuntimeGeneration? targetGeneration = null;
+            List<AdmissionPartitionRuntimeGeneration>? targetGenerations = null;
+            if (!ReferenceEquals(source.Concurrency, targetConcurrency) ||
+                !ReferenceEquals(source.Rate, targetRate))
+            {
+                targetGeneration = new AdmissionPartitionRuntimeGeneration(
+                    AdmissionRuleRuntime.CreateBound(targetConcurrency, targetRate, "partition"),
+                    targetConcurrency,
+                    targetRate);
+                targetGenerations = new List<AdmissionPartitionRuntimeGeneration>(entry.Generations.Count + 1);
+                targetGenerations.AddRange(entry.Generations);
+                targetGenerations.Add(targetGeneration);
+            }
+
+            return new PreparedEntryTransition(
+                entry,
+                source,
+                targetGeneration,
+                targetGenerations,
+                targetRate,
+                resizePermitLimit,
+                createdConcurrency,
+                createdRate);
+'''))
+
+          replacements.append((
+          '''    private static void CollectRetiredGenerationsLocked(
+        AdmissionPartitionEntry entry,
+        ref List<IDisposable>? dispose)
+    {
+        for (var index = entry.Generations.Count - 1; index >= 0; index--)
+        {
+            var generation = entry.Generations[index];
+            if (!generation.Retired || generation.References != 0)
+                continue;
+
+            entry.Generations.RemoveAt(index);
+            if (generation.Concurrency is { } concurrency &&
+                !entry.Generations.Any(candidate => ReferenceEquals(candidate.Concurrency, concurrency)))
+            {
+                (dispose ??= []).Add(concurrency);
+            }
+            if (generation.Rate is { } rate &&
+                !entry.Generations.Any(candidate => ReferenceEquals(candidate.Rate, rate)))
+            {
+                (dispose ??= []).Add(rate);
+            }
+        }
+    }
+''',
+          '''    private static void CollectRetiredGenerationsLocked(
+        AdmissionPartitionEntry entry,
+        ref List<IDisposable>? dispose)
+    {
+        for (var index = entry.Generations.Count - 1; index >= 0; index--)
+        {
+            var generation = entry.Generations[index];
+            if (!generation.Retired || generation.References != 0)
+                continue;
+
+            entry.Generations.RemoveAt(index);
+            if (generation.Concurrency is { } concurrency &&
+                !ContainsConcurrencyState(entry.Generations, concurrency))
+            {
+                (dispose ??= []).Add(concurrency);
+            }
+            if (generation.Rate is { } rate &&
+                !ContainsRateState(entry.Generations, rate))
+            {
+                (dispose ??= []).Add(rate);
+            }
+        }
+    }
+
+    private static bool ContainsConcurrencyState(
+        List<AdmissionPartitionRuntimeGeneration> generations,
+        ResizableConcurrencyState state)
+    {
+        foreach (var generation in generations)
+            if (ReferenceEquals(generation.Concurrency, state))
+                return true;
+        return false;
+    }
+
+    private static bool ContainsRateState(
+        List<AdmissionPartitionRuntimeGeneration> generations,
+        AdmissionRateState state)
+    {
+        foreach (var generation in generations)
+            if (ReferenceEquals(generation.Rate, state))
+                return true;
+        return false;
+    }
+'''))
+
+          replacements.append((
+          '''    private sealed record PreparedEntryTransition(
+        AdmissionPartitionEntry Entry,
+        AdmissionPartitionRuntimeGeneration Source,
+        AdmissionPartitionRuntimeGeneration? TargetGeneration,
+        AdmissionRateState? TargetRate,
+        int? ResizePermitLimit,
+        ResizableConcurrencyState? CreatedConcurrency,
+        AdmissionRateState? CreatedRate);
+''',
+          '''    private sealed record PreparedEntryTransition(
+        AdmissionPartitionEntry Entry,
+        AdmissionPartitionRuntimeGeneration Source,
+        AdmissionPartitionRuntimeGeneration? TargetGeneration,
+        List<AdmissionPartitionRuntimeGeneration>? TargetGenerations,
+        AdmissionRateState? TargetRate,
+        int? ResizePermitLimit,
+        ResizableConcurrencyState? CreatedConcurrency,
+        AdmissionRateState? CreatedRate);
+'''))
+
+          replacements.append((
+          '''internal sealed class AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneration generation)
+{
+    internal AdmissionPartitionRuntimeGeneration Current = generation;
+    internal List<AdmissionPartitionRuntimeGeneration> Generations { get; } = [generation];
+''',
+          '''internal sealed class AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneration generation)
+{
+    internal AdmissionPartitionRuntimeGeneration Current = generation;
+    internal List<AdmissionPartitionRuntimeGeneration> Generations = [generation];
+'''))
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one patch match, found {count}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          git diff --check
+          git diff -- src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No patch needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs
+          git commit -m "fix(admission): preallocate partition commit state"
+          git push origin HEAD:issue-335-dynamic-admission-partition-update
