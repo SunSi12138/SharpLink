@@ -48,7 +48,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
     }
 
     [Test]
-    public Task GeneratedRoutedProxyShouldRequireOwnerAwareCustomRuntimeResolution()
+    public Task GeneratedRoutedProxyShouldRequireContractAwareCustomRuntimeResolution()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 [SharpLink.Sdk.RpcContract]
@@ -68,9 +68,9 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains(
-                "RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof(global::ICustomRuntimeRouteContract).Assembly)",
+                "RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof(global::ICustomRuntimeRouteContract))",
                 StringComparison.Ordinal),
-            "the public generated proxy constructor must use owner-aware resolution for any IRpcRuntimeContext implementation");
+            "the public generated proxy constructor must resolve the exact Contract policy for any IRpcRuntimeContext implementation");
         Ensure(!generated.Contains("channel.RuntimeContext.Codecs.GetCodec", StringComparison.Ordinal),
             "a custom runtime must never silently downgrade a routed proxy to the context-global Codec provider");
         return Task.CompletedTask;
