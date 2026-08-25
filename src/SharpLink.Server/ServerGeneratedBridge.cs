@@ -54,12 +54,15 @@ internal sealed class ServerGeneratedBridge(
         IRpcCodec<T> codec,
         bool payloadNullable,
         CancellationToken cancellationToken)
-        => _protocolBridge.CreateInboundStream(
+        => new UserCodeEntryAsyncEnumerable<T>(
+            this,
             requestId,
-            streamId,
-            codec,
-            payloadNullable,
-            cancellationToken);
+            _protocolBridge.CreateInboundStream(
+                requestId,
+                streamId,
+                codec,
+                payloadNullable,
+                cancellationToken));
 
     public async ValueTask PumpOutboundStreamAsync<T>(
         long requestId,
@@ -86,7 +89,10 @@ internal sealed class ServerGeneratedBridge(
         catch (Exception exception) when (
             exception is not OutOfMemoryException and not StackOverflowException)
         {
-            var protocolError = server.MapStreamServiceException(
+            // Once the framework call owner has selected a terminal, exception mapping is no
+            // longer a user-code boundary that may run. In particular, a mapper callback must
+            // not replace DeadlineExceeded/Cancel/connection teardown with a later mapping.
+            var protocolError = GetSelectedTerminal(requestId) ?? server.MapStreamServiceException(
                 callCancellations,
                 session,
                 requestId,
@@ -95,6 +101,41 @@ internal sealed class ServerGeneratedBridge(
                 exception);
             session.SendStreamErrorAsync(requestId, streamId, protocolError);
         }
+    }
+
+    private SharpLinkException? GetSelectedTerminal(long requestId)
+    {
+        if (callCancellations.TryCapture(
+                requestId,
+                static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
+                out var callLease) &&
+            callLease.TryAcquire())
+        {
+            try
+            {
+                var reason = callLease.State.Reason;
+                if (reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed))
+                {
+                    return ServerCallTerminationMapper.CreateServerCancellationException(
+                        reason,
+                        deadlineExceeded: reason == ServerCallCancellationReason.DeadlineExceeded);
+                }
+            }
+            finally
+            {
+                callLease.ReleaseUse();
+            }
+        }
+
+        if (SharpLinkCallContext.Current is { } context &&
+            context.DeadlineTimeProvider is { } timeProvider &&
+            context.LocalRpcDeadline.IsExpired(timeProvider))
+        {
+            return new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded.");
+        }
+        return null;
     }
 
     private sealed class UserCodeEntryAsyncEnumerable<T>(
