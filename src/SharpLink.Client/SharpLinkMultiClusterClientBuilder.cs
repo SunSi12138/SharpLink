@@ -319,6 +319,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         IEnumerable<Assembly> routedAssemblies)
     {
         var manifestsByAssembly = new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(ReferenceEqualityComparer.Instance);
+        var dependenciesExpanded = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
         var policyExpanded = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
         var pendingAssemblies = new Queue<(Assembly Assembly, bool IncludeContractPolicyDependencies)>();
         foreach (var routedAssembly in routedAssemblies)
@@ -337,12 +338,37 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 manifestsByAssembly.Add(assembly, manifest);
             }
 
-            var includePolicy = pending.IncludeContractPolicyDependencies && policyExpanded.Add(assembly);
-            foreach (var dependencyIdentity in EnumerateDependencyIdentities(manifest, includePolicy))
+            var expandDependencies = dependenciesExpanded.Add(assembly);
+            var expandPolicy = pending.IncludeContractPolicyDependencies && policyExpanded.Add(assembly);
+            if (!expandDependencies && !expandPolicy)
+                continue;
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            if (expandDependencies)
             {
-                var dependencyAssembly = ResolveDependencyAssembly(assembly, dependencyIdentity);
-                if (dependencyAssembly is not null)
-                    pendingAssemblies.Enqueue((dependencyAssembly, false));
+                foreach (var dependency in manifest.Dependencies)
+                {
+                    if (!seen.Add(dependency))
+                        continue;
+                    var dependencyAssembly = ResolveDependencyAssembly(assembly, dependency);
+                    if (dependencyAssembly is not null)
+                        pendingAssemblies.Enqueue((dependencyAssembly, false));
+                }
+            }
+
+            if (!expandPolicy)
+                continue;
+
+            foreach (var set in manifest.ContractCodecSets)
+            {
+                foreach (var dependency in set.Dependencies)
+                {
+                    if (!seen.Add(dependency))
+                        continue;
+                    var dependencyAssembly = ResolveDependencyAssembly(assembly, dependency);
+                    if (dependencyAssembly is not null)
+                        pendingAssemblies.Enqueue((dependencyAssembly, false));
+                }
             }
         }
 
