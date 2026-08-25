@@ -368,7 +368,7 @@ internal sealed partial class SharpLinkClient
                 registrations.Add(contract.ContractType, new ClientProxyRegistration(
                     contract,
                     null,
-                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, manifest.OwnerAssembly)));
+                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType)));
             }
         }
         return registrations.ToFrozenDictionary();
@@ -414,7 +414,7 @@ internal sealed partial class SharpLinkClient
             var registration = new ClientProxyRegistration(
                 contract,
                 module,
-                RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration));
+                RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration, contract.ContractType));
             nextProxies.Add(contract.ContractType, registration);
             byId.Add(contract.ContractId, registration);
         }
