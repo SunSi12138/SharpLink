@@ -46,6 +46,7 @@ internal sealed class TestTransportConnection : ITransportConnection
 {
     private readonly Pipe _inbound = new();
     private readonly Pipe _outbound = new();
+    private readonly BlockingPipeWriter _output;
     private readonly Channel<TestSentFrame> _sentPackets = Channel.CreateUnbounded<TestSentFrame>();
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _observeOutputTask;
@@ -53,14 +54,21 @@ internal sealed class TestTransportConnection : ITransportConnection
 
     public TestTransportConnection()
     {
+        _output = new BlockingPipeWriter(_outbound.Writer);
         _observeOutputTask = ObserveOutputAsync(_disposeCts.Token);
     }
 
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public PipeReader Input => _inbound.Reader;
-    public PipeWriter Output => _outbound.Writer;
+    public PipeWriter Output => _output;
     public EndPoint? LocalEndPoint => null;
     public EndPoint? RemoteEndPoint => null;
+
+    internal Task BlockNextOutputBufferRequest()
+        => _output.BlockNextBufferRequest();
+
+    internal void ReleaseBlockedOutputBufferRequest()
+        => _output.ReleaseBlockedBufferRequest();
 
     public Task InjectPacketAsync(
         ProtocolV2FrameType type,
@@ -135,9 +143,10 @@ internal sealed class TestTransportConnection : ITransportConnection
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
+        _output.ReleaseBlockedBufferRequest();
         _disposeCts.Cancel();
         await CompleteAsync(_inbound.Writer);
-        await CompleteAsync(_outbound.Writer);
+        await CompleteAsync(_output);
         try
         {
             await _observeOutputTask;
@@ -194,6 +203,76 @@ internal sealed class TestTransportConnection : ITransportConnection
         }
         catch (InvalidOperationException)
         {
+        }
+    }
+
+    private sealed class BlockingPipeWriter(PipeWriter inner) : PipeWriter
+    {
+        private readonly object _gate = new();
+        private TaskCompletionSource<bool>? _blocked;
+        private ManualResetEventSlim? _release;
+        private int _armed;
+
+        internal Task BlockNextBufferRequest()
+        {
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _armed) != 0 || _release is { IsSet: false })
+                    throw new InvalidOperationException("an output buffer request is already blocked");
+                _release?.Dispose();
+                _release = new ManualResetEventSlim(initialState: false);
+                _blocked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                Volatile.Write(ref _armed, 1);
+                return _blocked.Task;
+            }
+        }
+
+        internal void ReleaseBlockedBufferRequest()
+        {
+            lock (_gate)
+                _release?.Set();
+        }
+
+        public override void Advance(int bytes) => inner.Advance(bytes);
+
+        public override void CancelPendingFlush() => inner.CancelPendingFlush();
+
+        public override void Complete(Exception? exception = null) => inner.Complete(exception);
+
+        public override ValueTask CompleteAsync(Exception? exception = null)
+            => inner.CompleteAsync(exception);
+
+        public override ValueTask<FlushResult> FlushAsync(
+            CancellationToken cancellationToken = default)
+            => inner.FlushAsync(cancellationToken);
+
+        public override Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            WaitIfArmed();
+            return inner.GetMemory(sizeHint);
+        }
+
+        public override Span<byte> GetSpan(int sizeHint = 0)
+        {
+            WaitIfArmed();
+            return inner.GetSpan(sizeHint);
+        }
+
+        private void WaitIfArmed()
+        {
+            if (Interlocked.Exchange(ref _armed, 0) == 0)
+                return;
+
+            TaskCompletionSource<bool>? blocked;
+            ManualResetEventSlim? release;
+            lock (_gate)
+            {
+                blocked = _blocked;
+                release = _release;
+            }
+            blocked?.TrySetResult(true);
+            if (release is null || !release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("test did not release the blocked output buffer request");
         }
     }
 }
