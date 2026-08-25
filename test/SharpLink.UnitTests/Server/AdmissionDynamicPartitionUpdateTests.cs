@@ -111,7 +111,7 @@ public sealed class AdmissionDynamicPartitionUpdateTests
     }
 
     [Test]
-    public async Task ExhaustedPartitionTokenBucketMustNotRefillOnUpdate()
+    public async Task PartitionTokenBucketIncreaseShouldExposeOnlyDeltaQuota()
     {
         await using var server = CreateServer();
         var publicServer = (ISharpLinkServer)server;
@@ -131,9 +131,13 @@ public sealed class AdmissionDynamicPartitionUpdateTests
         Ensure(ReferenceEquals(pool, replacement.Controller.PartitionStateForTests),
             "rate parameter update must keep the same partition namespace and key state");
 
+        var delta = await replacement.Controller.AcquireAsync(context, 1, false, CancellationToken.None);
+        Ensure(delta.IsAcquired,
+            "raising the partition bucket from one to two after one consumed token may expose one delta token");
+        delta.Lease!.Dispose();
         var exhausted = await replacement.Controller.AcquireAsync(context, 1, false, CancellationToken.None);
         Ensure(!exhausted.IsAcquired && exhausted.Reason == "rate",
-            "an exhausted existing partition must not receive a fresh target bucket on update");
+            "partition rate update must not expose a fresh full target bucket");
     }
 
     [Test]
