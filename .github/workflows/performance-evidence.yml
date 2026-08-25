@@ -1,52 +1,50 @@
 name: Performance Matrix Smoke
 
 on:
-  push:
-    branches:
-      - issue-333-dynamic-admission-rate-update
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Independent smoke repetitions
+        required: true
+        default: '1'
 
 permissions:
   contents: read
 
 jobs:
   performance-smoke:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_NOLOGO: '1'
+      SHARPLINK_MATRIX_TIER: smoke
+      SHARPLINK_MATRIX_REPETITIONS: ${{ inputs.repetitions }}
+      SHARPLINK_MATRIX_OUTPUT: ${{ github.workspace }}/artifacts/performance/smoke/${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
 
-      - name: Prepare exact comparison worktrees
+      - name: Record environment
         shell: bash
         run: |
-          set -euo pipefail
-          git worktree add ../issue333-before 5856422666373ae596ce4920c7b7159d98d199bc
-          git worktree add ../issue333-after 5967065a48c3045928d30a22eafd47882cae9e92
-          dotnet restore ../issue333-before/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
-          dotnet restore ../issue333-after/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          mkdir -p artifacts/performance/smoke/${{ github.sha }}
+          dotnet --info > artifacts/performance/smoke/${{ github.sha }}/dotnet-info.txt
+          uname -a > artifacts/performance/smoke/${{ github.sha }}/uname.txt
+          lscpu > artifacts/performance/smoke/${{ github.sha }}/cpu.txt
 
-      - name: Benchmark pre-fix head
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd ../issue333-before
-          dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -- --filter '*AdmissionFreshRateRpcBenchmarks*'
-          dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -- --filter '*AdmissionRateControllerBenchmarks*'
+      - name: Run correctness-oriented performance smoke
+        run: ./eng/run-performance-matrix.sh
 
-      - name: Benchmark coupled-credit fix
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd ../issue333-after
-          dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -- --filter '*AdmissionFreshRateRpcBenchmarks*'
-          dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -- --filter '*AdmissionRateControllerBenchmarks*'
+      - name: Upload raw smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sharplink-performance-smoke-${{ github.sha }}
+          path: artifacts/performance/smoke/${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
