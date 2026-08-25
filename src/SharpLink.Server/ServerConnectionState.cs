@@ -210,6 +210,17 @@ internal sealed class ServerConnectionState
     internal ValueTask<ServiceLease> AcquireServiceAsync(
         ServiceRegistration registration,
         SharpLinkDynamicModuleLease moduleLease)
+        => AcquireServiceAsync(
+            registration,
+            moduleLease,
+            generatedBridge: null,
+            requestId: 0);
+
+    internal ValueTask<ServiceLease> AcquireServiceAsync(
+        ServiceRegistration registration,
+        SharpLinkDynamicModuleLease moduleLease,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
     {
         if (LifecycleState != ServerConnectionLifecycleState.Ready)
         {
@@ -221,7 +232,7 @@ internal sealed class ServerConnectionState
         if (_services.TryGetValue(registration, out var existing))
             return AwaitConnectionServiceAsync(registration, existing, moduleLease);
 
-        var candidate = new ConnectionServiceEntry(registration);
+        var candidate = new ConnectionServiceEntry(registration, generatedBridge, requestId);
         var selected = _services.GetOrAdd(registration, candidate);
         return AwaitConnectionServiceAsync(registration, selected, moduleLease);
     }
@@ -434,9 +445,12 @@ internal sealed class ServerConnectionState
         private readonly Lock _disposeGate = new();
         private Task? _disposeTask;
 
-        internal ConnectionServiceEntry(ServiceRegistration registration)
+        internal ConnectionServiceEntry(
+            ServiceRegistration registration,
+            IRpcGeneratedServerBridge? generatedBridge,
+            long requestId)
             => _instance = new Lazy<Task<ConnectionServiceInstance>>(
-                () => registration.CreateConnectionServiceAsync().AsTask(),
+                () => registration.CreateConnectionServiceAsync(generatedBridge, requestId).AsTask(),
                 LazyThreadSafetyMode.ExecutionAndPublication);
 
         internal Task<ConnectionServiceInstance> GetServiceAsync() => _instance.Value;
