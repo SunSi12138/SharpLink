@@ -47,8 +47,8 @@ public partial class RpcGenerator
                 selectorOnlyContractDefault: false,
                 contractRoot: contract);
             var perContractPolicy = perContractPolicyState.AnalyzeWithFinalCodecBindings();
-            contractManifestCodecCandidates.AddRange(
-                perContractPolicyState.BuildContractManifestCodecs(perContractPolicy.Codecs));
+            var manifestCodecs = perContractPolicyState.BuildContractManifestCodecs(perContractPolicy.Codecs);
+            contractManifestCodecCandidates.AddRange(manifestCodecs);
             var ownedCodecs = SelectOwnedContractCodecs(
                 perContractDefault.Codecs,
                 perContractPolicy.Codecs,
@@ -64,7 +64,8 @@ public partial class RpcGenerator
                 perContractPolicy.Codecs,
                 ownedCodecs,
                 !ownedCodecs.IsDefaultOrEmpty,
-                dependencies));
+                dependencies,
+                manifestCodecs));
             policyDiagnostics.AddRange(perContractPolicy.Diagnostics);
             policyEnums.AddRange(perContractPolicy.Enums);
         }
@@ -83,10 +84,9 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.CodecName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // Compatibility manifests describe the complete final wire-reachable graph, not only
-        // generated factories. This makes implicit Native/UnsafeBlit -> Adapter/Direct (and the
-        // reverse) comparable in the same identity space instead of depending on one side having
-        // happened to emit a factory entry.
+        // Keep the legacy aggregate for generator consumers that only need a Type-level view.
+        // The compatibility Manifest itself consumes ContractPolicies.ManifestCodecs so two
+        // same-assembly Contracts may retain distinct final identities for the same closed Type.
         var contractManifestCodecs = contractManifestCodecCandidates
             .GroupBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .Select(static group => group.OrderBy(static codec => codec.SchemaId, StringComparer.Ordinal).First())
@@ -464,10 +464,22 @@ public partial class RpcGenerator
                     continue;
                 }
                 target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target) &&
-                    !IsEnumOrNullableEnum(target) &&
-                    (!_contractMode || !HasDeclaredRouteForScope(target)))
+                if (IsNonOverridableBuiltin(target) && !IsEnumOrNullableEnum(target))
                 {
+                    if (_contractMode && HasDeclaredRouteForScope(target))
+                    {
+                        AddAssemblyBinding(target,
+                            new ExplicitBindingCandidate(implementation, GetAttributeWireFormatId(attribute), location));
+                        continue;
+                    }
+
+                    // A builtin binding is a Contract-route escape hatch, never standalone policy.
+                    // If another Contract in this assembly owns the matching route, ignore the
+                    // binding for this standalone/no-route analysis rather than reporting a false
+                    // global builtin override or applying the binding to an unrelated sibling.
+                    if (HasAnyDeclaredRouteForScope(target))
+                        continue;
+
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
                         "built-in primitive Codecs cannot be rebound by RpcCodecAdapter unless a matching Contract route is also present",
                         location);
@@ -475,6 +487,33 @@ public partial class RpcGenerator
                 }
                 AddAssemblyBinding(target,
                     new ExplicitBindingCandidate(implementation, GetAttributeWireFormatId(attribute), location));
+            }
+        }
+
+        private bool HasAnyDeclaredRouteForScope(ITypeSymbol type)
+        {
+            var scope = ClassifyCodecScope(type);
+            if (HasRoute(_compilation.Assembly.GetAttributes(), scope))
+                return true;
+            foreach (var contract in CollectCurrentRpcContracts(_compilation.Assembly.GlobalNamespace))
+            {
+                if (HasRoute(contract.GetAttributes(), scope))
+                    return true;
+            }
+            return false;
+
+            static bool HasRoute(ImmutableArray<AttributeData> attributes, int targetScope)
+            {
+                foreach (var attribute in attributes)
+                {
+                    if (TryGetCodecRoute(attribute, out var declaredScope, out _) &&
+                        declaredScope > 0 && (declaredScope & ~RpcCodecScopeAll) == 0 &&
+                        (declaredScope & targetScope) != 0)
+                    {
+                        return true;
+                    }
+                }
+                return false;
             }
         }
 

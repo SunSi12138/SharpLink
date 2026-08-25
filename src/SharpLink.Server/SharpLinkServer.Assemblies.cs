@@ -772,7 +772,7 @@ internal sealed partial class SharpLinkServer
         foreach (var candidate in _dynamicModules.Values)
         {
             if (!ReferenceEquals(candidate, oldModule) &&
-                candidate.Manifest.Dependencies.Contains(oldIdentity, StringComparer.Ordinal))
+                ManifestDependsOn(candidate.Manifest, oldIdentity))
             {
                 return CreateError(
                     SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
@@ -827,7 +827,7 @@ internal sealed partial class SharpLinkServer
                 available.Add(module.Manifest.OwnerAssembly.FullName ?? string.Empty);
         }
         var self = incoming.OwnerAssembly.FullName;
-        foreach (var dependency in incoming.Dependencies)
+        foreach (var dependency in EnumerateManifestDependencies(incoming).Distinct(StringComparer.Ordinal))
         {
             if (string.Equals(dependency, self, StringComparison.Ordinal) || available.Contains(dependency))
                 continue;
@@ -911,6 +911,21 @@ internal sealed partial class SharpLinkServer
         return false;
     }
 
+    private static IEnumerable<string> EnumerateManifestDependencies(ISharpLinkGeneratedAssemblyManifest manifest)
+    {
+        foreach (var dependency in manifest.Dependencies)
+            yield return dependency;
+        foreach (var contractSet in manifest.ContractCodecSets)
+        {
+            foreach (var dependency in contractSet.Dependencies)
+                yield return dependency;
+        }
+    }
+
+    private static bool ManifestDependsOn(ISharpLinkGeneratedAssemblyManifest manifest, string? identity)
+        => identity is not null && EnumerateManifestDependencies(manifest)
+            .Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal));
+
     private void EnsureNoDynamicDependants(SharpLinkDynamicModule module)
     {
         var identity = module.Manifest.OwnerAssembly.FullName;
@@ -918,7 +933,7 @@ internal sealed partial class SharpLinkServer
         {
             if (ReferenceEquals(candidate, module))
                 continue;
-            if (candidate.Manifest.Dependencies.Contains(identity, StringComparer.Ordinal))
+            if (ManifestDependsOn(candidate.Manifest, identity))
             {
                 throw new InvalidOperationException(
                     $"Assembly '{identity}' cannot be unregistered while '{candidate.Manifest.OwnerAssembly.FullName}' depends on it.");

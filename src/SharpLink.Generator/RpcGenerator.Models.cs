@@ -214,7 +214,8 @@ internal sealed record GeneratedContractCodecPolicy(
     ImmutableArray<GeneratedCodecModel> Codecs,
     ImmutableArray<GeneratedCodecModel> OwnedCodecs,
     bool HasCompileTimePolicy,
-    ImmutableArray<string> Dependencies);
+    ImmutableArray<string> Dependencies,
+    ImmutableArray<GeneratedCodecModel> ManifestCodecs);
 
 internal enum DtoDiagnosticKind
 {
@@ -311,7 +312,9 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             if (!string.Equals(left.ContractTypeName, right.ContractTypeName, StringComparison.Ordinal) ||
                 left.HasCompileTimePolicy != right.HasCompileTimePolicy ||
                 !left.Dependencies.SequenceEqual(right.Dependencies, StringComparer.Ordinal) ||
-                left.Codecs.Length != right.Codecs.Length || left.OwnedCodecs.Length != right.OwnedCodecs.Length)
+                left.Codecs.Length != right.Codecs.Length ||
+                left.OwnedCodecs.Length != right.OwnedCodecs.Length ||
+                left.ManifestCodecs.Length != right.ManifestCodecs.Length)
             {
                 return false;
             }
@@ -323,6 +326,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             for (var codecIndex = 0; codecIndex < left.OwnedCodecs.Length; codecIndex++)
             {
                 if (!CodecEquals(left.OwnedCodecs[codecIndex], right.OwnedCodecs[codecIndex]))
+                    return false;
+            }
+            for (var codecIndex = 0; codecIndex < left.ManifestCodecs.Length; codecIndex++)
+            {
+                if (!CodecEquals(left.ManifestCodecs[codecIndex], right.ManifestCodecs[codecIndex]))
                     return false;
             }
         }
@@ -362,6 +370,8 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
                 hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
             foreach (var dependency in policy.Dependencies)
                 hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(dependency));
+            foreach (var codec in policy.ManifestCodecs)
+                hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
         }
         return hash;
     }

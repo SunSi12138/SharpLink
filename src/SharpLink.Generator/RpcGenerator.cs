@@ -339,7 +339,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Select(static (value, _) => new ContractManifestModels(
                 value.Left.Left.Left,
                 value.Left.Left.Right,
-                value.Left.Right.ContractManifestCodecs,
+                value.Left.Right.ContractPolicies,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider
@@ -350,7 +350,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Select(static (value, ct) => AnalyzeContractManifest(
                 value.Left.Left.Interfaces,
                 value.Left.Left.Services,
-                value.Left.Left.Codecs,
+                value.Left.Left.ContractPolicies,
                 value.Left.Left.Enums,
                 value.Left.Left.Unions,
                 value.Left.Right,
