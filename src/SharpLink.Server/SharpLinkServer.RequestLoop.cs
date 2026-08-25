@@ -146,35 +146,52 @@ internal sealed partial class SharpLinkServer
                         catch (SharpLinkException exception) when (
                             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
                         {
-                            var failedRequestId = unchecked((long)header.RequestId);
-                            if (header.Type == ProtocolV2FrameType.Request)
+                            try
                             {
-                                if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                var failedRequestId = unchecked((long)header.RequestId);
+                                if (header.Type == ProtocolV2FrameType.Request)
                                 {
-                                    Interlocked.Increment(ref _rejectedOneWayCalls);
-                                    DrainRejectedOneWayStreams(
-                                        session,
-                                        failedRequestId,
-                                        ResolveRawRequestClientStreamCount(payload));
+                                    if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                    {
+                                        Interlocked.Increment(ref _rejectedOneWayCalls);
+                                        DrainRejectedOneWayStreams(
+                                            session,
+                                            failedRequestId,
+                                            ResolveRawRequestClientStreamCount(payload));
+                                    }
+                                    else
+                                    {
+                                        var errorSend = session.SendRpcErrorWithBackpressureAsync(
+                                            failedRequestId, exception, connection.ConnectionToken);
+                                        if (!errorSend.IsCompletedSuccessfully)
+                                            _ = ObserveDecodedRequestErrorSend(errorSend, failedRequestId);
+                                    }
                                 }
-                                else
+                                else if (header.Type == ProtocolV2FrameType.StreamData)
                                 {
-                                    var errorSend = session.SendRpcErrorWithBackpressureAsync(
-                                        failedRequestId, exception, connection.ConnectionToken);
-                                    if (!errorSend.IsCompletedSuccessfully)
-                                        _ = ObserveDecodedRequestErrorSend(errorSend, failedRequestId);
+                                    // The decompressor is allowed to fail only while the call still
+                                    // owns progress. Re-arbitrate here because an active call may
+                                    // cross its monotonic boundary inside the decompressor and this
+                                    // catch path would otherwise bypass the normal post-decode claim.
+                                    if (hasOwningStreamCallState &&
+                                        !TryAcceptInboundStreamProgress(
+                                            requestCancellationMap,
+                                            failedRequestId,
+                                            out _))
+                                    {
+                                        continue;
+                                    }
+
+                                    session.StreamManager.CompleteStream(
+                                        failedRequestId,
+                                        RpcSession.ReadCompressedStreamId(payload),
+                                        exception);
                                 }
                             }
-                            else if (header.Type == ProtocolV2FrameType.StreamData)
+                            finally
                             {
-                                // A live call was already admitted by the pre-decode claim. A
-                                // decompression failure while still live is therefore the frame
-                                // error; if the deadline crossed during decode, the post-decode
-                                // claimant below would have owned the terminal instead.
-                                session.StreamManager.CompleteStream(
-                                    failedRequestId,
-                                    RpcSession.ReadCompressedStreamId(payload),
-                                    exception);
+                                session.ReturnDecodedPayload(decodedOwner);
+                                decodedOwner = null;
                             }
                             continue;
                         }
