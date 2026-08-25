@@ -9,11 +9,11 @@ namespace SharpLink.UnitTests.Runtime;
 public sealed class RpcManifestCodecOwnershipRegressionTests
 {
     [Test]
-    public void PolicyOwnerShouldFreezeUnroutedBuiltinAgainstRuntimeOverride()
+    public void PolicyOwnerShouldFreezeUnroutedUnmanagedCodecAgainstRuntimeOverride()
     {
-        var runtimeInt = new RuntimeIntCodec();
+        var runtimeValue = new RuntimeUnroutedValueCodec();
         using var context = new SharpLinkRuntimeContextBuilder()
-            .AddCodec(runtimeInt)
+            .AddCodec(runtimeValue)
             .Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new PolicyManifest(
             typeof(RpcManifestCodecOwnershipRegressionTests).Assembly,
@@ -21,13 +21,14 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         var registration = context.PrepareGeneratedManifest(manifest);
         context.AdoptGeneratedManifest(registration);
 
-        Ensure(ReferenceEquals(context.Codecs.GetCodec<int>(), runtimeInt),
-            "the context-global provider must retain the explicit runtime int Codec");
-        var ownerInt = RpcGeneratedCodecResolver.GetProvider(context, manifest.OwnerAssembly).GetCodec<int>();
-        Ensure(!ReferenceEquals(ownerInt, runtimeInt),
-            "once a Contract owner has compile-time policy, its unrouted builtin remainder must come from the frozen compile-time graph rather than runtime UseCodec state");
-        Ensure(ownerInt.GetType() != typeof(RuntimeIntCodec),
-            "the policy owner must resolve the deterministic builtin int Codec independently of endpoint runtime overrides");
+        Ensure(ReferenceEquals(context.Codecs.GetCodec<UnroutedValue>(), runtimeValue),
+            "the context-global provider must retain the explicit runtime Codec for the unmanaged value");
+        var ownerValue = RpcGeneratedCodecResolver.GetProvider(context, manifest.OwnerAssembly)
+            .GetCodec<UnroutedValue>();
+        Ensure(!ReferenceEquals(ownerValue, runtimeValue),
+            "once a Contract owner has compile-time policy, its unrouted unmanaged remainder must come from the frozen compile-time graph rather than runtime UseCodec state");
+        Ensure(ownerValue.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
+            "the policy owner must resolve the deterministic compile-time unmanaged fallback independently of endpoint runtime overrides");
     }
 
     [Test]
@@ -63,7 +64,7 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
 
         Ensure(scopeA.Disposed,
             "releasing module A must dispose A's Adapter scope so the regression exercises the lifetime boundary");
-        Ensure(!scopeB.Disposed && codecB.Owner == "B",
+        Ensure(!scopeB.Disposed && codecB!.Owner == "B",
             "module B's already-bound Codec must remain backed by B's live scope after the equivalent module A generation is released");
     }
 
@@ -91,13 +92,14 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
     }
 
     private readonly record struct PolicyPoint(int X, int Y);
+    private readonly record struct UnroutedValue(int Value);
     private readonly record struct SharedValue(int Value);
     private sealed class IncomingValue { }
 
-    private sealed class RuntimeIntCodec : IRpcCodec<int>
+    private sealed class RuntimeUnroutedValueCodec : IRpcCodec<UnroutedValue>
     {
-        public void Serialize(in int value, IBufferWriter<byte> buffer) { }
-        public int Deserialize(in ReadOnlySequence<byte> buffer) => 0;
+        public void Serialize(in UnroutedValue value, IBufferWriter<byte> buffer) { }
+        public UnroutedValue Deserialize(in ReadOnlySequence<byte> buffer) => default;
     }
 
     private sealed class PolicyPointCodec : IRpcCodec<PolicyPoint>
