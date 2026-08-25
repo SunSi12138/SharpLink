@@ -4,7 +4,8 @@ internal sealed partial class SharpLinkServer
 {
     private static bool TryAcceptInboundStreamProgress(
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        long requestId)
+        long requestId,
+        out bool hasOwningCallState)
     {
         if (!requestCancellationMap.TryCapture(
                 requestId,
@@ -12,17 +13,44 @@ internal sealed partial class SharpLinkServer
                 out var callLease))
         {
             // No owning state yet: preserve pre-admission buffering.
+            hasOwningCallState = false;
             return true;
         }
+
+        hasOwningCallState = true;
         if (!callLease.TryAcquire())
             return false;
+
+        var releaseLease = true;
         try
         {
-            return callLease.State.TryAcceptStreamData();
+            var accepted = callLease.State.TryAcceptStreamDataDeferredCancellation(
+                out var notifyCancellation);
+            if (notifyCancellation)
+            {
+                // The connection read loop owns frame parsing for every call on this transport.
+                // Never execute application token callbacks inline here. Retain this generation
+                // until the best-effort notification completes so the pooled state cannot be
+                // recycled underneath the queued work.
+                releaseLease = false;
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        callLease.State.NotifyInvocationCancellation();
+                    }
+                    finally
+                    {
+                        callLease.ReleaseUse();
+                    }
+                });
+            }
+            return accepted;
         }
         finally
         {
-            callLease.ReleaseUse();
+            if (releaseLease)
+                callLease.ReleaseUse();
         }
     }
 
@@ -54,21 +82,41 @@ internal sealed partial class SharpLinkServer
                         session.EnsureInboundFrameAllowed(
                             header.Type,
                             allowRequestWhileDraining: true);
+
+                        var isStreamProgress = header.Type is
+                            ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete;
+                        var streamRequestId = isStreamProgress
+                            ? unchecked((long)header.RequestId)
+                            : 0;
+                        var hasOwningStreamCallState = false;
+                        if (isStreamProgress &&
+                            !TryAcceptInboundStreamProgress(
+                                requestCancellationMap,
+                                streamRequestId,
+                                out hasOwningStreamCallState))
+                        {
+                            continue;
+                        }
+
                         IRpcByteBufferWriter? decodedOwner = null;
                         try
                         {
                             if (header.Type == ProtocolV2FrameType.StreamData &&
-                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0)
+                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
+                                !hasOwningStreamCallState)
                             {
+                                // Only a genuinely pre-admission stream may use the manager's
+                                // compressed buffering path. Once an owning call state exists,
+                                // decode stays in this loop so we can re-arbitrate immediately
+                                // after the potentially user-supplied decompressor returns.
                                 var preAdmissionStreams = session.StreamManager;
                                 session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
-                                var requestId = unchecked((long)header.RequestId);
                                 var streamId = RpcSession.ReadCompressedStreamId(payload);
                                 var originalLength = RpcSession.ReadCompressedOriginalLength(
                                     header.Type, header.Flags, payload);
                                 if (preAdmissionStreams.TryDispatchPreAdmissionCompressed(
-                                        requestId,
+                                        streamRequestId,
                                         streamId,
                                         payload,
                                         originalLength,
@@ -119,6 +167,10 @@ internal sealed partial class SharpLinkServer
                             }
                             else if (header.Type == ProtocolV2FrameType.StreamData)
                             {
+                                // A live call was already admitted by the pre-decode claim. A
+                                // decompression failure while still live is therefore the frame
+                                // error; if the deadline crossed during decode, the post-decode
+                                // claimant below would have owned the terminal instead.
                                 session.StreamManager.CompleteStream(
                                     failedRequestId,
                                     RpcSession.ReadCompressedStreamId(payload),
@@ -126,12 +178,16 @@ internal sealed partial class SharpLinkServer
                             }
                             continue;
                         }
-                        if (header.Type is ProtocolV2FrameType.StreamData or
-                            ProtocolV2FrameType.StreamComplete)
+
+                        if (isStreamProgress &&
+                            !TryAcceptInboundStreamProgress(
+                                requestCancellationMap,
+                                streamRequestId,
+                                out _))
                         {
-                            var streamRequestId = unchecked((long)header.RequestId);
-                            if (!TryAcceptInboundStreamProgress(requestCancellationMap, streamRequestId))
-                                continue;
+                            session.ReturnDecodedPayload(decodedOwner);
+                            decodedOwner = null;
+                            continue;
                         }
 
                         // 3. 处理完整的消息 (这里不需要 await 阻塞网络读取，最好由 Task.Run 处理业务)
@@ -185,11 +241,11 @@ internal sealed partial class SharpLinkServer
                                     break;
                                 case ProtocolV2FrameType.StreamData:
                                     await DispatchStreamChunkAsync(
-                                        session, unchecked((long)header.RequestId), payload);
+                                        session, streamRequestId, payload);
                                     break;
                                 case ProtocolV2FrameType.StreamComplete:
                                     DispatchStreamComplete(
-                                        session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
+                                        session, streamRequestId, header.Flags, payload, _protocolOptions);
                                     break;
                                 case ProtocolV2FrameType.WindowUpdate:
                                     session.ApplyWindowUpdate(
