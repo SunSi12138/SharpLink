@@ -19,6 +19,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     private int _permitLimit;
     private int _active;
     private int _disposed;
+    private int _fastRejectUnavailable;
 
     internal ResizableConcurrencyState(
         int permitLimit,
@@ -80,11 +81,10 @@ internal sealed class ResizableConcurrencyState : RateLimiter
     {
         ValidatePermitCount(permitCount);
 
-        // The complete AdmissionRequest owns the reader-visible target-version transaction. Keep
-        // exhausted rejection directly in the override so the common denied path does not pay a
-        // secondary helper call; only a potentially successful acquisition reaches the hook/lock.
-        if (Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit) ||
-            Volatile.Read(ref _disposed) != 0)
+        // All state transitions that can change a final fast rejection publish this single bit
+        // under _gate. One acquire read therefore observes a coherent reject decision without
+        // independently sampling _active / _permitLimit / _disposed outside their lock.
+        if (Volatile.Read(ref _fastRejectUnavailable) != 0)
         {
             return FailedLease.Instance;
         }
@@ -109,6 +109,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 return FailedLease.Instance;
 
             _active++;
+            RefreshFastRejectStateLocked();
             return new ConcurrencyLease(this);
         }
     }
@@ -160,6 +161,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                         _active--;
                         continue;
                     }
+                    RefreshFastRejectStateLocked();
                     immediateLease = new VersionedConcurrencyLease(this, targetVersion);
                 }
                 else
@@ -196,6 +198,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_waitingCount == 0 && _active < _permitLimit)
             {
                 _active++;
+                RefreshFastRejectStateLocked();
                 return ValueTask.FromResult<RateLimitLease>(new ConcurrencyLease(this));
             }
 
@@ -229,6 +232,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             _permitLimit = permitLimit;
             if (_targetVersionOwner is null)
                 granted = GrantWaitersLocked();
+            RefreshFastRejectStateLocked();
         }
         CompleteGranted(granted, UnversionedTarget);
     }
@@ -251,6 +255,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_disposed != 0)
                 return;
             _disposed = 1;
+            RefreshFastRejectStateLocked();
             failed = DetachAllWaitersLocked();
         }
 
@@ -264,6 +269,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             if (_active <= 0)
                 throw new InvalidOperationException("Admission concurrency permit count underflowed.");
             _active--;
+            RefreshFastRejectStateLocked();
             if (_disposed != 0)
                 return;
         }
@@ -284,6 +290,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 if (_disposed != 0)
                     return;
                 granted = GrantWaitersLocked();
+                RefreshFastRejectStateLocked();
             }
             CompleteGranted(granted, UnversionedTarget);
             return;
@@ -313,6 +320,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
                 else
                 {
                     granted = GrantWaitersLocked();
+                    RefreshFastRejectStateLocked();
                 }
             }
 
@@ -339,6 +347,13 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             grantedTail = waiter;
         }
         return grantedHead;
+    }
+
+    private void RefreshFastRejectStateLocked()
+    {
+        var unavailable = _disposed != 0 || _active >= _permitLimit ? 1 : 0;
+        if (_fastRejectUnavailable != unavailable)
+            Volatile.Write(ref _fastRejectUnavailable, unavailable);
     }
 
     private void CancelWaiter(Waiter waiter)
