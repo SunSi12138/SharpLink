@@ -225,7 +225,10 @@ public partial class RpcGenerator
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
                 adapter.WireFormatId,
-                GetAssemblyDependencies([type, adapter.AdapterType]),
+                // The Adapter/direct implementation binary is a runtime Codec implementation, not
+                // a generated-manifest module dependency. Only the payload type's generated-owner
+                // dependency belongs in module closure metadata.
+                GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
         }
 
