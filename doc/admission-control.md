@@ -33,6 +33,12 @@ ISharpLinkServer server = serverBuilder.Build();
 server.EnableAdmissionControl(options =>
 {
     options.Global.UseConcurrency(256);
+    options.Global.UseTokenBucket(rate =>
+    {
+        rate.TokenLimit = 1000;
+        rate.TokensPerPeriod = 1000;
+        rate.ReplenishmentPeriod = TimeSpan.FromSeconds(1);
+    });
     options.MaxQueuedCalls = 512;
     options.MaxQueuedBytes = 16 * 1024 * 1024;
     options.MaxQueueDelay = TimeSpan.FromSeconds(2);
@@ -42,6 +48,11 @@ server.UpdateAdmissionControl(options =>
 {
     // 回调描述完整的 N+1 Admission 配置，而不是增量 patch。
     options.Global.UseConcurrency(128);
+    options.Global.UseFixedWindow(rate =>
+    {
+        rate.PermitLimit = 750;
+        rate.Window = TimeSpan.FromSeconds(1);
+    });
     options.MaxQueuedCalls = 256;
     options.MaxQueuedBytes = 8 * 1024 * 1024;
     options.MaxQueueDelay = TimeSpan.FromSeconds(1);
@@ -52,15 +63,16 @@ server.DisableAdmissionControl();
 
 `EnableAdmissionControl` 只支持 Disabled → Enabled；已启用时再次调用会抛出 `InvalidOperationException`。`UpdateAdmissionControl` 只支持 Enabled → Enabled，并要求回调给出完整候选配置；Admission 已停用时调用也会抛出 `InvalidOperationException`。`DisableAdmissionControl` 执行 Enabled → Disabled，对已经停用的状态重复调用是幂等的。不支持这些入口的自定义 `ISharpLinkServer` 实现会抛出 `NotSupportedException`。
 
-Enable 和 Update 都会在 publication/lifecycle 锁之外执行用户回调，并完成候选配置的校验、规则解析和运行时状态绑定。Update 还会记住它实际派生自哪个 source generation；进入短 writer 临界区后必须确认该 generation 仍然是 current，才会提交并发 resize 并原子发布 N+1。若另一个 Update、Disable、Enable 或 Stop 已先改变当前状态，候选会失败并回收，不会自动 rebase，也不会把 losing candidate 的目标值留在 live state 中。
+Enable 和 Update 都会在 publication/lifecycle 锁之外执行用户回调，并完成候选配置的校验、规则解析和运行时状态绑定。Update 还会记住它实际派生自哪个 source generation；进入短 writer 临界区后必须确认该 generation 仍然是 current，才会提交已准备好的 concurrency/rate transition 并原子发布 N+1。若另一个 Update、Disable、Enable 或 Stop 已先改变当前状态，候选会失败并回收，不会自动 rebase，也不会把 losing candidate 的目标值或 rate quota 变更留在 live state 中。
 
-请求只捕获一次 Admission program。N+1 发布后才捕获 Admission 的 Request 使用 N+1；已经捕获 N 的活动或排队 Request 继续使用 N 的不可变策略快照直到终止。因此普通 update/disable 都不会取消旧 Request，也不会把旧 waiter 的超时或 OneWay 策略改成新值。旧 generation 在最后一个用户离开后按 retire/reclaim 生命周期回收。
+请求只捕获一次 Admission program。N+1 发布后才捕获 Admission 的 Request 使用 N+1；已经捕获 N 的活动或排队 Request 继续使用 N 的不可变策略快照直到终止。因此普通 update/disable 都不会取消旧 Request，也不会把旧 waiter 的超时、OneWay 策略或 rate algorithm 静默切换成新值。旧 generation 在最后一个用户离开后按 retire/reclaim 生命周期回收。
 
 ### 当前可在线更新的范围
 
-Enabled → Enabled 当前仅支持：
+Enabled → Enabled 当前支持：
 
 - Global / Contract / Method concurrency 的新增、移除和 resize；
+- Global / Contract / Method rate limiter 的新增、移除、参数更新和 Token Bucket / Fixed Window / Sliding Window 之间的算法替换；
 - `MaxQueuedCalls`；
 - `MaxQueuedBytes`；
 - `MaxQueueDelay`；
@@ -68,9 +80,20 @@ Enabled → Enabled 当前仅支持：
 
 Global / Contract / Method 的并发状态按逻辑 scope 保持稳定，不以当前数值 limit 作为状态身份。并发从 1 增加到 3 时，已有 1 个 holder 仍计入 active，只新增 2 个可用 permit；已有 FIFO waiter 会按容量释放。并发从 3 缩到 1 且已经有 3 个 holder 时，3 个 holder 都继续执行，不取消任何活动调用，也不会创建一份新的 permit budget；在 active 降到新 limit 以下之前不会再接纳 holder。已经排队的 waiter 同样不会因为 shrink 被取消。
 
-速率状态与并发状态独立持有。只修改 concurrency 或 queue policy 时，未变化的 Token Bucket、Fixed Window、Sliding Window 会继续使用同一运行时状态，因此不会获得免费 burst，也不会重置 window。当前 slice 不支持修改速率参数、切换速率算法、增加或移除 rate limiter；这些候选会在发布前事务性拒绝。
+速率状态与并发状态独立持有，logical rate identity 由 Global / Contract(id) / Method(contractId, methodId) 决定，而不是由当前算法参数决定。未变化的 rate policy 会精确复用同一运行时状态；发生 rate 更新时，N+1 会创建新的 policy generation，并在 publication writer 内从 source lineage 提交 quota/history handoff。候选构造本身不会消耗、重置或修改 live source quota。
 
-Partition 配置迁移同样暂不支持：selector、`MaxPartitions`、`IdleTimeout`、partition concurrency/rate 配置都必须保持不变。全局 queue policy 或非 partition concurrency 更新会精确复用既有 partition pool 和其中的活动 entry/rate history；任何 partition 配置变化都会事务性拒绝。
+所有 rate transition 都遵守“配置更新不能凭空制造 quota”的约束：
+
+- Token Bucket 保留已经消耗的 debt；修改 `TokenLimit` 不会 refill，shrink 可暂时阻塞新请求；保持相同补充 cadence 时延续原 monotonic anchor，修改 cadence 时不会因 publication 额外获得一个补充周期。
+- Fixed Window 保留 active window epoch 和已消费 permit；修改 limit 不开启新 window。修改 window duration 使用保守的 monotonic handoff，不能在 publication 时得到完整新 window。
+- Sliding Window 保留仍应属于新 horizon 的消费历史。shape/window/segment 变化不安全进行精确映射时，会把 source burden 折叠为有明确 expiry 的保守 transition barrier，而不是清空 segments。
+- 算法替换不会机械地把 token 解释为 window segment。source debt 会以 conservative transition barrier 进入目标算法，至少保留到 source debt 合法过期与目标 horizon 要求中的较晚边界。
+
+旧 generation 的 rate waiter/retained lease 仍属于旧 state。它在 N+1 发布后才获得的旧算法 grant 也会保守计入当前 lineage 的 target barrier，因此旧、新 generation 重叠期间不会叠加出免费 burst。每个底层 rate waiter 仍必须对应恰好一个 kernel 外层 queue reservation；rate state 没有第二套 queue capacity limit。
+
+新增 rate component 时，因为该 logical component 在 source 中没有旧 quota，可按新 policy 的初始状态开始；只有 winning candidate 会成为 live lineage。移除 rate component 后，新请求不再经过该 limiter，但旧 generation 用户继续安全完成。若 A 被移除时仍存活，随后相同数值 policy 被重新加入，会创建 current lineage B，不会按“历史参数相同”错误复用 A；Disable/Enable 期间若 B 仍是当前可复用 lineage，则同 policy 会继续绑定 B。
+
+Partition 配置迁移仍暂不支持：selector、`MaxPartitions`、`IdleTimeout`、partition concurrency/rate 配置都必须保持不变。全局 queue policy 或非 partition Global / Contract / Method concurrency/rate 更新会精确复用既有 partition pool 和其中的活动 entry/rate history；任何 partition 配置变化都会事务性拒绝。
 
 ## 排队与在线 queue policy
 
@@ -86,7 +109,7 @@ OneWay 默认不排队，超限即丢弃并记录 `sharplink.admission.oneway.dr
 
 ## Stop 与 ResourceGovernor
 
-普通的 `DisableAdmissionControl` 或 `UpdateAdmissionControl` 都不是 Server Stop。它们只切换 Admission publication，不触发 `StopAccepting`，也不取消或等待旧 generation。一旦 Server 进入 Draining、Stopped 或 Faulted，Admission control plane 就封口；之后的 Enable/Update/Disable 不再发布 program，并按同一生命周期 writer 顺序线性化。
+普通的 `DisableAdmissionControl` 或 `UpdateAdmissionControl` 都不是 Server Stop。它们只切换 Admission publication，不触发 `StopAccepting`，也不取消或等待旧 generation。一旦 Server 进入 Draining、Stopped 或 Faulted，Admission control plane 就封口；之后的 Enable/Update/Disable 不再发布 program，并按同一生命周期 writer 顺序线性化。Stop 会终止仍排队的 Admission waiter，并在 generation 用户退出后回收 current/retired rate state 及其 timer；timer callback 不会继续访问已 dispose 的 state。
 
 运行时 Admission 更新不会改变服务器调用容量、解码/预接入预算、保留字节或流式字节的所有权与边界。`ServerCallCapacityGovernor`/ResourceGovernor 相关限制始终在 Admission 之外独立生效；容量拒绝仍发生在昂贵 request decode/decompression 之前，受控拒绝也不会使健康连接失效。
 
