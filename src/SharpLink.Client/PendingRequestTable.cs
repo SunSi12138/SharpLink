@@ -74,7 +74,8 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly ITimer _deadlineTimer;
     private readonly Lock _deadlineGate = new();
     private long _nextId;
-    private long _approximateEarliestDeadline;
+    private RpcDeadline _approximateEarliestDeadline;
+    private long _deadlineRevision;
     private bool _hasApproximateEarliestDeadline;
     private int _deadlineScanRunning;
     private int _activeSlots;
@@ -1009,17 +1010,20 @@ internal sealed class PendingRequestTable : IDisposable
             if (Volatile.Read(ref _disposed) != 0)
                 return;
 
-            if (_hasApproximateEarliestDeadline)
+            if (_hasApproximateEarliestDeadline &&
+                _approximateEarliestDeadline.IsEarlierOrEqual(
+                    deadline,
+                    _timeProvider.GetTimestamp()))
             {
-                var current = RpcDeadline.FromTimestamp(_approximateEarliestDeadline);
-                if (current.IsEarlierOrEqual(deadline, _timeProvider.GetTimestamp()))
-                    return;
+                return;
             }
 
-            _approximateEarliestDeadline = deadline.Timestamp;
+            _approximateEarliestDeadline = deadline;
             _hasApproximateEarliestDeadline = true;
-            ArmDeadlineTimer(deadline.Timestamp);
+            _deadlineRevision++;
         }
+
+        ReconcileDeadlineTimer();
     }
 
     private void ScanExpiredDeadlines()
@@ -1033,7 +1037,11 @@ internal sealed class PendingRequestTable : IDisposable
         try
         {
             lock (_deadlineGate)
+            {
+                _approximateEarliestDeadline = default;
                 _hasApproximateEarliestDeadline = false;
+                _deadlineRevision++;
+            }
             var slots = Volatile.Read(ref _slots);
             if (slots is null)
                 return;
@@ -1062,30 +1070,38 @@ internal sealed class PendingRequestTable : IDisposable
 
     private void ReconcileDeadlineTimer()
     {
-        long next = 0;
-        var hasNext = false;
-        lock (_deadlineGate)
+        while (Volatile.Read(ref _disposed) == 0)
         {
-            if (Volatile.Read(ref _disposed) == 0 && _hasApproximateEarliestDeadline)
+            RpcDeadline next;
+            long revision;
+            lock (_deadlineGate)
             {
+                if (Volatile.Read(ref _disposed) != 0 || !_hasApproximateEarliestDeadline)
+                    return;
                 next = _approximateEarliestDeadline;
-                hasNext = true;
+                revision = _deadlineRevision;
+            }
+
+            ArmDeadlineTimer(next);
+
+            lock (_deadlineGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0 ||
+                    !_hasApproximateEarliestDeadline ||
+                    revision == _deadlineRevision)
+                {
+                    return;
+                }
             }
         }
-
-        if (hasNext)
-            ArmDeadlineTimer(next);
     }
 
-    private void ArmDeadlineTimer(long deadlineTimestamp)
+    private void ArmDeadlineTimer(RpcDeadline deadline)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var delay = RpcDeadline.GetRemaining(
-            deadlineTimestamp,
-            _timeProvider.GetTimestamp(),
-            _timeProvider.TimestampFrequency);
+        var delay = deadline.GetRemaining(_timeProvider);
         if (delay > SharpLinkTimer.MaximumDelay)
             delay = SharpLinkTimer.MaximumDelay;
         try
