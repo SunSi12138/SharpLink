@@ -119,17 +119,16 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.dto-kind/v1\", \"sharplink-native/v1\")]";
         var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
         var routedSource = AddAssemblyAttributes(
-  BuildRouteSource(contract),
-  registration,
-  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            BuildRouteSource(contract),
+            registration,
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
 
         var baseline = RunContractGenerator(baselineSource);
         var compared = RunContractGenerator(routedSource, baseline.Json);
         Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-  $"changing a direct payload from native DTO to routed adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+            $"changing a direct payload from native DTO to routed adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
-
 
     [Test]
     public Task NativeRouteOnCollectionShouldBeWireBreakWhenWireFormatIdIsUnchanged()
@@ -223,6 +222,55 @@ public sealed class AdapterB : TestRouteAdapterBase
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ImplicitUnsafeBlitAndAdapterTransitionsShouldBeWireBreaks()
+    {
+        const string contract = """
+public struct BlitPayload
+{
+    public int X;
+    public int Y;
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IBlitCodecIdentityContract : SharpLink.Sdk.IService
+{
+    ValueTask<BlitPayload> Echo(BlitPayload value, CancellationToken cancellationToken);
+}
+
+public sealed class RouteAdapter : TestRouteAdapterBase
+{
+    public override string AdapterId => "route.blit-identity/v1";
+    public override string WireFormatId => "sharplink-native/v1";
+}
+""";
+        const string registration =
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.blit-identity/v1\", \"sharplink-native/v1\")]";
+        var implicitSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
+        var adapterSource = AddAssemblyAttributes(
+            BuildRouteSource(contract),
+            registration,
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(RouteAdapter))]");
+
+        var implicitManifest = RunContractGenerator(implicitSource);
+        var adapterManifest = RunContractGenerator(adapterSource);
+        var implicitKinds = System.Text.Json.Nodes.JsonNode.Parse(implicitManifest.Json)!["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Where(static item => item["type"]!.GetValue<string>().Contains("BlitPayload", StringComparison.Ordinal))
+            .Select(static item => item["kind"]!.GetValue<string>())
+            .ToArray();
+        Ensure(implicitKinds.Contains("UnsafeBlit", StringComparer.Ordinal),
+            "format-2 compatibility manifests must explicitly record the implicit UnsafeBlit selection");
+
+        var toAdapter = RunContractGenerator(adapterSource, implicitManifest.Json);
+        Ensure(toAdapter.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"implicit UnsafeBlit -> Adapter must be a wire break even with a stable WireFormatId. Diagnostics: {FormatDiagnostics(toAdapter.Diagnostics)}");
+
+        var toImplicit = RunContractGenerator(implicitSource, adapterManifest.Json);
+        Ensure(toImplicit.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"Adapter -> implicit UnsafeBlit must be a wire break even with a stable WireFormatId. Diagnostics: {FormatDiagnostics(toImplicit.Diagnostics)}");
+        return Task.CompletedTask;
+    }
 
     [Test]
     public Task LegacyCollectionBaselineWithoutCodecKindShouldRequireRegeneration()
