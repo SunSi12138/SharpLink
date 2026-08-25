@@ -400,7 +400,7 @@ public sealed class AdmissionDynamicUpdateTests
             "consumed partition rate quota must not reset across a non-partition update");
 
         var before = replacement;
-        var failure = CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
+        publicServer.UpdateAdmissionControl(options =>
         {
             options.Global.UseConcurrency(3);
             ConfigureQueueBounds(options, 2, 1024, TimeSpan.FromSeconds(5));
@@ -415,10 +415,17 @@ public sealed class AdmissionDynamicUpdateTests
                     rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
                 });
             });
-        }));
-        Ensure(failure is InvalidOperationException && ReferenceEquals(before, Current(server)) &&
-               ReferenceEquals(pool, Current(server).Controller.PartitionStateForTests),
-            "partition configuration change must reject transactionally without publishing or replacing state");
+        });
+        var partitionUpdated = Current(server);
+        Ensure(!ReferenceEquals(before, partitionUpdated) &&
+               ReferenceEquals(pool, partitionUpdated.Controller.PartitionStateForTests) &&
+               pool.MaxPartitionsForTests == 9,
+            "same-selector partition policy update must publish while preserving the authoritative pool");
+        var stillExhausted = await partitionUpdated.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(!stillExhausted.IsAcquired && stillExhausted.Reason == "rate" &&
+               stillExhausted.Scope == "partition",
+            "MaxPartitions update must not reset consumed partition quota");
     }
 
     [Test]
@@ -474,13 +481,15 @@ public sealed class AdmissionDynamicUpdateTests
                ReferenceEquals(state, readded.Controller.GlobalConcurrencyStateForTests),
             "rate addition after removal must publish a fresh current component while preserving concurrency");
 
-        var beforePartition = readded;
-        Ensure(CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
+        publicServer.UpdateAdmissionControl(options =>
         {
             ConfigureRate(options, RateKind.TokenBucket, concurrency: 5, rateLimit: 1);
             options.UsePartition(TenantSelector, partition => partition.UseConcurrency(1));
-        })) is InvalidOperationException && ReferenceEquals(beforePartition, Current(server)),
-            "partition addition must remain transactionally unsupported in the rate-update slice");
+        });
+        var partitionAdded = Current(server);
+        Ensure(partitionAdded.Controller.PartitionStateForTests is not null &&
+               ReferenceEquals(state, partitionAdded.Controller.GlobalConcurrencyStateForTests),
+            "partition addition must publish independently while preserving unchanged non-partition state");
     }
 
     [Test]
