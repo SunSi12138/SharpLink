@@ -188,7 +188,23 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
         }
 
         internal void Advance(TimeSpan elapsed)
-            => Interlocked.Add(ref _timestamp, elapsed.Ticks);
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(elapsed, TimeSpan.Zero);
+            Interlocked.Add(ref _timestamp, elapsed.Ticks);
+            lock (_gate)
+            {
+                if (_timer is not { IsDisposed: false } timer ||
+                    timer.ScheduledDelay == Timeout.InfiniteTimeSpan ||
+                    timer.ScheduledDelay <= TimeSpan.Zero)
+                {
+                    return;
+                }
+
+                timer.ScheduledDelay = elapsed >= timer.ScheduledDelay
+                    ? TimeSpan.Zero
+                    : timer.ScheduledDelay - elapsed;
+            }
+        }
 
         internal void FireTimer()
         {
