@@ -21,8 +21,11 @@ public partial class RpcGenerator
             .ThenBy(static model => model.ServiceFullName, StringComparer.Ordinal)
             .ToArray();
         if (contracts.Length == 0 && serviceModels.Length == 0 && codecs.IsDefaultOrEmpty &&
-            contractCodecs.IsDefaultOrEmpty && contractPolicies.IsDefaultOrEmpty)
+            contractCodecs.IsDefaultOrEmpty)
         {
+            // Contract policies only describe emitted Contract artifacts. Invalid/suppressed
+            // Contracts may still leave analysis policy records behind, but those records must
+            // not force an otherwise empty assembly manifest or become its synthetic owner.
             return string.Empty;
         }
 
