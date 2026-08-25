@@ -148,10 +148,7 @@ internal static class SharpLinkTimer
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
-        var deadline = SharpLinkTime.AddDuration(
-            timeProvider.GetTimestamp(),
-            timeout,
-            timeProvider.TimestampFrequency);
+        var deadline = RpcDeadline.Create(timeout, timeProvider);
         while (true)
         {
             if (task.IsCompleted)
@@ -161,10 +158,7 @@ internal static class SharpLinkTimer
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var remaining = SharpLinkTime.GetRemaining(
-                deadline,
-                timeProvider.GetTimestamp(),
-                timeProvider.TimestampFrequency);
+            var remaining = deadline.GetRemaining(timeProvider);
             if (remaining == TimeSpan.Zero)
                 return false;
             var slice = remaining > MaximumDelay ? MaximumDelay : remaining;
@@ -180,13 +174,8 @@ internal static class SharpLinkTimer
                     await task.ConfigureAwait(false);
                     return true;
                 }
-                if (SharpLinkTime.GetRemaining(
-                        deadline,
-                        timeProvider.GetTimestamp(),
-                        timeProvider.TimestampFrequency) == TimeSpan.Zero)
-                {
+                if (deadline.IsExpired(timeProvider))
                     return false;
-                }
             }
         }
     }
@@ -278,13 +267,9 @@ internal static class SharpLinkTimer
             return true;
         if (timeout == TimeSpan.Zero)
             return false;
-        var deadline = SharpLinkTime.AddDuration(
-            timeProvider.GetTimestamp(),
-            timeout,
-            timeProvider.TimestampFrequency);
         return await WaitAsync(
             semaphore,
-            RpcDeadline.FromTimestamp(deadline),
+            RpcDeadline.Create(timeout, timeProvider),
             timeProvider,
             cancellationToken).ConfigureAwait(false);
     }
