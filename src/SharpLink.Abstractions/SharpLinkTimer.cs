@@ -150,15 +150,32 @@ internal static class SharpLinkTimer
         ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
 
         // Generic graceful-drain/remove waits are not RPC lifetimes and therefore do not inherit
-        // the modular half-ring restriction used by RpcDeadline. Preserve the established
-        // TimeSpan.MaxValue contract as an unbounded wait while still honoring caller cancellation.
+        // the modular half-ring restriction used by RpcDeadline. Preserve TimeSpan.MaxValue as an
+        // effectively unbounded wait, but keep it provider-driven and bounded to the runtime's
+        // timer range so fake/custom providers retain deterministic timer ownership.
         if (timeout == TimeSpan.MaxValue)
         {
-            if (cancellationToken.CanBeCanceled)
-                await task.WaitAsync(cancellationToken).ConfigureAwait(false);
-            else
-                await task.ConfigureAwait(false);
-            return true;
+            while (true)
+            {
+                if (task.IsCompleted)
+                {
+                    await task.ConfigureAwait(false);
+                    return true;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    await task.WaitAsync(
+                        MaximumDelay,
+                        timeProvider,
+                        cancellationToken).ConfigureAwait(false);
+                    return true;
+                }
+                catch (TimeoutException) when (!task.IsCompleted)
+                {
+                }
+            }
         }
 
         var deadline = RpcDeadline.Create(timeout, timeProvider);
