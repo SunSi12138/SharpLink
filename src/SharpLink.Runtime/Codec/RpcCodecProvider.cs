@@ -45,6 +45,18 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
         return ResolveCodec<T>(targetType);
     }
 
+    internal bool TryGetExplicitCodec<T>(out IRpcCodec<T> codec)
+    {
+        ThrowIfDisposed();
+        if (_resolvedCodecs.TryGetValue(typeof(T), out var resolved) && resolved.IsExplicit)
+        {
+            codec = Cast<T>(resolved.Codec);
+            return true;
+        }
+        codec = null!;
+        return false;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private IRpcCodec<T> ResolveCodec<T>(Type targetType)
     {
@@ -305,6 +317,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     {
         get
         {
+            ThrowIfDisposed();
             if (!HasContractCodecs)
                 return BaseProvider;
             var existing = Volatile.Read(ref _contractCodecProvider);
@@ -314,6 +327,9 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             return Interlocked.CompareExchange(ref _contractCodecProvider, created, null) ?? created;
         }
     }
+
+    internal void ThrowIfDisposed()
+        => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
     internal static RpcGeneratedManifestRegistration Create(
         ISharpLinkGeneratedAssemblyManifest manifest,
@@ -524,7 +540,12 @@ internal sealed class RpcGeneratedCodecRegistration
     internal IRpcGeneratedCodecFactory Factory { get; }
 
     internal IRpcCodec GetCodec(IRpcCodecProvider provider)
-        => _preparedCodec ?? Factory.Create(provider, adapterScope: null);
+    {
+        Owner.ThrowIfDisposed();
+        var codec = _preparedCodec ?? Factory.Create(provider, adapterScope: null);
+        Owner.ThrowIfDisposed();
+        return codec;
+    }
 }
 
 internal static class SharedRpcCodec<T>
