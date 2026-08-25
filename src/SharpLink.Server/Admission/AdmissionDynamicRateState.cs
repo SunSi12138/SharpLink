@@ -209,6 +209,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             switch (_definition.Kind)
             {
                 case AdmissionRateStateKind.TokenBucket:
+                    CopyTransitionBarrierLocked(source, now);
                     _tokenDebt = source._tokenDebt;
                     _tokenAnchor = source._definition.Secondary == _definition.Secondary &&
                                    source._definition.PeriodTicks == _definition.PeriodTicks
@@ -217,6 +218,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
                     _latestGrantTimestamp = source._latestGrantTimestamp;
                     break;
                 case AdmissionRateStateKind.FixedWindow:
+                    CopyTransitionBarrierLocked(source, now);
                     _fixedConsumed = source._fixedConsumed;
                     _fixedWindowStart = source._fixedWindowStart;
                     var targetWindow = GetWindowTimestampTicks();
@@ -225,7 +227,20 @@ internal sealed class AdmissionDynamicRateState : IDisposable
                     _latestGrantTimestamp = source._latestGrantTimestamp;
                     break;
                 case AdmissionRateStateKind.SlidingWindow:
-                    InitializeConservativeBarrierLocked(source, now);
+                    if (source._definition.PeriodTicks == _definition.PeriodTicks &&
+                        source._definition.Segments == _definition.Segments)
+                    {
+                        CopyTransitionBarrierLocked(source, now);
+                        Array.Copy(source._slidingSegments, _slidingSegments, _slidingSegments.Length);
+                        _slidingOwnTotal = source._slidingOwnTotal;
+                        _slidingCurrentSegment = source._slidingCurrentSegment;
+                        _slidingSegmentStart = source._slidingSegmentStart;
+                        _latestGrantTimestamp = source._latestGrantTimestamp;
+                    }
+                    else
+                    {
+                        InitializeConservativeBarrierLocked(source, now);
+                    }
                     break;
                 default:
                     throw new InvalidOperationException("Unsupported admission rate transition kind.");
@@ -235,6 +250,24 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         {
             InitializeConservativeBarrierLocked(source, now);
         }
+    }
+
+    private void CopyTransitionBarrierLocked(AdmissionDynamicRateState source, long now)
+    {
+        _transitionDebt = source._transitionDebt;
+        if (_transitionDebt == 0)
+        {
+            _transitionDebtExpiry = 0;
+            return;
+        }
+
+        var anchor = source._latestGrantTimestamp == long.MinValue
+            ? now
+            : source._latestGrantTimestamp;
+        var targetExpiry = SaturatingAdd(
+            anchor,
+            GetBarrierHorizonTimestampTicks(_transitionDebt));
+        _transitionDebtExpiry = Math.Max(source._transitionDebtExpiry, targetExpiry);
     }
 
     private void InitializeConservativeBarrierLocked(AdmissionDynamicRateState source, long now)
@@ -396,20 +429,17 @@ internal sealed class AdmissionDynamicRateState : IDisposable
 
     private void AdvanceTokenBucketLocked(long now)
     {
-        if (_tokenDebt == 0)
-        {
-            _tokenAnchor = now;
-            return;
-        }
-
         var period = GetPeriodTimestampTicks();
         var elapsed = now - _tokenAnchor;
         if (elapsed < period)
             return;
 
         var periods = elapsed / period;
-        var credit = SaturatingMultiply(periods, _definition.Secondary);
-        _tokenDebt = Math.Max(0, _tokenDebt - credit);
+        if (_tokenDebt != 0)
+        {
+            var credit = SaturatingMultiply(periods, _definition.Secondary);
+            _tokenDebt = Math.Max(0, _tokenDebt - credit);
+        }
         _tokenAnchor = SaturatingAdd(_tokenAnchor, SaturatingMultiply(periods, period));
     }
 
@@ -707,7 +737,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         => ToTimestampTicks(_definition.PeriodTicks);
 
     private long GetSlidingSegmentTimestampTicks()
-        => Math.Max(1, GetWindowTimestampTicks() / _definition.Segments);
+        => Math.Max(1, DivideRoundUp(GetWindowTimestampTicks(), _definition.Segments));
 
     private long ToTimestampTicks(long timeSpanTicks)
     {
