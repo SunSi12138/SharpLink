@@ -106,43 +106,39 @@ public sealed class AdapterC : TestRouteAdapterBase
     public override string WireFormatId => "same-wire/v1";
 }
 """;
-        var baselineSource = AddAssemblyAttributes(BuildRouteSource($"""
+        var baselineSource = AddAssemblyAttributes(BuildRouteSource("""
 [SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(AdapterA))]
 [SharpLink.Sdk.RpcContract]
 public interface IContractA : SharpLink.Sdk.IService
-{{
+{
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
-}}
+}
 
 [SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(AdapterB))]
 [SharpLink.Sdk.RpcContract]
 public interface IContractB : SharpLink.Sdk.IService
-{{
+{
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
-}}
-
-{shared}
-"""),
+}
+""" + shared),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterA), \"contract-a/v1\", \"same-wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterB), \"contract-b/v1\", \"same-wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterC), \"contract-c/v1\", \"same-wire/v1\")]");
-        var currentSource = AddAssemblyAttributes(BuildRouteSource($"""
+        var currentSource = AddAssemblyAttributes(BuildRouteSource("""
 [SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(AdapterA))]
 [SharpLink.Sdk.RpcContract]
 public interface IContractA : SharpLink.Sdk.IService
-{{
+{
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
-}}
+}
 
 [SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(AdapterC))]
 [SharpLink.Sdk.RpcContract]
 public interface IContractB : SharpLink.Sdk.IService
-{{
+{
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
-}}
-
-{shared}
-"""),
+}
+""" + shared),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterA), \"contract-a/v1\", \"same-wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterB), \"contract-b/v1\", \"same-wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AdapterC), \"contract-c/v1\", \"same-wire/v1\")]");
