@@ -19,6 +19,8 @@ public class AdmissionRpcBenchmarks
     private BenchmarkEnvironment _runtimeImmediate = null!;
     private BenchmarkEnvironment _afterConcurrencyResize = null!;
     private BenchmarkEnvironment _afterQueuePolicyUpdates = null!;
+    private BenchmarkEnvironment _afterSameAlgorithmRateUpdates = null!;
+    private BenchmarkEnvironment _afterAlgorithmReplacements = null!;
 
     [GlobalSetup]
     public async Task Setup()
@@ -55,6 +57,35 @@ public class AdmissionRpcBenchmarks
                         expanded ? 2 : 1));
                 }
             });
+        _afterSameAlgorithmRateUpdates = await BenchmarkEnvironment.CreateAsync(
+            configureBuiltServer: server =>
+            {
+                server.EnableAdmissionControl(options => ConfigureTokenBucket(
+                    options,
+                    tokenLimit: 1_000_000_000,
+                    tokensPerPeriod: 10_000,
+                    TimeSpan.FromHours(1)));
+                for (var index = 0; index < 64; index++)
+                {
+                    var tokenLimit = (index & 1) == 0 ? 999_000_000 : 1_000_000_000;
+                    var tokensPerPeriod = (index & 1) == 0 ? 9_000 : 10_000;
+                    server.UpdateAdmissionControl(options => ConfigureTokenBucket(
+                        options,
+                        tokenLimit,
+                        tokensPerPeriod,
+                        TimeSpan.FromHours(1)));
+                }
+            });
+        _afterAlgorithmReplacements = await BenchmarkEnvironment.CreateAsync(
+            configureBuiltServer: server =>
+            {
+                server.EnableAdmissionControl(options => ConfigureBenchmarkRate(options, BenchmarkRateKind.TokenBucket));
+                for (var index = 0; index < 64; index++)
+                {
+                    var kind = (BenchmarkRateKind)((index + 1) % 3);
+                    server.UpdateAdmissionControl(options => ConfigureBenchmarkRate(options, kind));
+                }
+            });
     }
 
     [GlobalCleanup]
@@ -65,6 +96,8 @@ public class AdmissionRpcBenchmarks
         await _runtimeImmediate.DisposeAsync();
         await _afterConcurrencyResize.DisposeAsync();
         await _afterQueuePolicyUpdates.DisposeAsync();
+        await _afterSameAlgorithmRateUpdates.DisposeAsync();
+        await _afterAlgorithmReplacements.DisposeAsync();
     }
 
     [Benchmark(Baseline = true)]
@@ -86,6 +119,14 @@ public class AdmissionRpcBenchmarks
     public ValueTask<int> SteadyStateAfterRepeatedQueuePolicyUpdates()
         => _afterQueuePolicyUpdates.Rpc.AddAsync(10, 20);
 
+    [Benchmark]
+    public ValueTask<int> SteadyStateAfterRepeatedSameAlgorithmRateUpdates()
+        => _afterSameAlgorithmRateUpdates.Rpc.AddAsync(10, 20);
+
+    [Benchmark]
+    public ValueTask<int> SteadyStateAfterRepeatedRateAlgorithmReplacements()
+        => _afterAlgorithmReplacements.Rpc.AddAsync(10, 20);
+
     private static void ConfigureQueuePolicy(
         SharpLinkAdmissionControlOptions options,
         int maxQueuedCalls,
@@ -97,6 +138,58 @@ public class AdmissionRpcBenchmarks
         options.MaxQueuedBytes = maxQueuedBytes;
         options.MaxQueueDelay = TimeSpan.FromSeconds(maxQueueDelaySeconds);
         options.QueueOneWayCalls = (maxQueuedCalls & 1) == 0;
+    }
+
+    private static void ConfigureBenchmarkRate(
+        SharpLinkAdmissionControlOptions options,
+        BenchmarkRateKind kind)
+    {
+        switch (kind)
+        {
+            case BenchmarkRateKind.TokenBucket:
+                ConfigureTokenBucket(
+                    options,
+                    tokenLimit: 1_000_000_000,
+                    tokensPerPeriod: 10_000,
+                    TimeSpan.FromHours(1));
+                break;
+            case BenchmarkRateKind.FixedWindow:
+                options.Global.UseFixedWindow(rate =>
+                {
+                    rate.PermitLimit = 1_000_000_000;
+                    rate.Window = TimeSpan.FromHours(1);
+                });
+                break;
+            case BenchmarkRateKind.SlidingWindow:
+                options.Global.UseSlidingWindow(rate =>
+                {
+                    rate.PermitLimit = 1_000_000_000;
+                    rate.Window = TimeSpan.FromHours(1);
+                    rate.SegmentsPerWindow = 4;
+                });
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+    }
+
+    private static void ConfigureTokenBucket(
+        SharpLinkAdmissionControlOptions options,
+        int tokenLimit,
+        int tokensPerPeriod,
+        TimeSpan period)
+        => options.Global.UseTokenBucket(rate =>
+        {
+            rate.TokenLimit = tokenLimit;
+            rate.TokensPerPeriod = tokensPerPeriod;
+            rate.ReplenishmentPeriod = period;
+        });
+
+    private enum BenchmarkRateKind
+    {
+        TokenBucket,
+        FixedWindow,
+        SlidingWindow
     }
 }
 
@@ -166,5 +259,126 @@ public class AdmissionControllerBenchmarks
             options.MaxQueueDelay = TimeSpan.FromSeconds(1);
         }
         return SharpLinkAdmissionController.Create(options, []);
+    }
+}
+
+[MemoryDiagnoser]
+[ThreadingDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class AdmissionRateControllerBenchmarks
+{
+    private SharpLinkAdmissionController _tokenPermit = null!;
+    private SharpLinkAdmissionController _tokenReject = null!;
+    private SharpLinkAdmissionController _fixedPermit = null!;
+    private SharpLinkAdmissionController _fixedReject = null!;
+    private SharpLinkAdmissionController _slidingPermit = null!;
+    private SharpLinkAdmissionController _slidingReject = null!;
+    private SharpLinkAdmissionContext _context = null!;
+
+    [GlobalSetup]
+    public async Task Setup()
+    {
+        _context = new SharpLinkAdmissionContext(
+            1, 2, RpcMethodKind.Unary, "rate-benchmark", null, null, null);
+        _tokenPermit = CreateRateController(RateKind.TokenBucket, 1_000_000_000);
+        _tokenReject = CreateRateController(RateKind.TokenBucket, 1);
+        _fixedPermit = CreateRateController(RateKind.FixedWindow, 1_000_000_000);
+        _fixedReject = CreateRateController(RateKind.FixedWindow, 1);
+        _slidingPermit = CreateRateController(RateKind.SlidingWindow, 1_000_000_000);
+        _slidingReject = CreateRateController(RateKind.SlidingWindow, 1);
+
+        await ConsumeAsync(_tokenReject);
+        await ConsumeAsync(_fixedReject);
+        await ConsumeAsync(_slidingReject);
+    }
+
+    [GlobalCleanup]
+    public async Task Cleanup()
+    {
+        await _tokenPermit.DisposeAsync();
+        await _tokenReject.DisposeAsync();
+        await _fixedPermit.DisposeAsync();
+        await _fixedReject.DisposeAsync();
+        await _slidingPermit.DisposeAsync();
+        await _slidingReject.DisposeAsync();
+    }
+
+    [Benchmark(Baseline = true)]
+    public void TokenBucketImmediatePermit()
+        => AcquireAndDispose(_tokenPermit);
+
+    [Benchmark]
+    public bool TokenBucketImmediateReject()
+        => _tokenReject.AcquireAsync(_context, 1, false, CancellationToken.None).Result.IsAcquired;
+
+    [Benchmark]
+    public void FixedWindowImmediatePermit()
+        => AcquireAndDispose(_fixedPermit);
+
+    [Benchmark]
+    public bool FixedWindowImmediateReject()
+        => _fixedReject.AcquireAsync(_context, 1, false, CancellationToken.None).Result.IsAcquired;
+
+    [Benchmark]
+    public void SlidingWindowImmediatePermit()
+        => AcquireAndDispose(_slidingPermit);
+
+    [Benchmark]
+    public bool SlidingWindowImmediateReject()
+        => _slidingReject.AcquireAsync(_context, 1, false, CancellationToken.None).Result.IsAcquired;
+
+    private void AcquireAndDispose(SharpLinkAdmissionController controller)
+    {
+        var decision = controller.AcquireAsync(
+            _context, 1, false, CancellationToken.None).Result;
+        decision.Lease!.Dispose();
+    }
+
+    private async Task ConsumeAsync(SharpLinkAdmissionController controller)
+    {
+        var decision = await controller.AcquireAsync(
+            _context, 1, false, CancellationToken.None);
+        decision.Lease!.Dispose();
+    }
+
+    private static SharpLinkAdmissionController CreateRateController(RateKind kind, int permitLimit)
+    {
+        var options = new SharpLinkAdmissionControlOptions();
+        switch (kind)
+        {
+            case RateKind.TokenBucket:
+                options.Global.UseTokenBucket(rate =>
+                {
+                    rate.TokenLimit = permitLimit;
+                    rate.TokensPerPeriod = permitLimit;
+                    rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
+                });
+                break;
+            case RateKind.FixedWindow:
+                options.Global.UseFixedWindow(rate =>
+                {
+                    rate.PermitLimit = permitLimit;
+                    rate.Window = TimeSpan.FromHours(1);
+                });
+                break;
+            case RateKind.SlidingWindow:
+                options.Global.UseSlidingWindow(rate =>
+                {
+                    rate.PermitLimit = permitLimit;
+                    rate.Window = TimeSpan.FromHours(1);
+                    rate.SegmentsPerWindow = 4;
+                });
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+        return SharpLinkAdmissionController.Create(options, []);
+    }
+
+    private enum RateKind
+    {
+        TokenBucket,
+        FixedWindow,
+        SlidingWindow
     }
 }
