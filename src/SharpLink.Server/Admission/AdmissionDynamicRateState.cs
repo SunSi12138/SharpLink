@@ -149,7 +149,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             if (_waitingCount != 0 || !CanGrantLocked())
                 return FailedLease.Instance;
 
-            RecordGrantLocked(now, fromLegacyGeneration: false);
+            RecordGrantLocked(now);
             return AcquiredLease.Instance;
         }
     }
@@ -172,7 +172,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             AdvanceLocked(now);
             if (_waitingCount == 0 && CanGrantLocked())
             {
-                RecordGrantLocked(now, fromLegacyGeneration: false);
+                RecordGrantLocked(now);
                 return ValueTask.FromResult<RateLimitLease>(AcquiredLease.Instance);
             }
 
@@ -214,6 +214,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
                                    source._definition.PeriodTicks == _definition.PeriodTicks
                         ? source._tokenAnchor
                         : now;
+                    _latestGrantTimestamp = source._latestGrantTimestamp;
                     break;
                 case AdmissionRateStateKind.FixedWindow:
                     _fixedConsumed = source._fixedConsumed;
@@ -221,9 +222,10 @@ internal sealed class AdmissionDynamicRateState : IDisposable
                     var targetWindow = GetWindowTimestampTicks();
                     if (now >= SaturatingAdd(_fixedWindowStart, targetWindow))
                         _fixedWindowStart = now;
+                    _latestGrantTimestamp = source._latestGrantTimestamp;
                     break;
                 case AdmissionRateStateKind.SlidingWindow:
-                    InitializeConservativeSlidingBarrierLocked(source, now);
+                    InitializeConservativeBarrierLocked(source, now);
                     break;
                 default:
                     throw new InvalidOperationException("Unsupported admission rate transition kind.");
@@ -231,62 +233,31 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         }
         else
         {
-            var burden = source.GetBurdenLocked();
-            _latestGrantTimestamp = source._latestGrantTimestamp;
-            switch (_definition.Kind)
-            {
-                case AdmissionRateStateKind.TokenBucket:
-                    _tokenDebt = burden;
-                    _tokenAnchor = now;
-                    break;
-                case AdmissionRateStateKind.FixedWindow:
-                    _fixedConsumed = burden;
-                    _fixedWindowStart = now;
-                    break;
-                case AdmissionRateStateKind.SlidingWindow:
-                    _transitionDebt = burden;
-                    _transitionDebtExpiry = burden == 0
-                        ? 0
-                        : GetConservativeSlidingExpiryLocked(source, now);
-                    break;
-                default:
-                    throw new InvalidOperationException("Unsupported admission rate transition target.");
-            }
+            InitializeConservativeBarrierLocked(source, now);
         }
-
-        if (_latestGrantTimestamp == long.MinValue)
-            _latestGrantTimestamp = source._latestGrantTimestamp;
     }
 
-    private void InitializeConservativeSlidingBarrierLocked(
-        AdmissionDynamicRateState source,
-        long now)
+    private void InitializeConservativeBarrierLocked(AdmissionDynamicRateState source, long now)
     {
         var burden = source.GetBurdenLocked();
         _transitionDebt = burden;
         _latestGrantTimestamp = source._latestGrantTimestamp;
         _transitionDebtExpiry = burden == 0
             ? 0
-            : GetConservativeSlidingExpiryLocked(source, now);
+            : GetConservativeTransitionExpiryLocked(source, now, burden);
     }
 
-    private long GetConservativeSlidingExpiryLocked(
+    private long GetConservativeTransitionExpiryLocked(
         AdmissionDynamicRateState source,
-        long now)
+        long now,
+        long burden)
     {
-        var expiry = source.GetDebtExpiryLocked(now);
-        var targetWindow = GetWindowTimestampTicks();
-        if (source._latestGrantTimestamp != long.MinValue)
-        {
-            expiry = Math.Max(
-                expiry,
-                SaturatingAdd(source._latestGrantTimestamp, targetWindow));
-        }
-        else
-        {
-            expiry = Math.Max(expiry, SaturatingAdd(now, targetWindow));
-        }
-        return expiry;
+        var sourceExpiry = source.GetDebtExpiryLocked(now);
+        var anchor = source._latestGrantTimestamp == long.MinValue
+            ? now
+            : source._latestGrantTimestamp;
+        var targetExpiry = SaturatingAdd(anchor, GetBarrierHorizonTimestampTicks(burden));
+        return Math.Max(sourceExpiry, targetExpiry);
     }
 
     private void ResetPreparedTargetLocked(long now)
@@ -305,7 +276,22 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         _latestGrantTimestamp = long.MinValue;
     }
 
-    private void RecordGrantLocked(long now, bool fromLegacyGeneration)
+    private void RecordGrantLocked(long now)
+    {
+        RecordOwnGrantLocked();
+        _latestGrantTimestamp = Math.Max(_latestGrantTimestamp, now);
+
+        var current = Lineage.CurrentLocked;
+        if (current is null || ReferenceEquals(current, this))
+            return;
+
+        var sourceExpiry = GetDebtExpiryLocked(now);
+        current.AdvanceLocked(now);
+        current.RecordLegacyGrantLocked(now, sourceExpiry);
+        current.ScheduleTimerLocked(now);
+    }
+
+    private void RecordOwnGrantLocked()
     {
         switch (_definition.Kind)
         {
@@ -316,89 +302,84 @@ internal sealed class AdmissionDynamicRateState : IDisposable
                 _fixedConsumed = SaturatingAdd(_fixedConsumed, 1);
                 break;
             case AdmissionRateStateKind.SlidingWindow:
-                if (fromLegacyGeneration)
-                {
-                    _transitionDebt = SaturatingAdd(_transitionDebt, 1);
-                    _transitionDebtExpiry = Math.Max(
-                        _transitionDebtExpiry,
-                        SaturatingAdd(now, GetWindowTimestampTicks()));
-                }
-                else
-                {
-                    _slidingSegments[_slidingCurrentSegment] = SaturatingAdd(
-                        _slidingSegments[_slidingCurrentSegment], 1);
-                    _slidingOwnTotal = SaturatingAdd(_slidingOwnTotal, 1);
-                }
+                _slidingSegments[_slidingCurrentSegment] = SaturatingAdd(
+                    _slidingSegments[_slidingCurrentSegment], 1);
+                _slidingOwnTotal = SaturatingAdd(_slidingOwnTotal, 1);
                 break;
             default:
                 throw new InvalidOperationException("Unsupported admission rate state kind.");
         }
+    }
 
+    private void RecordLegacyGrantLocked(long now, long sourceExpiry)
+    {
+        _transitionDebt = SaturatingAdd(_transitionDebt, 1);
+        var targetExpiry = SaturatingAdd(now, GetBarrierHorizonTimestampTicks(1));
+        _transitionDebtExpiry = Math.Max(
+            _transitionDebtExpiry,
+            Math.Max(sourceExpiry, targetExpiry));
         _latestGrantTimestamp = Math.Max(_latestGrantTimestamp, now);
-
-        var current = Lineage.CurrentLocked;
-        if (!fromLegacyGeneration && current is not null && !ReferenceEquals(current, this))
-        {
-            current.AdvanceLocked(now);
-            current.RecordGrantLocked(now, fromLegacyGeneration: true);
-            current.ScheduleTimerLocked(now);
-        }
     }
 
     private bool CanGrantLocked()
         => GetBurdenLocked() < _definition.Limit;
 
     private long GetBurdenLocked()
+        => SaturatingAdd(_transitionDebt, GetOwnBurdenLocked());
+
+    private long GetOwnBurdenLocked()
         => _definition.Kind switch
         {
             AdmissionRateStateKind.TokenBucket => _tokenDebt,
             AdmissionRateStateKind.FixedWindow => _fixedConsumed,
-            AdmissionRateStateKind.SlidingWindow => SaturatingAdd(_transitionDebt, _slidingOwnTotal),
+            AdmissionRateStateKind.SlidingWindow => _slidingOwnTotal,
             _ => long.MaxValue
         };
 
     private long GetDebtExpiryLocked(long now)
     {
-        var burden = GetBurdenLocked();
-        if (burden == 0)
+        if (GetBurdenLocked() == 0)
             return now;
 
-        return _definition.Kind switch
+        var expiry = _transitionDebt == 0 ? now : _transitionDebtExpiry;
+        switch (_definition.Kind)
         {
-            AdmissionRateStateKind.TokenBucket => GetTokenDebtExpiryLocked(),
-            AdmissionRateStateKind.FixedWindow => SaturatingAdd(
-                _fixedWindowStart,
-                GetWindowTimestampTicks()),
-            AdmissionRateStateKind.SlidingWindow => GetSlidingDebtExpiryLocked(),
-            _ => long.MaxValue
-        };
+            case AdmissionRateStateKind.TokenBucket when _tokenDebt != 0:
+                expiry = Math.Max(expiry, GetTokenDebtExpiryLocked());
+                break;
+            case AdmissionRateStateKind.FixedWindow when _fixedConsumed != 0:
+                expiry = Math.Max(
+                    expiry,
+                    SaturatingAdd(_fixedWindowStart, GetWindowTimestampTicks()));
+                break;
+            case AdmissionRateStateKind.SlidingWindow when _slidingOwnTotal != 0:
+                expiry = Math.Max(expiry, GetSlidingOwnDebtExpiryLocked());
+                break;
+        }
+        return expiry;
     }
 
     private long GetTokenDebtExpiryLocked()
     {
-        var perPeriod = _definition.Secondary;
-        var periods = (_tokenDebt + perPeriod - 1) / perPeriod;
+        var periods = DivideRoundUp(_tokenDebt, _definition.Secondary);
         return SaturatingAdd(
             _tokenAnchor,
             SaturatingMultiply(periods, GetPeriodTimestampTicks()));
     }
 
-    private long GetSlidingDebtExpiryLocked()
-    {
-        var expiry = _transitionDebt == 0 ? 0 : _transitionDebtExpiry;
-        if (_slidingOwnTotal != 0)
-        {
-            expiry = Math.Max(
-                expiry,
-                SaturatingAdd(
-                    _slidingSegmentStart,
-                    SaturatingMultiply(_definition.Segments, GetSlidingSegmentTimestampTicks())));
-        }
-        return expiry;
-    }
+    private long GetSlidingOwnDebtExpiryLocked()
+        => SaturatingAdd(
+            _slidingSegmentStart,
+            SaturatingMultiply(_definition.Segments, GetSlidingSegmentTimestampTicks()));
 
     private void AdvanceLocked(long now)
     {
+        if (_transitionDebt != 0 && now >= _transitionDebtExpiry)
+        {
+            _transitionDebt = 0;
+            _transitionDebtExpiry = 0;
+        }
+
         switch (_definition.Kind)
         {
             case AdmissionRateStateKind.TokenBucket:
@@ -448,12 +429,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
 
     private void AdvanceSlidingWindowLocked(long now)
     {
-        if (_transitionDebt != 0 && now >= _transitionDebtExpiry)
-        {
-            _transitionDebt = 0;
-            _transitionDebtExpiry = 0;
-        }
-
         var segment = GetSlidingSegmentTimestampTicks();
         var elapsed = now - _slidingSegmentStart;
         if (elapsed < segment)
@@ -490,44 +465,51 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         if (CanGrantLocked())
             return now;
 
-        return _definition.Kind switch
+        var next = _transitionDebt == 0 ? long.MaxValue : _transitionDebtExpiry;
+        switch (_definition.Kind)
         {
-            AdmissionRateStateKind.TokenBucket => GetNextTokenAvailabilityLocked(),
-            AdmissionRateStateKind.FixedWindow => SaturatingAdd(
-                _fixedWindowStart,
-                GetWindowTimestampTicks()),
-            AdmissionRateStateKind.SlidingWindow => GetNextSlidingAvailabilityLocked(),
-            _ => long.MaxValue
-        };
+            case AdmissionRateStateKind.TokenBucket when _tokenDebt != 0:
+                next = Math.Min(next, GetNextTokenOwnAvailabilityLocked());
+                break;
+            case AdmissionRateStateKind.FixedWindow when _fixedConsumed != 0:
+                next = Math.Min(
+                    next,
+                    SaturatingAdd(_fixedWindowStart, GetWindowTimestampTicks()));
+                break;
+            case AdmissionRateStateKind.SlidingWindow when _slidingOwnTotal != 0:
+                next = Math.Min(next, GetNextSlidingOwnAvailabilityLocked());
+                break;
+        }
+        return next;
     }
 
-    private long GetNextTokenAvailabilityLocked()
+    private long GetNextTokenOwnAvailabilityLocked()
     {
-        var excess = _tokenDebt - _definition.Limit;
-        var periods = excess / _definition.Secondary + 1;
+        var requiredReduction = GetBurdenLocked() - _definition.Limit + 1;
+        if (requiredReduction <= 0)
+            return _timeProvider.GetTimestamp();
+        if (requiredReduction > _tokenDebt)
+            return long.MaxValue;
+
+        var periods = DivideRoundUp(requiredReduction, _definition.Secondary);
         return SaturatingAdd(
             _tokenAnchor,
             SaturatingMultiply(periods, GetPeriodTimestampTicks()));
     }
 
-    private long GetNextSlidingAvailabilityLocked()
+    private long GetNextSlidingOwnAvailabilityLocked()
     {
-        var next = _transitionDebt == 0 ? long.MaxValue : _transitionDebtExpiry;
-        if (_slidingOwnTotal == 0)
-            return next;
-
         var segment = GetSlidingSegmentTimestampTicks();
         for (var offset = 1; offset <= _definition.Segments; offset++)
         {
             var index = (_slidingCurrentSegment + offset) % _definition.Segments;
             if (_slidingSegments[index] == 0)
                 continue;
-            next = Math.Min(
-                next,
-                SaturatingAdd(_slidingSegmentStart, SaturatingMultiply(offset, segment)));
-            break;
+            return SaturatingAdd(
+                _slidingSegmentStart,
+                SaturatingMultiply(offset, segment));
         }
-        return next;
+        return long.MaxValue;
     }
 
     private RateWaiter? GrantWaitersLocked(long now)
@@ -538,7 +520,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         while (_waiterHead is not null && CanGrantLocked())
         {
             var waiter = DequeueLocked();
-            RecordGrantLocked(now, fromLegacyGeneration: false);
+            RecordGrantLocked(now);
             if (grantedTail is null)
                 grantedHead = waiter;
             else
@@ -702,6 +684,22 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         CompleteFailed(failed);
     }
 
+    private long GetBarrierHorizonTimestampTicks(long burden)
+    {
+        if (burden <= 0)
+            return 0;
+
+        return _definition.Kind switch
+        {
+            AdmissionRateStateKind.TokenBucket => SaturatingMultiply(
+                DivideRoundUp(burden, _definition.Secondary),
+                GetPeriodTimestampTicks()),
+            AdmissionRateStateKind.FixedWindow => GetWindowTimestampTicks(),
+            AdmissionRateStateKind.SlidingWindow => GetWindowTimestampTicks(),
+            _ => long.MaxValue
+        };
+    }
+
     private long GetPeriodTimestampTicks()
         => ToTimestampTicks(_definition.PeriodTicks);
 
@@ -728,6 +726,9 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             return TimeSpan.MaxValue;
         return TimeSpan.FromTicks(Math.Max(1, (long)Math.Ceiling(scaled)));
     }
+
+    private static long DivideRoundUp(long value, long divisor)
+        => value <= 0 ? 0 : (value - 1) / divisor + 1;
 
     private static long SaturatingAdd(long left, long right)
     {
