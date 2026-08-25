@@ -148,10 +148,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             if (options.Partition is { } partition)
             {
                 var selector = options.PartitionSelector!;
-                partitionBinding = kernel.AcquirePartitionState(
-                    AdmissionPartitionStateKey.Create(selector, partition),
-                    selector,
-                    partition);
+                partitionBinding = kernel.AcquirePartitionState(selector, partition);
                 partitions = partitionBinding.Value.Pool;
             }
 
@@ -207,10 +204,6 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         options.Validate();
         ResolveRuleOptions(options, manifests, out var contractOptions, out var methodOptions);
 
-        // Partition migration remains out of this slice. Rate transitions below are non-partition
-        // Global / Contract / Method state only.
-        ValidateUpdateTransition(source, options);
-
         AdmissionRuleRuntime? global = null;
         var contractRules = new Dictionary<long, AdmissionRuleRuntime>(contractOptions.Count);
         var methodRules = new Dictionary<(long, long), AdmissionRuleRuntime>(methodOptions.Count);
@@ -218,6 +211,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         var resizes = new List<AdmissionConcurrencyResize>();
         var rateTransitions = new List<AdmissionRateTransition>();
         AdmissionPartitionStateBinding? partitionBinding = null;
+        AdmissionPartitionUpdate? partitionUpdate = null;
         try
         {
             if (options.Global.HasLimit)
@@ -285,14 +279,15 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             if (options.Partition is { } partition)
             {
                 var selector = options.PartitionSelector!;
-                partitionBinding = kernel.AcquirePartitionState(
-                    AdmissionPartitionStateKey.Create(selector, partition),
+                partitionBinding = kernel.AcquirePartitionStateForUpdate(
+                    source._partitionStateBinding,
                     selector,
-                    partition);
+                    partition,
+                    out partitionUpdate);
                 partitions = partitionBinding.Value.Pool;
             }
 
-            updatePlan = new AdmissionUpdatePlan(resizes, rateTransitions);
+            updatePlan = new AdmissionUpdatePlan(resizes, rateTransitions, partitionUpdate);
             return new SharpLinkAdmissionController(
                 kernel,
                 options.MaxQueuedCalls,
@@ -454,6 +449,13 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
     }
 
     internal void StopAccepting() => _kernel.StopAccepting();
+
+    internal void GrantConcurrencyWaitersAfterTargetCommit()
+    {
+        foreach (var binding in _ruleStateBindings)
+            binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();
+        _partitions?.GrantConcurrencyWaitersAfterTargetCommit();
+    }
 
     private AdmissionRequest CreateRequest(
         SharpLinkAdmissionContext context,
@@ -629,21 +631,6 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 throw new InvalidOperationException(
                     $"Admission control has duplicate rules for method {key.Item1}/{key.Item2}.");
             }
-        }
-    }
-
-    private static void ValidateUpdateTransition(
-        SharpLinkAdmissionController source,
-        SharpLinkAdmissionControlOptions options)
-    {
-        AdmissionPartitionStateKey? candidatePartition = options.Partition is { } partition
-            ? AdmissionPartitionStateKey.Create(options.PartitionSelector!, partition)
-            : null;
-        var sourcePartition = source._partitionStateBinding?.Key;
-        if (sourcePartition != candidatePartition)
-        {
-            throw new InvalidOperationException(
-                "Partition admission configuration updates are not supported by this Dynamic Admission slice.");
         }
     }
 }
@@ -1019,24 +1006,47 @@ internal sealed class AdmissionRuleRuntime : IDisposable
     }
 }
 
-/// <summary>Kernel-owned partition namespace/state shared by compatible program generations.</summary>
+/// <summary>
+/// Kernel-owned selector namespace. Mutable policy targets and per-entry limiter generations change
+/// transactionally while the entry dictionary remains authoritative for selector-compatible updates.
+/// </summary>
 internal sealed class AdmissionPartitionPool : IDisposable
 {
     private readonly Func<SharpLinkAdmissionContext, string?> _selector;
-    private readonly SharpLinkPartitionAdmissionOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly AdmissionStateKernel _kernel;
     private readonly Lock _gate = new();
     private readonly Dictionary<AdmissionPartitionKey, AdmissionPartitionEntry> _entries = [];
+    private SharpLinkPartitionAdmissionOptions _options;
     private int _disposed;
 
     internal AdmissionPartitionPool(
         Func<SharpLinkAdmissionContext, string?> selector,
         SharpLinkPartitionAdmissionOptions options,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        AdmissionStateKernel kernel)
     {
         _selector = selector;
         _options = options.CloneValidated();
         _timeProvider = timeProvider;
+        _kernel = kernel;
+    }
+
+    internal Action? AfterKeyResolvedBeforeEntryLockForTests { get; set; }
+
+    internal AdmissionPartitionUpdate PrepareUpdate(SharpLinkPartitionAdmissionOptions options)
+        => new(this, options.CloneValidated());
+
+    internal bool IsPolicyEquivalent(SharpLinkPartitionAdmissionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
+        lock (_gate)
+        {
+            return _options.MaxPartitions == options.MaxPartitions &&
+                   _options.IdleTimeout == options.IdleTimeout &&
+                   AdmissionRuleStateDefinition.Create(_options) == AdmissionRuleStateDefinition.Create(options);
+        }
     }
 
     internal AdmissionPartitionLease? TryAcquire(SharpLinkAdmissionContext context)
@@ -1048,70 +1058,161 @@ internal sealed class AdmissionPartitionPool : IDisposable
             ? AdmissionPartitionKey.Default
             : AdmissionPartitionKey.ForUser(selected);
 
-        List<AdmissionRuleRuntime>? evicted = null;
-        AdmissionPartitionEntry entry;
-        lock (_gate)
+        AfterKeyResolvedBeforeEntryLockForTests?.Invoke();
+
+        while (true)
         {
-            if (Volatile.Read(ref _disposed) != 0)
-                return null;
-            if (!_entries.TryGetValue(key, out entry!))
+            var targetVersion = _kernel.ReadStableConcurrencyTargetVersion();
+            List<IDisposable>? dispose = null;
+            AdmissionPartitionLease? lease = null;
+            var capacityRejected = false;
+
+            lock (_gate)
             {
-                evicted = ReclaimIdleEntries(_timeProvider.GetTimestamp(), stopAfterOne: true);
-                if (_entries.Count >= _options.MaxPartitions)
+                if (Volatile.Read(ref _disposed) != 0)
                     return null;
-                entry = new AdmissionPartitionEntry(
-                    AdmissionRuleRuntime.CreateOwned(_options, "partition", _timeProvider));
-                _entries.Add(key, entry);
-                SharpLinkTelemetry.AddAdmissionActivePartitions(1);
+                if (!_kernel.IsConcurrencyTargetVersionCurrent(targetVersion))
+                    continue;
+
+                if (!_entries.TryGetValue(key, out var entry))
+                {
+                    CollectIdleEntriesLocked(
+                        _timeProvider.GetTimestamp(),
+                        stopAfterOne: true,
+                        ref dispose);
+                    if (_entries.Count >= _options.MaxPartitions)
+                    {
+                        capacityRejected = true;
+                    }
+                    else
+                    {
+                        var generation = CreateInitialGenerationLocked(_options);
+                        entry = new AdmissionPartitionEntry(generation);
+                        _entries.Add(key, entry);
+                        SharpLinkTelemetry.AddAdmissionActivePartitions(1);
+                    }
+                }
+
+                if (!capacityRejected)
+                {
+                    var current = _entries[key].Current;
+                    _entries[key].References++;
+                    current.References++;
+                    _entries[key].IsIdle = false;
+                    lease = new AdmissionPartitionLease(this, _entries[key], current);
+                }
             }
-            entry.References++;
-            entry.IsIdle = false;
+
+            DisposeStates(dispose);
+            if (capacityRejected)
+                return null;
+            if (lease is null)
+                continue;
+            if (_kernel.IsConcurrencyTargetVersionCurrent(targetVersion))
+                return lease;
+
+            lease.Dispose();
         }
-        DisposeRules(evicted);
-        return new AdmissionPartitionLease(this, entry);
     }
 
-    internal void Release(AdmissionPartitionEntry entry)
+    internal void Release(
+        AdmissionPartitionEntry entry,
+        AdmissionPartitionRuntimeGeneration generation)
     {
-        List<AdmissionRuleRuntime>? evicted;
+        List<IDisposable>? dispose = null;
         lock (_gate)
         {
+            if (--generation.References < 0)
+                throw new InvalidOperationException("Admission partition runtime generation reference count underflowed.");
             if (--entry.References < 0)
                 throw new InvalidOperationException("Admission partition reference count underflowed.");
+
+            CollectRetiredGenerationsLocked(entry, ref dispose);
             if (entry.References == 0)
             {
                 entry.IdleSince = _timeProvider.GetTimestamp();
                 entry.IsIdle = true;
             }
-            evicted = ReclaimIdleEntries(_timeProvider.GetTimestamp(), stopAfterOne: true);
+            CollectIdleEntriesLocked(
+                _timeProvider.GetTimestamp(),
+                stopAfterOne: true,
+                ref dispose);
         }
-        DisposeRules(evicted);
+        DisposeStates(dispose);
     }
 
-    private List<AdmissionRuleRuntime>? ReclaimIdleEntries(long now, bool stopAfterOne)
+    internal void CommitUpdate(SharpLinkPartitionAdmissionOptions targetOptions)
     {
-        List<AdmissionPartitionKey>? keys = null;
-        foreach (var pair in _entries)
+        ArgumentNullException.ThrowIfNull(targetOptions);
+        var target = targetOptions.CloneValidated();
+        List<IDisposable>? dispose = null;
+        List<PreparedEntryTransition>? prepared = null;
+
+        lock (_gate)
         {
-            if (pair.Value.References != 0 || !pair.Value.IsIdle ||
-                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)
+            if (_disposed != 0)
+                throw new ObjectDisposedException(nameof(AdmissionPartitionPool));
+
+            try
             {
-                continue;
+                prepared = new List<PreparedEntryTransition>(_entries.Count);
+                foreach (var entry in _entries.Values)
+                    prepared.Add(PrepareEntryTransitionLocked(entry, target));
             }
-            (keys ??= []).Add(pair.Key);
-            if (stopAfterOne)
-                break;
+            catch
+            {
+                DisposePreparedTransitions(prepared);
+                throw;
+            }
+
+            // Everything above this point is fallible preparation only. From here the target objects
+            // are complete and validated, so the live namespace can be changed as one pool-gate epoch.
+            _options = target;
+            foreach (var transition in prepared)
+            {
+                if (transition.Source.Rate is { } sourceRate &&
+                    !ReferenceEquals(sourceRate, transition.TargetRate))
+                {
+                    sourceRate.CommitTransitionTo(transition.TargetRate);
+                }
+
+                if (transition.ResizePermitLimit is { } permitLimit)
+                    transition.Source.Concurrency!.Resize(permitLimit);
+
+                if (transition.TargetGeneration is { } targetGeneration)
+                {
+                    transition.Source.Retired = true;
+                    transition.Entry.Current = targetGeneration;
+                    transition.Entry.Generations.Add(targetGeneration);
+                }
+            }
+
+            foreach (var entry in _entries.Values)
+                CollectRetiredGenerationsLocked(entry, ref dispose);
+            CollectIdleEntriesLocked(
+                _timeProvider.GetTimestamp(),
+                stopAfterOne: false,
+                ref dispose);
         }
-        if (keys is null)
-            return null;
-        var rules = new List<AdmissionRuleRuntime>(keys.Count);
-        foreach (var key in keys)
+
+        DisposeStates(dispose);
+    }
+
+    internal void GrantConcurrencyWaitersAfterTargetCommit()
+    {
+        ResizableConcurrencyState[] states;
+        lock (_gate)
         {
-            rules.Add(_entries[key].Runtime);
-            _entries.Remove(key);
-            SharpLinkTelemetry.AddAdmissionActivePartitions(-1);
+            var unique = new HashSet<ResizableConcurrencyState>(ReferenceEqualityComparer.Instance);
+            foreach (var entry in _entries.Values)
+                foreach (var generation in entry.Generations)
+                    if (generation.Concurrency is { } concurrency)
+                        unique.Add(concurrency);
+            states = [.. unique];
         }
-        return rules;
+
+        foreach (var state in states)
+            state.GrantWaitersAfterTargetCommit();
     }
 
     internal int Count
@@ -1123,29 +1224,237 @@ internal sealed class AdmissionPartitionPool : IDisposable
         }
     }
 
+    internal int RuntimeGenerationCount
+    {
+        get
+        {
+            lock (_gate)
+                return _entries.Values.Sum(static entry => entry.Generations.Count);
+        }
+    }
+
+    internal int MaxPartitionsForTests
+    {
+        get
+        {
+            lock (_gate)
+                return _options.MaxPartitions;
+        }
+    }
+
+    internal TimeSpan IdleTimeoutForTests
+    {
+        get
+        {
+            lock (_gate)
+                return _options.IdleTimeout;
+        }
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        AdmissionRuleRuntime[] rules;
+
+        List<IDisposable>? dispose = null;
         lock (_gate)
         {
-            rules = _entries.Values.Select(static entry => entry.Runtime).ToArray();
+            foreach (var entry in _entries.Values)
+                CollectAllEntryStateLocked(entry, ref dispose);
             var count = _entries.Count;
             _entries.Clear();
             if (count != 0)
                 SharpLinkTelemetry.AddAdmissionActivePartitions(-count);
         }
-        foreach (var rule in rules)
-            rule.Dispose();
+        DisposeStates(dispose);
     }
 
-    private static void DisposeRules(List<AdmissionRuleRuntime>? rules)
+    private PreparedEntryTransition PrepareEntryTransitionLocked(
+        AdmissionPartitionEntry entry,
+        SharpLinkPartitionAdmissionOptions target)
     {
-        if (rules is null)
+        var source = entry.Current;
+        ResizableConcurrencyState? targetConcurrency = null;
+        AdmissionRateState? targetRate = null;
+        ResizableConcurrencyState? createdConcurrency = null;
+        AdmissionRateState? createdRate = null;
+        int? resizePermitLimit = null;
+
+        try
+        {
+            if (target.Concurrency is { } concurrencyOptions)
+            {
+                if (source.Concurrency is { } sourceConcurrency)
+                {
+                    targetConcurrency = sourceConcurrency;
+                    if (sourceConcurrency.PermitLimit != concurrencyOptions.PermitLimit)
+                        resizePermitLimit = concurrencyOptions.PermitLimit;
+                }
+                else
+                {
+                    createdConcurrency = new ResizableConcurrencyState(
+                        concurrencyOptions.PermitLimit,
+                        _kernel);
+                    targetConcurrency = createdConcurrency;
+                }
+            }
+
+            if (target.RateLimit is not null)
+            {
+                var targetDefinition = AdmissionRateStateDefinition.Create(target.RateLimit);
+                if (source.Rate is { } sourceRate && sourceRate.Definition == targetDefinition)
+                {
+                    targetRate = sourceRate;
+                }
+                else
+                {
+                    createdRate = AdmissionRateState.Create(target, _timeProvider, source.Rate);
+                    targetRate = createdRate;
+                }
+            }
+
+            AdmissionPartitionRuntimeGeneration? targetGeneration = null;
+            if (!ReferenceEquals(source.Concurrency, targetConcurrency) ||
+                !ReferenceEquals(source.Rate, targetRate))
+            {
+                targetGeneration = new AdmissionPartitionRuntimeGeneration(
+                    AdmissionRuleRuntime.CreateBound(targetConcurrency, targetRate, "partition"),
+                    targetConcurrency,
+                    targetRate);
+            }
+
+            return new PreparedEntryTransition(
+                entry,
+                source,
+                targetGeneration,
+                targetRate,
+                resizePermitLimit,
+                createdConcurrency,
+                createdRate);
+        }
+        catch
+        {
+            createdConcurrency?.Dispose();
+            createdRate?.Dispose();
+            throw;
+        }
+    }
+
+    private AdmissionPartitionRuntimeGeneration CreateInitialGenerationLocked(
+        SharpLinkPartitionAdmissionOptions options)
+    {
+        ResizableConcurrencyState? concurrency = null;
+        AdmissionRateState? rate = null;
+        try
+        {
+            concurrency = options.Concurrency is { } concurrencyOptions
+                ? new ResizableConcurrencyState(concurrencyOptions.PermitLimit, _kernel)
+                : null;
+            rate = options.RateLimit is not null
+                ? AdmissionRateState.Create(options, _timeProvider)
+                : null;
+            return new AdmissionPartitionRuntimeGeneration(
+                AdmissionRuleRuntime.CreateBound(concurrency, rate, "partition"),
+                concurrency,
+                rate);
+        }
+        catch
+        {
+            concurrency?.Dispose();
+            rate?.Dispose();
+            throw;
+        }
+    }
+
+    private void CollectIdleEntriesLocked(
+        long now,
+        bool stopAfterOne,
+        ref List<IDisposable>? dispose)
+    {
+        List<AdmissionPartitionKey>? keys = null;
+        foreach (var pair in _entries)
+        {
+            if (pair.Value.References != 0 ||
+                !pair.Value.IsIdle ||
+                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)
+            {
+                continue;
+            }
+
+            (keys ??= []).Add(pair.Key);
+            if (stopAfterOne)
+                break;
+        }
+        if (keys is null)
             return;
-        foreach (var rule in rules)
-            rule.Dispose();
+
+        foreach (var key in keys)
+        {
+            var entry = _entries[key];
+            CollectAllEntryStateLocked(entry, ref dispose);
+            _entries.Remove(key);
+            SharpLinkTelemetry.AddAdmissionActivePartitions(-1);
+        }
+    }
+
+    private static void CollectRetiredGenerationsLocked(
+        AdmissionPartitionEntry entry,
+        ref List<IDisposable>? dispose)
+    {
+        for (var index = entry.Generations.Count - 1; index >= 0; index--)
+        {
+            var generation = entry.Generations[index];
+            if (!generation.Retired || generation.References != 0)
+                continue;
+
+            entry.Generations.RemoveAt(index);
+            if (generation.Concurrency is { } concurrency &&
+                !entry.Generations.Any(candidate => ReferenceEquals(candidate.Concurrency, concurrency)))
+            {
+                (dispose ??= []).Add(concurrency);
+            }
+            if (generation.Rate is { } rate &&
+                !entry.Generations.Any(candidate => ReferenceEquals(candidate.Rate, rate)))
+            {
+                (dispose ??= []).Add(rate);
+            }
+        }
+    }
+
+    private static void CollectAllEntryStateLocked(
+        AdmissionPartitionEntry entry,
+        ref List<IDisposable>? dispose)
+    {
+        var states = new HashSet<IDisposable>(ReferenceEqualityComparer.Instance);
+        foreach (var generation in entry.Generations)
+        {
+            if (generation.Concurrency is not null)
+                states.Add(generation.Concurrency);
+            if (generation.Rate is not null)
+                states.Add(generation.Rate);
+        }
+        foreach (var state in states)
+            (dispose ??= []).Add(state);
+        entry.Generations.Clear();
+    }
+
+    private static void DisposePreparedTransitions(List<PreparedEntryTransition>? prepared)
+    {
+        if (prepared is null)
+            return;
+        foreach (var transition in prepared)
+        {
+            transition.CreatedConcurrency?.Dispose();
+            transition.CreatedRate?.Dispose();
+        }
+    }
+
+    private static void DisposeStates(List<IDisposable>? states)
+    {
+        if (states is null)
+            return;
+        foreach (var state in states)
+            state.Dispose();
     }
 
     private readonly record struct AdmissionPartitionKey(string? Value, bool IsDefault)
@@ -1153,21 +1462,60 @@ internal sealed class AdmissionPartitionPool : IDisposable
         internal static AdmissionPartitionKey Default { get; } = new(null, true);
         internal static AdmissionPartitionKey ForUser(string value) => new(value, false);
     }
+
+    private sealed record PreparedEntryTransition(
+        AdmissionPartitionEntry Entry,
+        AdmissionPartitionRuntimeGeneration Source,
+        AdmissionPartitionRuntimeGeneration? TargetGeneration,
+        AdmissionRateState? TargetRate,
+        int? ResizePermitLimit,
+        ResizableConcurrencyState? CreatedConcurrency,
+        AdmissionRateState? CreatedRate);
 }
 
-internal sealed class AdmissionPartitionEntry(AdmissionRuleRuntime runtime)
+internal sealed class AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneration generation)
 {
-    internal AdmissionRuleRuntime Runtime { get; } = runtime;
+    internal AdmissionPartitionRuntimeGeneration Current = generation;
+    internal List<AdmissionPartitionRuntimeGeneration> Generations { get; } = [generation];
     internal int References;
     internal long IdleSince;
     internal bool IsIdle;
 }
 
+internal sealed class AdmissionPartitionRuntimeGeneration(
+    AdmissionRuleRuntime runtime,
+    ResizableConcurrencyState? concurrency,
+    AdmissionRateState? rate)
+{
+    internal AdmissionRuleRuntime Runtime { get; } = runtime;
+    internal ResizableConcurrencyState? Concurrency { get; } = concurrency;
+    internal AdmissionRateState? Rate { get; } = rate;
+    internal int References;
+    internal bool Retired;
+}
+
 internal sealed class AdmissionPartitionLease(
     AdmissionPartitionPool owner,
-    AdmissionPartitionEntry entry) : IDisposable
+    AdmissionPartitionEntry entry,
+    AdmissionPartitionRuntimeGeneration generation) : IDisposable
 {
     private AdmissionPartitionPool? _owner = owner;
-    internal AdmissionRuleRuntime Runtime => entry.Runtime;
-    public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Release(entry);
+    internal AdmissionRuleRuntime Runtime { get; } = generation.Runtime;
+    public void Dispose()
+        => Interlocked.Exchange(ref _owner, null)?.Release(entry, generation);
+}
+
+/// <summary>Side-effect-free same-namespace target prepared before exact-source publication validation.</summary>
+internal sealed class AdmissionPartitionUpdate(
+    AdmissionPartitionPool pool,
+    SharpLinkPartitionAdmissionOptions targetOptions)
+{
+    private int _committed;
+
+    internal void Commit()
+    {
+        if (Interlocked.Exchange(ref _committed, 1) != 0)
+            throw new InvalidOperationException("Admission partition update was committed more than once.");
+        pool.CommitUpdate(targetOptions);
+    }
 }
