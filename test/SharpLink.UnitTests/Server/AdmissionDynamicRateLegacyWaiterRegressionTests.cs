@@ -14,44 +14,51 @@ public sealed class AdmissionDynamicRateLegacyWaiterRegressionTests
         var source = CreateProgram(kernel, options => ConfigureFixedWindowQueue(options));
         Ensure(source.TryAcquireUse(), "test must retain the old program while its waiter survives publication");
 
-        var consumed = await source.Controller.AcquireAsync(
-            CreateContext(), 1, allowQueue: true, CancellationToken.None);
-        Ensure(consumed.IsAcquired, "source fixed window must grant its first permit");
-        consumed.Lease!.Dispose();
+        try
+        {
+            var consumed = await source.Controller.AcquireAsync(
+                CreateContext(), 1, allowQueue: true, CancellationToken.None);
+            Ensure(consumed.IsAcquired, "source fixed window must grant its first permit");
+            consumed.Lease!.Dispose();
 
-        var oldQueued = source.Controller.AcquireAsync(
-            CreateContext(), 1, allowQueue: true, CancellationToken.None).AsTask();
-        Ensure(kernel.QueuedCalls == 1 && source.Controller.GlobalRateStateForTests!.WaitingCount == 1,
-            "old request must own exactly one kernel queue reservation and one source rate waiter");
+            var oldQueued = source.Controller.AcquireAsync(
+                CreateContext(), 1, allowQueue: true, CancellationToken.None).AsTask();
+            Ensure(kernel.QueuedCalls == 1 && source.Controller.GlobalRateStateForTests!.WaitingCount == 1,
+                "old request must own exactly one kernel queue reservation and one source rate waiter");
 
-        var replacement = CreateUpdate(
-            kernel,
-            source,
-            options => ConfigureFastTokenBucketQueue(options),
-            out var plan);
-        plan.Commit();
-        source.Retire();
+            var replacement = CreateUpdate(
+                kernel,
+                source,
+                options => ConfigureFastTokenBucketQueue(options),
+                out var plan);
+            plan.Commit();
+            source.Retire();
 
-        time.Advance(TimeSpan.FromSeconds(40));
-        var oldDecision = await oldQueued.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(oldDecision.IsAcquired,
-            "old fixed-window waiter must remain valid and grant when its captured source window rolls");
-        oldDecision.Lease!.Dispose();
-        Ensure(kernel.QueuedCalls == 0 && source.Controller.GlobalRateStateForTests!.WaitingCount == 0,
-            "old waiter completion must release its outer queue reservation exactly once");
+            time.Advance(TimeSpan.FromSeconds(40));
+            var oldDecision = await oldQueued.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(oldDecision.IsAcquired,
+                "old fixed-window waiter must remain valid and grant when its captured source window rolls");
+            oldDecision.Lease!.Dispose();
+            Ensure(kernel.QueuedCalls == 0 && source.Controller.GlobalRateStateForTests!.WaitingCount == 0,
+                "old waiter completion must release its outer queue reservation exactly once");
 
-        await EnsureRateRejectedAsync(replacement,
-            "the target must account for the old-generation grant at the handoff timestamp");
-        time.Advance(TimeSpan.FromSeconds(1));
-        await EnsureRateRejectedAsync(replacement,
-            "a one-second target replenishment must not erase a grant that belongs to the old forty-second fixed window");
-        time.Advance(TimeSpan.FromSeconds(39).Subtract(TimeSpan.FromTicks(1)));
-        await EnsureRateRejectedAsync(replacement,
-            "legacy waiter debt must remain effective one tick before the old grant's conservative expiry");
-        time.Advance(TimeSpan.FromTicks(1));
-        await ConsumeAsync(replacement);
+            await EnsureRateRejectedAsync(replacement,
+                "the target must account for the old-generation grant at the handoff timestamp");
+            time.Advance(TimeSpan.FromSeconds(1));
+            await EnsureRateRejectedAsync(replacement,
+                "a one-second target replenishment must not erase a grant that belongs to the old forty-second fixed window");
+            time.Advance(TimeSpan.FromSeconds(39).Subtract(TimeSpan.FromTicks(1)));
+            await EnsureRateRejectedAsync(replacement,
+                "legacy waiter debt must remain effective one tick before the old grant's conservative expiry");
+            time.Advance(TimeSpan.FromTicks(1));
+            await ConsumeAsync(replacement);
+        }
+        finally
+        {
+            if (source.ActiveUses != 0)
+                source.ReleaseUse();
+        }
 
-        source.ReleaseUse();
         Ensure(source.IsReclaimed && kernel.RateStateCount == 1,
             "retired source state must reclaim after the retained old-generation use ends");
     }
