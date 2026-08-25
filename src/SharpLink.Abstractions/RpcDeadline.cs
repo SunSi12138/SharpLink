@@ -45,11 +45,11 @@ internal readonly struct RpcDeadline
     internal bool IsExpired(TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
-        return HasValue && Timestamp <= timeProvider.GetTimestamp();
+        return HasValue && SharpLinkTime.IsReached(Timestamp, timeProvider.GetTimestamp());
     }
 
     internal bool IsExpired(long timestamp)
-        => HasValue && Timestamp <= timestamp;
+        => HasValue && SharpLinkTime.IsReached(Timestamp, timestamp);
 
     internal bool WouldExpireBeforeOrAt(
         TimeSpan delay,
@@ -59,10 +59,16 @@ internal readonly struct RpcDeadline
         ArgumentOutOfRangeException.ThrowIfLessThan(delay, TimeSpan.Zero);
         if (!HasValue)
             return false;
-        var now = timeProvider.GetTimestamp();
-        return Timestamp <= now ||
-               Timestamp <= SharpLinkTime.AddElapsedDuration(
-                   now, delay, timeProvider.TimestampFrequency);
+        return GetRemaining(timeProvider) <= delay;
+    }
+
+    internal bool IsEarlierOrEqual(RpcDeadline other, long timestampNow)
+    {
+        if (!HasValue)
+            return false;
+        if (!other.HasValue)
+            return true;
+        return SharpLinkTime.IsEarlierOrEqual(Timestamp, other.Timestamp, timestampNow);
     }
 
     internal TimeSpan GetRemaining(TimeProvider timeProvider)
