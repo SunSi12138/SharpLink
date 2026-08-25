@@ -42,6 +42,67 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
     }
 
     [Test]
+    public async Task ConsumerDeliveryGateShouldClaimDeadlineBeforeBufferedItemPublishes()
+    {
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(default, Int32Codec.Instance);
+        var creditedBytes = 0;
+        dispatcher.SetBytesConsumedCallback(
+            (_, _, bytes) => Interlocked.Add(ref creditedBytes, bytes),
+            requestId: 74,
+            streamId: 0);
+        var localAbort = (IStreamLocalAbortDispatcher)dispatcher;
+        var terminal = new SharpLinkException(
+            SharpLinkErrorCode.DeadlineExceeded,
+            "deadline claimed at delivery");
+        var gate = new DeadlineDeliveryGate(localAbort, terminal);
+        dispatcher.SetConsumerAbandonedCallback(gate.OnConsumerAbandonedAsync, requestId: 74);
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        await dispatcher.DispatchAsync(Encode(17));
+
+        var failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
+        Ensure(gate.ClaimCount == 1,
+            "the owning logical call must be consulted before the buffered dequeue claim");
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "a delivery-time deadline win must preempt a previously buffered response item");
+        Ensure(Volatile.Read(ref creditedBytes) == 0,
+            "the preempted buffered item must not publish receive credit as delivered");
+
+        localAbort.RetireLocalAbortBuffer();
+        Ensure(Volatile.Read(ref creditedBytes) == 4,
+            "retiring the preempted buffered item must return its receive credit exactly once");
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task DeliveryGateMustNotPreemptBufferedItemsAfterRemoteTerminalWon()
+    {
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(default, Int32Codec.Instance);
+        var gate = new AlreadyTerminalDeliveryGate();
+        dispatcher.SetConsumerAbandonedCallback(gate.OnConsumerAbandonedAsync, requestId: 75);
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        await dispatcher.DispatchAsync(Encode(23));
+        dispatcher.Complete(new SharpLinkException(
+            SharpLinkErrorCode.RemoteError,
+            "peer terminal"));
+
+        Ensure(await enumerator.MoveNextAsync() && enumerator.Current == 23,
+            "a peer terminal that already owns the call must retain normal buffered-drain semantics");
+        var failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.RemoteError },
+            "the peer terminal must surface after its preceding buffered item drains");
+        Ensure(gate.ClaimCount >= 1,
+            "the dispatcher should still consult the owning gate before user-visible delivery");
+
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+    }
+
+    [Test]
     public async Task LocalAbortShouldWaitForOwnedBufferedPublication()
     {
         PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
@@ -182,6 +243,45 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
         }
 
         throw new Exception("expected failure");
+    }
+
+    private sealed class DeadlineDeliveryGate(
+        IStreamLocalAbortDispatcher localAbort,
+        Exception terminal) : IStreamConsumerDeliveryGate
+    {
+        private int _claimCount;
+
+        internal int ClaimCount => Volatile.Read(ref _claimCount);
+
+        public bool TryAcceptStreamDelivery(long requestId)
+        {
+            Interlocked.Increment(ref _claimCount);
+            localAbort.CompleteLocalAbort(terminal);
+            return false;
+        }
+
+        internal ValueTask OnConsumerAbandonedAsync(
+            long requestId,
+            IStreamDispatchState? dispatchState)
+            => ValueTask.CompletedTask;
+    }
+
+    private sealed class AlreadyTerminalDeliveryGate : IStreamConsumerDeliveryGate
+    {
+        private int _claimCount;
+
+        internal int ClaimCount => Volatile.Read(ref _claimCount);
+
+        public bool TryAcceptStreamDelivery(long requestId)
+        {
+            Interlocked.Increment(ref _claimCount);
+            return false;
+        }
+
+        internal ValueTask OnConsumerAbandonedAsync(
+            long requestId,
+            IStreamDispatchState? dispatchState)
+            => ValueTask.CompletedTask;
     }
 
     private static void Ensure(bool condition, string message)
