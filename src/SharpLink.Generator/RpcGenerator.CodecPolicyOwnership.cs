@@ -283,8 +283,11 @@ public partial class RpcGenerator
             {
                 _ = Analyze();
             }
-            EnsureNativeNullableEnumModels();
+            // Final route selection must run before the default Nullable<Enum> wrapper is materialized.
+            // Otherwise the wrapper occupies the Type key and prevents a matching Native route from
+            // replacing it with the Contract-owned Adapter/Direct selection.
             PromoteSelectedFixedMembersToCodecBindings();
+            EnsureNativeNullableEnumModels();
             return new DtoAnalysisPassResult(
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
                 _diagnostics.ToImmutableArray(),
