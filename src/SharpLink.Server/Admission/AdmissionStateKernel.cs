@@ -665,6 +665,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             if (pair.Key.Scope != scope || pair.Key.Definition != definition)
                 continue;
             pair.Value.ProgramReferences++;
+            pair.Value.RetainedLineageAnchor = false;
             return pair.Value.State;
         }
         return CreateRateLocked(scope, options, transitionSource: null);
@@ -687,6 +688,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         if (!TryFindRateEntryLocked(scope, state, out _, out var entry))
             throw new InvalidOperationException("Source admission rate state is no longer registered.");
         entry.ProgramReferences++;
+        entry.RetainedLineageAnchor = false;
     }
 
     private bool TryFindRateEntryLocked(
@@ -706,6 +708,48 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         key = default;
         entry = null!;
         return false;
+    }
+
+    private bool HasOtherRateStateInLineageLocked(AdmissionRateState state)
+    {
+        foreach (var pair in _rateStates)
+        {
+            if (ReferenceEquals(pair.Value.State, state))
+                continue;
+            if (ReferenceEquals(pair.Value.State.Lineage, state.Lineage))
+                return true;
+        }
+        return false;
+    }
+
+    private void CollectUnreferencedRateAnchorsLocked(ref List<IDisposable>? dispose)
+    {
+        List<AdmissionRateStateKey>? remove = null;
+        foreach (var pair in _rateStates)
+        {
+            var entry = pair.Value;
+            if (entry.ProgramReferences != 0 ||
+                !entry.RetainedLineageAnchor ||
+                HasOtherRateStateInLineageLocked(entry.State))
+            {
+                continue;
+            }
+            (remove ??= []).Add(pair.Key);
+        }
+        if (remove is null)
+            return;
+
+        foreach (var key in remove)
+        {
+            var entry = _rateStates[key];
+            if (_publishedRateStates.TryGetValue(key.Scope, out var published) &&
+                ReferenceEquals(published, entry.State))
+            {
+                _publishedRateStates.Remove(key.Scope);
+            }
+            _rateStates.Remove(key);
+            (dispose ??= []).Add(entry.State);
+        }
     }
 
     private void ReleaseBindingsLocked(
@@ -747,13 +791,19 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                     throw new InvalidOperationException("Admission rate state reference count underflowed.");
                 if (rateEntry.ProgramReferences == 0)
                 {
-                    if (_publishedRateStates.TryGetValue(binding.Key, out var published) &&
-                        ReferenceEquals(published, rateEntry.State))
+                    var isPublished = _publishedRateStates.TryGetValue(binding.Key, out var published) &&
+                                      ReferenceEquals(published, rateEntry.State);
+                    if (isPublished && HasOtherRateStateInLineageLocked(rateEntry.State))
                     {
-                        _publishedRateStates.Remove(binding.Key);
+                        rateEntry.RetainedLineageAnchor = true;
                     }
-                    _rateStates.Remove(rateKey);
-                    (dispose ??= []).Add(rateEntry.State);
+                    else
+                    {
+                        if (isPublished)
+                            _publishedRateStates.Remove(binding.Key);
+                        _rateStates.Remove(rateKey);
+                        (dispose ??= []).Add(rateEntry.State);
+                    }
                 }
             }
         }
@@ -770,6 +820,8 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                 (dispose ??= []).Add(partitionEntry.Pool);
             }
         }
+
+        CollectUnreferencedRateAnchorsLocked(ref dispose);
     }
 
     private void ThrowIfDisposed()
@@ -805,6 +857,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     {
         internal AdmissionRateState State { get; } = state;
         internal int ProgramReferences = programReferences;
+        internal bool RetainedLineageAnchor;
     }
 
     private sealed class PartitionStateEntry(AdmissionPartitionPool pool, int programReferences)
