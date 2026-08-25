@@ -7,7 +7,7 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task NestedEnumAndNullableEnumShouldUseUnmanagedRouteCodec()
+    public Task NestedEnumAndNullableEnumShouldUseNativeRouteCodec()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public enum NestedMode : short
@@ -35,15 +35,15 @@ public sealed class EnumAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.nested-enum/v1\", \"route-nested-enum-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(EnumAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(EnumAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::NestedMode>()", StringComparison.Ordinal),
-            "a DTO-only nested enum selected by an Unmanaged route must receive an owner-bound Codec factory");
+            "a DTO-only nested enum selected by a Native route must receive an owner-bound Codec factory");
         Ensure(generated.Contains("CreateCodec<global::NestedMode?>()", StringComparison.Ordinal),
-            "a DTO-only nested nullable enum selected by an Unmanaged route must receive an owner-bound Codec factory");
+            "a DTO-only nested nullable enum selected by a Native route must receive an owner-bound Codec factory");
         Ensure(generated.Contains("private readonly IRpcCodec<global::NestedMode> __codec_", StringComparison.Ordinal),
-            "the Contract-policy Envelope Codec must bind its enum member through IRpcCodec instead of the fixed unmanaged member path");
+            "the Contract-policy Envelope Codec must bind its enum member through IRpcCodec instead of the fixed native member path");
         Ensure(generated.Contains("private readonly IRpcCodec<global::NestedMode?> __codec_", StringComparison.Ordinal),
             "the Contract-policy Envelope Codec must bind its nullable enum member through IRpcCodec instead of the nullable-fixed path");
 
@@ -88,7 +88,7 @@ public sealed class MixedEnumAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(MixedEnumAdapter), \"route.mixed-enum/v1\", \"route-mixed-enum-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(MixedEnumAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(MixedEnumAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::MixedMode>()", StringComparison.Ordinal),
@@ -110,7 +110,7 @@ public sealed class MixedEnumAdapter : TestRouteAdapterBase
     }
 
     [Test]
-    public Task ExplicitEnumBindingsShouldOverrideUnmanagedRoute()
+    public Task ExplicitEnumBindingsShouldOverrideNativeRoute()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public enum ExplicitMode : byte
@@ -140,13 +140,13 @@ public sealed class ExplicitEnumAdapter : TestRouteAdapterBase
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteEnumAdapter), \"route.explicit-enum/a\", \"route-explicit-enum-a/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitEnumAdapter), \"route.explicit-enum/b\", \"route-explicit-enum-b/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(RouteEnumAdapter))]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteEnumAdapter))]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(ExplicitMode), typeof(ExplicitEnumAdapter))]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(ExplicitMode?), typeof(ExplicitEnumAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("internal static readonly IRpcCodecAdapter Instance = new global::ExplicitEnumAdapter();", StringComparison.Ordinal),
-            "assembly-level explicit enum binding must be accepted and win over the broader Unmanaged route");
+            "assembly-level explicit enum binding must be accepted and win over the broader Native route");
         Ensure(!generated.Contains("internal static readonly IRpcCodecAdapter Instance = new global::RouteEnumAdapter();", StringComparison.Ordinal),
             "the broader route Adapter must not capture enum or nullable-enum targets with explicit bindings");
 
@@ -157,7 +157,7 @@ public sealed class ExplicitEnumAdapter : TestRouteAdapterBase
         Ensure(entries.All(codec =>
                 codec["kind"]!.GetValue<string>() == "Adapter" &&
                 codec["wireFormatId"]!.GetValue<string>() == "route-explicit-enum-b/v1"),
-            "explicit enum/nullable-enum bindings must outrank the Unmanaged route in the emitted manifest as well as generated factories");
+            "explicit enum/nullable-enum bindings must outrank the Native route in the emitted manifest as well as generated factories");
         return Task.CompletedTask;
     }
 
