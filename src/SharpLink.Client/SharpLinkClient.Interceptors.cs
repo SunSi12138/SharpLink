@@ -51,7 +51,7 @@ internal sealed partial class SharpLinkClient
             this, method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
         return new InterceptedAsyncEnumerable<TResponse>(
             state.InvokeAsync(), method.ResponseNullable, state.Deadline,
-            _runtimeContext.TimeProvider, state.InvocationCancellation);
+            _runtimeContext.TimeProvider, state.LogicalCall, state.InvocationCancellation);
     }
 
     private IAsyncEnumerable<TResponse> InvokeDuplexStreamingIntercepted<TRequest, TResponse, TStreams>(
@@ -69,7 +69,7 @@ internal sealed partial class SharpLinkClient
             this, method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
         return new InterceptedAsyncEnumerable<TResponse>(
             state.InvokeAsync(), method.ResponseNullable, state.Deadline,
-            _runtimeContext.TimeProvider, state.InvocationCancellation);
+            _runtimeContext.TimeProvider, state.LogicalCall, state.InvocationCancellation);
     }
 
     private abstract class ClientInterceptorState
@@ -98,6 +98,7 @@ internal sealed partial class SharpLinkClient
         protected SharpLinkClient Client => _client;
         protected SharpLinkClientInvocationContext Context => _context;
         internal RpcDeadline Deadline => _control.Deadline;
+        internal ClientLogicalCallState? LogicalCall => _control.LogicalCall;
         internal CancellationToken InvocationCancellation => _context.CancellationToken;
 
         public ValueTask<SharpLinkClientInvocationResult> InvokeAsync()
@@ -193,6 +194,7 @@ internal sealed partial class SharpLinkClient
                     _client._runtimeContext.TimeProvider,
                     CancellationToken.None).ConfigureAwait(false))
             {
+                _control.LogicalCall?.TryClaimDeadline();
                 _ = ObserveAbandonedInvocationAsync(invocationTask);
                 throw CreateDeadlineExceededException();
             }
@@ -210,6 +212,12 @@ internal sealed partial class SharpLinkClient
             int index,
             SharpLinkClientInvocationContext context)
         {
+            if (_control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
+            {
+                return ValueTask.FromException<SharpLinkClientInvocationResult>(
+                    CreateDeadlineExceededException());
+            }
+
             if (index >= _interceptors.Length)
                 return InvokeTerminalTrackedAsync(context);
 
@@ -424,10 +432,17 @@ internal sealed partial class SharpLinkClient
         protected ResolvedCallControl GetTerminalControl(SharpLinkClientInvocationContext context)
             => new(
                 _control.Deadline,
-                context.Metadata is { Count: > 0 } ? context.Metadata : null);
+                context.Metadata is { Count: > 0 } ? context.Metadata : null,
+                _control.LogicalCall);
 
         private void ThrowIfFrozenDeadlineExpired()
         {
+            if (_control.LogicalCall is { } logicalCall)
+            {
+                if (!logicalCall.TryEnterProgress())
+                    throw CreateDeadlineExceededException();
+                return;
+            }
             if (_control.Deadline.IsExpired(_client._runtimeContext.TimeProvider))
                 throw CreateDeadlineExceededException();
         }
@@ -758,6 +773,7 @@ internal sealed partial class SharpLinkClient
         bool responseNullable,
         RpcDeadline deadline,
         TimeProvider timeProvider,
+        ClientLogicalCallState? logicalCall,
         CancellationToken invocationCancellation) : IAsyncEnumerable<T>
     {
         private int _enumerated;
@@ -773,12 +789,14 @@ internal sealed partial class SharpLinkClient
 
             using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 invocationCancellation, cancellationToken);
+            ThrowIfDeadlineExpired();
             var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
             var deadlineWon = false;
             try
             {
                 while (true)
                 {
+                    ThrowIfDeadlineExpired();
                     var moveNext = enumerator.MoveNextAsync();
                     bool hasNext;
                     if (!deadline.HasValue)
@@ -796,6 +814,7 @@ internal sealed partial class SharpLinkClient
                         if (!await SharpLinkTimer.WaitAsync(
                                 moveNextTask, deadline, timeProvider, lifetimeCancellation.Token).ConfigureAwait(false))
                         {
+                            logicalCall?.TryClaimDeadline();
                             deadlineWon = true;
                             TryCancelLifetime(lifetimeCancellation);
                             _ = ObserveAbandonedMoveNextAsync(moveNextTask);
@@ -863,6 +882,7 @@ internal sealed partial class SharpLinkClient
                     timeProvider,
                     CancellationToken.None).ConfigureAwait(false))
             {
+                logicalCall?.TryClaimDeadline();
                 _ = ObserveAbandonedInvocationAsync(invocationTask);
                 throw CreateDeadlineExceededException();
             }
@@ -890,6 +910,12 @@ internal sealed partial class SharpLinkClient
 
         private void ThrowIfDeadlineExpired()
         {
+            if (logicalCall is not null)
+            {
+                if (!logicalCall.TryEnterProgress())
+                    throw CreateDeadlineExceededException();
+                return;
+            }
             if (deadline.IsExpired(timeProvider))
                 throw CreateDeadlineExceededException();
         }
