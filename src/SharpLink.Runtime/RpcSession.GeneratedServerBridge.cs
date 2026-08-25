@@ -334,6 +334,18 @@ internal sealed partial class RpcSession
 /// </summary>
 internal sealed class RpcSessionGeneratedServerBridge(RpcSession session) : IRpcGeneratedServerBridge
 {
+    public void EnsureUserCodeEntry(long requestId)
+    {
+        if (SharpLinkCallContext.Current is { } context &&
+            context.DeadlineTimeProvider is { } timeProvider &&
+            context.LocalRpcDeadline.IsExpired(timeProvider))
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded.");
+        }
+    }
+
     public IAsyncEnumerable<T> CreateInboundStream<T>(
         long requestId,
         ushort streamId,
