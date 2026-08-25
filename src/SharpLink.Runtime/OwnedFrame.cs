@@ -8,7 +8,8 @@ internal readonly struct OwnedFrame(
     IRpcByteBufferWriter owner,
     bool forceFlush,
     TaskCompletionSource<bool>? flushCompletion,
-    bool isProtocolProgress)
+    bool isProtocolProgress,
+    RpcDeadline deadline = default)
 {
     public IRpcByteBufferWriter Owner { get; } = owner;
 
@@ -19,6 +20,13 @@ internal readonly struct OwnedFrame(
     public bool ForceFlush { get; } = forceFlush;
 
     public TaskCompletionSource<bool>? FlushCompletion { get; } = flushCompletion;
+
+    /// <summary>
+    /// The process-local request lifetime retained until the transport emission boundary.
+    /// The encoded Request field is only a placeholder until the send pump stamps remaining
+    /// TimeBudget immediately before publication.
+    /// </summary>
+    public RpcDeadline Deadline { get; } = deadline;
 
     /// <summary>
     /// True when the frame carries protocol progress (ping/pong, window
