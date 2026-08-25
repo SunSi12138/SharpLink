@@ -285,8 +285,8 @@ internal sealed partial class RpcSession
                         }
                         bytesAccumulated += frame.Length;
 
-                        // A deadline-bearing Request is a publication boundary. Its private
-                        // monotonic timestamp is converted only after its output span/copy has
+                        // A deadline-bearing Request is a publication boundary. Its retained
+                        // process-local deadline is sampled only after output span/copy has
                         // completed, and no later frame may perform local work before the flush
                         // that publishes that budget snapshot.
                         if (hasTimeBudget ||
@@ -437,20 +437,20 @@ internal sealed partial class RpcSession
                 WriteFrame(frame);
                 return true;
             }
+            if (!frame.Deadline.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "A Request carrying TimeBudget must retain its process-local RpcDeadline until emission.");
+            }
 
             var budgetOffset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
-            var deadlineTimestamp = BinaryPrimitives.ReadInt64LittleEndian(
-                source.Slice(budgetOffset, sizeof(long)));
 
             // GetSpan/copy are still local pre-publication work and may be supplied by a
             // custom PipeWriter. Finish that work before sampling the remaining budget so
             // it cannot silently extend the peer's lifetime.
             var destination = _output.GetSpan(source.Length);
             source.CopyTo(destination);
-            var remaining = RpcDeadline.GetRemaining(
-                deadlineTimestamp,
-                _timeProvider.GetTimestamp(),
-                _timeProvider.TimestampFrequency);
+            var remaining = frame.Deadline.GetRemaining(_timeProvider);
             if (remaining <= TimeSpan.Zero)
                 return false;
 
@@ -467,8 +467,8 @@ internal sealed partial class RpcSession
             int writtenCount)
         {
             // Only the suffix beginning with the first deadline-bearing request stays in
-            // owned buffers. Convert its private monotonic timestamp to a remaining wire
-            // budget at the last possible point before FlushAsync.
+            // owned buffers. Stamp its remaining TimeBudget from retained deadline metadata
+            // at the last possible point before FlushAsync.
             for (var index = writtenCount; index < pending.Count;)
             {
                 var frame = pending[index];
