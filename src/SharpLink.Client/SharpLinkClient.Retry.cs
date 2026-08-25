@@ -36,6 +36,7 @@ internal sealed partial class SharpLinkClient
         for (var attempt = 1; attempt <= options.MaxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            EnsureLogicalCallProgress(control);
             var outcome = new AttemptOutcomeState(this, method);
             var attemptScope = SharpLinkTelemetry.StartClientAttempt(method, attempt);
             try
@@ -44,6 +45,7 @@ internal sealed partial class SharpLinkClient
                     method,
                     method.ContractId, method.MethodId, method.HasResponsePayload,
                     request, requestCodec, responseCodec, control, selection, outcome, cancellationToken).ConfigureAwait(false);
+                EnsureLogicalCallProgress(control);
                 attemptScope.Complete();
                 return response;
             }
@@ -55,6 +57,10 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 attemptScope.Complete(exception);
+                if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
+                    _ = control.LogicalCall?.TryClaimDeadline();
+                EnsureLogicalCallProgress(control);
+
                 lastFailure = exception;
                 if (attempt == options.MaxAttempts)
                     throw;
@@ -66,7 +72,17 @@ internal sealed partial class SharpLinkClient
                     attemptOutcome.ErrorCode,
                     attemptOutcome.ResponseObserved,
                     attemptOutcome.Elapsed);
-                var decision = EvaluateRetryDecision(context, options);
+                SharpLinkRetryDecision decision;
+                try
+                {
+                    decision = EvaluateRetryDecision(context, options);
+                }
+                catch
+                {
+                    EnsureLogicalCallProgress(control);
+                    throw;
+                }
+                EnsureLogicalCallProgress(control);
                 if (!decision.ShouldRetry)
                     throw;
                 SharpLinkTelemetry.RecordClientRetry();
@@ -82,17 +98,23 @@ internal sealed partial class SharpLinkClient
                     delay = admissionDelay;
                 if (delay == TimeSpan.Zero)
                 {
-                    if (control.Deadline.IsExpired(_runtimeContext.TimeProvider))
-                        throw CreateDeadlineExceededException();
+                    EnsureLogicalCallProgress(control);
                     continue;
                 }
 
                 await DelayForRetryOrAdmissionAsync(
                     delay, control.Deadline, cancellationToken).ConfigureAwait(false);
+                EnsureLogicalCallProgress(control);
             }
         }
 
         throw lastFailure ?? new SharpLinkException(SharpLinkErrorCode.Internal, "Retry exhausted without an attempt outcome.");
+    }
+
+    private static void EnsureLogicalCallProgress(in ResolvedCallControl control)
+    {
+        if (control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
+            throw CreateDeadlineExceededException();
     }
 
     private SharpLinkRetryDecision EvaluateRetryDecision(
@@ -151,7 +173,9 @@ internal sealed partial class SharpLinkClient
     {
         try
         {
+            EnsureLogicalCallProgress(control);
             var connection = GetReadyConnection(method, selection, outcome);
+            EnsureLogicalCallProgress(control);
             outcome.SetConnection(connection);
             var operation = connection.PendingCalls.Rent(
                 responseCodec,
@@ -176,6 +200,10 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
+            if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
+                _ = control.LogicalCall?.TryClaimDeadline();
+            if (control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
+                exception = CreateDeadlineExceededException();
             outcome.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);
         }
