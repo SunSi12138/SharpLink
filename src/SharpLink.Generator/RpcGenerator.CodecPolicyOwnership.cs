@@ -14,8 +14,6 @@ public partial class RpcGenerator
             selectorOnlyContractDefault: false);
         var standalone = standaloneState.AnalyzeWithFinalCodecBindings();
 
-        // Keep one assembly-wide selector/default pass for global publication and referenced legacy
-        // Contract roots. Contract policy itself is analyzed independently for every current Contract.
         var contractDefaultState = new DtoAnalysisState(
             compilation,
             cancellationToken,
@@ -377,10 +375,13 @@ public partial class RpcGenerator
                     continue;
                 }
                 target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target) && !IsEnumOrNullableEnum(target))
+                if (IsNonOverridableBuiltin(target) &&
+                    !IsEnumOrNullableEnum(target) &&
+                    (!_contractMode || !HasDeclaredRouteForScope(target)))
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
-                        "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
+                        "built-in primitive Codecs cannot be rebound by RpcCodecAdapter unless a matching Contract route is also present",
+                        location);
                     continue;
                 }
                 AddAssemblyBinding(target,
