@@ -83,7 +83,8 @@ internal sealed class ResizableConcurrencyState : RateLimiter
         // The complete AdmissionRequest owns the reader-visible target-version transaction. Keep
         // exhausted rejection directly in the override so the common denied path does not pay a
         // secondary helper call; only a potentially successful acquisition reaches the hook/lock.
-        if (_active >= _permitLimit || _disposed != 0)
+        if (Volatile.Read(ref _active) >= Volatile.Read(ref _permitLimit) ||
+            Volatile.Read(ref _disposed) != 0)
         {
             return FailedLease.Instance;
         }
