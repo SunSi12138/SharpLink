@@ -599,6 +599,26 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     private bool TryAcquireLocalAbortDelivery()
     {
+        // A client response stream can have data buffered before its logical deadline. Submit
+        // each actual consumer-delivery boundary to the owning pending call before acquiring the
+        // dequeue claim, so an expired call publishes DeadlineExceeded even when its timer
+        // callback has not run. The callback target also owns normal remote terminal publication;
+        // if another thread already removed the pending slot, wait for that terminal to become
+        // visible and only preempt delivery when it is the stronger local-abort terminal.
+        if (_consumerAbandonedAsync?.Target is IStreamConsumerDeliveryGate deliveryGate &&
+            !deliveryGate.TryAcceptStreamDelivery(_consumerAbandonedRequestId))
+        {
+            var terminalSpinner = new SpinWait();
+            var terminal = Volatile.Read(ref _consumerTerminal);
+            while (terminal == 0)
+            {
+                terminalSpinner.SpinOnce();
+                terminal = Volatile.Read(ref _consumerTerminal);
+            }
+            if (terminal == ConsumerTerminalLocalAbort && Volatile.Read(ref _completed))
+                return false;
+        }
+
         var spinner = new SpinWait();
         while (true)
         {
