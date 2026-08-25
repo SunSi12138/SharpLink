@@ -25,7 +25,7 @@ public class SharpLinkTimePrecisionTests
     [Test]
     public void WouldExpireBeforeOrAtShouldNotRoundProspectiveDelayUpAtLowFrequency()
     {
-        var provider = new FixedTimestampTimeProvider(timestamp: 0, frequency: 1);
+        var provider = new MutableTimestampTimeProvider(timestamp: 0, frequency: 1);
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
 
         Ensure(!deadline.WouldExpireBeforeOrAt(TimeSpan.FromTicks(1), provider),
@@ -46,62 +46,46 @@ public class SharpLinkTimePrecisionTests
     }
 
     [Test]
-    public void RoundTripShouldPreserveFullLifetimeAcrossSignedTimestampBoundary()
+    public void RpcDeadlineShouldPreserveFullLifetimeAcrossSignedTimestampBoundary()
     {
         const long frequency = TimeSpan.TicksPerSecond;
         var start = long.MaxValue - 5_000_000;
-        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), start, frequency);
+        var provider = new MutableTimestampTimeProvider(start, frequency);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
 
-        Ensure(deadline.Timestamp < 0,
-            "a finite deadline that crosses long.MaxValue must wrap into the signed-negative half");
-        Ensure(RpcDeadline.GetRemaining(deadline.Timestamp, start, frequency) == TimeSpan.FromSeconds(1),
-            "crossing the signed boundary must preserve the full configured lifetime");
+        Ensure(deadline.GetRemaining(provider) == TimeSpan.FromSeconds(1),
+            "crossing the signed timestamp boundary must preserve the full configured lifetime");
 
-        var oneTickBefore = unchecked(start + frequency - 1);
-        Ensure(!deadline.IsExpired(oneTickBefore),
-            "the wrapped deadline must remain live one timestamp unit before its boundary");
-        Ensure(RpcDeadline.GetRemaining(deadline.Timestamp, oneTickBefore, frequency) == TimeSpan.FromTicks(1),
-            "the final wrapped timestamp unit must remain observable");
+        provider.Timestamp = unchecked(start + frequency - 1);
+        Ensure(!deadline.IsExpired(provider),
+            "the deadline must remain live one timestamp unit before its modular boundary");
+        Ensure(deadline.GetRemaining(provider) == TimeSpan.FromTicks(1),
+            "the final timestamp unit must remain observable after crossing the signed boundary");
 
-        var exactBoundary = unchecked(start + frequency);
-        Ensure(deadline.IsExpired(exactBoundary),
-            "the wrapped deadline must expire at its exact modular boundary");
-        Ensure(RpcDeadline.GetRemaining(deadline.Timestamp, exactBoundary, frequency) == TimeSpan.Zero,
-            "remaining time must reach zero at the wrapped boundary");
+        provider.Timestamp = unchecked(start + frequency);
+        Ensure(deadline.IsExpired(provider),
+            "the deadline must expire at its exact modular boundary");
+        Ensure(deadline.GetRemaining(provider) == TimeSpan.Zero,
+            "remaining time must reach zero at the modular boundary");
     }
 
     [Test]
-    public void AddElapsedDurationShouldMatchWrappedDeadlineProjection()
+    public void RpcDeadlineShouldAcceptLifetimeBeyondSignedHalfRing()
     {
-        const long frequency = TimeSpan.TicksPerSecond;
-        var start = long.MaxValue - 5_000_000;
-        var elapsedTarget = SharpLinkTime.AddElapsedDuration(
-            start,
-            TimeSpan.FromSeconds(1),
-            frequency);
-        var deadlineTarget = SharpLinkTime.AddDuration(
-            start,
-            TimeSpan.FromSeconds(1),
-            frequency);
+        const long frequency = long.MaxValue;
+        var provider = new MutableTimestampTimeProvider(timestamp: 0, frequency);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(2), provider);
 
-        Ensure(elapsedTarget == deadlineTarget && elapsedTarget < 0,
-            "elapsed-duration ordering and deadline projection must cross the signed boundary coherently");
-    }
+        Ensure(deadline.GetRemaining(provider) == TimeSpan.FromSeconds(2),
+            "a large positive lifetime must not be rejected because it exceeds the signed half-ring");
 
-    [Test]
-    public void AddDurationShouldRejectAmbiguousMoreThanHalfRingLifetime()
-    {
-        try
-        {
-            _ = SharpLinkTime.AddDuration(
-                0,
-                TimeSpan.FromSeconds(2),
-                long.MaxValue);
-            throw new Exception("expected ArgumentOutOfRangeException");
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-        }
+        provider.Timestamp = long.MaxValue;
+        Ensure(deadline.GetRemaining(provider) == TimeSpan.FromSeconds(1),
+            "one second of modular elapsed time must deduct exactly one second");
+
+        provider.Timestamp = -2;
+        Ensure(deadline.IsExpired(provider),
+            "a lifetime spanning almost the full 64-bit counter ring must expire at its modular boundary");
     }
 
     [Test]
@@ -121,10 +105,12 @@ public class SharpLinkTimePrecisionTests
             throw new Exception(message);
     }
 
-    private sealed class FixedTimestampTimeProvider(long timestamp, long frequency) : TimeProvider
+    private sealed class MutableTimestampTimeProvider(long timestamp, long frequency) : TimeProvider
     {
+        internal long Timestamp { get; set; } = timestamp;
+
         public override long TimestampFrequency => frequency;
 
-        public override long GetTimestamp() => timestamp;
+        public override long GetTimestamp() => Timestamp;
     }
 }
