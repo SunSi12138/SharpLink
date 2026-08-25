@@ -318,7 +318,12 @@ public partial class RpcGenerator : IIncrementalGenerator
         var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
-            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs, value.Right.ContractCodecs);
+            var code = GenerateAssemblyManifest(
+                value.Left.Left,
+                value.Left.Right,
+                value.Right.Codecs,
+                value.Right.ContractCodecs,
+                value.Right.ContractPolicies);
             if (!string.IsNullOrEmpty(code))
             {
                 spc.AddSource(
