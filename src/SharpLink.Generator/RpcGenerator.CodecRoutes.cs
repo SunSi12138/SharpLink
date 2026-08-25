@@ -54,12 +54,39 @@ public partial class RpcGenerator
     private sealed partial class DtoAnalysisState
     {
         private readonly Dictionary<int, ITypeSymbol> _assemblyRoutes = [];
+        private readonly Dictionary<int, ITypeSymbol> _contractRoutes = [];
         private readonly HashSet<int> _conflictingRouteScopes = [];
+        private readonly HashSet<int> _conflictingContractRouteScopes = [];
         private HashSet<ITypeSymbol>? _routeEligibleTypes;
 
         private void CollectAssemblyRoutes()
         {
-            foreach (var attribute in _compilation.Assembly.GetAttributes()
+            CollectRoutes(
+                _compilation.Assembly.GetAttributes(),
+                _assemblyRoutes,
+                _conflictingRouteScopes,
+                _compilation.Assembly,
+                "assembly-level");
+
+            if (_contractRoot is not null)
+            {
+                CollectRoutes(
+                    _contractRoot.GetAttributes(),
+                    _contractRoutes,
+                    _conflictingContractRouteScopes,
+                    _contractRoot,
+                    "Contract-level");
+            }
+        }
+
+        private void CollectRoutes(
+            IEnumerable<AttributeData> attributes,
+            Dictionary<int, ITypeSymbol> routes,
+            HashSet<int> conflicts,
+            ISymbol owner,
+            string level)
+        {
+            foreach (var attribute in attributes
                          .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecRouteAttribute"))
                          .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
             {
@@ -68,8 +95,8 @@ public partial class RpcGenerator
                 {
                     Report(
                         DtoDiagnosticKind.AdapterBindingInvalid,
-                        _compilation.Assembly,
-                        "assembly-level RpcCodecRoute requires RpcCodecScope and adapterType",
+                        owner,
+                        $"{level} RpcCodecRoute requires RpcCodecScope and adapterType",
                         location);
                     continue;
                 }
@@ -78,17 +105,24 @@ public partial class RpcGenerator
                 {
                     Report(
                         DtoDiagnosticKind.AdapterBindingInvalid,
-                        _compilation.Assembly,
+                        owner,
                         $"RpcCodecRoute scope value '{scope}' must be a non-empty combination of Managed, Unmanaged, and Native",
                         location);
                     continue;
                 }
 
-                AddRouteBits(scope, adapterType, location);
+                AddRouteBits(scope, adapterType, location, routes, conflicts, owner, level);
             }
         }
 
-        private void AddRouteBits(int scope, ITypeSymbol adapterType, Location location)
+        private void AddRouteBits(
+            int scope,
+            ITypeSymbol adapterType,
+            Location location,
+            Dictionary<int, ITypeSymbol> routes,
+            HashSet<int> conflicts,
+            ISymbol owner,
+            string level)
         {
             AddRouteBit(RpcCodecScopeManaged, "Managed");
             AddRouteBit(RpcCodecScopeUnmanaged, "Unmanaged");
@@ -98,20 +132,20 @@ public partial class RpcGenerator
             {
                 if ((scope & bit) == 0)
                     return;
-                if (!_assemblyRoutes.TryGetValue(bit, out var existing))
+                if (!routes.TryGetValue(bit, out var existing))
                 {
-                    _assemblyRoutes.Add(bit, adapterType);
+                    routes.Add(bit, adapterType);
                     return;
                 }
                 if (SymbolEqualityComparer.Default.Equals(existing, adapterType))
                     return;
-                if (!_conflictingRouteScopes.Add(bit))
+                if (!conflicts.Add(bit))
                     return;
 
                 Report(
                     DtoDiagnosticKind.AdapterSelectionConflict,
-                    _compilation.Assembly,
-                    $"RpcCodecRoute declarations overlap for scope '{name}' with different adapters '{GetTypeName(existing)}' and '{GetTypeName(adapterType)}'",
+                    owner,
+                    $"{level} RpcCodecRoute declarations overlap for scope '{name}' with different adapters '{GetTypeName(existing)}' and '{GetTypeName(adapterType)}'",
                     location);
             }
         }
@@ -122,7 +156,7 @@ public partial class RpcGenerator
                 return TrySelectSelectorAdapter(type, out selected);
 
             // Contract compilation has one deterministic precedence entrypoint:
-            // explicit per-type Codec/Adapter selection > assembly route > SharpLink default generation.
+            // explicit per-type Codec/Adapter selection > Contract route > assembly route > default.
             if (TrySelectAdapter(type, out selected))
             {
                 if (selected is not null && HasExplicitContractBinding(type))
@@ -168,8 +202,6 @@ public partial class RpcGenerator
                 if (AdapterRegistrationsEqual(selected, candidate))
                     continue;
 
-                // The full Contract-policy pass reports the conflict. The selector-only default pass
-                // only needs to avoid publishing an arbitrary default binding.
                 selected = null;
                 _failed.Add(GetTypeName(type));
                 return true;
@@ -185,13 +217,19 @@ public partial class RpcGenerator
                 return false;
 
             var scope = ClassifyCodecScope(type);
-            if (_conflictingRouteScopes.Contains(scope))
+            if (_conflictingContractRouteScopes.Contains(scope) ||
+                (!_contractRoutes.ContainsKey(scope) && _conflictingRouteScopes.Contains(scope)))
             {
                 _failed.Add(GetTypeName(type));
                 return true;
             }
-            if (!_assemblyRoutes.TryGetValue(scope, out var adapterType))
+
+            ITypeSymbol? adapterType;
+            if (!_contractRoutes.TryGetValue(scope, out adapterType) &&
+                !_assemblyRoutes.TryGetValue(scope, out adapterType))
+            {
                 return false;
+            }
             if (!_adaptersByType.TryGetValue(adapterType, out selected))
             {
                 Report(
@@ -204,6 +242,18 @@ public partial class RpcGenerator
             }
 
             return true;
+        }
+
+        private bool HasMatchingContractRoute(ITypeSymbol type)
+        {
+            if (!_contractMode || !IsRouteEligible(type))
+                return false;
+            var scope = ClassifyCodecScope(type);
+            if (_conflictingContractRouteScopes.Contains(scope))
+                return false;
+            if (_contractRoutes.ContainsKey(scope))
+                return true;
+            return !_conflictingRouteScopes.Contains(scope) && _assemblyRoutes.ContainsKey(scope);
         }
 
         private void AddAdapterModel(ITypeSymbol type, string typeName, AdapterRegistration adapter)
@@ -225,22 +275,25 @@ public partial class RpcGenerator
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
                 adapter.WireFormatId,
-                // The Adapter/direct implementation binary is a runtime Codec implementation, not
-                // a generated-manifest module dependency. Only the payload type's generated-owner
-                // dependency belongs in module closure metadata.
                 GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
         }
 
         private bool IsRouteEligible(ITypeSymbol type)
         {
-            if (_assemblyRoutes.Count == 0 && _conflictingRouteScopes.Count == 0)
+            if (_assemblyRoutes.Count == 0 && _contractRoutes.Count == 0 &&
+                _conflictingRouteScopes.Count == 0 && _conflictingContractRouteScopes.Count == 0)
+            {
                 return false;
+            }
 
             if (_routeEligibleTypes is null)
             {
                 var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-                CollectCurrentContractRouteRoots(_compilation.Assembly.GlobalNamespace, roots);
+                if (_contractRoot is not null)
+                    CollectContractPayloadRoots(_contractRoot, roots);
+                else
+                    CollectCurrentContractRouteRoots(_compilation.Assembly.GlobalNamespace, roots);
                 var eligible = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
                 foreach (var root in roots.Values)
                     CollectRouteEligibleTypes(root, eligible, 0);
@@ -311,9 +364,6 @@ public partial class RpcGenerator
 
         private bool IsNativeCodecType(ITypeSymbol type)
         {
-            // Enums do not have a generic shared native Codec in the runtime. Top-level enum and
-            // Nullable<Enum> resolution otherwise falls through to UnsafeBlitCodec<T>, so classify
-            // them as Unmanaged until/unless a deterministic enum Codec becomes a runtime builtin.
             if (IsEnumOrNullableEnum(type))
                 return false;
             if (IsNonOverridableBuiltin(type))
@@ -433,8 +483,6 @@ public partial class RpcGenerator
                 return false;
             }
 
-            // Explicit per-type Adapter/direct Codec bindings are part of the Contract policy graph
-            // and can make an outer generated DTO/collection a valid Native shell.
             if (HasResolvableExplicitAdapter(type))
                 return true;
             if (IsNonOverridableBuiltin(type) || type.IsUnmanagedType)
@@ -453,13 +501,17 @@ public partial class RpcGenerator
                 return true;
             }
 
-            // A nested non-Native dependency may itself be satisfied by the Contract route. Never
-            // use the root's own route to prove that the root is Native; that would be circular.
             if (SymbolEqualityComparer.Default.Equals(type, blockedRouteType) || !IsRouteEligible(type))
                 return false;
             var scope = type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
-            return !_conflictingRouteScopes.Contains(scope) &&
-                   _assemblyRoutes.TryGetValue(scope, out var adapterType) &&
+            if (_conflictingContractRouteScopes.Contains(scope) ||
+                (!_contractRoutes.ContainsKey(scope) && _conflictingRouteScopes.Contains(scope)))
+            {
+                return false;
+            }
+            ITypeSymbol? adapterType;
+            return (_contractRoutes.TryGetValue(scope, out adapterType) ||
+                    _assemblyRoutes.TryGetValue(scope, out adapterType)) &&
                    _adaptersByType.ContainsKey(adapterType);
         }
     }
