@@ -30,13 +30,13 @@ public partial class RpcGenerator
 
         // The global/default registry contains the normal generated graph. Contract-default models
         // preserve registered selector-attribute Adapter choices while omitting explicit
-        // RpcCodecAdapter bindings and assembly routes. Selector attributes are intrinsic serializer
-        // opt-ins and remain in the base provider so runtime UseCodec<T> keeps its established
-        // precedence. For a dual-role [RpcSerializable] Contract payload, the Contract-default
-        // definition wins in the shared graph so explicit static Contract policy never leaks into
-        // standalone resolution.
-        var globalByType = standalone.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        foreach (var codec in contractDefault.Codecs)
+        // RpcCodecAdapter bindings and assembly routes. Standalone [RpcSerializable] analysis still
+        // owns its historical explicit Adapter/direct-Codec semantics, including definitions that are
+        // shared transitively with an RPC payload. Seed from the Contract default graph and let the
+        // standalone graph win matching TypeNames so Contract-only policy never erases an existing
+        // standalone explicit binding.
+        var globalByType = contractDefault.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+        foreach (var codec in standalone.Codecs)
             globalByType[codec.TypeName] = codec;
         var globalCodecs = globalByType.Values
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
