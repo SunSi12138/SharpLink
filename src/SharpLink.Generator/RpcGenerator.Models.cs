@@ -205,6 +205,13 @@ internal sealed record GeneratedCodecModel(
     ImmutableArray<string> AssemblyDependencies,
     Location? Location);
 
+internal sealed record GeneratedContractCodecPolicy(
+    string ContractTypeName,
+    ImmutableArray<GeneratedCodecModel> Codecs,
+    ImmutableArray<GeneratedCodecModel> OwnedCodecs,
+    bool HasCompileTimePolicy,
+    ImmutableArray<string> Dependencies);
+
 internal enum DtoDiagnosticKind
 {
     Unsupported,
@@ -233,7 +240,8 @@ internal sealed record DtoGenerationResult(
     ImmutableArray<GeneratedCodecModel> ContractCodecs,
     ImmutableArray<GeneratedCodecModel> ContractManifestCodecs,
     ImmutableArray<DtoDiagnosticModel> Diagnostics,
-    ImmutableArray<GeneratedEnumModel> Enums);
+    ImmutableArray<GeneratedEnumModel> Enums,
+    ImmutableArray<GeneratedContractCodecPolicy> ContractPolicies = default);
 
 internal sealed record GeneratedEnumModel(
     string TypeName,
@@ -251,7 +259,8 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
             x.ContractCodecs.Length != y.ContractCodecs.Length ||
             x.ContractManifestCodecs.Length != y.ContractManifestCodecs.Length ||
-            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
+            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length ||
+            x.ContractPolicies.Length != y.ContractPolicies.Length)
         {
             return false;
         }
@@ -291,6 +300,28 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
                 return false;
             }
         }
+        for (var index = 0; index < x.ContractPolicies.Length; index++)
+        {
+            var left = x.ContractPolicies[index];
+            var right = y.ContractPolicies[index];
+            if (!string.Equals(left.ContractTypeName, right.ContractTypeName, StringComparison.Ordinal) ||
+                left.HasCompileTimePolicy != right.HasCompileTimePolicy ||
+                !left.Dependencies.SequenceEqual(right.Dependencies, StringComparer.Ordinal) ||
+                left.Codecs.Length != right.Codecs.Length || left.OwnedCodecs.Length != right.OwnedCodecs.Length)
+            {
+                return false;
+            }
+            for (var codecIndex = 0; codecIndex < left.Codecs.Length; codecIndex++)
+            {
+                if (!CodecEquals(left.Codecs[codecIndex], right.Codecs[codecIndex]))
+                    return false;
+            }
+            for (var codecIndex = 0; codecIndex < left.OwnedCodecs.Length; codecIndex++)
+            {
+                if (!CodecEquals(left.OwnedCodecs[codecIndex], right.OwnedCodecs[codecIndex]))
+                    return false;
+            }
+        }
         return true;
     }
 
@@ -318,6 +349,15 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         {
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(item.TypeName));
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(item.UnderlyingType));
+        }
+        foreach (var policy in obj.ContractPolicies)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(policy.ContractTypeName));
+            hash = unchecked(hash * 31 + policy.HasCompileTimePolicy.GetHashCode());
+            foreach (var codec in policy.Codecs)
+                hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
+            foreach (var dependency in policy.Dependencies)
+                hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(dependency));
         }
         return hash;
     }
