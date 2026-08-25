@@ -153,7 +153,8 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? decodedRequestOwner = null;
         try
         {
-            if (_admissionController is not null)
+            if (_admissionController is not null ||
+                (flags & ProtocolV2FrameFlags.Compressed) != 0)
             {
                 payload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.Request,
