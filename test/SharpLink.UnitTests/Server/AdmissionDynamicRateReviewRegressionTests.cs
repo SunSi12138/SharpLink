@@ -114,6 +114,41 @@ public sealed class AdmissionDynamicRateReviewRegressionTests
         }
     }
 
+    [Test]
+    public async Task TokenReplacementMustNotSpendOneReplenishmentOnBothCarriedAndTargetDebt()
+    {
+        var time = new ManualTimeProvider();
+        await using var kernel = new AdmissionStateKernel(time);
+        var source = CreateProgram(kernel, ConfigureThirtySecondFixedSource);
+
+        await ConsumeAsync(source);
+        await ConsumeAsync(source);
+        await ConsumeAsync(source);
+
+        var replacement = CreateUpdate(kernel, source, ConfigureCoupledTokenTarget, out var plan);
+        plan.Commit();
+        source.Retire();
+
+        await ConsumeAsync(replacement);
+        await EnsureRateRejectedAsync(replacement,
+            "three carried permits plus the target t=0 grant must exhaust the four-permit target");
+
+        time.Advance(TimeSpan.FromSeconds(10));
+        await ConsumeAsync(replacement);
+        await EnsureRateRejectedAsync(replacement,
+            "the t=10 replenishment may be consumed only once while carried debt remains");
+
+        time.Advance(TimeSpan.FromSeconds(10));
+        await ConsumeAsync(replacement);
+        await EnsureRateRejectedAsync(replacement,
+            "the t=20 replenishment may be consumed only once while carried debt remains");
+
+        time.Advance(TimeSpan.FromSeconds(10));
+        await ConsumeAsync(replacement);
+        await EnsureRateRejectedAsync(replacement,
+            "at the t=30 carry horizon, the same replenishment cannot both repay carried debt and erase target-owned debt");
+    }
+
     private static AdmissionProgram CreateProgram(
         AdmissionStateKernel kernel,
         Action<SharpLinkAdmissionControlOptions> configure)
@@ -168,6 +203,21 @@ public sealed class AdmissionDynamicRateReviewRegressionTests
             rate.ReplenishmentPeriod = TimeSpan.FromSeconds(10);
         });
     }
+
+    private static void ConfigureThirtySecondFixedSource(SharpLinkAdmissionControlOptions options)
+        => options.Global.UseFixedWindow(rate =>
+        {
+            rate.PermitLimit = 4;
+            rate.Window = TimeSpan.FromSeconds(30);
+        });
+
+    private static void ConfigureCoupledTokenTarget(SharpLinkAdmissionControlOptions options)
+        => options.Global.UseTokenBucket(rate =>
+        {
+            rate.TokenLimit = 4;
+            rate.TokensPerPeriod = 1;
+            rate.ReplenishmentPeriod = TimeSpan.FromSeconds(10);
+        });
 
     private static void ConfigureQueue(SharpLinkAdmissionControlOptions options, int maxQueuedCalls)
     {
