@@ -84,7 +84,7 @@ Global / Contract / Method 的并发状态按逻辑 scope 保持稳定，不以�
 
 所有 rate transition 都遵守“配置更新不能凭空制造 quota”的约束：
 
-- Token Bucket 保留已经消耗的 debt；修改 `TokenLimit` 不会 refill，shrink 可暂时阻塞新请求；保持相同补充 cadence 时延续原 monotonic anchor，修改 cadence 时不会因 publication 额外获得一个补充周期。
+- Token Bucket 保留已经消耗的 debt；修改 `TokenLimit` 不会 refill，shrink 可暂时阻塞新请求；保持相同补充 cadence 时延续原 monotonic anchor，修改 cadence 时不会因 publication 额外获得一个补充周期。结构性替换进入 Token Bucket 时，source barrier 中的 carried debt 与 target 自己产生的 token debt 共用同一份 replenishment credit：每个补充 credit 只能偿还一处；source barrier 到期前未被 target traffic 使用的 credit 只能预付 carried debt、不能提前释放它，barrier 到期时尚未预付的 carried debt 会转入普通 token debt 并继续按 target cadence 偿还。
 - Fixed Window 保留 active window epoch 和已消费 permit；修改 limit 不开启新 window。修改 window duration 使用保守的 monotonic handoff，不能在 publication 时得到完整新 window。
 - Sliding Window 保留仍应属于新 horizon 的消费历史。shape/window/segment 变化不安全进行精确映射时，会把 source burden 折叠为有明确 expiry 的保守 transition barrier，而不是清空 segments。
 - 算法替换不会机械地把 token 解释为 window segment。source debt 会以 conservative transition barrier 进入目标算法，至少保留到 source debt 合法过期与目标 horizon 要求中的较晚边界。
