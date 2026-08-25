@@ -33,16 +33,6 @@ jobs:
       - name: Build
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
-      - name: Focused Resolver Diagnostic
-        run: >-
-          timeout 25s dotnet run -c Release --no-build
-          --project test/SharpLink.IntegrationTests
-          --
-          --treenode-filter "/*/*/RuntimeMultiClusterIntegrationTests/RuntimeDynamicResolverShouldUpdateEndpointsWithoutReplacingTheSlot"
-          --maximum-parallel-tests 1
-          --output Detailed
-          --no-progress
-
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
