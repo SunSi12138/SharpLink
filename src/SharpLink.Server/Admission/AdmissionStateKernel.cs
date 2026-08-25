@@ -12,6 +12,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     private readonly Dictionary<AdmissionRuleStateKey, List<ConcurrencyStateEntry>> _concurrencyStates = [];
     private readonly Dictionary<AdmissionRuleStateKey, ResizableConcurrencyState> _publishedConcurrencyStates = [];
     private readonly Dictionary<AdmissionRateStateKey, RateStateEntry> _rateStates = [];
+    private readonly Dictionary<AdmissionRuleStateKey, AdmissionRateState> _publishedRateStates = [];
     private readonly Dictionary<AdmissionPartitionStateKey, PartitionStateEntry> _partitionStates = [];
     private readonly HashSet<AdmissionProgram> _programs = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<AdmissionProgram> _retiredPrograms = new(ReferenceEqualityComparer.Instance);
@@ -24,7 +25,9 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     private long _queuedBytes;
     private int _activePermits;
     private long _concurrencyTargetVersion;
+    private long _nextRateStateGeneration;
     private bool _hasPublishedConcurrencyLineage;
+    private bool _hasPublishedRateLineage;
     private int _disposed;
 
     internal AdmissionStateKernel(TimeProvider timeProvider)
@@ -96,11 +99,6 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Compatibility diagnostic: reports logical rule-state variants rather than component count.
-    /// A rule with one concurrency state plus one unchanged rate state still counts as one rule
-    /// variant; overlapping incompatible variants count separately.
-    /// </summary>
     internal int RuleStateCount
     {
         get
@@ -151,11 +149,6 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Records only the concurrency states of a successfully published runtime generation. This is
-    /// deliberately separate from candidate construction: speculative or losing candidates never
-    /// become a compatibility source for a later Disable -&gt; Enable transition.
-    /// </summary>
     internal void RecordPublishedConcurrencyLineage(SharpLinkAdmissionController controller)
     {
         ArgumentNullException.ThrowIfNull(controller);
@@ -182,6 +175,30 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                 if (!registered)
                     throw new InvalidOperationException("Published admission concurrency state is no longer registered.");
                 _publishedConcurrencyStates.Add(binding.Key, state);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records only the rate states of the actual publication. Historical removed states and losing
+    /// candidates remain registered only for their old program users and are never compatibility
+    /// sources for a later re-enable.
+    /// </summary>
+    internal void RecordPublishedRateLineage(SharpLinkAdmissionController controller)
+    {
+        ArgumentNullException.ThrowIfNull(controller);
+        lock (_registryGate)
+        {
+            ThrowIfDisposed();
+            _hasPublishedRateLineage = true;
+            _publishedRateStates.Clear();
+            foreach (var binding in controller.RuleStateBindings)
+            {
+                if (binding.RateState is not { } state)
+                    continue;
+                if (!TryFindRateEntryLocked(binding.Key, state, out _, out _))
+                    throw new InvalidOperationException("Published admission rate state is no longer registered.");
+                _publishedRateStates.Add(binding.Key, state);
             }
         }
     }
@@ -258,17 +275,13 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Reconciles one candidate rule against the expected source generation without mutating any
-    /// live concurrency target. Shared source components gain candidate references; newly added
-    /// concurrency always receives fresh state. Target changes are appended to the deferred plan.
-    /// </summary>
     internal AdmissionRuleStateBinding AcquireRuleStateForUpdate(
         AdmissionRuleStateKey key,
         SharpLinkAdmissionRuleOptions options,
         AdmissionRuleRuntime? sourceRuntime,
         string scope,
-        List<AdmissionConcurrencyResize> resizes)
+        List<AdmissionConcurrencyResize> resizes,
+        List<AdmissionRateTransition> rateTransitions)
     {
         lock (_registryGate)
         {
@@ -290,19 +303,30 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                 }
                 else
                 {
-                    // An add is a new logical component in this slice. Do not accidentally attach
-                    // it to a lingering concurrency state from an older removed generation.
                     concurrency = CreateConcurrencyLocked(key, concurrencyOptions.PermitLimit);
                 }
             }
 
+            var sourceRate = sourceRuntime?.RateState;
             AdmissionRateState? rate = null;
             if (options.RateLimit is not null)
             {
-                rate = sourceRuntime?.RateState ??
-                    throw new InvalidOperationException(
-                        "Admission update transition validation did not preserve the source rate state.");
-                AddRateReferenceLocked(key, rate);
+                var candidateDefinition = AdmissionRateStateDefinition.Create(options.RateLimit);
+                if (sourceRate is not null && sourceRate.Definition == candidateDefinition)
+                {
+                    AddRateReferenceLocked(key, sourceRate);
+                    rate = sourceRate;
+                }
+                else
+                {
+                    rate = CreateRateLocked(key, options, sourceRate);
+                    if (sourceRate is not null)
+                        rateTransitions.Add(new AdmissionRateTransition(sourceRate, rate));
+                }
+            }
+            else if (sourceRate is not null)
+            {
+                rateTransitions.Add(new AdmissionRateTransition(sourceRate, null));
             }
 
             var runtime = AdmissionRuleRuntime.CreateBound(concurrency, rate, scope);
@@ -489,7 +513,6 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         SharpLinkTelemetry.AddAdmissionActivePermits(-1);
     }
 
-    /// <summary>Shutdown-only cancellation. Ordinary program retirement never calls this method.</summary>
     internal void StopAccepting()
     {
         try
@@ -554,6 +577,8 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             _publishedConcurrencyStates.Clear();
             _hasPublishedConcurrencyLineage = false;
             _rateStates.Clear();
+            _publishedRateStates.Clear();
+            _hasPublishedRateLineage = false;
             _partitionStates.Clear();
             _retiredPrograms.Clear();
         }
@@ -565,9 +590,6 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         AdmissionRuleStateKey key,
         int permitLimit)
     {
-        // Before runtime publication exists, preserve the original static/kernel compatibility
-        // behavior. Once runtime lineage exists, only the most recently published state may be
-        // reused; historical removed variants and speculative candidates are never fallback peers.
         if (_hasPublishedConcurrencyLineage)
         {
             if (_publishedConcurrencyStates.TryGetValue(key, out var published) &&
@@ -626,23 +648,64 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         AdmissionRuleStateKey scope,
         SharpLinkAdmissionRuleOptions options)
     {
-        var key = new AdmissionRateStateKey(scope, AdmissionRateStateDefinition.Create(options.RateLimit));
-        if (_rateStates.TryGetValue(key, out var existing))
+        var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
+        if (_hasPublishedRateLineage)
         {
-            existing.ProgramReferences++;
-            return existing.State;
+            if (_publishedRateStates.TryGetValue(scope, out var published) &&
+                published.Definition == definition)
+            {
+                AddRateReferenceLocked(scope, published);
+                return published;
+            }
+            return CreateRateLocked(scope, options, transitionSource: null);
         }
-        var state = AdmissionRateState.Create(options);
+
+        foreach (var pair in _rateStates)
+        {
+            if (pair.Key.Scope != scope || pair.Key.Definition != definition)
+                continue;
+            pair.Value.ProgramReferences++;
+            return pair.Value.State;
+        }
+        return CreateRateLocked(scope, options, transitionSource: null);
+    }
+
+    private AdmissionRateState CreateRateLocked(
+        AdmissionRuleStateKey scope,
+        SharpLinkAdmissionRuleOptions options,
+        AdmissionRateState? transitionSource)
+    {
+        var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
+        var key = new AdmissionRateStateKey(scope, definition, ++_nextRateStateGeneration);
+        var state = AdmissionRateState.Create(options, _timeProvider, transitionSource);
         _rateStates.Add(key, new RateStateEntry(state, 1));
         return state;
     }
 
     private void AddRateReferenceLocked(AdmissionRuleStateKey scope, AdmissionRateState state)
     {
-        var key = new AdmissionRateStateKey(scope, state.Definition);
-        if (!_rateStates.TryGetValue(key, out var entry) || !ReferenceEquals(entry.State, state))
+        if (!TryFindRateEntryLocked(scope, state, out _, out var entry))
             throw new InvalidOperationException("Source admission rate state is no longer registered.");
         entry.ProgramReferences++;
+    }
+
+    private bool TryFindRateEntryLocked(
+        AdmissionRuleStateKey scope,
+        AdmissionRateState state,
+        out AdmissionRateStateKey key,
+        out RateStateEntry entry)
+    {
+        foreach (var pair in _rateStates)
+        {
+            if (pair.Key.Scope != scope || !ReferenceEquals(pair.Value.State, state))
+                continue;
+            key = pair.Key;
+            entry = pair.Value;
+            return true;
+        }
+        key = default;
+        entry = null!;
+        return false;
     }
 
     private void ReleaseBindingsLocked(
@@ -677,18 +740,20 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                 }
             }
 
-            if (binding.RateState is { } rate)
+            if (binding.RateState is { } rate &&
+                TryFindRateEntryLocked(binding.Key, rate, out var rateKey, out var rateEntry))
             {
-                var rateKey = new AdmissionRateStateKey(binding.Key, rate.Definition);
-                if (_rateStates.TryGetValue(rateKey, out var entry) && ReferenceEquals(entry.State, rate))
+                if (--rateEntry.ProgramReferences < 0)
+                    throw new InvalidOperationException("Admission rate state reference count underflowed.");
+                if (rateEntry.ProgramReferences == 0)
                 {
-                    if (--entry.ProgramReferences < 0)
-                        throw new InvalidOperationException("Admission rate state reference count underflowed.");
-                    if (entry.ProgramReferences == 0)
+                    if (_publishedRateStates.TryGetValue(binding.Key, out var published) &&
+                        ReferenceEquals(published, rateEntry.State))
                     {
-                        _rateStates.Remove(rateKey);
-                        (dispose ??= []).Add(entry.State);
+                        _publishedRateStates.Remove(binding.Key);
                     }
+                    _rateStates.Remove(rateKey);
+                    (dispose ??= []).Add(rateEntry.State);
                 }
             }
         }
@@ -806,7 +871,6 @@ internal readonly record struct AdmissionRuleStateDefinition(
             AdmissionRateStateDefinition.Create(options.RateLimit));
 }
 
-/// <summary>Stable logical scope identity. Mutable concurrency targets and queue policy are not keys.</summary>
 internal readonly record struct AdmissionRuleStateKey(
     AdmissionRuleStateScope Scope,
     long ContractId,
@@ -824,7 +888,8 @@ internal readonly record struct AdmissionRuleStateKey(
 
 internal readonly record struct AdmissionRateStateKey(
     AdmissionRuleStateKey Scope,
-    AdmissionRateStateDefinition Definition);
+    AdmissionRateStateDefinition Definition,
+    long Generation);
 
 internal readonly record struct AdmissionPartitionStateKey(
     Func<SharpLinkAdmissionContext, string?> Selector,
@@ -856,33 +921,44 @@ internal readonly record struct AdmissionConcurrencyResize(
     ResizableConcurrencyState State,
     int PermitLimit);
 
+internal readonly record struct AdmissionRateTransition(
+    AdmissionRateState Source,
+    AdmissionRateState? Target);
+
 /// <summary>Prepared transition whose only live mutations are committed inside publication serialization.</summary>
 internal sealed class AdmissionUpdatePlan
 {
     private readonly AdmissionConcurrencyResize[] _resizes;
+    private readonly AdmissionRateTransition[] _rateTransitions;
     private int _committed;
 
-    internal AdmissionUpdatePlan(IEnumerable<AdmissionConcurrencyResize> resizes)
+    internal AdmissionUpdatePlan(
+        IEnumerable<AdmissionConcurrencyResize> resizes,
+        IEnumerable<AdmissionRateTransition> rateTransitions)
     {
         _resizes = [.. resizes];
+        _rateTransitions = [.. rateTransitions];
         foreach (var resize in _resizes)
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resize.PermitLimit);
     }
 
     internal int ResizeCount => _resizes.Length;
 
+    internal int RateTransitionCount => _rateTransitions.Length;
+
     internal void Commit(Action<int, int>? afterResize = null)
     {
         if (Interlocked.Exchange(ref _committed, 1) != 0)
             throw new InvalidOperationException("Admission update plan was committed more than once.");
 
-        // Candidate and source references keep every state alive through this point. Targets were
-        // validated before candidate publication, so Resize has no policy-validation failure path.
         for (var index = 0; index < _resizes.Length; index++)
         {
             var resize = _resizes[index];
             resize.State.Resize(resize.PermitLimit);
             afterResize?.Invoke(index, _resizes.Length);
         }
+
+        foreach (var transition in _rateTransitions)
+            transition.Source.CommitTransitionTo(transition.Target);
     }
 }
