@@ -70,4 +70,4 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-# P2 lock-free reject visibility evidence.
+# P2 lock-free reject visibility evidence refresh.
