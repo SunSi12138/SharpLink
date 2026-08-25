@@ -19,11 +19,14 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     private readonly SemaphoreSlim _readySignal = new(0);
     private readonly SemaphoreSlim _compatibilitySlots;
     private readonly CancellationTokenSource _compatibilityStop = new();
+    private readonly TaskCompletionSource _compatibilityOperationsDrained =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task[] _workers;
     private readonly Task _completion;
     private readonly int _queueCapacity;
     private int _completionRequested;
     private int _disposeRequested;
+    private int _compatibilityOperations;
     private int _queueReservations;
     private int _queueDepth;
     private int _skippedBeforeStart;
@@ -55,6 +58,8 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     /// short pre-publication interval used to copy/retain a request after scheduler admission.
     /// </summary>
     internal int QueueReservations => Volatile.Read(ref _queueReservations);
+
+    internal int ReadySignalCount => _readySignal.CurrentCount;
 
     internal int SkippedBeforeStart => Volatile.Read(ref _skippedBeforeStart);
 
@@ -128,12 +133,11 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
             () => RemoveCancelledBeforeStart(entry));
 
         var published = false;
-        var signalWorker = false;
         lock (_schedulerGate)
         {
             if (Volatile.Read(ref _completionRequested) == 0 && !workItem.IsCancelledBeforeStart)
             {
-                PublishEntryLocked(entry, out signalWorker);
+                PublishEntryLocked(entry);
                 published = true;
             }
         }
@@ -148,8 +152,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
             return ValueTask.FromException(new ServerDecodeExecutorClosedException());
         }
 
-        if (signalWorker)
-            _readySignal.Release();
         return new ValueTask(workItem.Completion);
     }
 
@@ -170,29 +172,44 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(schedulingKey);
         ArgumentNullException.ThrowIfNull(workItem);
-        if (Volatile.Read(ref _completionRequested) != 0)
+
+        lock (_schedulerGate)
         {
-            return cancellationToken.IsCancellationRequested
-                ? ValueTask.FromCanceled(cancellationToken)
-                : ValueTask.FromException(new ServerDecodeExecutorClosedException());
+            if (Volatile.Read(ref _completionRequested) != 0)
+            {
+                return cancellationToken.IsCancellationRequested
+                    ? ValueTask.FromCanceled(cancellationToken)
+                    : ValueTask.FromException(new ServerDecodeExecutorClosedException());
+            }
+
+            _compatibilityOperations++;
         }
 
-        return EnqueueCoreAsync(schedulingKey, workItem, cancellationToken);
+        return EnqueueTrackedCompatibilityAsync(schedulingKey, workItem, cancellationToken);
     }
 
     internal void StopAccepting()
     {
-        if (Interlocked.Exchange(ref _completionRequested, 1) != 0)
-            return;
+        var compatibilityDrained = false;
+        lock (_schedulerGate)
+        {
+            if (Volatile.Read(ref _completionRequested) != 0)
+                return;
+
+            Volatile.Write(ref _completionRequested, 1);
+            compatibilityDrained = _compatibilityOperations == 0;
+        }
 
         _compatibilityStop.Cancel();
+        if (compatibilityDrained)
+            _compatibilityOperationsDrained.TrySetResult();
         _readySignal.Release(_workers.Length);
     }
 
     internal async ValueTask CompleteAsync()
     {
         StopAccepting();
-        await _completion.ConfigureAwait(false);
+        await Task.WhenAll(_completion, _compatibilityOperationsDrained.Task).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -214,6 +231,21 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
         Interlocked.Increment(ref _queueReservations);
         throw new InvalidOperationException("Server decode queue reservation accounting underflowed.");
+    }
+
+    private async ValueTask EnqueueTrackedCompatibilityAsync(
+        object schedulingKey,
+        ServerDecodeWorkItem workItem,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await EnqueueCoreAsync(schedulingKey, workItem, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            CompleteCompatibilityOperation();
+        }
     }
 
     private async ValueTask EnqueueCoreAsync(
@@ -241,12 +273,11 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 cancellationToken,
                 () => RemoveCancelledBeforeStart(entry));
 
-            var signalWorker = false;
             lock (_schedulerGate)
             {
                 if (Volatile.Read(ref _completionRequested) == 0 && !workItem.IsCancelledBeforeStart)
                 {
-                    PublishEntryLocked(entry, out signalWorker, queueDepthAlreadyOwned: true);
+                    PublishEntryLocked(entry, queueDepthAlreadyOwned: true);
                     published = true;
                 }
             }
@@ -259,8 +290,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 throw new ServerDecodeExecutorClosedException();
             }
 
-            if (signalWorker)
-                _readySignal.Release();
             await workItem.Completion.ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!published)
@@ -274,9 +303,9 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         {
             if (!published)
             {
+                DecrementQueueDepth();
                 if (slotAcquired)
                     _compatibilitySlots.Release();
-                DecrementQueueDepth();
             }
         }
     }
@@ -297,7 +326,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 continue;
             }
 
-            ReleaseQueuedOwnership(entry);
             var workItem = entry.WorkItem;
             if (!workItem.TryStart())
             {
@@ -315,7 +343,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
     private void PublishEntryLocked(
         ServerDecodeQueueEntry entry,
-        out bool signalWorker,
         bool queueDepthAlreadyOwned = false)
     {
         if (!_connectionQueues.TryGetValue(entry.SchedulingKey, out var queue))
@@ -329,17 +356,23 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         if (!queueDepthAlreadyOwned)
             Interlocked.Increment(ref _queueDepth);
 
-        signalWorker = false;
         if (queue.ReadyNode is null)
-        {
-            queue.ReadyNode = _readyConnections.AddLast(queue);
-            signalWorker = true;
-        }
+            AddReadyConnectionLocked(queue);
+    }
+
+    private void AddReadyConnectionLocked(ConnectionQueue queue)
+    {
+        if (queue.ReadyNode is not null)
+            throw new InvalidOperationException("A decode connection can only have one ready node.");
+
+        queue.ReadyNode = _readyConnections.AddLast(queue);
+        // Publish the wake while holding the same gate that protects the ready node. Cancellation can
+        // then either retire an unconsumed permit or observe that a worker has already claimed it.
+        _readySignal.Release();
     }
 
     private bool TryTakeNextEntry(out ServerDecodeQueueEntry entry)
     {
-        var signalAnotherWorker = false;
         lock (_schedulerGate)
         {
             while (_readyConnections.First is { } readyNode)
@@ -357,7 +390,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 entry = pendingNode.Value;
                 queue.Pending.Remove(pendingNode);
                 entry.PendingNode = null;
-                entry.Owner = null;
                 DecrementQueueDepth();
 
                 if (queue.Pending.Count == 0)
@@ -366,21 +398,20 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
                 }
                 else
                 {
-                    queue.ReadyNode = _readyConnections.AddLast(queue);
-                    signalAnotherWorker = true;
+                    AddReadyConnectionLocked(queue);
                 }
 
-                goto Found;
+                // Release bounded queue ownership before publishing that a cancellation-completed
+                // work item is terminal. A cancellation callback that lost the dequeue race blocks on
+                // this same gate until the release below has happened.
+                ReleaseQueuedOwnership(entry);
+                entry.Owner = null;
+                return true;
             }
 
             entry = null!;
             return false;
         }
-
-    Found:
-        if (signalAnotherWorker)
-            _readySignal.Release();
-        return true;
     }
 
     private void RemoveCancelledBeforeStart(ServerDecodeQueueEntry entry)
@@ -400,11 +431,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
             if (queue.Pending.Count == 0)
             {
-                if (queue.ReadyNode is { } readyNode && readyNode.List is not null)
-                {
-                    _readyConnections.Remove(readyNode);
-                    queue.ReadyNode = null;
-                }
+                RemoveReadyConnectionLocked(queue);
                 _connectionQueues.Remove(queue.SchedulingKey);
             }
 
@@ -419,12 +446,49 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         entry.WorkItem.CompleteRemovedBeforeStart();
     }
 
+    private void RemoveReadyConnectionLocked(ConnectionQueue queue)
+    {
+        var readyNode = queue.ReadyNode;
+        if (readyNode is null || readyNode.List is null)
+            return;
+
+        _readyConnections.Remove(readyNode);
+        queue.ReadyNode = null;
+
+        // While accepting, every ready node has exactly one coordinated wake. If the permit is still
+        // in the semaphore, retire it. If Wait(0) fails, a worker already consumed that wake and will
+        // observe the updated ready ring after acquiring _schedulerGate. Stop wakes are deliberately
+        // not retired because they are needed to let idle workers exit after drain.
+        if (Volatile.Read(ref _completionRequested) == 0)
+            _readySignal.Wait(0);
+    }
+
     private void ReleaseQueuedOwnership(ServerDecodeQueueEntry entry)
     {
         if (entry.QueuePermit is not null)
             entry.QueuePermit.Dispose();
         if (entry.ReleaseCompatibilitySlot)
             _compatibilitySlots.Release();
+    }
+
+    private void CompleteCompatibilityOperation()
+    {
+        var drained = false;
+        lock (_schedulerGate)
+        {
+            _compatibilityOperations--;
+            if (_compatibilityOperations < 0)
+            {
+                _compatibilityOperations++;
+                throw new InvalidOperationException("Compatibility decode operation accounting underflowed.");
+            }
+
+            drained = _compatibilityOperations == 0 &&
+                Volatile.Read(ref _completionRequested) != 0;
+        }
+
+        if (drained)
+            _compatibilityOperationsDrained.TrySetResult();
     }
 
     private void DecrementQueueDepth()
@@ -633,7 +697,14 @@ internal sealed class ServerDecodeWorkItem
     {
         if (Interlocked.CompareExchange(ref _state, CancelledBeforeStart, Queued) != Queued)
             return;
-        _completion.TrySetCanceled(_cancellationToken);
-        _cancelledBeforeStart?.Invoke();
+
+        try
+        {
+            _cancelledBeforeStart?.Invoke();
+        }
+        finally
+        {
+            _completion.TrySetCanceled(_cancellationToken);
+        }
     }
 }
