@@ -467,18 +467,23 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     {
         if (!TryAcquireDispatch(out var retentionLeaseState))
             return;
-        if (!TryClaimLocalAbort())
+
+        // Snapshot receive-credit ownership before publishing the local terminal. A racing
+        // consumer DisposeAsync may participate in the one-shot retirement as soon as the
+        // terminal becomes visible, so it must never observe an uninitialized credit snapshot.
+        _localAbortBytesConsumed = _bytesConsumed;
+        _localAbortRequestId = _flowControlRequestId;
+        _localAbortStreamId = _flowControlStreamId;
+        if (!TryClaimLocalAbort(exception))
         {
+            _localAbortBytesConsumed = null;
+            _localAbortRequestId = 0;
+            _localAbortStreamId = 0;
             ReleaseDispatch(retentionLeaseState);
             return;
         }
 
         Volatile.Write(ref _localAbortRetentionLeaseState, retentionLeaseState);
-        _localAbortBytesConsumed = _bytesConsumed;
-        _localAbortRequestId = _flowControlRequestId;
-        _localAbortStreamId = _flowControlStreamId;
-        _error = exception;
-        Volatile.Write(ref _completed, true);
 
         var dispatchState = Volatile.Read(ref _dispatchState);
         if (dispatchState is null)
@@ -536,17 +541,26 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             ReleaseDispatch(retentionLeaseState);
     }
 
-    private bool TryClaimLocalAbort()
+    private bool TryClaimLocalAbort(Exception? exception)
     {
+        // The local terminal and one user-visible buffered delivery arbitrate the same state.
+        // If delivery already owns the boundary, let that single item finish publishing Current
+        // and receive credit; only then may the local terminal close every later delivery.
+        var spinner = new SpinWait();
         while (true)
         {
             var state = Volatile.Read(ref _localAbortDeliveryState);
             if ((state & LocalAbortClaimed) != 0)
                 return false;
+            if ((state & LocalAbortDelivery) != 0)
+            {
+                spinner.SpinOnce();
+                continue;
+            }
             if (Interlocked.CompareExchange(
                     ref _localAbortDeliveryState,
-                    state | LocalAbortClaimed,
-                    state) == state)
+                    LocalAbortClaimed,
+                    0) == 0)
             {
                 break;
             }
@@ -557,6 +571,8 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
                 ConsumerTerminalLocalAbort,
                 0) == 0)
         {
+            _error = exception;
+            Volatile.Write(ref _completed, true);
             return true;
         }
 
@@ -583,17 +599,29 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     private bool TryAcquireLocalAbortDelivery()
     {
+        var spinner = new SpinWait();
         while (true)
         {
             var state = Volatile.Read(ref _localAbortDeliveryState);
             if ((state & LocalAbortClaimed) != 0)
-                return false;
+            {
+                // A claimant that later loses to a peer terminal or consumer disposal clears
+                // the bit again. Only treat the boundary as closed after the winning local
+                // terminal has published its error/completed state.
+                if (Volatile.Read(ref _consumerTerminal) == ConsumerTerminalLocalAbort &&
+                    Volatile.Read(ref _completed))
+                {
+                    return false;
+                }
+                spinner.SpinOnce();
+                continue;
+            }
             if ((state & LocalAbortDelivery) != 0)
                 throw new InvalidOperationException("Only one stream delivery can be published at a time.");
             if (Interlocked.CompareExchange(
                     ref _localAbortDeliveryState,
-                    state | LocalAbortDelivery,
-                    state) == state)
+                    LocalAbortDelivery,
+                    0) == 0)
             {
                 return true;
             }
@@ -741,8 +769,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             // even though the path completes synchronously and allocates nothing (issue #218).
             if (TryDequeue(out var value, out var encodedByteCount))
             {
-                _current = value;
-                NotifyBytesConsumed(encodedByteCount);
+                PublishDequeuedItem(value, encodedByteCount);
 
                 // 如果已经 complete 且队列空且已 Dispose，则回收
                 if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
@@ -796,8 +823,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
                 if (TryDequeue(out var value, out var encodedByteCount))
                 {
-                    _current = value;
-                    NotifyBytesConsumed(encodedByteCount);
+                    PublishDequeuedItem(value, encodedByteCount);
 
                     // 如果已经 complete 且队列空且已 Dispose，则回收
                     if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
@@ -1226,9 +1252,32 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
         }
 
+        var releaseDelivery = true;
         try
         {
-            return TryDequeueCore(out value, out encodedByteCount);
+            if (!TryDequeueCore(out value, out encodedByteCount))
+                return false;
+
+            // A successful dequeue transfers this claim to PublishDequeuedItem. Keeping the
+            // claim active across the method boundary is what makes dequeue -> Current -> credit
+            // one indivisible user-visible publication against a local terminal.
+            releaseDelivery = false;
+            return true;
+        }
+        finally
+        {
+            if (releaseDelivery)
+                ReleaseLocalAbortDelivery();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void PublishDequeuedItem(T value, int encodedByteCount)
+    {
+        try
+        {
+            _current = value;
+            NotifyBytesConsumed(encodedByteCount);
         }
         finally
         {
