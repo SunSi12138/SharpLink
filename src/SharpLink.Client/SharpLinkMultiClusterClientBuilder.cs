@@ -107,7 +107,12 @@ public sealed class SharpLinkMultiClusterClientBuilder
             }
 
             assemblyOwners.Add(route.ContractAssembly, route.Cluster);
-            AddManifestClosure(contractManifest, route.Cluster, manifestsByCluster, manifestByAssembly);
+            AddManifestClosure(
+                contractManifest,
+                route.Cluster,
+                manifestsByCluster,
+                manifestByAssembly,
+                includeContractPolicyDependencies: true);
         }
 
         foreach (var configuration in _clusters.Values)
@@ -210,7 +215,12 @@ public sealed class SharpLinkMultiClusterClientBuilder
             }
             if (!assemblyOwners.TryAdd(route.ContractAssembly, cluster))
                 continue;
-            AddManifestClosure(contractManifest, cluster, manifestsByCluster, manifestsByAssembly);
+            AddManifestClosure(
+                contractManifest,
+                cluster,
+                manifestsByCluster,
+                manifestsByAssembly,
+                includeContractPolicyDependencies: true);
         }
 
         if (manifestsByCluster[cluster].Values.All(static manifest => manifest.Contracts.Count == 0) &&
@@ -309,27 +319,58 @@ public sealed class SharpLinkMultiClusterClientBuilder
         IEnumerable<Assembly> routedAssemblies)
     {
         var manifestsByAssembly = new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(ReferenceEqualityComparer.Instance);
-        var pendingAssemblies = new Queue<Assembly>(routedAssemblies);
-        while (pendingAssemblies.TryDequeue(out var assembly))
+        var policyExpanded = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
+        var pendingAssemblies = new Queue<(Assembly Assembly, bool IncludeContractPolicyDependencies)>();
+        foreach (var routedAssembly in routedAssemblies)
+            pendingAssemblies.Enqueue((routedAssembly, true));
+
+        while (pendingAssemblies.TryDequeue(out var pending))
         {
-            if (manifestsByAssembly.ContainsKey(assembly))
-                continue;
+            var assembly = pending.Assembly;
+            if (!manifestsByAssembly.TryGetValue(assembly, out var manifest))
+            {
+                RuntimeHelpers.RunModuleConstructor(assembly.ManifestModule.ModuleHandle);
+                if (!TryGetRegisteredManifest(assembly, out manifest))
+                    continue;
 
-            RuntimeHelpers.RunModuleConstructor(assembly.ManifestModule.ModuleHandle);
-            if (!TryGetRegisteredManifest(assembly, out var manifest))
-                continue;
+                SharpLinkClient.ValidateStaticManifestCompatibility(manifest);
+                manifestsByAssembly.Add(assembly, manifest);
+            }
 
-            SharpLinkClient.ValidateStaticManifestCompatibility(manifest);
-            manifestsByAssembly.Add(assembly, manifest);
-            foreach (var dependencyIdentity in manifest.Dependencies)
+            var includePolicy = pending.IncludeContractPolicyDependencies && policyExpanded.Add(assembly);
+            foreach (var dependencyIdentity in EnumerateDependencyIdentities(manifest, includePolicy))
             {
                 var dependencyAssembly = ResolveDependencyAssembly(assembly, dependencyIdentity);
                 if (dependencyAssembly is not null)
-                    pendingAssemblies.Enqueue(dependencyAssembly);
+                    pendingAssemblies.Enqueue((dependencyAssembly, false));
             }
         }
 
         return manifestsByAssembly;
+    }
+
+    private static IEnumerable<string> EnumerateDependencyIdentities(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        bool includeContractPolicyDependencies)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var dependency in manifest.Dependencies)
+        {
+            if (seen.Add(dependency))
+                yield return dependency;
+        }
+
+        if (!includeContractPolicyDependencies)
+            yield break;
+
+        foreach (var set in manifest.ContractCodecSets)
+        {
+            foreach (var dependency in set.Dependencies)
+            {
+                if (seen.Add(dependency))
+                    yield return dependency;
+            }
+        }
     }
 
     private static bool TryGetRegisteredManifest(
@@ -371,13 +412,15 @@ public sealed class SharpLinkMultiClusterClientBuilder
         ISharpLinkGeneratedAssemblyManifest manifest,
         SharpLinkClusterKey cluster,
         IReadOnlyDictionary<SharpLinkClusterKey, Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>> manifestsByCluster,
-        IReadOnlyDictionary<Assembly, ISharpLinkGeneratedAssemblyManifest> manifestsByAssembly)
+        IReadOnlyDictionary<Assembly, ISharpLinkGeneratedAssemblyManifest> manifestsByAssembly,
+        bool includeContractPolicyDependencies)
     {
         var destination = manifestsByCluster[cluster];
-        if (!destination.TryAdd(manifest.OwnerAssembly, manifest))
+        var newlyAdded = destination.TryAdd(manifest.OwnerAssembly, manifest);
+        if (!newlyAdded && !includeContractPolicyDependencies)
             return;
 
-        foreach (var dependencyIdentity in manifest.Dependencies)
+        foreach (var dependencyIdentity in EnumerateDependencyIdentities(manifest, includeContractPolicyDependencies))
         {
             var dependencyAssembly = ResolveDependencyAssembly(manifest.OwnerAssembly, dependencyIdentity);
             if (dependencyAssembly is null || !manifestsByAssembly.TryGetValue(dependencyAssembly, out var dependency))
@@ -385,7 +428,12 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 throw new InvalidOperationException(
                     $"Static route for '{manifest.OwnerAssembly.FullName}' is missing generated dependency '{dependencyIdentity}' in cluster '{cluster}'.");
             }
-            AddManifestClosure(dependency, cluster, manifestsByCluster, manifestsByAssembly);
+            AddManifestClosure(
+                dependency,
+                cluster,
+                manifestsByCluster,
+                manifestsByAssembly,
+                includeContractPolicyDependencies: false);
         }
     }
 
@@ -416,6 +464,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => source.Codecs;
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [];
+        public IReadOnlyList<SharpLinkGeneratedContractCodecSet> ContractCodecSets => [];
         public IReadOnlyList<string> Dependencies => source.Dependencies;
     }
 
