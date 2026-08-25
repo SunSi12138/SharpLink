@@ -55,10 +55,8 @@ public sealed class RuntimeMultiClusterIntegrationTests
     [NotInParallel]
     public async Task RuntimeDynamicResolverShouldUpdateEndpointsWithoutReplacingTheSlot()
     {
-        Console.WriteLine("resolver-stage:start");
         await using var first = await ServerScope.StartAsync("resolver-first");
         await using var second = await ServerScope.StartAsync("resolver-second");
-        Console.WriteLine("resolver-stage:servers-started");
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(
             1,
             [Endpoint("resolver-first", first.Port)]));
@@ -69,7 +67,6 @@ public sealed class RuntimeMultiClusterIntegrationTests
                 slot => slot.AllowDynamicContracts = true)
             .Build();
         await client.ConnectAsync();
-        Console.WriteLine("resolver-stage:coordinator-connected");
 
         await client.AddClusterAsync(
             "runtime",
@@ -81,40 +78,22 @@ public sealed class RuntimeMultiClusterIntegrationTests
                     options.MaxConnections = 1;
                     options.MaxConnectionsPerEndpoint = 1;
                 }));
-        Console.WriteLine("resolver-stage:runtime-added");
         var proxy = client.Get<IConnectionBehaviorService>();
-        Console.WriteLine("resolver-stage:initial-call-start");
-        var initialEndpoint = await proxy.GetEndpointIdAsync();
-        Console.WriteLine($"resolver-stage:initial-call-result:{initialEndpoint}");
-        Ensure(initialEndpoint == "resolver-first",
+        Ensure(await proxy.GetEndpointIdAsync() == "resolver-first",
             "runtime resolver slot must use its initial endpoint");
 
         resolver.Publish(new SharpLinkEndpointSnapshot(
             2,
             [Endpoint("resolver-second", second.Port)]));
-        Console.WriteLine("resolver-stage:snapshot-published");
         await WaitUntilAsync(
-            async () =>
-            {
-                Console.WriteLine("resolver-stage:poll-call-start");
-                var endpoint = await proxy.GetEndpointIdAsync();
-                Console.WriteLine($"resolver-stage:poll-call-result:{endpoint}");
-                return endpoint == "resolver-second";
-            },
+            async () => await proxy.GetEndpointIdAsync() == "resolver-second",
             TimeSpan.FromSeconds(4));
-        Console.WriteLine("resolver-stage:update-observed");
 
-        Console.WriteLine("resolver-stage:final-call-start");
-        var finalEndpoint = await proxy.GetEndpointIdAsync();
-        Console.WriteLine($"resolver-stage:final-call-result:{finalEndpoint}");
-        Ensure(finalEndpoint == "resolver-second",
+        Ensure(await proxy.GetEndpointIdAsync() == "resolver-second",
             "resolver publication must update the existing slot without ReplaceClusterAsync");
-        Console.WriteLine("resolver-stage:remove-start");
         var removal = await client.RemoveClusterAsync("runtime", TimeSpan.FromSeconds(2));
-        Console.WriteLine($"resolver-stage:remove-result:{removal.Succeeded}:{removal.ReferencesReleased}:{removal.ForcedStop}:{resolver.DisposeCount}");
         Ensure(removal.ReferencesReleased && resolver.DisposeCount == 1,
             "removed dynamic-resolver slot must release its resolver exactly once");
-        Console.WriteLine("resolver-stage:done");
     }
 
     private static Exception? CaptureException(Action action)
