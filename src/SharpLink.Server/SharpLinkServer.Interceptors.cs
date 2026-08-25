@@ -13,7 +13,10 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
-        if (registration.TryGetStaticSingleton(out var singleton))
+        if (registration.TryGetStaticSingleton(
+                connection.GeneratedBridge,
+                requestId,
+                out var singleton))
         {
             return InvokeServiceTrackedAsync(
                 registration.Stub,
@@ -44,6 +47,8 @@ internal sealed partial class SharpLinkServer
         {
             if (registration.TryAcquireDynamicSingleton(
                     isStream,
+                    connection.GeneratedBridge,
+                    requestId,
                     out var dynamicSingleton,
                     out dynamicSingletonLease))
             {
@@ -97,7 +102,11 @@ internal sealed partial class SharpLinkServer
         ValueTask<ServiceLease> acquisition;
         try
         {
-            acquisition = registration.AcquireAsync(connection, isStream);
+            acquisition = registration.AcquireAsync(
+                connection,
+                isStream,
+                connection.GeneratedBridge,
+                requestId);
         }
         catch (Exception exception)
         {
