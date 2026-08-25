@@ -80,7 +80,7 @@ public class RpcManifestCodecProviderTests
         {
             _ = RpcGeneratedCodecResolver.GetProvider(
                 new CustomRuntimeContext(),
-                typeof(RpcManifestCodecProviderTests).Assembly);
+                typeof(RpcManifestCodecProviderTests));
         }
         catch (NotSupportedException exception)
         {
