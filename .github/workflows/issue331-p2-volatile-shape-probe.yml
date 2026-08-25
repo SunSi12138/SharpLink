@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 30
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      V7_SHA: c76dc2adb5bd13d69763291890bc847a02e48349
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -25,54 +26,37 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Benchmark current snapshot read
+      - name: Benchmark V7 and P2 head on same runner
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p artifacts/p2-probe/current artifacts/p2-probe/volatile-field
+          ROOT="$PWD"
+          V7_DIR="${RUNNER_TEMP}/issue331-v7"
+          rm -rf "$V7_DIR" "$ROOT/artifacts/p2-probe"
+          mkdir -p "$ROOT/artifacts/p2-probe/v7" "$ROOT/artifacts/p2-probe/head"
+          git worktree add --detach "$V7_DIR" "$V7_SHA"
+
+          cd "$V7_DIR"
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
             --filter "*AdmissionControllerBenchmarks.ImmediateRejection*" \
-            --artifacts artifacts/p2-probe/current \
-            | tee artifacts/p2-probe/current.log
+            --artifacts "$ROOT/artifacts/p2-probe/v7" \
+            | tee "$ROOT/artifacts/p2-probe/v7.log"
 
-      - name: Patch volatile field direct access
-        shell: bash
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/SharpLink.Server/Admission/AdmissionLimiterState.cs')
-          s = p.read_text()
-          replacements = [
-              ('    private int _fastRejectUnavailable;\n', '    private volatile int _fastRejectUnavailable;\n'),
-              ('        if (Volatile.Read(ref _fastRejectUnavailable) != 0)\n', '        if (_fastRejectUnavailable != 0)\n'),
-              ('            Volatile.Write(ref _fastRejectUnavailable, unavailable);\n', '            _fastRejectUnavailable = unavailable;\n'),
-          ]
-          for old, new in replacements:
-              if s.count(old) != 1:
-                  raise SystemExit(f'expected exactly one occurrence: {old!r}, got {s.count(old)}')
-              s = s.replace(old, new)
-          p.write_text(s)
-          PY
-          git diff --check
-          git diff -- src/SharpLink.Server/Admission/AdmissionLimiterState.cs
-
-      - name: Build and benchmark volatile field
-        shell: bash
-        run: |
-          set -euxo pipefail
-          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+          cd "$ROOT"
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
             --filter "*AdmissionControllerBenchmarks.ImmediateRejection*" \
-            --artifacts artifacts/p2-probe/volatile-field \
-            | tee artifacts/p2-probe/volatile-field.log
+            --artifacts "$ROOT/artifacts/p2-probe/head" \
+            | tee "$ROOT/artifacts/p2-probe/head.log"
+
+          printf 'V7_SHA=%s\nHEAD_SHA=%s\n' "$V7_SHA" "$(git rev-parse HEAD)" > "$ROOT/artifacts/p2-probe/shas.txt"
 
       - name: Upload probe evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: issue331-p2-volatile-shape-${{ github.event.pull_request.head.sha }}
+          name: issue331-p2-v7-comparison-${{ github.event.pull_request.head.sha }}
           path: artifacts/p2-probe
           if-no-files-found: error
           retention-days: 7
