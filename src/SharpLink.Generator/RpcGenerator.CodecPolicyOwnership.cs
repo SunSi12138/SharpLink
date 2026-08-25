@@ -13,6 +13,9 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
         var standalone = standaloneState.AnalyzeWithFinalCodecBindings();
+
+        // Keep one assembly-wide selector/default pass for global publication and referenced legacy
+        // Contract roots. Contract policy itself is analyzed independently for every current Contract.
         var contractDefaultState = new DtoAnalysisState(
             compilation,
             cancellationToken,
@@ -20,21 +23,56 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: true);
         var contractDefault = contractDefaultState.AnalyzeWithFinalCodecBindings();
-        var contractPolicyState = new DtoAnalysisState(
-            compilation,
-            cancellationToken,
-            contractMode: true,
-            applyCodecPolicy: true,
-            selectorOnlyContractDefault: false);
-        var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
+
+        var contractPolicies = ImmutableArray.CreateBuilder<GeneratedContractCodecPolicy>();
+        var policyDiagnostics = ImmutableArray.CreateBuilder<DtoDiagnosticModel>();
+        var policyEnums = ImmutableArray.CreateBuilder<GeneratedEnumModel>();
+        foreach (var contract in CollectCurrentRpcContracts(compilation.Assembly.GlobalNamespace)
+                     .OrderBy(static item => GetTypeName(item), StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var contractTypeName = GetTypeName(contract);
+            var perContractDefaultState = new DtoAnalysisState(
+                compilation,
+                cancellationToken,
+                contractMode: true,
+                applyCodecPolicy: true,
+                selectorOnlyContractDefault: true,
+                contractRoot: contract);
+            var perContractDefault = perContractDefaultState.AnalyzeWithFinalCodecBindings();
+            var perContractPolicyState = new DtoAnalysisState(
+                compilation,
+                cancellationToken,
+                contractMode: true,
+                applyCodecPolicy: true,
+                selectorOnlyContractDefault: false,
+                contractRoot: contract);
+            var perContractPolicy = perContractPolicyState.AnalyzeWithFinalCodecBindings();
+            var ownedCodecs = SelectOwnedContractCodecs(
+                perContractDefault.Codecs,
+                perContractPolicy.Codecs,
+                perContractPolicyState.ContractOwnedPolicyRoots,
+                contractTypeName);
+            var dependencies = perContractPolicy.Codecs
+                .SelectMany(static codec => codec.AssemblyDependencies)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static dependency => dependency, StringComparer.Ordinal)
+                .ToImmutableArray();
+            contractPolicies.Add(new GeneratedContractCodecPolicy(
+                contractTypeName,
+                perContractPolicy.Codecs,
+                ownedCodecs,
+                !ownedCodecs.IsDefaultOrEmpty,
+                dependencies));
+            policyDiagnostics.AddRange(perContractPolicy.Diagnostics);
+            policyEnums.AddRange(perContractPolicy.Enums);
+        }
 
         // The global/default registry contains the normal generated graph. Contract-default models
-        // preserve registered selector-attribute Adapter choices while omitting explicit
-        // RpcCodecAdapter bindings and assembly routes. Standalone [RpcSerializable] analysis still
-        // owns its historical explicit Adapter/direct-Codec semantics, including definitions that are
-        // shared transitively with an RPC payload. Seed from the Contract default graph and let the
-        // standalone graph win matching TypeNames so Contract-only policy never erases an existing
-        // standalone explicit binding.
+        // preserve selector-attribute Adapter choices while omitting explicit RpcCodecAdapter bindings
+        // and routes. Standalone [RpcSerializable] analysis owns its historical explicit Adapter/direct
+        // Codec semantics, including definitions shared transitively with an RPC payload, so standalone
+        // definitions win matching TypeNames.
         var globalByType = contractDefault.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in standalone.Codecs)
             globalByType[codec.TypeName] = codec;
@@ -42,25 +80,35 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // Contract ownership is defined by explicit/route selection provenance as well as the
-        // resulting definition delta. Provenance matters when an explicit binding intentionally
-        // selects the same Adapter that an intrinsic selector would choose: it is still published
-        // Contract policy and must not become runtime-overridable merely because the definitions
-        // happen to compare equal. Native parents/dependencies are then pulled into the owner graph
-        // so the changed policy remains closed over its full generated dependency graph.
-        var contractCodecs = SelectOwnedContractCodecs(
-            contractDefault.Codecs,
-            contractPolicy.Codecs,
-            contractPolicyState.ContractOwnedPolicyRoots);
+        // Contract policy Codecs are emitted as implementation classes but are no longer one
+        // assembly-wide runtime binding table. Distinct Contract owners may intentionally emit
+        // different policy implementations for the same closed payload Type.
+        var contractCodecs = contractPolicies
+            .SelectMany(static policy => policy.OwnedCodecs)
+            .GroupBy(static codec => codec.CodecName, StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .OrderBy(static codec => codec.CodecName, StringComparer.Ordinal)
+            .ToImmutableArray();
+
+        // The legacy contract-baseline document remains type-indexed for now. Keep a deterministic
+        // representative when identical payload Types appear in multiple Contract graphs; per-Contract
+        // generated-manifest metadata is the runtime source of truth.
+        var contractManifestCodecs = contractPolicies
+            .SelectMany(static policy => policy.Codecs)
+            .GroupBy(static codec => codec.TypeName, StringComparer.Ordinal)
+            .Select(static group => group.OrderBy(static codec => codec.SchemaId, StringComparer.Ordinal).First())
+            .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
+            .ToImmutableArray();
+
         var diagnostics = standalone.Diagnostics
-            .Concat(contractPolicy.Diagnostics)
+            .Concat(policyDiagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
             .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
             .Select(static group => group.First())
             .ToImmutableArray();
         var enums = standalone.Enums
             .Concat(contractDefault.Enums)
-            .Concat(contractPolicy.Enums)
+            .Concat(policyEnums)
             .GroupBy(static item => item.TypeName, StringComparer.Ordinal)
             .Select(static group => group.First())
             .OrderBy(static item => item.TypeName, StringComparer.Ordinal)
@@ -69,15 +117,42 @@ public partial class RpcGenerator
         return new DtoGenerationResult(
             globalCodecs,
             contractCodecs,
-            contractPolicy.Codecs,
+            contractManifestCodecs,
             diagnostics,
-            enums);
+            enums,
+            contractPolicies.ToImmutable());
+    }
+
+    private static IEnumerable<INamedTypeSymbol> CollectCurrentRpcContracts(INamespaceSymbol namespaceSymbol)
+    {
+        foreach (var type in namespaceSymbol.GetTypeMembers())
+        {
+            foreach (var contract in CollectCurrentRpcContracts(type))
+                yield return contract;
+        }
+        foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+        {
+            foreach (var contract in CollectCurrentRpcContracts(nestedNamespace))
+                yield return contract;
+        }
+    }
+
+    private static IEnumerable<INamedTypeSymbol> CollectCurrentRpcContracts(INamedTypeSymbol type)
+    {
+        if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
+            yield return type;
+        foreach (var nested in type.GetTypeMembers())
+        {
+            foreach (var contract in CollectCurrentRpcContracts(nested))
+                yield return contract;
+        }
     }
 
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
         ImmutableArray<GeneratedCodecModel> contractDefault,
         ImmutableArray<GeneratedCodecModel> contractPolicy,
-        IReadOnlyCollection<string> policyRoots)
+        IReadOnlyCollection<string> policyRoots,
+        string policyOwnerKey)
     {
         var defaultByType = contractDefault.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         var policyTypes = new HashSet<string>(
@@ -117,11 +192,6 @@ public partial class RpcGenerator
             .Where(codec => scopedTypes.Contains(codec.TypeName))
             .Select(codec =>
             {
-                // Explicit provenance can owner-scope a definition that is byte-for-byte identical
-                // to the intrinsic selector/default definition. In that case both manifest tables
-                // can reference the same generated factory: ownership comes from ContractCodecs,
-                // not from manufacturing a duplicate implementation type. A real definition delta
-                // still needs a distinct generated type because both versions coexist in one source.
                 if (defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) &&
                     HasSameCodecDefinition(defaultCodec, codec))
                 {
@@ -131,7 +201,7 @@ public partial class RpcGenerator
                 return codec with
                 {
                     CodecName = "__SharpLinkGeneratedContractPolicyCodec_" +
-                                Hashing.GetIdentifierHash("contract-policy|" + codec.TypeName)
+                                Hashing.GetIdentifierHash("contract-policy|" + policyOwnerKey + "|" + codec.TypeName)
                 };
             })
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
@@ -166,9 +236,6 @@ public partial class RpcGenerator
         if (implementsAdapter || implementsCodec)
             return diagnostic;
 
-        // Before direct Codec support, a plain class selected by RpcCodecAdapter meant "adapter that
-        // forgot registration". Preserve that diagnostic unless WireFormatId makes direct-Codec
-        // intent explicit.
         if (diagnostic.Location?.SourceTree is { } tree)
         {
             var source = tree.GetText(cancellationToken).ToString(diagnostic.Location.SourceSpan);
@@ -187,6 +254,7 @@ public partial class RpcGenerator
     {
         private readonly bool _selectorOnlyContractDefaults = false;
         private readonly HashSet<string> _contractOwnedPolicyRoots = new(StringComparer.Ordinal);
+        private readonly INamedTypeSymbol? _contractRoot;
 
         internal IReadOnlyCollection<string> ContractOwnedPolicyRoots => _contractOwnedPolicyRoots;
 
@@ -196,12 +264,30 @@ public partial class RpcGenerator
             bool contractMode,
             bool applyCodecPolicy,
             bool selectorOnlyContractDefault)
+            : this(
+                compilation,
+                cancellationToken,
+                contractMode,
+                applyCodecPolicy,
+                selectorOnlyContractDefault,
+                contractRoot: null)
+        {
+        }
+
+        public DtoAnalysisState(
+            Compilation compilation,
+            CancellationToken cancellationToken,
+            bool contractMode,
+            bool applyCodecPolicy,
+            bool selectorOnlyContractDefault,
+            INamedTypeSymbol? contractRoot)
         {
             _compilation = compilation;
             _cancellationToken = cancellationToken;
             _contractMode = contractMode;
             _applyCodecPolicy = applyCodecPolicy;
             _selectorOnlyContractDefaults = selectorOnlyContractDefault;
+            _contractRoot = contractRoot;
             _allowedAssemblyNames = ResolveReferenceAssemblyNames(compilation);
             _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
             CollectAdapterRegistrations();
@@ -213,7 +299,20 @@ public partial class RpcGenerator
 
         internal DtoAnalysisPassResult AnalyzeWithFinalCodecBindings()
         {
-            _ = Analyze();
+            if (_contractMode && _contractRoot is not null)
+            {
+                var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+                CollectContractPayloadRoots(_contractRoot, roots);
+                foreach (var root in roots.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+                {
+                    _cancellationToken.ThrowIfCancellationRequested();
+                    Visit(root.Value, [], 0);
+                }
+            }
+            else
+            {
+                _ = Analyze();
+            }
             PromoteSelectedFixedMembersToCodecBindings();
             return new DtoAnalysisPassResult(
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
@@ -260,13 +359,20 @@ public partial class RpcGenerator
                 return;
 
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
-            if (_contractMode)
-                CollectReferencedContractRoots(roots);
+            if (_contractMode && _contractRoot is not null)
+            {
+                CollectContractPayloadRoots(_contractRoot, roots);
+            }
+            else
+            {
+                CollectCurrentAssemblyRoots(
+                    _compilation.Assembly.GlobalNamespace,
+                    roots,
+                    includeSerializable: !_contractMode,
+                    includeContracts: _contractMode);
+                if (_contractMode)
+                    CollectReferencedContractRoots(roots);
+            }
 
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
