@@ -172,10 +172,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                 return providers[^1].Provider;
         }
 
-        var loadedPolicyOwner = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
+        var loadedGeneratedOwner = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
             ReferenceEquals(manifest.OwnerAssembly, ownerAssembly) &&
-            manifest.ContractCodecs.Count != 0);
-        if (!loadedPolicyOwner)
+            (manifest.Codecs.Count != 0 || manifest.ContractCodecs.Count != 0));
+        if (!loadedGeneratedOwner)
             return Codecs;
 
         // Adoption can race with the catalog observation for dynamic modules. Recheck before
@@ -188,7 +188,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         }
 
         throw new InvalidOperationException(
-            $"Generated Contract owner '{ownerAssembly.FullName}' has Contract-owned Codec policy but its manifest was not adopted by this SharpLink runtime context. Rebuild the client/server runtime after loading the Contract assembly.");
+            $"Generated Contract owner '{ownerAssembly.FullName}' has generated Codec bindings but its manifest was not adopted by this SharpLink runtime context. Rebuild the client/server runtime after loading the Contract assembly.");
     }
 
     internal RpcGeneratedCodecRegistration? FindGeneratedCodec(
