@@ -3,25 +3,37 @@ using System.Runtime.CompilerServices;
 
 namespace SharpLink.Runtime;
 
-/// <summary>Resolves generated codecs using the policy owned by one contract assembly.</summary>
+/// <summary>Resolves generated codecs using the policy owned by one RPC Contract.</summary>
 public static class RpcGeneratedCodecResolver
 {
     private static readonly ConditionalWeakTable<RpcGeneratedManifestRegistration, RpcManifestCodecProvider> OwnerProviders = new();
 
-    /// <summary>
-    /// Gets the codec provider bound to <paramref name="ownerAssembly"/> when the runtime is
-    /// SharpLink-owned. Custom runtimes must provide the same owner-aware contract explicitly.
-    /// </summary>
+    /// <summary>Gets the Codec provider bound to one generated Contract.</summary>
+    public static IRpcCodecProvider GetProvider(
+        IRpcRuntimeContext runtimeContext,
+        Type contractType)
+    {
+        ArgumentNullException.ThrowIfNull(runtimeContext);
+        ArgumentNullException.ThrowIfNull(contractType);
+        if (runtimeContext is IRpcContractCodecProviderResolver resolver)
+            return resolver.GetContractCodecProvider(contractType);
+        throw new NotSupportedException(
+            $"Runtime context '{runtimeContext.GetType().FullName}' must implement {nameof(IRpcContractCodecProviderResolver)} to construct generated Contract artifacts.");
+    }
+
+    // Compatibility bridge for API-4 generated source while the API-5 generator switches its
+    // public proxy constructor to Contract Type lookup. SharpLink-owned contexts can still resolve
+    // the assembly generation; custom runtimes must use the Contract-aware overload.
     public static IRpcCodecProvider GetProvider(
         IRpcRuntimeContext runtimeContext,
         Assembly ownerAssembly)
     {
         ArgumentNullException.ThrowIfNull(runtimeContext);
         ArgumentNullException.ThrowIfNull(ownerAssembly);
-        if (runtimeContext is IRpcContractCodecProviderResolver resolver)
-            return resolver.GetContractCodecProvider(ownerAssembly);
+        if (runtimeContext is SharpLinkRuntimeContext sharpLinkContext)
+            return sharpLinkContext.GetManifestCodecProvider(ownerAssembly);
         throw new NotSupportedException(
-            $"Runtime context '{runtimeContext.GetType().FullName}' must implement {nameof(IRpcContractCodecProviderResolver)} to construct generated Contract artifacts.");
+            $"Runtime context '{runtimeContext.GetType().FullName}' must use Contract Type-aware generated Codec resolution.");
     }
 
     internal static IRpcCodecProvider GetProvider(RpcGeneratedManifestRegistration registration)
@@ -59,10 +71,6 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
 
         if (_owner.HasContractCodecs)
         {
-            // Once a Contract generation owns any compile-time policy, the complete generation is
-            // immutable: policy first, then this owner's generated/default graph, then deterministic
-            // generated dependencies and builtins. Runtime UseCodec/resolver state must not rewrite
-            // the unrouted remainder of the same published Contract.
             if (_owner.Codecs.TryGetValue(targetType, out var ownerRegistration))
                 return ResolveOwned<T>(targetType, ownerRegistration);
 
@@ -82,11 +90,6 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
                 $"Codec for '{targetType.FullName}' is not part of the compile-time Codec graph owned by '{_owner.Manifest.OwnerAssembly.FullName}'.");
         }
 
-        // A no-policy Contract preserves only an *explicit* runtime UseCodec<T> override. Resolver
-        // fallback, UnsafeBlit and an equivalent globally-published generated registration are not
-        // explicit policy and therefore cannot replace this generation's own generated/default
-        // binding. Construct owner-generated parents against this provider as well so their nested
-        // dependencies cannot borrow another module generation's disposable Adapter scope.
         if (_runtimeProvider is not null && _runtimeProvider.TryGetExplicitCodec<T>(out var explicitCodec))
             return explicitCodec;
 
