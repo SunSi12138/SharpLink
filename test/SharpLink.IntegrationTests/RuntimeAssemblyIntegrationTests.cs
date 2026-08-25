@@ -1012,84 +1012,86 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task ReplacementShouldPublishNewRoutesWhileOldUnaryDrainsAndThenReleaseItsAlc()
+    public async Task ReplacementShouldRejectContractGenerationWhileDependentServiceRemainsRegistered()
     {
         await using var harness = await DynamicHarness.CreateAsync();
-        var oldPlugin = PluginBundle.Load("replace-old");
-        using var newPlugin = PluginBundle.Load("replace-new");
-        oldPlugin.ResetServiceState();
-        newPlugin.ResetServiceState();
+        using var oldPlugin = PluginBundle.Load("replace-dependency-old");
+        using var newPlugin = PluginBundle.Load("replace-dependency-new");
+        RegisterAll(harness, oldPlugin);
+        object? oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
+
+        Ensure(string.Equals(
+                oldPlugin.ContractAssembly.FullName,
+                newPlugin.ContractAssembly.FullName,
+                StringComparison.Ordinal),
+            "the regression must exercise same-identity replacement across distinct collectible generations");
+        var replacement = await harness.Server.ReplaceAssemblyAsync(
+            oldPlugin.ContractAssembly,
+            newPlugin.ContractAssembly,
+            TimeSpan.Zero);
+        Ensure(!replacement.Succeeded,
+            "a Contract generation must not be replaced while a dynamic service dependant remains registered");
+        Ensure(replacement.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
+            "unsafe same-identity replacement must return the structured dependency error");
+        Ensure(replacement.Error?.Message.Contains("depends on", StringComparison.Ordinal) == true,
+            "replacement rejection should identify the retained dependant");
+        Ensure(await InvokeValueTaskAsync<int>(
+                oldProxy, oldPlugin.ContractType, "UnaryAsync", 9, CancellationToken.None) == 10,
+            "rejected replacement must leave the old Contract/service snapshot serving normally");
+
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            oldPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "dependent service release after replacement rejection");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            oldPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "old server Contract release after dependant removal");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            oldPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "old client Contract release after replacement rejection");
+        oldProxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ReplacementShouldProceedAfterDependentServiceIsRemoved()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var oldPlugin = PluginBundle.Load("replace-safe-order-old");
+        using var newPlugin = PluginBundle.Load("replace-safe-order-new");
         RegisterAll(harness, oldPlugin);
 
-        object? oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
-        var oldCall = InvokeValueTaskAsync<int>(
-            oldProxy,
-            oldPlugin.ContractType,
-            "BlockIgnoringCancellationAsync",
-            CancellationToken.None).AsTask();
-        await oldPlugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
-
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            oldPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "safe replacement removes the service dependant before replacing its Contract generation");
         var serverContract = await harness.Server.ReplaceAssemblyAsync(
             oldPlugin.ContractAssembly,
             newPlugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
         Ensure(serverContract.Succeeded && serverContract.ReferencesReleased,
-            "contract-only replacement drains immediately");
+            "server Contract replacement may proceed once no dynamic dependant retains the old generation");
+        Ensure(harness.Server.RegisterAssembly(newPlugin.ServiceAssembly).Succeeded,
+            "the new service generation may register after its new Contract generation is published");
 
-        var serverServiceTask = harness.Server.ReplaceAssemblyAsync(
-            oldPlugin.ServiceAssembly,
-            newPlugin.ServiceAssembly,
-            TimeSpan.FromSeconds(5)).AsTask();
-        var clientContractTask = harness.Client.ReplaceAssemblyAsync(
+        var clientContract = await harness.Client.ReplaceAssemblyAsync(
             oldPlugin.ContractAssembly,
             newPlugin.ContractAssembly,
-            TimeSpan.FromSeconds(5)).AsTask();
-
-        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
-        await InvokeValueTaskAsync(
-            newProxy,
-            newPlugin.ContractType,
-            "NotifyAsync",
-            17,
-            CancellationToken.None);
-        await WaitUntilAsync(() => newPlugin.GetStaticInt("Notifications") == 17);
-        Ensure(oldPlugin.GetStaticInt("Notifications") == 0,
-            "post-switch request enters only the new service registration");
-        Ensure(!serverServiceTask.IsCompleted && !clientContractTask.IsCompleted,
-            "old server and client registrations remain alive while their admitted call is active");
-
-        oldPlugin.ReleaseBlock();
-        Ensure(await oldCall.WaitAsync(TimeSpan.FromSeconds(2)) == 43,
-            "admitted old unary completes on its original registration");
-        var serverService = await serverServiceTask;
-        Ensure(serverService.Succeeded && serverService.ReferencesReleased,
-            "old service registration releases after the last call");
-        var clientContract = await clientContractTask;
+            TimeSpan.FromSeconds(2));
         Ensure(clientContract.Succeeded && clientContract.ReferencesReleased,
-            "old client registration releases after the last call");
-        Ensure(oldPlugin.GetStaticInt("Disposed") == 1, "old singleton is observed and disposed once");
-        Ensure(newPlugin.GetStaticInt("Disposed") == 0, "new singleton remains active");
-
-        oldProxy = null;
-        var weakOldContext = oldPlugin.Unload();
-        for (var attempt = 0; attempt < 20 && weakOldContext.IsAlive; attempt++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            await Task.Delay(20);
-        }
-        Ensure(!weakOldContext.IsAlive, "replacement cleanup releases the old collectible ALC");
+            "client Contract replacement without dependants remains supported");
+        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
+        Ensure(await InvokeValueTaskAsync<int>(
+                newProxy, newPlugin.ContractType, "UnaryAsync", 4, CancellationToken.None) == 5,
+            "safe-order replacement publishes a usable new Contract/service generation");
 
         Ensure((await harness.Server.UnregisterAssemblyAsync(
             newPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "new service release");
+            "new service release after safe replacement");
         Ensure((await harness.Server.UnregisterAssemblyAsync(
             newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "new server contract release");
+            "new server Contract release after safe replacement");
         Ensure((await harness.Client.UnregisterAssemblyAsync(
             newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "new client contract release");
+            "new client Contract release after safe replacement");
         newProxy = null;
     }
 
@@ -1123,78 +1125,6 @@ public sealed class RuntimeAssemblyIntegrationTests
             plugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
             "client contract release after failed replacement");
         proxy = null;
-    }
-
-    [Test]
-    [NotInParallel]
-    public async Task ReplacementTimeoutShouldCancelThenDeferOldServiceCleanup()
-    {
-        await using var harness = await DynamicHarness.CreateAsync();
-        using var oldPlugin = PluginBundle.Load("replace-timeout-old");
-        using var newPlugin = PluginBundle.Load("replace-timeout-new");
-        oldPlugin.ResetServiceState();
-        newPlugin.ResetServiceState();
-        RegisterAll(harness, oldPlugin);
-        object? proxy = GetProxy(harness.Client, oldPlugin.ContractType);
-        var blocked = InvokeValueTaskAsync<int>(
-            proxy,
-            oldPlugin.ContractType,
-            "BlockIgnoringCancellationAsync",
-            CancellationToken.None).AsTask();
-        await oldPlugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
-
-        Ensure((await harness.Server.ReplaceAssemblyAsync(
-            oldPlugin.ContractAssembly,
-            newPlugin.ContractAssembly,
-            TimeSpan.Zero)).ReferencesReleased, "timeout test contract replacement");
-        var timedOut = await harness.Server.ReplaceAssemblyAsync(
-            oldPlugin.ServiceAssembly,
-            newPlugin.ServiceAssembly,
-            TimeSpan.FromMilliseconds(20));
-        Ensure(timedOut.Succeeded && !timedOut.ReferencesReleased,
-            "published replacement returns at its graceful bound");
-        Ensure(timedOut.RemainingCalls > 0,
-            "bounded replacement reports the non-cooperative old call");
-        Ensure(oldPlugin.GetStaticInt("Disposed") == 0,
-            "old service is not disposed while user code is still active");
-
-        var clientReplacement = await harness.Client.ReplaceAssemblyAsync(
-            oldPlugin.ContractAssembly,
-            newPlugin.ContractAssembly,
-            TimeSpan.FromMilliseconds(20));
-        Ensure(clientReplacement.Succeeded,
-            "client replacement publishes even when the remote old call was already canceled");
-        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
-        Ensure(await InvokeValueTaskAsync<int>(
-                newProxy, newPlugin.ContractType, "UnaryAsync", 4, CancellationToken.None) == 5,
-            "new server route accepts requests immediately after timeout");
-        oldPlugin.ReleaseBlock();
-        try
-        {
-            _ = await blocked.WaitAsync(TimeSpan.FromSeconds(2));
-        }
-        catch (SharpLinkException exception)
-        {
-            Ensure(exception.Code == SharpLinkErrorCode.Unavailable,
-                "timed-out client observes targeted old-module cancellation");
-        }
-        catch (OperationCanceledException)
-        {
-            // The old client module's forced token may win the response race.
-        }
-        await WaitUntilAsync(() => oldPlugin.GetStaticInt("Disposed") == 1);
-
-        Ensure((await harness.Server.UnregisterAssemblyAsync(
-            newPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "timeout replacement new service release");
-        Ensure((await harness.Server.UnregisterAssemblyAsync(
-            newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "timeout replacement new contract release");
-        Ensure((await harness.Client.UnregisterAssemblyAsync(
-            newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "timeout replacement client contract release");
-        proxy = null;
-        newProxy = null;
     }
 
     [Test]
