@@ -46,6 +46,65 @@ public class SharpLinkTimePrecisionTests
     }
 
     [Test]
+    public void RoundTripShouldPreserveFullLifetimeAcrossSignedTimestampBoundary()
+    {
+        const long frequency = TimeSpan.TicksPerSecond;
+        var start = long.MaxValue - 5_000_000;
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), start, frequency);
+
+        Ensure(deadline.Timestamp < 0,
+            "a finite deadline that crosses long.MaxValue must wrap into the signed-negative half");
+        Ensure(RpcDeadline.GetRemaining(deadline.Timestamp, start, frequency) == TimeSpan.FromSeconds(1),
+            "crossing the signed boundary must preserve the full configured lifetime");
+
+        var oneTickBefore = unchecked(start + frequency - 1);
+        Ensure(!deadline.IsExpired(oneTickBefore),
+            "the wrapped deadline must remain live one timestamp unit before its boundary");
+        Ensure(RpcDeadline.GetRemaining(deadline.Timestamp, oneTickBefore, frequency) == TimeSpan.FromTicks(1),
+            "the final wrapped timestamp unit must remain observable");
+
+        var exactBoundary = unchecked(start + frequency);
+        Ensure(deadline.IsExpired(exactBoundary),
+            "the wrapped deadline must expire at its exact modular boundary");
+        Ensure(RpcDeadline.GetRemaining(deadline.Timestamp, exactBoundary, frequency) == TimeSpan.Zero,
+            "remaining time must reach zero at the wrapped boundary");
+    }
+
+    [Test]
+    public void AddElapsedDurationShouldMatchWrappedDeadlineProjection()
+    {
+        const long frequency = TimeSpan.TicksPerSecond;
+        var start = long.MaxValue - 5_000_000;
+        var elapsedTarget = SharpLinkTime.AddElapsedDuration(
+            start,
+            TimeSpan.FromSeconds(1),
+            frequency);
+        var deadlineTarget = SharpLinkTime.AddDuration(
+            start,
+            TimeSpan.FromSeconds(1),
+            frequency);
+
+        Ensure(elapsedTarget == deadlineTarget && elapsedTarget < 0,
+            "elapsed-duration ordering and deadline projection must cross the signed boundary coherently");
+    }
+
+    [Test]
+    public void AddDurationShouldRejectAmbiguousMoreThanHalfRingLifetime()
+    {
+        try
+        {
+            _ = SharpLinkTime.AddDuration(
+                0,
+                TimeSpan.FromSeconds(2),
+                long.MaxValue);
+            throw new Exception("expected ArgumentOutOfRangeException");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
+    }
+
+    [Test]
     public void AddDurationShouldNotSaturateWhenNegativeTimestampPlusLargeDeltaFits()
     {
         var deadline = SharpLinkTime.AddDuration(
