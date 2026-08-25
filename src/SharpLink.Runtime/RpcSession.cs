@@ -354,27 +354,12 @@ internal sealed partial class RpcSession
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
         RpcDeadline deadline = default)
-    {
-        if (deadline.HasValue)
-        {
-            var span = packet.WrittenSpan;
-            var budgetOffset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
-            if (span.Length >= budgetOffset + sizeof(long) &&
-                (ProtocolV2FrameType)span[5] == ProtocolV2FrameType.Request &&
-                (((ProtocolV2FrameFlags)span[6]) & ProtocolV2FrameFlags.HasTimeBudget) != 0)
-            {
-                BinaryPrimitives.WriteInt64LittleEndian(
-                    span.Slice(budgetOffset, sizeof(long)),
-                    deadline.Timestamp);
-            }
-        }
-
-        return new OwnedFrame(
+        => new(
             packet,
             forceFlush,
             flushCompletion,
-            IsProtocolProgressFrame(packet.WrittenSpan));
-    }
+            IsProtocolProgressFrame(packet.WrittenSpan),
+            deadline);
 
     private static void ObserveAbandonedFlushCompletion(Task flushCompletion)
         => _ = ObserveAbandonedFlushCompletionAsync(flushCompletion);
