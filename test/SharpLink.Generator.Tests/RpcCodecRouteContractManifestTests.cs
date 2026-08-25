@@ -72,25 +72,25 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         const string registration =
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.enum-framing/v1\", \"sharplink-native/v1\")]";
         var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
-        var unmanagedSource = AddAssemblyAttributes(
-            BuildRouteSource(contract),
-            registration,
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(RouteAdapter))]");
-        var nativeOnlySource = AddAssemblyAttributes(
+        var nativeSource = AddAssemblyAttributes(
             BuildRouteSource(contract),
             registration,
             "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+        var unmanagedOnlySource = AddAssemblyAttributes(
+            BuildRouteSource(contract),
+            registration,
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(RouteAdapter))]");
 
         var baselineRequest = GetFirstRequestValue(RunContractGenerator(baselineSource).Json);
-        var unmanagedRequest = GetFirstRequestValue(RunContractGenerator(unmanagedSource).Json);
-        var nativeOnlyRequest = GetFirstRequestValue(RunContractGenerator(nativeOnlySource).Json);
+        var nativeRequest = GetFirstRequestValue(RunContractGenerator(nativeSource).Json);
+        var unmanagedOnlyRequest = GetFirstRequestValue(RunContractGenerator(unmanagedOnlySource).Json);
 
         Ensure(baselineRequest["wireType"]!.GetValue<string>() == "Fixed4",
             "an unrouted enum request must retain its underlying Fixed4 field path");
-        Ensure(unmanagedRequest["wireType"]!.GetValue<string>() == "LengthDelimited",
-            "an enum selected by the Unmanaged route must use its final Codec and length-delimited framing");
-        Ensure(nativeOnlyRequest["wireType"]!.GetValue<string>() == "Fixed4",
-            "an unrelated Native route must not globally disable inline framing for an Unmanaged enum");
+        Ensure(nativeRequest["wireType"]!.GetValue<string>() == "LengthDelimited",
+            "an enum selected by the Native route must use its final Codec and length-delimited framing");
+        Ensure(unmanagedOnlyRequest["wireType"]!.GetValue<string>() == "Fixed4",
+            "an unrelated Unmanaged route must not disable inline framing for a generated Native enum");
         return Task.CompletedTask;
     }
 
