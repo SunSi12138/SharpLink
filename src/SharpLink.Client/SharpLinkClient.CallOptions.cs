@@ -41,7 +41,8 @@ internal sealed partial class SharpLinkClient
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
             deadline,
-            metadata is { Count: > 0 } ? metadata : null);
+            metadata is { Count: > 0 } ? metadata : null,
+            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null);
     }
 
     private async ValueTask DelayForRetryOrAdmissionAsync(
@@ -75,7 +76,38 @@ internal sealed partial class SharpLinkClient
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
 
+    internal sealed class ClientLogicalCallState
+    {
+        private readonly RpcDeadline _deadline;
+        private readonly TimeProvider _timeProvider;
+        private int _deadlineClaimed;
+
+        internal ClientLogicalCallState(
+            RpcDeadline deadline,
+            TimeProvider timeProvider)
+        {
+            _deadline = deadline;
+            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        }
+
+        internal bool TryEnterProgress()
+        {
+            if (Volatile.Read(ref _deadlineClaimed) != 0)
+                return false;
+            if (_deadline.IsExpired(_timeProvider))
+            {
+                _ = TryClaimDeadline();
+                return false;
+            }
+            return Volatile.Read(ref _deadlineClaimed) == 0;
+        }
+
+        internal bool TryClaimDeadline()
+            => Interlocked.CompareExchange(ref _deadlineClaimed, 1, 0) == 0;
+    }
+
     internal readonly record struct ResolvedCallControl(
         RpcDeadline Deadline,
-        SharpLinkMetadata? Metadata);
+        SharpLinkMetadata? Metadata,
+        ClientLogicalCallState? LogicalCall);
 }
