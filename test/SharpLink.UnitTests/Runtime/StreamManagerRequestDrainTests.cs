@@ -57,7 +57,7 @@ public sealed class StreamManagerRequestDrainTests
         await dispatch;
         await completion;
 
-        Ensure(completedStreams.OrderBy(static id => id).SequenceEqual([1, 2]),
+        Ensure(completedStreams.OrderBy(static id => id).SequenceEqual(new ushort[] { 1, 2 }),
             "both request streams must finalize after the dispatch barrier completes");
         Ensure(events.IndexOf("one-dispatch-released") < events.IndexOf("stream-1-finalized") &&
                events.IndexOf("one-dispatch-released") < events.IndexOf("stream-2-finalized"),
