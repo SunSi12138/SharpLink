@@ -256,50 +256,64 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             started,
             _timeProvider.TimestampFrequency);
         var deadlineLimitsWait =
-            deadline.HasValue && deadline.Timestamp <= queueDeadline.Timestamp;
+            deadline.HasValue && deadline.WouldExpireBeforeOrAt(_maxQueueDelay, _timeProvider);
         var waitDeadline = deadlineLimitsWait ? deadline : queueDeadline;
+        var waitDelay = waitDeadline.GetRemaining(_timeProvider);
+        using var timeoutCancellation = waitDelay <= TimeSpan.Zero
+            ? new CancellationTokenSource()
+            : new CancellationTokenSource(waitDelay, _timeProvider);
+        if (waitDelay <= TimeSpan.Zero)
+            timeoutCancellation.Cancel();
         using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
-            _draining.Token);
+            _draining.Token,
+            timeoutCancellation.Token);
 
         try
         {
             while (true)
             {
-                var waitTask = failedSlot.Limiter
-                    .AcquireAsync(1, waitCancellation.Token)
-                    .AsTask();
-                bool completedWithinDeadline;
+                RateLimitLease waitedLease;
                 try
                 {
-                    completedWithinDeadline = await SharpLinkTimer.WaitAsync(
-                        waitTask,
-                        waitDeadline,
-                        _timeProvider,
-                        waitCancellation.Token).ConfigureAwait(false);
+                    waitedLease = await failedSlot.Limiter
+                        .AcquireAsync(1, waitCancellation.Token)
+                        .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (
                     _draining.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    ObserveLateLimiterLease(waitTask);
+                    if (waitDeadline.IsExpired(_timeProvider))
+                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
                     return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    ObserveLateLimiterLease(waitTask);
+                    if (waitDeadline.IsExpired(_timeProvider))
+                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
                     throw;
                 }
-
-                if (!completedWithinDeadline)
+                catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested)
                 {
-                    waitCancellation.Cancel();
-                    ObserveLateLimiterLease(waitTask);
-                    return deadlineLimitsWait
-                        ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
-                        : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
+                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
                 }
 
-                var waitedLease = await waitTask.ConfigureAwait(false);
+                if (waitDeadline.IsExpired(_timeProvider))
+                {
+                    waitedLease.Dispose();
+                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
+                }
+                if (_draining.IsCancellationRequested)
+                {
+                    waitedLease.Dispose();
+                    return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
+                }
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    waitedLease.Dispose();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 if (!waitedLease.IsAcquired)
                 {
                     waitedLease.Dispose();
@@ -325,28 +339,12 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         }
     }
 
-    private static void ObserveLateLimiterLease(Task<RateLimitLease> waitTask)
-    {
-        // Never dispose a late-granted lease on the limiter's completion stack. Some rate
-        // limiter implementations can complete a waiter while holding internal coordination;
-        // re-entering Dispose from an ExecuteSynchronously continuation can deadlock that path.
-        _ = waitTask.ContinueWith(
-            static completed => DisposeCompletedLimiterLease(completed),
-            CancellationToken.None,
-            TaskContinuationOptions.DenyChildAttach,
-            TaskScheduler.Default);
-    }
-
-    private static void DisposeCompletedLimiterLease(Task<RateLimitLease> waitTask)
-    {
-        if (waitTask.Status == TaskStatus.RanToCompletion)
-        {
-            waitTask.Result.Dispose();
-            return;
-        }
-
-        _ = waitTask.Exception;
-    }
+    private static AdmissionDecision RejectExpiredAdmissionWait(
+        AdmissionLimiterSlot failedSlot,
+        bool deadlineLimitsWait)
+        => deadlineLimitsWait
+            ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
+            : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
 
     private bool TryReserveQueue(int retainedBytes, out string reason)
     {
