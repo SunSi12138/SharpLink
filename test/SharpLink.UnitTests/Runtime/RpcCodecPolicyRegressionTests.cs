@@ -57,15 +57,15 @@ public sealed class RpcCodecPolicyRegressionTests
     }
 
     [Test]
-    public void UnmanagedEnumPolicyShouldOverrideUnsafeBlitFallback()
+    public void NativeEnumShouldNotUseUnsafeBlitAndOwnerPolicyCanStillOverrideIt()
     {
         using var context = new SharpLinkRuntimeContextBuilder()
             .Build(includeGeneratedAssemblyCatalog: false);
         var globalEnum = context.Codecs.GetCodec<SampleEnum>();
         var globalNullableEnum = context.Codecs.GetCodec<SampleEnum?>();
-        Ensure(globalEnum.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal) &&
-               globalNullableEnum.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
-            "the regression must exercise the existing unmanaged fallback for enum and nullable enum");
+        Ensure(globalEnum.GetType().Name.Contains("EnumCodec", StringComparison.Ordinal) &&
+               !globalEnum.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
+            "enum payloads must use the deterministic SharpLink native enum Codec instead of UnsafeBlit");
 
         var adapter = new EnumRouteAdapter();
         var owner = typeof(IRpcRuntimeContext).Assembly;
@@ -80,12 +80,12 @@ public sealed class RpcCodecPolicyRegressionTests
 
         var ownerProvider = RpcGeneratedCodecResolver.GetProvider(context, owner);
         Ensure(ownerProvider.GetCodec<SampleEnum>() is SampleEnumCodec,
-            "an owner-scoped Unmanaged enum route must replace the UnsafeBlit fallback");
+            "an owner-scoped compile-time enum policy must override the native enum Codec");
         Ensure(ownerProvider.GetCodec<SampleEnum?>() is NullableSampleEnumCodec,
-            "an owner-scoped Unmanaged nullable-enum route must replace the UnsafeBlit fallback");
+            "an owner-scoped compile-time nullable-enum policy must override the default resolution");
         Ensure(ReferenceEquals(context.Codecs.GetCodec<SampleEnum>(), globalEnum) &&
                ReferenceEquals(context.Codecs.GetCodec<SampleEnum?>(), globalNullableEnum),
-            "enum route policy must remain owner-scoped and leave the context-global fallback unchanged");
+            "enum policy must remain owner-scoped and leave the context-global resolution unchanged");
     }
 
     private enum SampleEnum : short
@@ -121,7 +121,7 @@ public sealed class RpcCodecPolicyRegressionTests
 
     private sealed class EnumRouteAdapter : IRpcCodecAdapter
     {
-        public string AdapterId => "enum-unmanaged-route/v1";
+        public string AdapterId => "enum-native-route/v1";
         public string WireFormatId => "enum-safe-wire/v1";
         public IRpcCodecAdapterScope CreateScope() => new EnumRouteScope();
     }
