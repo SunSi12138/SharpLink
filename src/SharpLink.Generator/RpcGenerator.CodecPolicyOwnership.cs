@@ -68,11 +68,6 @@ public partial class RpcGenerator
             policyEnums.AddRange(perContractPolicy.Enums);
         }
 
-        // The global/default registry contains the normal generated graph. Contract-default models
-        // preserve selector-attribute Adapter choices while omitting explicit RpcCodecAdapter bindings
-        // and routes. Standalone [RpcSerializable] analysis owns its historical explicit Adapter/direct
-        // Codec semantics, including definitions shared transitively with an RPC payload, so standalone
-        // definitions win matching TypeNames.
         var globalByType = contractDefault.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in standalone.Codecs)
             globalByType[codec.TypeName] = codec;
@@ -80,9 +75,6 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // Contract policy Codecs are emitted as implementation classes but are no longer one
-        // assembly-wide runtime binding table. Distinct Contract owners may intentionally emit
-        // different policy implementations for the same closed payload Type.
         var contractCodecs = contractPolicies
             .SelectMany(static policy => policy.OwnedCodecs)
             .GroupBy(static codec => codec.CodecName, StringComparer.Ordinal)
@@ -90,9 +82,6 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.CodecName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // The legacy contract-baseline document remains type-indexed for now. Keep a deterministic
-        // representative when identical payload Types appear in multiple Contract graphs; per-Contract
-        // generated-manifest metadata is the runtime source of truth.
         var contractManifestCodecs = contractPolicies
             .SelectMany(static policy => policy.Codecs)
             .GroupBy(static codec => codec.TypeName, StringComparer.Ordinal)
@@ -155,9 +144,7 @@ public partial class RpcGenerator
         string policyOwnerKey)
     {
         var defaultByType = contractDefault.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var policyTypes = new HashSet<string>(
-            contractPolicy.Select(static codec => codec.TypeName),
-            StringComparer.Ordinal);
+        var policyTypes = new HashSet<string>(contractPolicy.Select(static codec => codec.TypeName), StringComparer.Ordinal);
         var scopedTypes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var policyRoot in policyRoots)
         {
@@ -169,9 +156,7 @@ public partial class RpcGenerator
         {
             if (!defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) ||
                 !HasSameCodecDefinition(defaultCodec, codec))
-            {
                 scopedTypes.Add(codec.TypeName);
-            }
         }
 
         bool changed;
@@ -194,9 +179,7 @@ public partial class RpcGenerator
             {
                 if (defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) &&
                     HasSameCodecDefinition(defaultCodec, codec))
-                {
                     return codec with { CodecName = defaultCodec.CodecName };
-                }
 
                 return codec with
                 {
@@ -215,9 +198,7 @@ public partial class RpcGenerator
     {
         if (diagnostic.Kind != DtoDiagnosticKind.AdapterTypeInvalid ||
             !diagnostic.Detail.StartsWith("direct Codec must", StringComparison.Ordinal))
-        {
             return diagnostic;
-        }
 
         var metadataName = diagnostic.TypeName.StartsWith("global::", StringComparison.Ordinal)
             ? diagnostic.TypeName.Substring("global::".Length)
@@ -227,12 +208,9 @@ public partial class RpcGenerator
             return diagnostic;
 
         var implementsAdapter = implementation.AllInterfaces.Any(static item =>
-            item.Name == "IRpcCodecAdapter" &&
-            item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
+            item.Name == "IRpcCodecAdapter" && item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
         var implementsCodec = implementation.AllInterfaces.Any(static item =>
-            item.Name == "IRpcCodec" &&
-            item.Arity == 1 &&
-            item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
+            item.Name == "IRpcCodec" && item.Arity == 1 && item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
         if (implementsAdapter || implementsCodec)
             return diagnostic;
 
@@ -264,13 +242,7 @@ public partial class RpcGenerator
             bool contractMode,
             bool applyCodecPolicy,
             bool selectorOnlyContractDefault)
-            : this(
-                compilation,
-                cancellationToken,
-                contractMode,
-                applyCodecPolicy,
-                selectorOnlyContractDefault,
-                contractRoot: null)
+            : this(compilation, cancellationToken, contractMode, applyCodecPolicy, selectorOnlyContractDefault, contractRoot: null)
         {
         }
 
@@ -313,11 +285,76 @@ public partial class RpcGenerator
             {
                 _ = Analyze();
             }
+            EnsureNativeNullableEnumModels();
             PromoteSelectedFixedMembersToCodecBindings();
             return new DtoAnalysisPassResult(
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
                 _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
+        }
+
+        private void EnsureNativeNullableEnumModels()
+        {
+            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            if (_contractMode && _contractRoot is not null)
+            {
+                CollectContractPayloadRoots(_contractRoot, roots);
+            }
+            else
+            {
+                CollectCurrentAssemblyRoots(
+                    _compilation.Assembly.GlobalNamespace,
+                    roots,
+                    includeSerializable: !_contractMode,
+                    includeContracts: _contractMode);
+                if (_contractMode)
+                    CollectReferencedContractRoots(roots);
+            }
+
+            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+            foreach (var root in roots.Values)
+                CollectFinalBindingTypes(root, reachable, seen, 0);
+
+            foreach (var type in reachable.Values)
+            {
+                if (type is not INamedTypeSymbol nullable ||
+                    nullable.OriginalDefinition.SpecialType != SpecialType.System_Nullable_T ||
+                    nullable.TypeArguments.Length != 1 ||
+                    nullable.TypeArguments[0].TypeKind != TypeKind.Enum)
+                {
+                    continue;
+                }
+
+                var typeName = GetTypeName(type);
+                if (_models.ContainsKey(typeName) || _failed.Contains(typeName))
+                    continue;
+
+                var enumType = nullable.TypeArguments[0];
+                Visit(enumType, [], 0);
+                if (_failed.Contains(GetTypeName(enumType)))
+                {
+                    _failed.Add(typeName);
+                    continue;
+                }
+
+                _models[typeName] = new GeneratedCodecModel(
+                    typeName,
+                    GetCodecName(typeName, _contractMode),
+                    GetSchemaId(typeName, GeneratedCodecKind.Nullable.ToString()),
+                    GeneratedCodecKind.Nullable,
+                    IsReferenceType: false,
+                    ImmutableArray<GeneratedMemberModel>.Empty,
+                    ImmutableArray<string>.Empty,
+                    GetTypeName(enumType),
+                    KeyType: null,
+                    ValueType: null,
+                    AdapterType: null,
+                    AdapterId: null,
+                    "sharplink-native/v1",
+                    GetAssemblyDependencies([type]),
+                    type.Locations.FirstOrDefault());
+            }
         }
 
         private void CollectAssemblyBindingsWithEnumSupport()
@@ -336,8 +373,7 @@ public partial class RpcGenerator
                 }
                 if (HasTypeParameter(target))
                 {
-                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target,
-                        "Codec target must be a closed type", location);
+                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target, "Codec target must be a closed type", location);
                     continue;
                 }
                 target = NormalizeAdapterTarget(target);
@@ -347,8 +383,7 @@ public partial class RpcGenerator
                         "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
                     continue;
                 }
-                AddAssemblyBinding(
-                    target,
+                AddAssemblyBinding(target,
                     new ExplicitBindingCandidate(implementation, GetAttributeWireFormatId(attribute), location));
             }
         }
@@ -379,16 +414,13 @@ public partial class RpcGenerator
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
 
-            var dtoModels = _models.Values
-                .Where(static model => model.Kind == GeneratedCodecKind.Dto)
-                .ToArray();
+            var dtoModels = _models.Values.Where(static model => model.Kind == GeneratedCodecKind.Dto).ToArray();
             foreach (var model in dtoModels)
             {
                 if (!reachable.TryGetValue(model.TypeName, out var type) || type is not INamedTypeSymbol named)
                     continue;
 
-                var memberSymbols = GetSerializableMembers(named)
-                    .ToDictionary(static member => member.Name, StringComparer.Ordinal);
+                var memberSymbols = GetSerializableMembers(named).ToDictionary(static member => member.Name, StringComparer.Ordinal);
                 var members = model.Members.ToArray();
                 var changed = false;
                 for (var index = 0; index < members.Length; index++)
@@ -396,9 +428,7 @@ public partial class RpcGenerator
                     var member = members[index];
                     if (member.Kind is not (GeneratedMemberKind.Fixed or GeneratedMemberKind.NullableFixed) ||
                         !memberSymbols.TryGetValue(member.Name, out var memberSymbol))
-                    {
                         continue;
-                    }
 
                     var memberType = GetMemberType(memberSymbol);
                     AdapterRegistration? selected = null;
