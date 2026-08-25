@@ -568,6 +568,8 @@ internal static class SharedRpcCodec<T>
     {
         if (BuiltinRpcCodecs.TryGet(typeof(T), out var builtin))
             return (IRpcCodec<T>)builtin;
+        if (typeof(T).IsEnum)
+            return EnumCodec<T>.Instance;
         return null;
     }
 }
