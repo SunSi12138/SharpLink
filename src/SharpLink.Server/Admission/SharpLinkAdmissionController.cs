@@ -327,16 +327,13 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 
     private static void ObserveLateLimiterLease(Task<RateLimitLease> waitTask)
     {
-        if (waitTask.IsCompleted)
-        {
-            DisposeCompletedLimiterLease(waitTask);
-            return;
-        }
-
+        // Never dispose a late-granted lease on the limiter's completion stack. Some rate
+        // limiter implementations can complete a waiter while holding internal coordination;
+        // re-entering Dispose from an ExecuteSynchronously continuation can deadlock that path.
         _ = waitTask.ContinueWith(
             static completed => DisposeCompletedLimiterLease(completed),
             CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
+            TaskContinuationOptions.DenyChildAttach,
             TaskScheduler.Default);
     }
 
