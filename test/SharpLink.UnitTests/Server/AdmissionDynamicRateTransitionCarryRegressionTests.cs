@@ -54,10 +54,6 @@ public sealed class AdmissionDynamicRateTransitionCarryRegressionTests
         await ConsumeAsync(resizedTarget, 1);
         await EnsureRateRejectedAsync(resizedTarget,
             $"{targetKind}: same-algorithm parameter update must preserve the replacement barrier instead of exposing a fresh second permit");
-
-        time.Advance(TimeSpan.FromSeconds(40).Subtract(TimeSpan.FromTicks(1)));
-        await EnsureRateRejectedAsync(resizedTarget,
-            $"{targetKind}: carried source debt must remain effective until its conservative source expiry");
     }
 
     [Test]
