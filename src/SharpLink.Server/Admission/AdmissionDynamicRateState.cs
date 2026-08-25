@@ -65,6 +65,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
     private ITimer? _timer;
     private long _tokenDebt;
     private long _tokenAnchor;
+    private long _tokenTransitionCredit;
     private long _fixedConsumed;
     private long _fixedWindowStart;
     private long _slidingOwnTotal;
@@ -211,6 +212,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
                 case AdmissionRateStateKind.TokenBucket:
                     CopyTransitionBarrierLocked(source, now);
                     _tokenDebt = source._tokenDebt;
+                    _tokenTransitionCredit = Math.Min(source._tokenTransitionCredit, _transitionDebt);
                     _tokenAnchor = source._definition.Secondary == _definition.Secondary &&
                                    source._definition.PeriodTicks == _definition.PeriodTicks
                         ? source._tokenAnchor
@@ -297,6 +299,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
     {
         _tokenDebt = 0;
         _tokenAnchor = now;
+        _tokenTransitionCredit = 0;
         _fixedConsumed = 0;
         _fixedWindowStart = now;
         _slidingOwnTotal = 0;
@@ -376,12 +379,12 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         if (GetBurdenLocked() == 0)
             return now;
 
+        if (_definition.Kind == AdmissionRateStateKind.TokenBucket)
+            return GetTokenCombinedDebtExpiryLocked(now);
+
         var expiry = _transitionDebt == 0 ? now : _transitionDebtExpiry;
         switch (_definition.Kind)
         {
-            case AdmissionRateStateKind.TokenBucket when _tokenDebt != 0:
-                expiry = Math.Max(expiry, GetTokenDebtExpiryLocked());
-                break;
             case AdmissionRateStateKind.FixedWindow when _fixedConsumed != 0:
                 expiry = Math.Max(
                     expiry,
@@ -394,12 +397,20 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         return expiry;
     }
 
-    private long GetTokenDebtExpiryLocked()
+    private long GetTokenCombinedDebtExpiryLocked(long now)
     {
-        var periods = DivideRoundUp(_tokenDebt, _definition.Secondary);
-        return SaturatingAdd(
-            _tokenAnchor,
-            SaturatingMultiply(periods, GetPeriodTimestampTicks()));
+        var uncreditedTransitionDebt = Math.Max(0, _transitionDebt - _tokenTransitionCredit);
+        var cadenceDebt = SaturatingAdd(_tokenDebt, uncreditedTransitionDebt);
+        var cadenceExpiry = cadenceDebt == 0
+            ? now
+            : SaturatingAdd(
+                _tokenAnchor,
+                SaturatingMultiply(
+                    DivideRoundUp(cadenceDebt, _definition.Secondary),
+                    GetPeriodTimestampTicks()));
+        return _transitionDebt == 0
+            ? cadenceExpiry
+            : Math.Max(_transitionDebtExpiry, cadenceExpiry);
     }
 
     private long GetSlidingOwnDebtExpiryLocked()
@@ -409,6 +420,13 @@ internal sealed class AdmissionDynamicRateState : IDisposable
 
     private void AdvanceLocked(long now)
     {
+        if (_definition.Kind == AdmissionRateStateKind.TokenBucket)
+        {
+            AdvanceTokenBucketLocked(now);
+            CompleteTokenTransitionBarrierLocked(now);
+            return;
+        }
+
         if (_transitionDebt != 0 && now >= _transitionDebtExpiry)
         {
             _transitionDebt = 0;
@@ -417,9 +435,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
 
         switch (_definition.Kind)
         {
-            case AdmissionRateStateKind.TokenBucket:
-                AdvanceTokenBucketLocked(now);
-                break;
             case AdmissionRateStateKind.FixedWindow:
                 AdvanceFixedWindowLocked(now);
                 break;
@@ -437,12 +452,36 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             return;
 
         var periods = elapsed / period;
+        var credit = SaturatingMultiply(periods, _definition.Secondary);
         if (_tokenDebt != 0)
         {
-            var credit = SaturatingMultiply(periods, _definition.Secondary);
-            _tokenDebt = Math.Max(0, _tokenDebt - credit);
+            var ownCredit = Math.Min(_tokenDebt, credit);
+            _tokenDebt -= ownCredit;
+            credit -= ownCredit;
         }
+
+        if (credit != 0 && _transitionDebt != 0 && _tokenTransitionCredit < _transitionDebt)
+        {
+            var remainingTransitionDebt = _transitionDebt - _tokenTransitionCredit;
+            _tokenTransitionCredit = SaturatingAdd(
+                _tokenTransitionCredit,
+                Math.Min(credit, remainingTransitionDebt));
+        }
+
         _tokenAnchor = SaturatingAdd(_tokenAnchor, SaturatingMultiply(periods, period));
+    }
+
+    private void CompleteTokenTransitionBarrierLocked(long now)
+    {
+        if (_transitionDebt == 0 || now < _transitionDebtExpiry)
+            return;
+
+        var prepaid = Math.Min(_transitionDebt, _tokenTransitionCredit);
+        var remainingTransitionDebt = _transitionDebt - prepaid;
+        _tokenDebt = SaturatingAdd(_tokenDebt, remainingTransitionDebt);
+        _transitionDebt = 0;
+        _transitionDebtExpiry = 0;
+        _tokenTransitionCredit = 0;
     }
 
     private void AdvanceFixedWindowLocked(long now)
