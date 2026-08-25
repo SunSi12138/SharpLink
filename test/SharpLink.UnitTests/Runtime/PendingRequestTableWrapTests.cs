@@ -35,14 +35,14 @@ public class PendingRequestTableWrapTests
 
         timeProvider.Advance(TimeSpan.FromMilliseconds(250));
         Ensure(await CaptureFailureAsync(first) is SharpLinkException
-            { Code: SharpLinkErrorCode.DeadlineExceeded },
+        { Code: SharpLinkErrorCode.DeadlineExceeded },
             "the pre-wrap deadline must expire first even though the later raw target is signed-negative");
         Ensure(!later.IsCompleted && manager.Count == 1,
             "the wrapped later deadline must remain live after the earlier deadline fires");
 
         timeProvider.Advance(TimeSpan.FromMilliseconds(750));
         Ensure(await CaptureFailureAsync(later) is SharpLinkException
-            { Code: SharpLinkErrorCode.DeadlineExceeded },
+        { Code: SharpLinkErrorCode.DeadlineExceeded },
             "the wrapped later deadline must expire at its own modular boundary");
         Ensure(manager.Count == 0,
             "cross-boundary scheduler scans must release both pending slots in deadline order");
