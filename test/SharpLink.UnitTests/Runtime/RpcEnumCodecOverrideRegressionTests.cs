@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Generic;
 using System.Reflection;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
