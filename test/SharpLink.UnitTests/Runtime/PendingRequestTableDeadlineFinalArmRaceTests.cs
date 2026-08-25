@@ -98,6 +98,10 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
             "_approximateEarliestDeadline",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new MissingFieldException(tableType.FullName, "_approximateEarliestDeadline");
+        var revision = tableType.GetField(
+            "_deadlineRevision",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingFieldException(tableType.FullName, "_deadlineRevision");
 
         var reconcileTask = Task.Run(() => reconcile.Invoke(table, parameters: null));
         Ensure(timeProvider.BlockedChangeEntered.Wait(CoordinationTimeout),
@@ -108,8 +112,9 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
         // Model the review interleaving directly: schedule identity has already been observed,
         // then the actual earliest deadline moves earlier before the stale arm completes. Using
         // reflection here avoids adding a production-only test hook to the registration hot path.
-        earliest.SetValue(table, earlierDeadline.Timestamp);
-        arm.Invoke(table, [earlierDeadline.Timestamp]);
+        earliest.SetValue(table, earlierDeadline);
+        revision.SetValue(table, (long)revision.GetValue(table)! + 1);
+        arm.Invoke(table, [earlierDeadline]);
         Ensure(timeProvider.GetScheduledDelay() == TimeSpan.FromSeconds(1),
             "the simulated earlier writer should arm the one-second deadline first");
 
@@ -182,51 +187,52 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
             }
         }
 
-        internal void Advance(TimeSpan duration)
-            => Interlocked.Add(ref _timestamp, duration.Ticks);
+        internal void Advance(TimeSpan elapsed)
+            => Interlocked.Add(ref _timestamp, elapsed.Ticks);
 
         internal void FireTimer()
         {
-            var timer = GetTimer();
-            timer.FireUnconditionally();
+            ControlledTimer timer;
+            lock (_gate)
+                timer = _timer ?? throw new InvalidOperationException("timer not created");
+            timer.Fire();
         }
 
         internal void FireIfDue()
         {
-            var timer = GetTimer();
-            timer.FireIfDue(GetTimestamp());
+            ControlledTimer timer;
+            lock (_gate)
+            {
+                timer = _timer ?? throw new InvalidOperationException("timer not created");
+                if (timer.ScheduledDelay > TimeSpan.Zero)
+                    return;
+            }
+            timer.Fire();
         }
 
         internal TimeSpan GetScheduledDelay()
         {
-            var scheduled = GetTimer().ScheduledTimestamp;
-            if (scheduled == long.MaxValue)
-                return Timeout.InfiniteTimeSpan;
-            var remaining = Math.Max(0, scheduled - GetTimestamp());
-            return TimeSpan.FromTicks(remaining);
-        }
-
-        private ControlledTimer GetTimer()
-        {
             lock (_gate)
-                return _timer ?? throw new InvalidOperationException("timer has not been created");
+                return _timer?.ScheduledDelay ?? Timeout.InfiniteTimeSpan;
         }
 
-        private bool Change(ControlledTimer timer, TimeSpan dueTime)
+        private bool ChangeTimer(ControlledTimer timer, TimeSpan dueTime, TimeSpan period)
         {
-            var change = Interlocked.Increment(ref _changeCount);
-            if (change == blockChangeNumber)
+            var changeNumber = Interlocked.Increment(ref _changeCount);
+            if (changeNumber == blockChangeNumber)
             {
                 BlockedChangeEntered.Set();
                 if (!ReleaseBlockedChange.Wait(CoordinationTimeout))
-                    throw new TimeoutException("test did not release the scanner final-arm gate");
+                    throw new TimeoutException("test did not release the blocked timer change");
             }
 
-            timer.SetScheduledTimestamp(
-                dueTime == Timeout.InfiniteTimeSpan
-                    ? long.MaxValue
-                    : checked(GetTimestamp() + Math.Max(0, dueTime.Ticks)));
-            return true;
+            lock (_gate)
+            {
+                if (timer.IsDisposed)
+                    return false;
+                timer.ScheduledDelay = dueTime;
+                return true;
+            }
         }
 
         private sealed class ControlledTimer(
@@ -234,47 +240,19 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
             TimerCallback callback,
             object? state) : ITimer
         {
-            private long _scheduledTimestamp = long.MaxValue;
-            private int _disposed;
-
-            internal long ScheduledTimestamp => Volatile.Read(ref _scheduledTimestamp);
+            internal TimeSpan ScheduledDelay { get; set; } = Timeout.InfiniteTimeSpan;
+            internal bool IsDisposed { get; private set; }
 
             public bool Change(TimeSpan dueTime, TimeSpan period)
-            {
-                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                if (period != Timeout.InfiniteTimeSpan)
-                    throw new NotSupportedException("the deadline scheduler must use one-shot timers");
-                return owner.Change(this, dueTime);
-            }
-
-            internal void SetScheduledTimestamp(long timestamp)
-                => Volatile.Write(ref _scheduledTimestamp, timestamp);
-
-            internal void FireUnconditionally()
-            {
-                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                Volatile.Write(ref _scheduledTimestamp, long.MaxValue);
-                callback(state);
-            }
-
-            internal void FireIfDue(long now)
-            {
-                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                while (true)
-                {
-                    var scheduled = Volatile.Read(ref _scheduledTimestamp);
-                    if (scheduled == long.MaxValue || scheduled > now)
-                        return;
-                    if (Interlocked.CompareExchange(ref _scheduledTimestamp, long.MaxValue, scheduled) == scheduled)
-                        break;
-                }
-                callback(state);
-            }
+                => owner.ChangeTimer(this, dueTime, period);
 
             public void Dispose()
             {
-                Interlocked.Exchange(ref _disposed, 1);
-                Volatile.Write(ref _scheduledTimestamp, long.MaxValue);
+                lock (owner._gate)
+                {
+                    IsDisposed = true;
+                    ScheduledDelay = Timeout.InfiniteTimeSpan;
+                }
             }
 
             public ValueTask DisposeAsync()
@@ -282,45 +260,44 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
                 Dispose();
                 return ValueTask.CompletedTask;
             }
+
+            internal void Fire()
+            {
+                lock (owner._gate)
+                {
+                    if (IsDisposed)
+                        return;
+                    ScheduledDelay = Timeout.InfiniteTimeSpan;
+                }
+                callback(state);
+            }
         }
     }
 
     private sealed class Int32CodecProvider : IRpcCodecProvider
     {
-        internal static Int32CodecProvider Instance { get; } = new();
+        internal static readonly Int32CodecProvider Instance = new();
 
         public IRpcCodec<T> GetCodec<T>()
-        {
-            if (typeof(T) == typeof(int))
-                return (IRpcCodec<T>)(object)Int32Codec.Instance;
-            throw new NotSupportedException(typeof(T).FullName);
-        }
-    }
-
-    private sealed class Int32Codec : IRpcCodec<int>
-    {
-        internal static Int32Codec Instance { get; } = new();
-
-        public void Serialize(in int value, IBufferWriter<byte> buffer)
-        {
-            var span = buffer.GetSpan(sizeof(int));
-            BinaryPrimitives.WriteInt32LittleEndian(span, value);
-            buffer.Advance(sizeof(int));
-        }
-
-        public int Deserialize(in ReadOnlySequence<byte> buffer)
-        {
-            Span<byte> bytes = stackalloc byte[sizeof(int)];
-            buffer.CopyTo(bytes);
-            return BinaryPrimitives.ReadInt32LittleEndian(bytes);
-        }
+            => typeof(T) == typeof(int)
+                ? (IRpcCodec<T>)(object)Int32Codec.Instance
+                : throw new NotSupportedException(typeof(T).FullName);
     }
 
     private sealed class NoopOwner : IPendingCallOwner
     {
-        internal static NoopOwner Instance { get; } = new();
-        public void OnPendingCallRegistered() { }
-        public void OnPendingCallCompleted(in PendingCallCompletion completion) { }
-        public void OnProducerCancellationCallbackFailed(Exception exception) { }
+        internal static readonly NoopOwner Instance = new();
+
+        public void OnPendingCallRegistered()
+        {
+        }
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+        }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+        {
+        }
     }
 }
