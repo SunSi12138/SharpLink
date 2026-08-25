@@ -31,7 +31,7 @@ public partial class RpcGenerator
             AppendProxyFields(sb, model, method);
 
         sb.AppendLine($"    public {model.Name}_Proxy(IRpcChannel channel)");
-        sb.AppendLine($"        : this(channel, RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof({model.FullName}).Assembly))");
+        sb.AppendLine($"        : this(channel, RpcGeneratedCodecResolver.GetProvider(channel.RuntimeContext, typeof({model.FullName})))");
         sb.AppendLine("    {");
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -183,7 +183,6 @@ public partial class RpcGenerator
             return;
         }
 
-        // Response-less non-one-way methods use byte as an internal acknowledgement type.
         if (!method.IsOneWay)
             invocation += ".AsVoid()";
         sb.AppendLine(returnsValueTask
@@ -332,8 +331,7 @@ public partial class RpcGenerator
                 var stream = streams[index];
                 sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, _{stream.Name}, __codec_{stream.Name}, cancellationToken);");
             }
-            for (var index = 0; index < streams.Length; index++)
-                sb.AppendLine($"        await pending_{index}.ConfigureAwait(false);");
+            sb.AppendLine($"        await Task.WhenAll({string.Join(", ", Enumerable.Range(0, streams.Length).Select(static index => $"pending_{index}"))}).ConfigureAwait(false);");
             sb.AppendLine("    }");
         }
         sb.AppendLine("}");
