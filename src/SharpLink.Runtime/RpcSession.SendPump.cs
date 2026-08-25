@@ -287,10 +287,10 @@ internal sealed partial class RpcSession
 
                         // A deadline-bearing Request is a publication boundary. Its private
                         // monotonic timestamp is converted only after its output span/copy has
-                        // completed. With explicit latency-bounded batching it may wait for the
-                        // current batch deadline, but no later frame may be dequeued before this
-                        // request is flushed and its budget snapshot is published.
-                        if (frame.ForceFlush ||
+                        // completed, and no later frame may perform local work before the flush
+                        // that publishes that budget snapshot.
+                        if (hasTimeBudget ||
+                            frame.ForceFlush ||
                             _flushMode == FlushMode.LowLatency ||
                             bytesAccumulated >= _flushSizeThreshold)
                         {
@@ -300,9 +300,6 @@ internal sealed partial class RpcSession
                             writtenCount = 0;
                             deferWrites = false;
                         }
-
-                        if (hasTimeBudget)
-                            break;
 
                         // Bounded progress interleave: the progress check is
                         // independent of flush boundaries, otherwise frames at
@@ -339,14 +336,12 @@ internal sealed partial class RpcSession
                     if (_flushMode == FlushMode.TimedBatch &&
                         _deadlineBatchingEnabled &&
                         await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false) &&
-                        (HasProgressFrames() || HasNormalFrames()) &&
-                        !deferWrites)
+                        (HasProgressFrames() || HasNormalFrames()))
                     {
-                        // More frames followed the deadline win: keep batching only when no
-                        // deadline-bearing Request owns the publication boundary. If one does,
-                        // the wakeup only shortens its wait; flush it before dequeuing new work.
-                        // A stale retained read can win without new data, and skipping the flush
-                        // then would strand the batch until more frames arrive.
+                        // More frames followed the deadline win: keep batching.
+                        // A stale retained read can win without new data, and
+                        // skipping the flush then would strand the batch until
+                        // more frames arrive.
                         continue;
                     }
 
