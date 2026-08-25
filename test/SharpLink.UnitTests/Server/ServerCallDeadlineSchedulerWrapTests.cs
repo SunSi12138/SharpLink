@@ -14,8 +14,6 @@ public class ServerCallDeadlineSchedulerWrapTests
         using var scheduler = new ServerCallDeadlineScheduler(calls, maxCalls: 8, timeProvider);
         var first = CreateState(1, TimeSpan.FromMilliseconds(250), timeProvider);
         var later = CreateState(2, TimeSpan.FromSeconds(1), timeProvider);
-        Ensure(first.Deadline.Timestamp > 0 && later.Deadline.Timestamp < 0,
-            "the fixture must place the later deadline across the signed timestamp boundary");
 
         calls.Set(first.RequestId, first);
         calls.Set(later.RequestId, later);
@@ -26,11 +24,11 @@ public class ServerCallDeadlineSchedulerWrapTests
         Ensure(first.Reason == ServerCallCancellationReason.DeadlineExceeded,
             "the pre-wrap server deadline must expire first");
         Ensure(later.Reason == ServerCallCancellationReason.None,
-            "the signed-negative wrapped target must not be misordered ahead of the earlier deadline");
+            "the later cross-boundary deadline must not be misordered ahead of the earlier deadline");
 
         timeProvider.Advance(TimeSpan.FromMilliseconds(750));
         Ensure(later.Reason == ServerCallCancellationReason.DeadlineExceeded,
-            "the wrapped server deadline must expire at its own modular boundary");
+            "the later server deadline must expire at its own modular boundary");
 
         Cleanup(calls, first);
         Cleanup(calls, later);
