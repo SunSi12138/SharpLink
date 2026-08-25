@@ -23,6 +23,7 @@ public partial class RpcGenerator
         var contractDefault = contractDefaultState.AnalyzeWithFinalCodecBindings();
 
         var contractPolicies = ImmutableArray.CreateBuilder<GeneratedContractCodecPolicy>();
+        var contractManifestCodecCandidates = ImmutableArray.CreateBuilder<GeneratedCodecModel>();
         var policyDiagnostics = ImmutableArray.CreateBuilder<DtoDiagnosticModel>();
         var policyEnums = ImmutableArray.CreateBuilder<GeneratedEnumModel>();
         foreach (var contract in CollectCurrentRpcContracts(compilation.Assembly.GlobalNamespace)
@@ -46,6 +47,8 @@ public partial class RpcGenerator
                 selectorOnlyContractDefault: false,
                 contractRoot: contract);
             var perContractPolicy = perContractPolicyState.AnalyzeWithFinalCodecBindings();
+            contractManifestCodecCandidates.AddRange(
+                perContractPolicyState.BuildContractManifestCodecs(perContractPolicy.Codecs));
             var ownedCodecs = SelectOwnedContractCodecs(
                 perContractDefault.Codecs,
                 perContractPolicy.Codecs,
@@ -80,8 +83,11 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.CodecName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        var contractManifestCodecs = contractPolicies
-            .SelectMany(static policy => policy.Codecs)
+        // Compatibility manifests describe the complete final wire-reachable graph, not only
+        // generated factories. This makes implicit Native/UnsafeBlit -> Adapter/Direct (and the
+        // reverse) comparable in the same identity space instead of depending on one side having
+        // happened to emit a factory entry.
+        var contractManifestCodecs = contractManifestCodecCandidates
             .GroupBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .Select(static group => group.OrderBy(static codec => codec.SchemaId, StringComparer.Ordinal).First())
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
@@ -292,6 +298,86 @@ public partial class RpcGenerator
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
                 _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
+        }
+
+        internal ImmutableArray<GeneratedCodecModel> BuildContractManifestCodecs(
+            ImmutableArray<GeneratedCodecModel> selectedCodecs)
+        {
+            var selectedByType = selectedCodecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            if (_contractRoot is not null)
+            {
+                CollectContractPayloadRoots(_contractRoot, roots);
+            }
+            else
+            {
+                CollectCurrentAssemblyRoots(
+                    _compilation.Assembly.GlobalNamespace,
+                    roots,
+                    includeSerializable: false,
+                    includeContracts: true);
+            }
+
+            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+            foreach (var root in roots.Values)
+                CollectFinalBindingTypes(root, reachable, seen, 0);
+
+            var result = ImmutableArray.CreateBuilder<GeneratedCodecModel>();
+            foreach (var pair in reachable.OrderBy(static item => item.Key, StringComparer.Ordinal))
+            {
+                if (selectedByType.TryGetValue(pair.Key, out var selected))
+                {
+                    result.Add(selected);
+                    continue;
+                }
+
+                if (TryCreateImplicitContractManifestCodec(pair.Value, out var implicitCodec))
+                    result.Add(implicitCodec);
+            }
+            return result.ToImmutable();
+        }
+
+        private bool TryCreateImplicitContractManifestCodec(
+            ITypeSymbol type,
+            out GeneratedCodecModel codec)
+        {
+            if (!IsBuiltin(type))
+            {
+                codec = null!;
+                return false;
+            }
+
+            var typeName = GetTypeName(type);
+            var kind = IsNativeCodecType(type)
+                ? GeneratedCodecKind.Native
+                : GeneratedCodecKind.UnsafeBlit;
+            var schemaIdentity = kind == GeneratedCodecKind.Native
+                ? "implicit-native"
+                : "implicit-unsafe-blit";
+            if (type.TypeKind == TypeKind.Enum &&
+                type is INamedTypeSymbol { EnumUnderlyingType: { } underlying })
+            {
+                schemaIdentity += "|enum:" + GetTypeName(underlying);
+            }
+
+            codec = new GeneratedCodecModel(
+                typeName,
+                CodecName: string.Empty,
+                GetSchemaId(typeName, schemaIdentity),
+                kind,
+                type.IsReferenceType,
+                ImmutableArray<GeneratedMemberModel>.Empty,
+                ImmutableArray<string>.Empty,
+                ElementType: null,
+                KeyType: null,
+                ValueType: null,
+                AdapterType: null,
+                AdapterId: null,
+                "sharplink-native/v1",
+                GetAssemblyDependencies([type]),
+                type.Locations.FirstOrDefault());
+            return true;
         }
 
         private void EnsureNativeNullableEnumModels()
