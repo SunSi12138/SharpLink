@@ -6,7 +6,7 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task NativeRouteShouldClassifyCollectionsAsNativeButLeaveEnumsUnmanaged()
+    public Task NativeRouteShouldClassifyCollectionsAndEnumsAsNative()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public enum NativeMode : byte
@@ -43,8 +43,8 @@ public sealed class RouteAdapter : TestRouteAdapterBase
                 "CreateCodec<global::System.Collections.Generic.List<global::NativeItem>>()",
                 StringComparison.Ordinal),
             "generated collection paths must classify as Native and bind to the route");
-        Ensure(!generated.Contains("CreateCodec<global::NativeMode>()", StringComparison.Ordinal),
-            "a Native route must not capture enum paths that use the unmanaged fallback domain");
+        Ensure(generated.Contains("CreateCodec<global::NativeMode>()", StringComparison.Ordinal),
+            "generated enum paths must classify as Native and bind to the same route");
         return Task.CompletedTask;
     }
 }
