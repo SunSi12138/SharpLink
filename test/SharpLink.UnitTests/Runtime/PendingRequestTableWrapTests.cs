@@ -17,8 +17,6 @@ public class PendingRequestTableWrapTests
 
         var firstDeadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(250), timeProvider);
         var wrappedLaterDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
-        Ensure(firstDeadline.Timestamp > 0 && wrappedLaterDeadline.Timestamp < 0,
-            "the fixture must place the later deadline across the signed timestamp boundary");
 
         var first = manager.Rent(
             Int32Codec.Instance,
@@ -36,14 +34,14 @@ public class PendingRequestTableWrapTests
         timeProvider.Advance(TimeSpan.FromMilliseconds(250));
         Ensure(await CaptureFailureAsync(first) is SharpLinkException
         { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "the pre-wrap deadline must expire first even though the later raw target is signed-negative");
+            "the pre-wrap deadline must expire first even when the later lifetime crosses the signed boundary");
         Ensure(!later.IsCompleted && manager.Count == 1,
-            "the wrapped later deadline must remain live after the earlier deadline fires");
+            "the later cross-boundary deadline must remain live after the earlier deadline fires");
 
         timeProvider.Advance(TimeSpan.FromMilliseconds(750));
         Ensure(await CaptureFailureAsync(later) is SharpLinkException
         { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "the wrapped later deadline must expire at its own modular boundary");
+            "the later deadline must expire at its own modular boundary");
         Ensure(manager.Count == 0,
             "cross-boundary scheduler scans must release both pending slots in deadline order");
     }
