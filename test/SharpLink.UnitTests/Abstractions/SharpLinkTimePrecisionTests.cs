@@ -70,22 +70,26 @@ public class SharpLinkTimePrecisionTests
     }
 
     [Test]
-    public void RpcDeadlineShouldAcceptLifetimeBeyondSignedHalfRing()
+    public void RpcDeadlineShouldRejectLifetimeThatSpansAnAmbiguousCounterInterval()
     {
         const long frequency = long.MaxValue;
         var provider = new MutableTimestampTimeProvider(timestamp: 0, frequency);
-        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(2), provider);
 
-        Ensure(deadline.GetRemaining(provider) == TimeSpan.FromSeconds(2),
-            "a large positive lifetime must not be rejected because it exceeds the signed half-ring");
+        var supported = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
+        Ensure(supported.GetRemaining(provider) == TimeSpan.FromSeconds(1),
+            "a finite lifetime strictly inside the timestamp half-ring must remain supported");
 
-        provider.Timestamp = long.MaxValue;
-        Ensure(deadline.GetRemaining(provider) == TimeSpan.FromSeconds(1),
-            "one second of modular elapsed time must deduct exactly one second");
+        try
+        {
+            _ = RpcDeadline.Create(TimeSpan.FromSeconds(3), provider);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return;
+        }
 
-        provider.Timestamp = -2;
-        Ensure(deadline.IsExpired(provider),
-            "a lifetime spanning almost the full 64-bit counter ring must expire at its modular boundary");
+        throw new Exception(
+            "a three-second lifetime at Int64.MaxValue frequency spans a full timestamp ring and must be rejected instead of becoming live again after wrap");
     }
 
     [Test]
