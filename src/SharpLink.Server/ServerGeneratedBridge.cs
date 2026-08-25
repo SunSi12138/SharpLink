@@ -89,10 +89,14 @@ internal sealed class ServerGeneratedBridge(
         catch (Exception exception) when (
             exception is not OutOfMemoryException and not StackOverflowException)
         {
-            // Once the framework call owner has selected a terminal, exception mapping is no
-            // longer a user-code boundary that may run. In particular, a mapper callback must
-            // not replace DeadlineExceeded/Cancel/connection teardown with a later mapping.
-            var protocolError = GetSelectedTerminal(requestId) ?? server.MapStreamServiceException(
+            // Once the framework call owner has selected a terminal, this pump has lost both
+            // user-code and wire-publication ownership. Do not run the application exception
+            // mapper and do not publish a second StreamComplete(Error); the selected call terminal
+            // is already responsible for the externally visible outcome.
+            if (GetSelectedTerminal(requestId) is not null)
+                return;
+
+            var protocolError = server.MapStreamServiceException(
                 callCancellations,
                 session,
                 requestId,
