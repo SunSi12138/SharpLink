@@ -7,7 +7,7 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task NestedEnumAndNullableEnumShouldUseNativeRouteCodec()
+    public Task NestedEnumAndNullableEnumExplicitBindingsShouldUseOwnerCodec()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public enum NestedMode : short
@@ -35,13 +35,14 @@ public sealed class EnumAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.nested-enum/v1\", \"route-nested-enum-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(EnumAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(NestedMode), typeof(EnumAdapter))]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(NestedMode?), typeof(EnumAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::NestedMode>()", StringComparison.Ordinal),
-            "a DTO-only nested enum selected by a Native route must receive an owner-bound Codec factory");
+            "a DTO-only nested enum with an explicit Contract binding must receive an owner-bound Codec factory");
         Ensure(generated.Contains("CreateCodec<global::NestedMode?>()", StringComparison.Ordinal),
-            "a DTO-only nested nullable enum selected by a Native route must receive an owner-bound Codec factory");
+            "a DTO-only nested nullable enum with an explicit Contract binding must receive an owner-bound Codec factory");
         Ensure(generated.Contains("private readonly IRpcCodec<global::NestedMode> __codec_", StringComparison.Ordinal),
             "the Contract-policy Envelope Codec must bind its enum member through IRpcCodec instead of the fixed native member path");
         Ensure(generated.Contains("private readonly IRpcCodec<global::NestedMode?> __codec_", StringComparison.Ordinal),
@@ -52,15 +53,15 @@ public sealed class EnumAdapter : TestRouteAdapterBase
         var optionalMode = GetEnumPolicyDtoMember(manifest, "Envelope", "OptionalMode");
         Ensure(mode["wireType"]!.GetValue<string>() == "LengthDelimited" &&
                mode["wireFormatId"]!.GetValue<string>() == "route-nested-enum-wire/v1",
-            "the nested enum manifest identity must describe the same routed length-delimited Codec path emitted by the DTO Codec");
+            "the nested enum manifest identity must describe the same explicit length-delimited Codec path emitted by the DTO Codec");
         Ensure(optionalMode["wireType"]!.GetValue<string>() == "LengthDelimited" &&
                optionalMode["wireFormatId"]!.GetValue<string>() == "route-nested-enum-wire/v1",
-            "the nested nullable-enum manifest identity must describe the same routed Codec path emitted by the DTO Codec");
+            "the nested nullable-enum manifest identity must describe the same explicit Codec path emitted by the DTO Codec");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task DirectAndNestedEnumRouteShouldKeepEmitterAndManifestAligned()
+    public Task DirectAndNestedExplicitEnumBindingShouldKeepEmitterAndManifestAligned()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public enum MixedMode : int
@@ -88,13 +89,13 @@ public sealed class MixedEnumAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(MixedEnumAdapter), \"route.mixed-enum/v1\", \"route-mixed-enum-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(MixedEnumAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(MixedMode), typeof(MixedEnumAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::MixedMode>()", StringComparison.Ordinal),
-            "the mixed direct+nested enum must have one routed Codec selection");
+            "the mixed direct+nested enum must have one explicit Codec selection");
         Ensure(generated.Contains("private readonly IRpcCodec<global::MixedMode> __codec_", StringComparison.Ordinal),
-            "the same routed enum selection must be used inside the native DTO shell");
+            "the same explicit enum selection must be used inside the native DTO shell");
 
         var manifest = RunContractGenerator(source).Json;
         var member = GetEnumPolicyDtoMember(manifest, "MixedEnvelope", "Mode");
@@ -105,7 +106,7 @@ public sealed class MixedEnumAdapter : TestRouteAdapterBase
         Ensure(enumCodecs.Any(codec =>
                 codec["kind"]!.GetValue<string>() == "Adapter" &&
                 codec["wireFormatId"]!.GetValue<string>() == "route-mixed-enum-wire/v1"),
-            "the final manifest Codec identity for the mixed enum must remain the routed Adapter");
+            "the final manifest Codec identity for the mixed enum must remain the explicit Adapter");
         return Task.CompletedTask;
     }
 
