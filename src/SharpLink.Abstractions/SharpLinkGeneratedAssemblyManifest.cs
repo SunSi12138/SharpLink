@@ -63,6 +63,13 @@ public sealed record SharpLinkGeneratedContractDescriptor(
     }
 }
 
+/// <summary>Describes the final compile-time Codec graph owned by one RPC Contract.</summary>
+public sealed record SharpLinkGeneratedContractCodecSet(
+    Type ContractType,
+    bool HasCompileTimePolicy,
+    IReadOnlyList<IRpcGeneratedCodecFactory> Codecs,
+    IReadOnlyList<string> Dependencies);
+
 /// <summary>Describes one service-owned generated activator.</summary>
 public sealed record SharpLinkGeneratedServiceDescriptor(
     Type ContractType,
@@ -99,16 +106,20 @@ public interface ISharpLinkGeneratedAssemblyManifest
     /// <summary>Gets service-owned activator descriptors.</summary>
     IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; }
 
-    /// <summary>Gets generated Codec factories owned by this assembly.</summary>
+    /// <summary>Gets generated Codec factories owned by this assembly's global/default graph.</summary>
     IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
 
     /// <summary>
-    /// Gets Codec factories used only by RPC Contracts owned by this manifest. These bindings
-    /// are resolved through the Contract owner provider and are never published globally.
+    /// Legacy assembly-level Contract Codec table. API 5 generated manifests use
+    /// <see cref="ContractCodecSets"/> so same-assembly Contracts can own distinct bindings.
     /// </summary>
     IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => Array.Empty<IRpcGeneratedCodecFactory>();
 
-    /// <summary>Gets the identities of generated assemblies that this manifest depends on.</summary>
+    /// <summary>Gets final Codec graphs keyed by the Contract that owns each compile-time policy.</summary>
+    IReadOnlyList<SharpLinkGeneratedContractCodecSet> ContractCodecSets =>
+        Array.Empty<SharpLinkGeneratedContractCodecSet>();
+
+    /// <summary>Gets generated-module dependencies required outside Contract-only Codec graphs.</summary>
     IReadOnlyList<string> Dependencies { get; }
 }
 
@@ -116,7 +127,7 @@ public interface ISharpLinkGeneratedAssemblyManifest
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>The current generated manifest API version.</summary>
-    public const int Api = 4;
+    public const int Api = 5;
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;
