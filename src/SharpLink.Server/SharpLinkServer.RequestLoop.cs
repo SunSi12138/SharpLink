@@ -79,8 +79,13 @@ internal sealed partial class SharpLinkServer
                                 }
                             }
                             if (header.Type == ProtocolV2FrameType.Request &&
-                                _admissionController is not null)
+                                (_admissionController is not null ||
+                                 (header.Flags & ProtocolV2FrameFlags.Compressed) != 0))
                             {
+                                // Request compression preserves the routing/metadata/TimeBudget
+                                // prefix. Never perform potentially blocking decompression here:
+                                // dispatch must first resolve that relative budget into one local
+                                // RpcDeadline and then carry the same boundary through decode.
                                 session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
                             }
