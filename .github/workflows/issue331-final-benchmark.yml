@@ -70,4 +70,4 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-# Refresh after keeping exhausted rejection directly in the limiter override.
+# Refresh after matching the BCL exhausted-probe field-read shape.
