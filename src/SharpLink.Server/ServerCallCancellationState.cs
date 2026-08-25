@@ -214,18 +214,46 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
 
-        return TryClaimTerminal(reason, out _);
+        return TryClaimTerminal(reason, signalCancellation: true, out _, out _);
     }
 
     public bool TryAcceptStreamData()
-        => TryClaimStreamProgress();
+        => TryClaimStreamProgress(signalCancellation: true, out _);
+
+    /// <summary>
+    /// Claims the same stream-progress terminal boundary without invoking application cancellation
+    /// callbacks on the caller thread. The caller must arrange <see cref="NotifyInvocationCancellation"/>
+    /// when <paramref name="cancellationNotificationRequired"/> is true while retaining a lease.
+    /// </summary>
+    internal bool TryAcceptStreamDataDeferredCancellation(out bool cancellationNotificationRequired)
+        => TryClaimStreamProgress(signalCancellation: false, out cancellationNotificationRequired);
 
     public bool TryClaimResponse()
-        => TryClaimTerminal(ServerCallCancellationReason.Completed, out var claimedReason) &&
+        => TryClaimTerminal(
+               ServerCallCancellationReason.Completed,
+               signalCancellation: true,
+               out var claimedReason,
+               out _) &&
            claimedReason == ServerCallCancellationReason.Completed;
 
-    private bool TryClaimStreamProgress()
+    internal void NotifyInvocationCancellation()
     {
+        try
+        {
+            _invocationCancellation?.Cancel();
+        }
+        catch
+        {
+            // User cancellation callbacks are best-effort notification after terminal ownership
+            // has already been decided. They cannot replace the selected RPC result.
+        }
+    }
+
+    private bool TryClaimStreamProgress(
+        bool signalCancellation,
+        out bool cancellationNotificationRequired)
+    {
+        cancellationNotificationRequired = false;
         if (Reason != ServerCallCancellationReason.None)
             return false;
 
@@ -233,7 +261,11 @@ internal sealed class ServerCallCancellationState : IDisposable
             "Server call state has no time provider.");
         if (Deadline.IsExpired(timeProvider))
         {
-            _ = TryClaimTerminal(ServerCallCancellationReason.DeadlineExceeded, out _);
+            _ = TryClaimTerminal(
+                ServerCallCancellationReason.DeadlineExceeded,
+                signalCancellation,
+                out _,
+                out cancellationNotificationRequired);
             return false;
         }
 
@@ -242,11 +274,14 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     private bool TryClaimTerminal(
         ServerCallCancellationReason proposedReason,
-        out ServerCallCancellationReason claimedReason)
+        bool signalCancellation,
+        out ServerCallCancellationReason claimedReason,
+        out bool cancellationNotificationRequired)
     {
         if (proposedReason == ServerCallCancellationReason.None)
             throw new ArgumentOutOfRangeException(nameof(proposedReason));
 
+        cancellationNotificationRequired = false;
         var reason = proposedReason;
         var timeProvider = _timeProvider ?? throw new InvalidOperationException(
             "Server call state has no time provider.");
@@ -264,14 +299,11 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason == ServerCallCancellationReason.Completed)
             return true;
 
-        try
+        cancellationNotificationRequired = _invocationCancellation is not null;
+        if (signalCancellation)
         {
-            _invocationCancellation?.Cancel();
-        }
-        catch
-        {
-            // User cancellation callbacks cannot be allowed to escape into a protocol loop,
-            // timer callback or server shutdown path. Cancellation remains observable.
+            NotifyInvocationCancellation();
+            cancellationNotificationRequired = false;
         }
         return true;
     }
