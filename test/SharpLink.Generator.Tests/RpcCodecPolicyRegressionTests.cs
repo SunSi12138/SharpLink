@@ -78,7 +78,7 @@ public sealed class SelectorAdapter : TestRouteAdapterBase
     }
 
     [Test]
-    public Task EnumAndNullableEnumShouldBeEligibleForUnmanagedRoute()
+    public Task EnumAndNullableEnumShouldBeEligibleForNativeRoute()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public enum RouteEnum : short
@@ -96,18 +96,18 @@ public interface IEnumRouteContract : SharpLink.Sdk.IService
 
 public sealed class EnumAdapter : TestRouteAdapterBase
 {
-    public override string AdapterId => "route.enum-unmanaged/v1";
+    public override string AdapterId => "route.enum-native/v1";
     public override string WireFormatId => "route-enum-safe/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.enum-unmanaged/v1\", \"route-enum-safe/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(EnumAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.enum-native/v1\", \"route-enum-safe/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(EnumAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::RouteEnum>()", StringComparison.Ordinal),
-            "top-level enums must be classified as Unmanaged so an Unmanaged route can intercept the UnsafeBlit fallback path");
+            "top-level enums must be classified as Native so a Native route can replace the generated enum Codec");
         Ensure(generated.Contains("CreateCodec<global::RouteEnum?>()", StringComparison.Ordinal),
-            "nullable enums must be classified as Unmanaged so an Unmanaged route can intercept the UnsafeBlit fallback path");
+            "nullable enums must be classified as Native so a Native route can replace the generated nullable wrapper");
         return Task.CompletedTask;
     }
 
