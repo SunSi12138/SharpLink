@@ -60,6 +60,7 @@ public class SharpLinkClientInterceptorDeadlineTests
         await client.ConnectAsync();
 
         var advanced = 0;
+        var probeInvocation = new AsyncLocal<bool>();
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => ReferenceEquals(source, SharpLinkTelemetry.ClientActivitySource),
@@ -69,16 +70,23 @@ public class SharpLinkClientInterceptorDeadlineTests
                 ActivitySamplingResult.AllDataAndRecorded,
             ActivityStarted = _ =>
             {
-                if (Interlocked.Exchange(ref advanced, 1) == 0)
+                // ActivityListener is process-wide and Unit tests run concurrently. Restrict the
+                // clock mutation to this invocation's async context so an unrelated client call
+                // cannot consume the probe before this call freezes its deadline.
+                if (probeInvocation.Value && Interlocked.Exchange(ref advanced, 1) == 0)
                     clock.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(3));
             }
         };
         ActivitySource.AddActivityListener(listener);
 
+        probeInvocation.Value = true;
         var invocation = InvokeUnary(client).AsTask();
+        probeInvocation.Value = false;
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         var budgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
             sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
+        Ensure(Volatile.Read(ref advanced) == 1,
+            "the targeted logical call must start client telemetry");
         Ensure(budgetTicks == TimeSpan.FromSeconds(2).Ticks,
             "telemetry callbacks must consume the deadline frozen at logical invocation entry");
 
