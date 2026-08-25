@@ -160,7 +160,11 @@ internal enum GeneratedCodecKind
     Memory,
     ReadOnlyMemory,
     ImmutableArray,
-    Nullable
+    Nullable,
+    // Compatibility-only identities. These are never passed to the runtime Codec emitter;
+    // they make implicit final selections explicit in the contract manifest graph.
+    Native,
+    UnsafeBlit
 }
 
 internal enum GeneratedMemberKind
