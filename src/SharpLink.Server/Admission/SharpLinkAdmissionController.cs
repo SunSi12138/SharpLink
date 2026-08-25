@@ -207,14 +207,16 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         options.Validate();
         ResolveRuleOptions(options, manifests, out var contractOptions, out var methodOptions);
 
-        // Reject every out-of-slice transition before candidate bindings can affect live state.
-        ValidateUpdateTransition(source, options, contractOptions, methodOptions);
+        // Partition migration remains out of this slice. Rate transitions below are non-partition
+        // Global / Contract / Method state only.
+        ValidateUpdateTransition(source, options);
 
         AdmissionRuleRuntime? global = null;
         var contractRules = new Dictionary<long, AdmissionRuleRuntime>(contractOptions.Count);
         var methodRules = new Dictionary<(long, long), AdmissionRuleRuntime>(methodOptions.Count);
         var bindings = new List<AdmissionRuleStateBinding>(1 + contractOptions.Count + methodOptions.Count);
         var resizes = new List<AdmissionConcurrencyResize>();
+        var rateTransitions = new List<AdmissionRateTransition>();
         AdmissionPartitionStateBinding? partitionBinding = null;
         try
         {
@@ -225,9 +227,14 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                     options.Global,
                     source._global,
                     "global",
-                    resizes);
+                    resizes,
+                    rateTransitions);
                 bindings.Add(binding);
                 global = binding.Runtime;
+            }
+            else if (source._global?.RateState is { } removedGlobalRate)
+            {
+                rateTransitions.Add(new AdmissionRateTransition(removedGlobalRate, null));
             }
 
             foreach (var pair in contractOptions)
@@ -238,9 +245,18 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                     pair.Value,
                     sourceRuntime,
                     "contract",
-                    resizes);
+                    resizes,
+                    rateTransitions);
                 bindings.Add(binding);
                 contractRules.Add(pair.Key, binding.Runtime);
+            }
+            foreach (var sourcePair in source._contracts)
+            {
+                if (!contractOptions.ContainsKey(sourcePair.Key) &&
+                    sourcePair.Value.RateState is { } removedRate)
+                {
+                    rateTransitions.Add(new AdmissionRateTransition(removedRate, null));
+                }
             }
 
             foreach (var pair in methodOptions)
@@ -251,9 +267,18 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                     pair.Value,
                     sourceRuntime,
                     "method",
-                    resizes);
+                    resizes,
+                    rateTransitions);
                 bindings.Add(binding);
                 methodRules.Add(pair.Key, binding.Runtime);
+            }
+            foreach (var sourcePair in source._methods)
+            {
+                if (!methodOptions.ContainsKey(sourcePair.Key) &&
+                    sourcePair.Value.RateState is { } removedRate)
+                {
+                    rateTransitions.Add(new AdmissionRateTransition(removedRate, null));
+                }
             }
 
             AdmissionPartitionPool? partitions = null;
@@ -267,7 +292,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 partitions = partitionBinding.Value.Pool;
             }
 
-            updatePlan = new AdmissionUpdatePlan(resizes);
+            updatePlan = new AdmissionUpdatePlan(resizes, rateTransitions);
             return new SharpLinkAdmissionController(
                 kernel,
                 options.MaxQueuedCalls,
@@ -315,8 +340,6 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 
     internal AdmissionPartitionStateBinding? PartitionStateBinding => _partitionStateBinding;
 
-    // Preserve the existing tests' notion of shared state while the production binding is now a
-    // per-program immutable wrapper around independently owned concurrency/rate components.
     internal object? GlobalStateForTests => _global?.SharedStateForTests;
 
     internal object? ContractStateForTests(long contractId)
@@ -332,8 +355,14 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
     internal ResizableConcurrencyState? ContractConcurrencyStateForTests(long contractId)
         => _contracts.GetValueOrDefault(contractId)?.ConcurrencyState;
 
+    internal AdmissionRateState? ContractRateStateForTests(long contractId)
+        => _contracts.GetValueOrDefault(contractId)?.RateState;
+
     internal ResizableConcurrencyState? MethodConcurrencyStateForTests(long contractId, long methodId)
         => _methods.GetValueOrDefault((contractId, methodId))?.ConcurrencyState;
+
+    internal AdmissionRateState? MethodRateStateForTests(long contractId, long methodId)
+        => _methods.GetValueOrDefault((contractId, methodId))?.RateState;
 
     internal AdmissionPartitionPool? PartitionStateForTests => _partitions;
 
@@ -409,8 +438,6 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             return ValueTask.FromResult(AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope));
         }
 
-        // This reservation is the sole queue-admission authority. Only after it succeeds may this
-        // Request enter any concurrency/rate/partition underlying async waiter.
         if (!_kernel.TryReserveQueue(retainedBytes, _maxQueuedCalls, _maxQueuedBytes, out var queueReason))
         {
             request.Dispose();
@@ -607,42 +634,8 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 
     private static void ValidateUpdateTransition(
         SharpLinkAdmissionController source,
-        SharpLinkAdmissionControlOptions options,
-        IReadOnlyDictionary<long, SharpLinkAdmissionRuleOptions> contractOptions,
-        IReadOnlyDictionary<(long, long), SharpLinkAdmissionRuleOptions> methodOptions)
+        SharpLinkAdmissionControlOptions options)
     {
-        ValidateRateTransition("global", source._global, options.Global);
-
-        foreach (var sourcePair in source._contracts)
-        {
-            contractOptions.TryGetValue(sourcePair.Key, out var candidate);
-            ValidateRateTransition($"contract {sourcePair.Key}", sourcePair.Value, candidate);
-        }
-        foreach (var candidatePair in contractOptions)
-        {
-            if (!source._contracts.ContainsKey(candidatePair.Key))
-                ValidateRateTransition($"contract {candidatePair.Key}", null, candidatePair.Value);
-        }
-
-        foreach (var sourcePair in source._methods)
-        {
-            methodOptions.TryGetValue(sourcePair.Key, out var candidate);
-            ValidateRateTransition(
-                $"method {sourcePair.Key.ContractId}/{sourcePair.Key.MethodId}",
-                sourcePair.Value,
-                candidate);
-        }
-        foreach (var candidatePair in methodOptions)
-        {
-            if (!source._methods.ContainsKey(candidatePair.Key))
-            {
-                ValidateRateTransition(
-                    $"method {candidatePair.Key.Item1}/{candidatePair.Key.Item2}",
-                    null,
-                    candidatePair.Value);
-            }
-        }
-
         AdmissionPartitionStateKey? candidatePartition = options.Partition is { } partition
             ? AdmissionPartitionStateKey.Create(options.PartitionSelector!, partition)
             : null;
@@ -651,20 +644,6 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         {
             throw new InvalidOperationException(
                 "Partition admission configuration updates are not supported by this Dynamic Admission slice.");
-        }
-    }
-
-    private static void ValidateRateTransition(
-        string scope,
-        AdmissionRuleRuntime? source,
-        SharpLinkAdmissionRuleOptions? candidate)
-    {
-        var sourceDefinition = source?.RateDefinition ?? default;
-        var candidateDefinition = AdmissionRateStateDefinition.Create(candidate?.RateLimit);
-        if (sourceDefinition != candidateDefinition)
-        {
-            throw new InvalidOperationException(
-                $"Rate admission configuration updates are not supported for {scope} by this Dynamic Admission slice.");
         }
     }
 }
@@ -769,9 +748,6 @@ internal sealed class AdmissionRequest(
     {
         var retainedLeases = _retainedLeases;
 
-        // A one-slot request cannot combine concurrency permits from different scopes, so keep
-        // the original hot path completely free of target-epoch bookkeeping. Multi-scope requests
-        // take the transaction-wide epoch path below.
         if (slotCount == 1 && retainedLeases is null && suppliedLease is null)
         {
             var singleLease = slots[0].Limiter.AttemptAcquire(1);
@@ -819,9 +795,6 @@ internal sealed class AdmissionRequest(
                 ? owner.ReadStableConcurrencyTargetVersion()
                 : 0;
 
-            // A queued concurrency permit is granted under a particular complete target epoch. If
-            // its continuation did not resume until after a later update, it cannot be combined with
-            // slots from the new epoch; release it and reacquire/requeue under the current policy.
             if (_tracksConcurrencyTargetVersion &&
                 currentSuppliedLease is not null &&
                 currentSuppliedLimiter is ResizableConcurrencyState suppliedConcurrency &&
@@ -879,9 +852,6 @@ internal sealed class AdmissionRequest(
                 return false;
             }
 
-            // This check spans the complete Global / Contract / Method acquisition, not one limiter
-            // at a time. Any cross-epoch combination is still tentative here, so dispose every
-            // unretained lease and retry. Unchanged rate leases intentionally remain retained.
             if (_tracksConcurrencyTargetVersion &&
                 !owner.IsConcurrencyTargetVersionCurrent(targetVersion))
             {
@@ -1012,7 +982,8 @@ internal sealed class AdmissionRuleRuntime : IDisposable
 
     internal static AdmissionRuleRuntime CreateOwned(
         SharpLinkAdmissionRuleOptions options,
-        string scope)
+        string scope,
+        TimeProvider timeProvider)
     {
         var concurrency = options.Concurrency is { } concurrencyOptions
             ? new ResizableConcurrencyState(concurrencyOptions.PermitLimit)
@@ -1020,7 +991,9 @@ internal sealed class AdmissionRuleRuntime : IDisposable
         AdmissionRateState? rate = null;
         try
         {
-            rate = options.RateLimit is not null ? AdmissionRateState.Create(options) : null;
+            rate = options.RateLimit is not null
+                ? AdmissionRateState.Create(options, timeProvider)
+                : null;
             return new AdmissionRuleRuntime(concurrency, rate, scope, ownsStates: true);
         }
         catch
@@ -1087,7 +1060,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 if (_entries.Count >= _options.MaxPartitions)
                     return null;
                 entry = new AdmissionPartitionEntry(
-                    AdmissionRuleRuntime.CreateOwned(_options, "partition"));
+                    AdmissionRuleRuntime.CreateOwned(_options, "partition", _timeProvider));
                 _entries.Add(key, entry);
                 SharpLinkTelemetry.AddAdmissionActivePartitions(1);
             }
