@@ -8,7 +8,7 @@
 2. [契约与序列化](contracts-and-codecs.md)：五类 RPC、DTO 规则、原生 Codec、SharpPack 与 Adapter。
 3. [调用、流式与取消](calls-and-streaming.md)：deadline、metadata、背压、OneWay 和取消契约。
 4. [传输与部署](transports.md)：TCP/TLS、UDS、NamedPipe、AnonymousPipe、SharedMemory 与 NativeAOT。
-5. [安全](security.md)：认证、授权、TLS 和错误信息边界。
+5. [安全](security.md)：认证、授权、TLS、原始结构体序列化边界和错误信息边界。
 6. [服务发现与韧性](resilience.md)：连接池、静态/动态端点、负载均衡、Retry、Circuit Breaker。
 7. [服务端接入控制](admission-control.md)：并发、速率、排队和分区限制。
 8. [Hosting 与服务生命周期](hosting-and-services.md)：Generic Host、DI、健康检查、排空与动态模块。
@@ -16,9 +16,9 @@
 10. [多集群与动态模块](dynamic-modules-and-multicluster.md)：编译期路由、动态注册/替换/注销和 ALC 所有权。
 11. [限制与调优](limits-and-tuning.md)：默认值、硬上限和性能 Profile。
 12. [故障排查](troubleshooting.md)：常见配置、协议、资源和生命周期错误。
-13. [迁移到 2.0](migration.md)：Generated ABI（API 5）、包依赖变化和完整重建要求。
+13. [迁移到 2.0](migration.md)：Generated ABI（API 4）、包依赖变化和完整重建要求。
 
-深入资料：[架构](architecture.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
+深入资料：[架构](architecture.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
 
 ## 特性与可运行证据
 
