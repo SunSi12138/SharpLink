@@ -136,13 +136,27 @@ internal static class SharpLinkAssemblyManifestLoader
         if (string.IsNullOrWhiteSpace(manifest.GeneratorVersion) ||
             string.IsNullOrWhiteSpace(manifest.CompileTimeDescriptor) ||
             manifest.Contracts is null || manifest.Services is null ||
-            manifest.Codecs is null || manifest.ContractCodecs is null || manifest.Dependencies is null)
+            manifest.Codecs is null || manifest.ContractCodecs is null ||
+            manifest.ContractCodecSets is null || manifest.Dependencies is null)
         {
             return Error(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 "The generated manifest contains a null or empty required metadata field.",
                 assembly,
                 "Manifest");
+        }
+
+        try
+        {
+            SharpLinkGeneratedManifestStructureValidator.ValidateContractCodecSets(manifest);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            return Error(
+                SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                exception.Message,
+                assembly,
+                "ContractCodecSet");
         }
 
         var contractIds = new HashSet<long>();
