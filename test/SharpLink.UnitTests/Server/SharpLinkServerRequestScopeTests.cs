@@ -379,6 +379,7 @@ public class SharpLinkServerRequestScopeTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
+                null,
                 false,
                 null
             ])!;
@@ -392,6 +393,7 @@ public class SharpLinkServerRequestScopeTests
                 CreateRequestPayload(),
                 Connection.CallCancellations,
                 CancellationToken.None,
+                null,
                 null,
                 false,
                 0,

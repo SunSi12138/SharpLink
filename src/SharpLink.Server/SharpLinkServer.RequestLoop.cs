@@ -366,6 +366,7 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
+            var admissionProgram = CaptureAdmissionProgram(requestId);
             ValueTask dispatchTask;
             try
             {
@@ -376,14 +377,16 @@ internal sealed partial class SharpLinkServer
                         flags,
                         payload,
                         requestCancellationMap,
-                        serverLoopToken)
+                        serverLoopToken,
+                        admissionProgram)
                     : DispatchRpcAsync(
                         connection,
                         requestId,
                         flags,
                         payload,
                         requestCancellationMap,
-                        serverLoopToken);
+                        serverLoopToken,
+                        admissionProgram);
             }
             catch (SharpLinkException exception) when (
                 exception.Code == SharpLinkErrorCode.ProtocolViolation)

@@ -57,7 +57,7 @@ internal sealed class ServerRuntimeComposition
         Authenticator = authenticator;
         AuthenticationRequired = authenticationRequired;
         RpcSessionFlushOptions = rpcSessionFlushOptions;
-        AdmissionController = admissionController;
+        AdmissionProgram = admissionController is null ? null : new AdmissionProgram(admissionController);
         ConnectionAdmission = connectionAdmission ?? throw new ArgumentNullException(nameof(connectionAdmission));
     }
 
@@ -91,7 +91,9 @@ internal sealed class ServerRuntimeComposition
 
     internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> StaticManifests => _staticManifests;
 
-    internal SharpLinkAdmissionController? AdmissionController { get; }
+    internal AdmissionProgram? AdmissionProgram { get; }
+
+    internal SharpLinkAdmissionController? AdmissionController => AdmissionProgram?.Controller;
 
     internal ServerConnectionAdmission ConnectionAdmission { get; }
 
