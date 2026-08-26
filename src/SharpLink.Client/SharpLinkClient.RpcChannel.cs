@@ -12,13 +12,13 @@ internal sealed partial class SharpLinkClient
         long requestId,
         ProtocolV2FrameFlags flags,
         Action<IBufferWriter<byte>>? payloadWriter,
-        DateTimeOffset? deadline = null,
+        RpcDeadline deadline = default,
         SharpLinkMetadata? metadata = null)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
-        if (deadline is not null)
-            flags |= ProtocolV2FrameFlags.HasDeadline;
+        if (deadline.HasValue)
+            flags |= ProtocolV2FrameFlags.HasTimeBudget;
         if (hasMetadata)
         {
             if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
@@ -48,12 +48,12 @@ internal sealed partial class SharpLinkClient
                 BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
                 writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
-                if (deadline is { } absoluteDeadline)
+                if (deadline.HasValue)
                 {
-                    var deadlineSpan = writer.GetSpan(sizeof(long));
-                    BinaryPrimitives.WriteInt64LittleEndian(
-                        deadlineSpan,
-                        absoluteDeadline.ToUnixTimeMilliseconds());
+                    // Placeholder only. RpcSession stamps the remaining TimeBudget immediately
+                    // before the batch is flushed to the transport.
+                    var timeBudgetSpan = writer.GetSpan(sizeof(long));
+                    BinaryPrimitives.WriteInt64LittleEndian(timeBudgetSpan, 0L);
                     writer.Advance(sizeof(long));
                 }
                 if (hasMetadata)
@@ -66,7 +66,7 @@ internal sealed partial class SharpLinkClient
 
             // SendPacket takes ownership even when enqueueing detects a terminal session.
             ownsWriter = false;
-            session.SendPacket(writer);
+            session.SendPacket(writer, deadline);
         }
         finally
         {

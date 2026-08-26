@@ -9,7 +9,8 @@ public class GeneratedManifestCompatibilityTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
-    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
     [Arguments(0)]
     [Arguments(-1)]
     [Arguments(int.MinValue)]
@@ -105,6 +106,24 @@ public class GeneratedManifestCompatibilityTests
             "diagnostic should identify the expected owner assembly");
         Ensure(manifest.ShapeReads == 0,
             "version rejection must happen before descriptor or Codec shape is read");
+    }
+
+    [Test]
+    public void CurrentApiWithoutExactLocatorShouldRejectBeforeReadingManifestShape()
+    {
+        var manifest = new ProbeManifest(
+            SharpLinkGeneratedManifestVersions.Api,
+            SharpLinkGeneratedManifestVersions.Protocol,
+            typeof(string).Assembly);
+
+        var error = SharpLinkGeneratedManifestCompatibility.Validate(manifest);
+
+        Ensure(error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+            "current API without an exact locator should be incompatible");
+        Ensure(error!.Message.Contains("<missing: no current ABI locator>", StringComparison.Ordinal),
+            "missing-locator diagnostic should identify the exact ABI discriminator");
+        Ensure(manifest.ShapeReads == 0,
+            "missing exact locator must be rejected before manifest shape validation");
     }
 
     [Test]

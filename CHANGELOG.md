@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Server connection admission now defaults to an independent 64-concurrent pre-auth handshake bound (TLS → Protocol v2 → application authentication), clamped by a lower `MaxConcurrentConnections`. Explicit `MaxConcurrentHandshakes = 0` remains the opt-out that restores the previous follow-the-connection-bound behavior; the live-connection default remains 1,024 and Protocol v2/wire behavior is unchanged.
+
 - The send pump now wakes through one reusable zero-allocation signal (a claim-token `IValueTaskSource`) instead of racing two channel reads with `Task.WhenAny`. The dual-read wake-up created two `AsTask` wrappers, a `WhenAny` promise, and continuation closures on every pump wake; the signal-based wake allocates nothing per wake and keeps the dual-queue protocol-progress isolation intact.
 
 
@@ -16,17 +18,17 @@
 - Client readiness snapshots now expose lifecycle state, active/ready endpoint counts, ready connection count, and the current convergence target. Built-in fixed, static, and resolver topologies support caller-selected endpoint thresholds without raising configured convergence targets or changing `ConnectAsync` connectivity semantics.
 - Runtime sessions now receive one immutable creation snapshot containing their Client/Server role, real Runtime Context, and flush policy. Context-derived protocol limits and the sole StreamManager instance are established before the constructor returns.
 - `PendingRequestTable` now requires an explicit capacity, codec provider, pending-call owner, and time provider; Client connections supply the dependency set from their Runtime Context without transferring ownership.
-- Added the Runtime Architecture Phase 00 deterministic lifecycle/fake-time fixtures and a bounded six-path BenchmarkDotNet baseline. This is test/tooling evidence only and does not change production behavior, Protocol v2, contract/schema identity, or Generated API 5.
-- Generated Server API 5 introduces `IRpcGeneratedServerBridge`. Generated stubs now use this narrow operation-lifecycle bridge for inbound and outbound streams, while Runtime exclusively owns dispatchers, flow control, frame construction, send-pump behavior, and terminal arbitration.
-- Generated assembly locators now carry the manifest type, Generated API, Protocol version, and Generator version without materializing the manifest. Runtime uses that metadata to reject incompatible dynamic modules before publishing contracts, services, proxies, codecs, adapter scopes, or module leases.
-- Release gates now cover mixed Generator/package versions, all four SharpLink 1.1.1/2.0 Protocol v2 process pairs, five NativeAOT call shapes, generated-assembly metadata dependency scans, and collectible API 5 dynamic modules.
-- Frozen the vNext Generated ABI as API 5 after the Phase 16 public-surface cut and the #167
-  contract-owned codec architecture. API 3 (legacy locator) and API 4 (previous self-describing
-  locator) artifacts are rejected at load/registration/startup with an expected/actual version
-  mismatch and a regenerate-and-rebuild action; frozen API 3 and API 4 binary fixtures plus
-  loader/Client/Server/multi-cluster version-matrix tests prove early rejection without
-  snapshot publication or load-context retention. Protocol v2 wire format, contract/schema
-  identity, and call-path performance are unchanged.
+- Added the Runtime Architecture Phase 00 deterministic lifecycle/fake-time fixtures and a bounded six-path BenchmarkDotNet baseline. This is test/tooling evidence only and does not change production behavior, Protocol v2, contract/schema identity, or Generated API 4.
+- Generated Server API 4 introduces `IRpcGeneratedServerBridge`. Generated stubs now use this narrow operation-lifecycle bridge for inbound and outbound streams, while Runtime exclusively owns dispatchers, flow control, frame construction, send-pump behavior, and terminal arbitration.
+- Generated assembly locators now carry the manifest type, Generated API, Protocol version, Generator version, and an exact Generated ABI identity without materializing the manifest. Runtime uses that metadata to reject incompatible dynamic modules—including stale development artifacts that reused an API integer for a different binary shape—before publishing contracts, services, proxies, codecs, adapter scopes, or module leases.
+- Release gates cover mixed Generator/package rejection, the SharpLink 2.0 Protocol v2 process pair, minor-4 TimeBudget handshake-floor tests, five NativeAOT call shapes, generated-assembly metadata dependency scans, and collectible API 4 dynamic modules. Pre-2.0 process interoperability is intentionally outside the 2.0 release gate.
+- SharpLink 2.0 defines Generated API 4 as the single release ABI bump from the published
+  1.1.1/API 3 baseline. Intermediate development-only ABI numbers are not compatibility boundaries
+  and are not accumulated into the release version. API 3 artifacts are rejected at
+  load/registration/startup with an expected/actual version mismatch and a regenerate-and-rebuild
+  action before manifest materialization or runtime publication. Contract/schema identity remains
+  unchanged, while Protocol v2 minor 4 intentionally changes request lifetime bytes from an
+  absolute UTC deadline to a remaining TimeBudget duration.
 
 ### Changed
 
@@ -37,7 +39,7 @@
 - Business exception mapping now belongs to the Server invocation layer. A per-connection generated bridge maps Unary and streaming failures before Runtime encodes a structured protocol error; `RpcSession` no longer stores mapper policy or service/contract/method mapping state.
 - `RpcSession` now owns exactly one non-null `ITransportConnection`. Input, output, endpoints, physical cleanup, and terminal connectivity all flow through that transport; Fault and explicit disposal converge on one supervised dispose task.
 - Client, static/dynamic cluster, and Server connection paths now construct complete `RpcSession` instances before handshake. Runtime Context, role-specific telemetry, and StreamManager state are read-only for the Session lifetime; stream dispatcher codec-provider overloads also require an explicit provider.
-- SharpLink 2.0 generates only API 5 manifests and Runtime accepts only Generated API 5 with Protocol 2. Generated stubs receive codecs when they are constructed, write responses through `IBufferWriter<byte>`, and no longer reference `SharpLink.Runtime`, `IRpcSession`, pooled stream dispatchers, or Runtime helper methods.
+- SharpLink 2.0 generates only API 4 manifests and Runtime accepts only Generated API 4 with Protocol 2. Generated stubs receive codecs when they are constructed, write responses through `IBufferWriter<byte>`, and no longer reference `SharpLink.Runtime`, `IRpcSession`, pooled stream dispatchers, or Runtime helper methods.
 - `SharpLink.Sdk` now depends only on `SharpLink.Abstractions` and carries the Analyzer/Source Generator. A contract-only project no longer receives `SharpLink.Runtime` transitively; Client, Server, and Hosting applications continue to obtain Runtime from their corresponding application packages.
 - `SharpLink.Hosting` now declares its direct `SharpLink.Runtime` dependency instead of relying on Client or Server to provide the assembly transitively for `IAnonymousPipeAllocatorAccessor`.
 - `SharpLink.Abstractions` no longer carries the unused `Microsoft.Extensions.DependencyInjection.Abstractions` package. Consumers that use Microsoft DI APIs must reference that package explicitly; the public BCL `System.IServiceProvider` activator signature is unchanged.
@@ -45,11 +47,13 @@
 
 ### Breaking
 
+- `SharpLinkCallOptions` is removed from generated/service business signatures and from the generated `IRpcChannel` ABI. Per-call timeout now comes from method `[Timeout]` or the Client timeout policy, caller cancellation remains the method `CancellationToken`, and caller-selected metadata uses the narrow `GetWithMetadata<TContract>(SharpLinkMetadata)` proxy capability. No generic compatibility options bag is retained; regenerate all contracts/proxies/stubs and see [`doc/migration.md`](doc/migration.md).
+- Protocol v2 minor 4 is the SharpLink 2.0 wire baseline for RPC lifetime propagation. Request frames carry remaining `TimeBudget` instead of an absolute Unix-millisecond deadline, and 2.0 rejects peers below minor 4 during handshake so legacy bytes cannot be misinterpreted. Pre-2.0 process interoperability is not a 2.0 compatibility requirement.
 - `IRpcSession`, `IStreamManager`, raw stream dispatcher interfaces, public
   `PooledAsyncStreamDispatcher<T>`, public `RpcSession`, public `StreamManager`, and public
   `RpcSessionExtensions` have been removed from the business API.
   Custom transports continue to use `ITransportConnection` through transport factories/listeners;
-  generated stubs continue to use the narrow API 5 `IRpcGeneratedServerBridge`. No compatibility
+  generated stubs continue to use the narrow API 4 `IRpcGeneratedServerBridge`. No compatibility
   adapter or legacy Session control path is provided. See
   [`doc/runtime-phase-16-engine-api.md`](doc/runtime-phase-16-engine-api.md).
 - `SharpClientBuilder` and `SharpLinkServerBuilder` are single-use. After any Build attempt, whether
@@ -61,13 +65,13 @@
 - Public `RpcSession` error-send extensions now accept only an already structured `SharpLinkException`; callers that use these low-level protocol helpers must map arbitrary exceptions before encoding them.
 - The PipeReader/PipeWriter/disconnect/isConnected `RpcSession` constructor is removed without an obsolete or forwarding shim. Custom transports must implement `ITransportConnection` and expose themselves through a client factory or server listener; the Session no longer completes caller-supplied pipelines or invokes lifecycle callbacks.
 - The incomplete `RpcSession` constructors and the `BindRuntimeContext` follow-up call are removed instead of retained as forwarding shims. Internal Client/Server construction also requires an already-built Runtime Context; no process-wide Context or codec fallback remains.
-- Assemblies generated by SharpLink 1.1.x use Generated API 3 and cannot be loaded into a SharpLink 2.0 process; pre-release 2.0-dev API 4 artifacts are likewise rejected. Rebuild every contract, service, and plugin assembly with the 2.0 SDK after deleting stale `bin` and `obj` outputs, and do not mix 1.1.x and 2.0 SharpLink packages in one process.
-- Hand-written `IRpcStub`, generated-manifest descriptor, or manifest-locator implementations must adopt the API 5 bridge, codec-aware stub factory, `IBufferWriter<byte>` response surface, and self-describing locator constructor.
+- Assemblies generated by SharpLink 1.1.x use Generated API 3 and cannot be loaded into a SharpLink 2.0 process. Rebuild every contract, service, and plugin assembly with the 2.0 SDK after deleting stale `bin` and `obj` outputs, and do not mix 1.1.x and 2.0 SharpLink packages in one process. Intermediate development-only ABI artifacts are outside the release compatibility contract.
+- Hand-written `IRpcStub`, generated-manifest descriptor, or manifest-locator implementations must adopt the API 4 bridge, codec-aware stub factory, `IBufferWriter<byte>` response surface, and the current self-describing locator including `SharpLinkGeneratedManifestVersions.AbiIdentity`. The API number remains 4 relative to the published API 3 baseline; the identity prevents stale development API-4 binaries with a different `IRpcChannel` shape from being false-accepted.
 
 ### Compatibility
 
-- Generated ABI (API 5) is a build/runtime ABI change, not a wire change. Protocol v2 remains unchanged, so separate 1.1.1 and 2.0 processes interoperate when each process uses generated assemblies matching its own Runtime and both sides expose a wire-compatible contract.
-- SharpLink 2.0 intentionally has no hidden API 3 or API 4 switch, dual Runtime path, or compatibility environment variable. See [`doc/migration.md`](doc/migration.md) for the complete upgrade checklist.
+- Generated ABI (API 4) remains independent from the network version. SharpLink 2.0 uses Protocol v2 minor 4 as its TimeBudget baseline; the release gate validates the 2.0 package pair and does not promise pre-2.0 process interoperability.
+- SharpLink 2.0 intentionally has no hidden API 3 compatibility switch, dual Runtime path, or compatibility environment variable. See [`doc/migration.md`](doc/migration.md) for the complete upgrade checklist.
 
 ## [1.1.1] - 2026-08-03
 

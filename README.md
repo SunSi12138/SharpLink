@@ -244,6 +244,23 @@ var server = SharpLinkServerBuilder.Create()
 
 压缩在连接握手后按每个方向自动应用，不存在 per-call 强制开关；需要控制是否尝试压缩时，应在对应 Client/Server Runtime Context 配置 Provider 或调整 payload/收益阈值。
 
+## 连接接入资源边界
+
+服务端默认对 accept 后、Ready 前的资源建立独立硬边界：最多同时保留 1024 个 live accepted connection，并最多允许 64 个连接同时处于 TLS / Protocol v2 / application authentication handshake。handshake slot 覆盖完整的 pre-auth 阶段，并在连接 Ready 时立即释放；connection slot 一直持有到 terminal cleanup。超过任一边界时连接立即关闭，不排队，也不会进入更多握手工作。
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseTcp(5000)
+    .UseConnectionAdmission(options =>
+    {
+        options.MaxConcurrentConnections = 1024;
+        options.MaxConcurrentHandshakes = 64;
+    })
+    .Build();
+```
+
+`MaxConcurrentHandshakes` 的默认值为固定 64；如果只把 `MaxConcurrentConnections` 配到 64 以下且没有显式设置 handshake 上限，默认会自动 clamp 到更低的 connection bound。显式 `MaxConcurrentHandshakes = 0` 是保留的 opt-out：它关闭独立 handshake 上限，让握手并发只受 `MaxConcurrentConnections` 约束。启动日志会输出最终生效的 `max_connections` / `max_handshakes`。迁移与滚动重连注意事项见 [`doc/migration.md`](doc/migration.md)，完整接入说明见 [`doc/admission-control.md`](doc/admission-control.md)。
+
 ## 主动接入控制
 
 服务端可在创建 Service、DI Scope、Codec 调用状态和执行 Interceptor 之前启用累计 admission 规则。默认完全关闭；启用后依次取得 `Global → Contract → Method → Partition` 中所有已配置的 permit，现有每连接和进程硬并发上限仍作为最后安全边界：
@@ -333,7 +350,7 @@ var client = SharpClientBuilder.Create()
 
 正式 NuGet 包中，`SharpLink.Sdk` 会携带 `SharpLink.Generator` Analyzer。通过 NuGet 使用时只需引用 SDK，无需再手工添加 Generator DLL 或 Analyzer 项目引用。
 
-从 2.0 起，`SharpLink.Sdk` 只传递引入 `SharpLink.Abstractions`。纯契约项目不需要 Runtime；Client、Server 或 Hosting 应用应显式引用自身对应的应用包。1.1.x 生成程序集使用 Generated API 3，不能在 2.0 进程内加载，升级时必须清理 `bin/obj` 并重新构建全部契约、服务和插件程序集。此变化不修改 Protocol v2，分别使用本进程匹配生成程序集的 1.1.x 与 2.0 进程仍可跨网络互操作。完整步骤见 [`doc/migration.md`](doc/migration.md)。
+从 2.0 起，`SharpLink.Sdk` 只传递引入 `SharpLink.Abstractions`。纯契约项目不需要 Runtime；Client、Server 或 Hosting 应用应显式引用自身对应的应用包。1.1.x 生成程序集使用 Generated API 3，不能在 2.0 进程内加载，升级时必须清理 `bin/obj` 并重新构建全部契约、服务和插件程序集。2.0 同时把 Protocol v2 的 RPC lifetime baseline 提升到 minor 4，并以剩余 `TimeBudget` 取代旧 absolute deadline；pre-2.0 peer 不属于 2.0 的互操作承诺。完整步骤见 [`doc/migration.md`](doc/migration.md)。
 
 ## Host 模式
 
@@ -424,24 +441,9 @@ var client = SharpClientBuilder.Create()
 
 UDS、NamedPipe、AnonymousPipe 与 SharedMemory 默认依赖操作系统权限，不叠加 TLS。TLS 建立日志只记录协商协议与 cipher suite，不记录证书私钥、token 或 payload。
 
-契约方法可以在尾部声明一个 `SharpLinkCallOptions`，并可在其后再声明一个 `CancellationToken`。控制参数不会进入业务 payload：
+RPC 业务契约只声明业务 payload、流参数以及用于协作取消的 `CancellationToken`；通用调用控制不进入方法签名。Metadata 等 envelope state 可由 Client interceptor 的 `SharpLinkClientInvocationContext.Metadata` 提供，Server 从 `SharpLinkCallContext` 读取。
 
-```csharp
-ValueTask<Result> ExecuteAsync(
-    Command command,
-    SharpLinkCallOptions options,
-    CancellationToken cancellationToken);
-
-var options = new SharpLinkCallOptions
-{
-    Timeout = TimeSpan.FromSeconds(2),
-    WaitForReady = true,
-    Metadata = new SharpLinkMetadata(
-        new KeyValuePair<string, string>("tenant", "factory-a"))
-};
-```
-
-绝对 `Deadline`、相对 `Timeout`、`[Timeout]` 和客户端默认值会取最早到期时间。Unary 默认 30 秒；Server/Duplex stream 默认无超时。调用 deadline 到期时，客户端固定得到 `SharpLinkException(DeadlineExceeded)`；这与服务实现是否声明 `CancellationToken` 无关。`DisableRequestTimeout()` 只关闭客户端默认值，显式 deadline、`Timeout` 和 `[Timeout]` 仍然生效。
+请求 lifetime 使用分层语义：Client 默认 `Timeout` 是 fallback，方法 `[Timeout]` 可覆盖它；Runtime 把选中的 policy 解析为本地 monotonic `RpcDeadline`，并在真正发送 Request 前写入剩余 `TimeBudget`。Server 根据该 duration 创建自己的本地 deadline，跨机器不比较绝对墙钟。已有父 RPC 的剩余 `TimeBudget` 会限制下游调用，避免中间 hop 重启 lifetime。`DisableRequestTimeout()` 只关闭 Client 默认 fallback；方法 `[Timeout]` 和继承的父 lifetime 仍然生效。
 
 建议所有可能等待、访问 I/O 或占用昂贵资源的契约方法都把 `CancellationToken` 放在参数末尾。Unary 没有 token 时产生 `SHARPLINK004` Warning；Streaming 没有 token 时产生 `SHARPLINK014` Error。确认业务工作不可取消时可用 `[NonCancellable]` 显式说明，但不能同时声明该特性和 `CancellationToken`，否则产生 `SHARPLINK015` Error。此时客户端仍会按 deadline 停止等待，服务端会把调用标记为 abandoned、丢弃迟到响应并继续观察业务任务，直到任务结束后才释放该调用的 admission 与 DI scope。Streaming 的框架流泵、dispatcher 和窗口等待仍会被终止，不会因为 `[NonCancellable]` 保留连接资源。团队可以在 `.editorconfig` 中将 `dotnet_diagnostic.SHARPLINK004.severity = error` 提升为编译错误。
 
@@ -567,6 +569,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 日志：`UseLoggerFactory(...)`
 - 心跳：`UseHeartbeat(...)`
 - 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
+- 连接资源边界：`UseConnectionAdmission(...)`；默认 `1024` live connections / `64` concurrent handshakes，显式 handshake `0` 关闭独立上限
 - 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
 - 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
 - 服务注册与生命周期：`[RpcService]`、`EnableService` / `ExcludeService` / `ReplaceService`、`UseServiceProvider(...)` 与 `SharpLinkServiceLifetime`
