@@ -488,7 +488,7 @@ public interface IDeadlineCompressionProbeService : IService
     ValueTask<byte[]> EchoAsync(byte[] value);
 
     [Oneway]
-    [Timeout]
+    [SharpLink.Sdk.Timeout]
     [NonCancellable]
     ValueTask NotifyAsync(byte[] value);
 }
