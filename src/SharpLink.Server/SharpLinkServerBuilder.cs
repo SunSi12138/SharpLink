@@ -451,7 +451,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             ValidateDependencies(service, serviceProvider);
             definitions.Add(service.ContractId, new ServiceRegistrationDefinition(
                 service.ContractType,
-                contract.Descriptor.StubFactory(RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.Manifest.OwnerAssembly)),
+                contract.Descriptor.StubFactory(RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.Descriptor.ContractType)),
                 service.Lifetime,
                 service.Activator,
                 instance: null,
@@ -470,7 +470,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             var value = replacement.Value;
             definitions[contract.Descriptor.ContractId] = new ServiceRegistrationDefinition(
                 replacement.Key,
-                contract.Descriptor.StubFactory(RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.Manifest.OwnerAssembly)),
+                contract.Descriptor.StubFactory(RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.Descriptor.ContractType)),
                 value.Lifetime,
                 value.Factory,
                 value.Instance,
