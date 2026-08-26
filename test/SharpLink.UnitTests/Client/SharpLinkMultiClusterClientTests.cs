@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Reflection.Emit;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using SharpLink.Client;
+using SharpLink.MultiClusterTest.Contracts;
 using SharpLink.RollbackPlugin;
 using SharpLink.Sdk;
 
@@ -16,7 +16,7 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkMultiClusterClientTests
 {
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
-    private static readonly Assembly TestManifestAssembly = CreateTestManifestAssembly();
+    private static readonly Assembly TestManifestAssembly = typeof(IOrdersContract).Assembly;
 
     [Test]
     public async Task StaticRouteShouldCreateTheTargetChildProxyAndConnectEverySlot()
@@ -1402,13 +1402,6 @@ public sealed class SharpLinkMultiClusterClientTests
             Address = new SharpLinkTcpAddress("127.0.0.1", port)
         };
 
-    private static Assembly CreateTestManifestAssembly()
-        => AssemblyBuilder.DefineDynamicAssembly(
-            new AssemblyName("SharpLink.MultiClusterClientTests.Manifest"),
-            AssemblyBuilderAccess.Run);
-
-    private interface IOrdersContract : IService;
-    private interface IUnroutedContract : IService;
     private sealed class OrdersProxy(IRpcChannel channel) : IOrdersContract
     {
         internal IRpcChannel Channel { get; } = channel;
