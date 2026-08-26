@@ -11,10 +11,12 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
-        int admittedClientStreamCount = 0)
+        int admittedClientStreamCount = 0,
+        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
     {
         var session = connection.Session;
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
+        var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
         var request = ReadRequestEnvelope(
             session, payload, flags, admittedCallState?.Deadline ?? default);
         if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
@@ -104,15 +106,27 @@ internal sealed partial class SharpLinkServer
             }
             if (!admissionTask.IsCompletedSuccessfully)
             {
+                if (!TryCopyAdmissionPayload(payload, flags, out var retainedPayload))
+                {
+                    admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
+                    return new ValueTask(RejectQueuedAdmissionForRetainedBudgetAsync(
+                        admissionTask,
+                        connection,
+                        requestId,
+                        requestCancellationMap,
+                        admittedCallState,
+                        oneWay: true,
+                        descriptor.ClientStreamCount).AsTask());
+                }
+
                 ReservePreAdmissionRequestStreams(
                     session,
                     requestId,
                     descriptor.ClientStreamCount,
                     admittedCallState);
-                var retainedPayload = CopyAdmissionPayload(payload);
                 return new ValueTask(AwaitOneWayAdmissionAsync(
                     admissionTask,
-                    retainedPayload,
+                    retainedPayload!,
                     connection,
                     requestId,
                     flags,
@@ -133,8 +147,8 @@ internal sealed partial class SharpLinkServer
             admittedCallState.AttachAdmissionLease(decision.Lease!);
         }
 
-        var admission = TryAcquireCall(connection);
-        if (admission != ServerCallAdmissionResult.Acquired)
+        var admission = TryReserveCall(connection, out var requestPermit);
+        if (admission != ServerCallAdmissionResult.Acquired || requestPermit is null)
         {
             DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             if (admittedCallState is not null)
@@ -149,19 +163,54 @@ internal sealed partial class SharpLinkServer
             }
             return ValueTask.CompletedTask;
         }
+        var requestOwner = requestPermit;
 
         IRpcByteBufferWriter? decodedRequestOwner = null;
         try
         {
-            if (_admissionController is not null ||
-                (flags & ProtocolV2FrameFlags.Compressed) != 0)
+            if (isCompressed)
             {
+                admittedCallState = EnsurePreDecodeCallState(
+                    connection,
+                    admittedCallState,
+                    requestId,
+                    request.RpcDeadline,
+                    serverLoopToken,
+                    serviceInfo.ModuleCancellation,
+                    requestCancellationMap);
+                if (!TryPrepareCompressedRequestDecode(
+                        requestOwner,
+                        retainedAdmissionPayload?.RetainedPermit,
+                        flags,
+                        payload,
+                        out var decodePermit,
+                        out var resourceRejection))
+                {
+                    retainedAdmissionPayload?.Dispose();
+                    requestOwner.ReleaseDecodeResources();
+                    var rejection = resourceRejection ?? throw new InvalidOperationException(
+                        "Compressed one-way decode resource rejection is missing its error.");
+                    var reason = SharpLinkResourceExhaustion.GetReason(rejection);
+                    Interlocked.Increment(ref _rejectedOneWayCalls);
+                    LogOnewayRpcResourceExhausted(_logger, reason);
+                    DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+                    ReleaseOneWayDispatchResources(
+                        admittedCallState,
+                        requestId,
+                        requestCancellationMap,
+                        connection,
+                        requestOwner);
+                    return ValueTask.CompletedTask;
+                }
+
                 payload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
-                    admittedCallState?.InvocationToken ?? serverLoopToken,
+                    admittedCallState.InvocationToken,
                     out decodedRequestOwner);
+                retainedAdmissionPayload?.Dispose();
+                decodePermit!.CompleteDecode();
                 request = ReadRequestEnvelope(
                     session, payload, flags, request.RpcDeadline);
             }
@@ -169,28 +218,68 @@ internal sealed partial class SharpLinkServer
         catch (SharpLinkException exception) when (
             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
         {
+            retainedAdmissionPayload?.Dispose();
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
             Interlocked.Increment(ref _rejectedOneWayCalls);
             LogOnewayRpcDispatchFailed(_logger, exception);
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
-                admittedCallState, requestId, requestCancellationMap, connection);
+                admittedCallState,
+                requestId,
+                requestCancellationMap,
+                connection,
+                requestOwner);
             return ValueTask.CompletedTask;
         }
         catch (OperationCanceledException)
         {
+            retainedAdmissionPayload?.Dispose();
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
-                admittedCallState, requestId, requestCancellationMap, connection);
+                admittedCallState,
+                requestId,
+                requestCancellationMap,
+                connection,
+                requestOwner);
             return ValueTask.CompletedTask;
         }
         catch
         {
+            retainedAdmissionPayload?.Dispose();
             session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
-                admittedCallState, requestId, requestCancellationMap, connection);
+                admittedCallState,
+                requestId,
+                requestCancellationMap,
+                connection,
+                requestOwner);
             throw;
         }
+
+        if (IsDeadlineExceeded(request.RpcDeadline) || serverLoopToken.IsCancellationRequested)
+        {
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            requestOwner.ReleaseDecodeResources();
+            DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+            ReleaseOneWayDispatchResources(
+                admittedCallState,
+                requestId,
+                requestCancellationMap,
+                connection,
+                requestOwner);
+            return ValueTask.CompletedTask;
+        }
+
+        requestOwner.Activate();
 
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
@@ -250,7 +339,12 @@ internal sealed partial class SharpLinkServer
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
                 TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken);
                 DrainCompletedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
-                ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
+                ReleaseOneWayDispatchResources(
+                    callState,
+                    requestId,
+                    requestCancellationMap,
+                    connection,
+                    requestOwner);
                 return ValueTask.CompletedTask;
             }
 
@@ -268,7 +362,8 @@ internal sealed partial class SharpLinkServer
                 serviceInfo.Stub,
                 request.MethodHash,
                 descriptor.ClientStreamCount,
-                invokeToken));
+                invokeToken,
+                requestOwner));
         }
         catch (Exception ex)
         {
@@ -278,7 +373,12 @@ internal sealed partial class SharpLinkServer
                 LogOnewayRpcDispatchFailed(_logger, MapServiceException(
                     ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
             }
-            ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
+            ReleaseOneWayDispatchResources(
+                callState,
+                requestId,
+                requestCancellationMap,
+                connection,
+                requestOwner);
             return ValueTask.CompletedTask;
         }
     }
@@ -294,7 +394,8 @@ internal sealed partial class SharpLinkServer
         IRpcStub stub,
         long methodId,
         int clientStreamCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ServerRequestPermit requestPermit)
     {
         try
         {
@@ -317,13 +418,18 @@ internal sealed partial class SharpLinkServer
         finally
         {
             DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
-            ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
+            ReleaseOneWayDispatchResources(
+                callState,
+                requestId,
+                requestCancellationMap,
+                connection,
+                requestPermit);
         }
     }
 
     private async Task AwaitOneWayAdmissionAsync(
         ValueTask<AdmissionDecision> admissionTask,
-        IRpcByteBufferWriter retainedPayload,
+        ServerRetainedAdmissionPayload retainedPayload,
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -359,22 +465,20 @@ internal sealed partial class SharpLinkServer
                 connection,
                 requestId,
                 flags,
-                new ReadOnlySequence<byte>(retainedPayload.WrittenMemory),
+                retainedPayload.Payload,
                 requestCancellationMap,
                 serverLoopToken,
                 callState,
                 admissionGranted: true,
-                admittedClientStreamCount: clientStreamCount);
+                admittedClientStreamCount: clientStreamCount,
+                retainedAdmissionPayload: retainedPayload);
             transferred = true;
-            _runtimeContext.Buffers.Return(retainedPayload);
-            retainedPayload = null!;
             if (!dispatchTask.IsCompletedSuccessfully)
                 await dispatchTask.ConfigureAwait(false);
         }
         finally
         {
-            if (retainedPayload is not null)
-                _runtimeContext.Buffers.Return(retainedPayload);
+            retainedPayload.Dispose();
             if (!transferred)
                 ReleasePendingAdmissionState(connection.Session, requestCancellationMap, requestId, callState);
         }
@@ -382,7 +486,7 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask AwaitRpcAdmissionAsync(
         ValueTask<AdmissionDecision> admissionTask,
-        IRpcByteBufferWriter retainedPayload,
+        ServerRetainedAdmissionPayload retainedPayload,
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -419,20 +523,72 @@ internal sealed partial class SharpLinkServer
                 connection,
                 requestId,
                 flags,
-                new ReadOnlySequence<byte>(retainedPayload.WrittenMemory),
+                retainedPayload.Payload,
                 requestCancellationMap,
                 serverLoopToken,
                 callState,
-                admissionGranted: true);
+                admissionGranted: true,
+                retainedAdmissionPayload: retainedPayload);
             transferred = true;
+            if ((flags & ProtocolV2FrameFlags.Compressed) != 0)
+                retainedPayload.Dispose();
             if (!dispatchTask.IsCompletedSuccessfully)
                 await dispatchTask.ConfigureAwait(false);
         }
         finally
         {
-            _runtimeContext.Buffers.Return(retainedPayload);
+            retainedPayload.Dispose();
             if (!transferred)
                 ReleasePendingAdmissionState(connection.Session, requestCancellationMap, requestId, callState);
+        }
+    }
+
+    private async ValueTask RejectQueuedAdmissionForRetainedBudgetAsync(
+        ValueTask<AdmissionDecision> admissionTask,
+        ServerConnectionState connection,
+        long requestId,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        ServerCallCancellationState callState,
+        bool oneWay,
+        int clientStreamCount = 0)
+    {
+        var rejection = CreateRetainedCompressedResourceExhaustion();
+        try
+        {
+            if (oneWay)
+            {
+                Interlocked.Increment(ref _rejectedOneWayCalls);
+                DrainRejectedOneWayStreams(connection.Session, requestId, clientStreamCount);
+                LogOnewayRpcResourceExhausted(
+                    _logger,
+                    SharpLinkResourceExhaustion.ServerRetainedCompressedBytes);
+            }
+            else
+            {
+                await connection.Session.SendRpcErrorWithBackpressureAsync(
+                    requestId,
+                    rejection,
+                    connection.ConnectionToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            try
+            {
+                var decision = await admissionTask.ConfigureAwait(false);
+                decision.Lease?.Dispose();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (oneWay)
+                    ReleaseAdmissionCallState(requestCancellationMap, requestId, callState);
+                else
+                    ReleasePendingAdmissionState(
+                        connection.Session, requestCancellationMap, requestId, callState);
+            }
         }
     }
 
@@ -600,14 +756,17 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState? callState,
         long requestId,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        ServerConnectionState connection)
+        ServerConnectionState connection,
+        ServerRequestPermit requestPermit)
     {
+        _ = connection;
         if (callState is not null)
         {
+            requestPermit.TransferDecodedBytesTo(callState);
             requestCancellationMap.TryRemove(requestId, callState);
             callState.Dispose();
         }
-        ReleaseCall(connection);
+        requestPermit.Dispose();
     }
 
 }
