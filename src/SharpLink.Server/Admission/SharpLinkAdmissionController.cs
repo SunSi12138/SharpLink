@@ -1534,6 +1534,8 @@ internal sealed class AdmissionPartitionPool : IDisposable
         AdmissionPartitionEntry entry,
         AdmissionPartitionPolicyGeneration policy)
     {
+        if (ReferenceEquals(entry.Current.Policy, policy))
+            return entry.Current;
         foreach (var generation in entry.Generations)
             if (ReferenceEquals(generation.Policy, policy))
                 return generation;
@@ -1780,7 +1782,7 @@ internal sealed class AdmissionPartitionLease(
     AdmissionPartitionRuntimeGeneration generation) : IDisposable
 {
     private AdmissionPartitionPool? _owner = owner;
-    internal AdmissionRuleRuntime Runtime { get; } = generation.Runtime;
+    internal AdmissionRuleRuntime Runtime => generation.Runtime;
     public void Dispose()
         => Interlocked.Exchange(ref _owner, null)?.Release(entry, generation);
 }
