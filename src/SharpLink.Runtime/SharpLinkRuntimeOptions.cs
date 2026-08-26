@@ -42,6 +42,9 @@ public sealed class SharpLinkFlowControlOptions
     /// <summary>The default server-wide decoded-byte in-flight budget: 64 MiB.</summary>
     public const long DefaultMaxDecodedBytesInFlightPerServer = 64L * 1024 * 1024;
 
+    /// <summary>The default server-wide pre-admission client-stream buffer budget: 64 MiB.</summary>
+    public const long DefaultMaxPreAdmissionStreamBytesPerServer = 64L * 1024 * 1024;
+
     /// <summary>Gets or sets the maximum queued outbound bytes.</summary>
     public int MaxSendQueueBytes
     {
@@ -107,6 +110,13 @@ public sealed class SharpLinkFlowControlOptions
     /// </summary>
     public long MaxDecodedBytesInFlightPerServer { get; set; } = DefaultMaxDecodedBytesInFlightPerServer;
 
+    /// <summary>
+    /// Gets or sets the server-wide byte budget for client-stream frames physically retained while
+    /// their request is still waiting for server admission. This budget is independent from Dynamic
+    /// Admission queue limits and remains stable for the server runtime lifetime.
+    /// </summary>
+    public long MaxPreAdmissionStreamBytesPerServer { get; set; } = DefaultMaxPreAdmissionStreamBytesPerServer;
+
     /// <summary>Validates all flow-control limits.</summary>
     public void Validate()
     {
@@ -134,6 +144,7 @@ public sealed class SharpLinkFlowControlOptions
         }
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxRetainedCompressedBytesPerServer);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxDecodedBytesInFlightPerServer);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxPreAdmissionStreamBytesPerServer);
         if (ConnectionReceiveWindowBytes < StreamReceiveWindowBytes)
             throw new ArgumentException("ConnectionReceiveWindowBytes cannot be smaller than StreamReceiveWindowBytes.");
     }
@@ -150,7 +161,8 @@ public sealed class SharpLinkFlowControlOptions
             MaxConcurrentCallsPerServer = MaxConcurrentCallsPerServer,
             MaxConcurrentDecodesPerServer = MaxConcurrentDecodesPerServer,
             MaxRetainedCompressedBytesPerServer = MaxRetainedCompressedBytesPerServer,
-            MaxDecodedBytesInFlightPerServer = MaxDecodedBytesInFlightPerServer
+            MaxDecodedBytesInFlightPerServer = MaxDecodedBytesInFlightPerServer,
+            MaxPreAdmissionStreamBytesPerServer = MaxPreAdmissionStreamBytesPerServer
         };
         clone._maxSendQueueBytes = _maxSendQueueBytes;
         clone._maxSendQueueBytesConfigured = _maxSendQueueBytesConfigured;
@@ -171,6 +183,7 @@ public sealed class SharpLinkFlowControlOptions
         destination.MaxConcurrentDecodesPerServer = MaxConcurrentDecodesPerServer;
         destination.MaxRetainedCompressedBytesPerServer = MaxRetainedCompressedBytesPerServer;
         destination.MaxDecodedBytesInFlightPerServer = MaxDecodedBytesInFlightPerServer;
+        destination.MaxPreAdmissionStreamBytesPerServer = MaxPreAdmissionStreamBytesPerServer;
     }
 }
 

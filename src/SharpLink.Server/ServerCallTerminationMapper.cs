@@ -23,6 +23,8 @@ internal static class ServerCallTerminationMapper
             ServerCallCancellationReason.ServerStopping => "server_stopping",
             ServerCallCancellationReason.ConnectionClosed => "connection_closed",
             ServerCallCancellationReason.AdmissionResourceExhausted => "admission_resource_exhausted",
+            ServerCallCancellationReason.PreAdmissionStreamResourceExhausted =>
+                "pre_admission_stream_resource_exhausted",
             _ => "unknown"
         };
 
@@ -63,6 +65,11 @@ internal static class ServerCallTerminationMapper
             ServerCallCancellationReason.AdmissionResourceExhausted => new SharpLinkException(
                 SharpLinkErrorCode.ResourceExhausted,
                 "Admission queue retained-byte capacity was exhausted."),
+            ServerCallCancellationReason.PreAdmissionStreamResourceExhausted =>
+                SharpLinkResourceExhaustion.CreateWire(
+                    SharpLinkResourceExhaustion.ServerPreAdmissionStreamBytes,
+                    $"Pre-admission stream retained-byte capacity was exhausted " +
+                    $"({SharpLinkResourceExhaustion.ServerPreAdmissionStreamBytes})."),
             _ => new SharpLinkException(SharpLinkErrorCode.Cancelled, "Request canceled.")
         };
 }

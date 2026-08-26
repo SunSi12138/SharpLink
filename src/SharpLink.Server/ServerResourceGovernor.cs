@@ -16,7 +16,8 @@ internal sealed partial class SharpLinkServer
             var created = new ServerResourceGovernor(
                 flowControl.MaxConcurrentDecodesPerServer,
                 flowControl.MaxRetainedCompressedBytesPerServer,
-                flowControl.MaxDecodedBytesInFlightPerServer);
+                flowControl.MaxDecodedBytesInFlightPerServer,
+                flowControl.MaxPreAdmissionStreamBytesPerServer);
             return Interlocked.CompareExchange(ref _resourceGovernor, created, null) ?? created;
         }
     }
@@ -26,6 +27,8 @@ internal sealed partial class SharpLinkServer
     internal long RetainedCompressedBytesForDiagnostics => ResourceGovernor.RetainedCompressedBytes;
 
     internal long DecodedBytesInFlightForDiagnostics => ResourceGovernor.DecodedBytesInFlight;
+
+    internal long PreAdmissionStreamBytesForDiagnostics => ResourceGovernor.PreAdmissionStreamBytes;
 }
 
 /// <summary>
@@ -37,21 +40,38 @@ internal sealed class ServerResourceGovernor
     private readonly int _maxConcurrentDecodes;
     private readonly long _maxRetainedCompressedBytes;
     private readonly long _maxDecodedBytesInFlight;
+    private readonly long _maxPreAdmissionStreamBytes;
     private int _activeDecodes;
     private long _retainedCompressedBytes;
     private long _decodedBytesInFlight;
+    private long _preAdmissionStreamBytes;
 
     internal ServerResourceGovernor(
         int maxConcurrentDecodes,
         long maxRetainedCompressedBytes,
         long maxDecodedBytesInFlight)
+        : this(
+            maxConcurrentDecodes,
+            maxRetainedCompressedBytes,
+            maxDecodedBytesInFlight,
+            SharpLinkFlowControlOptions.DefaultMaxPreAdmissionStreamBytesPerServer)
+    {
+    }
+
+    internal ServerResourceGovernor(
+        int maxConcurrentDecodes,
+        long maxRetainedCompressedBytes,
+        long maxDecodedBytesInFlight,
+        long maxPreAdmissionStreamBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrentDecodes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxRetainedCompressedBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytesInFlight);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPreAdmissionStreamBytes);
         _maxConcurrentDecodes = maxConcurrentDecodes;
         _maxRetainedCompressedBytes = maxRetainedCompressedBytes;
         _maxDecodedBytesInFlight = maxDecodedBytesInFlight;
+        _maxPreAdmissionStreamBytes = maxPreAdmissionStreamBytes;
     }
 
     internal int ActiveDecodeCount => Volatile.Read(ref _activeDecodes);
@@ -59,6 +79,8 @@ internal sealed class ServerResourceGovernor
     internal long RetainedCompressedBytes => Volatile.Read(ref _retainedCompressedBytes);
 
     internal long DecodedBytesInFlight => Volatile.Read(ref _decodedBytesInFlight);
+
+    internal long PreAdmissionStreamBytes => Volatile.Read(ref _preAdmissionStreamBytes);
 
     internal bool TryAcquireRetained(
         long retainedCompressedBytes,
@@ -83,6 +105,37 @@ internal sealed class ServerResourceGovernor
         catch
         {
             ReleaseRetained(retainedCompressedBytes);
+            throw;
+        }
+    }
+
+    internal bool TryReservePreAdmissionStreamBytes(long retainedBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
+        return TryAddBounded(
+            ref _preAdmissionStreamBytes,
+            retainedBytes,
+            _maxPreAdmissionStreamBytes);
+    }
+
+    internal bool TryAcquirePreAdmissionStreamBytes(
+        long retainedBytes,
+        out ServerPreAdmissionStreamBytesPermit? permit)
+    {
+        if (!TryReservePreAdmissionStreamBytes(retainedBytes))
+        {
+            permit = null;
+            return false;
+        }
+
+        try
+        {
+            permit = new ServerPreAdmissionStreamBytesPermit(this, retainedBytes);
+            return true;
+        }
+        catch
+        {
+            ReleasePreAdmissionStreamBytes(retainedBytes);
             throw;
         }
     }
@@ -164,6 +217,12 @@ internal sealed class ServerResourceGovernor
             retainedCompressedBytes,
             "retained compressed bytes");
 
+    internal void ReleasePreAdmissionStreamBytes(long retainedBytes)
+        => ReleaseBytes(
+            ref _preAdmissionStreamBytes,
+            retainedBytes,
+            "pre-admission stream bytes");
+
     internal void ReleaseDecodeAndRetained(long retainedCompressedBytes)
     {
         try
@@ -229,6 +288,36 @@ internal sealed class ServerResourceGovernor
 
         Interlocked.Add(ref counter, amount);
         throw new InvalidOperationException($"Server {resourceName} accounting underflowed.");
+    }
+}
+
+/// <summary>
+/// Owns one physical pre-admission stream buffer's stable server-wide byte accounting. The buffer
+/// must be returned to its pool before this permit is disposed so accounting never under-reports
+/// physically retained memory.
+/// </summary>
+internal sealed class ServerPreAdmissionStreamBytesPermit : IDisposable
+{
+    private readonly ServerResourceGovernor _governor;
+    private readonly long _retainedBytes;
+    private int _disposed;
+
+    internal ServerPreAdmissionStreamBytesPermit(
+        ServerResourceGovernor governor,
+        long retainedBytes)
+    {
+        _governor = governor ?? throw new ArgumentNullException(nameof(governor));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
+        _retainedBytes = retainedBytes;
+    }
+
+    internal long RetainedBytes => _retainedBytes;
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        _governor.ReleasePreAdmissionStreamBytes(_retainedBytes);
     }
 }
 

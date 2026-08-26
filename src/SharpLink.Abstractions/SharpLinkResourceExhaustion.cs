@@ -16,6 +16,7 @@ internal static class SharpLinkResourceExhaustion
     private const char ServerRetainedCompressedBytesWireCode = '\u000B';
     private const char ServerDecodedBytesWireCode = '\u000C';
     private const char ServerDecodeQueueWireCode = '\u000D';
+    private const char ServerPreAdmissionStreamBytesWireCode = '\u000E';
     private static readonly string[] s_knownReasons =
     [
         ServerCallCapacity,
@@ -30,7 +31,8 @@ internal static class SharpLinkResourceExhaustion
         ServerDecodeConcurrency,
         ServerRetainedCompressedBytes,
         ServerDecodedBytes,
-        ServerDecodeQueue
+        ServerDecodeQueue,
+        ServerPreAdmissionStreamBytes
     ];
 
     internal const string Unspecified = "unspecified";
@@ -47,6 +49,7 @@ internal static class SharpLinkResourceExhaustion
     internal const string ServerRetainedCompressedBytes = "server_retained_compressed_bytes";
     internal const string ServerDecodedBytes = "server_decoded_bytes";
     internal const string ServerDecodeQueue = "server_decode_queue";
+    internal const string ServerPreAdmissionStreamBytes = "server_pre_admission_stream_bytes";
 
     internal static SharpLinkException Create(string reason, string message)
     {
@@ -96,6 +99,7 @@ internal static class SharpLinkResourceExhaustion
             ServerRetainedCompressedBytes => ServerRetainedCompressedBytesWireCode,
             ServerDecodedBytes => ServerDecodedBytesWireCode,
             ServerDecodeQueue => ServerDecodeQueueWireCode,
+            ServerPreAdmissionStreamBytes => ServerPreAdmissionStreamBytesWireCode,
             _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "A known resource exhaustion reason is required.")
         };
 
@@ -116,6 +120,7 @@ internal static class SharpLinkResourceExhaustion
             ServerRetainedCompressedBytesWireCode => ServerRetainedCompressedBytes,
             ServerDecodedBytesWireCode => ServerDecodedBytes,
             ServerDecodeQueueWireCode => ServerDecodeQueue,
+            ServerPreAdmissionStreamBytesWireCode => ServerPreAdmissionStreamBytes,
             _ => Unspecified
         };
         return reason != Unspecified;
