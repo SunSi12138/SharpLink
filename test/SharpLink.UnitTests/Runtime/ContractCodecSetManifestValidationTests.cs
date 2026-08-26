@@ -47,8 +47,8 @@ public class ContractCodecSetManifestValidationTests
             Ensure(!result.Succeeded, "dynamic registration must reject a foreign Contract Codec set");
             Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 "dynamic registration should return InvalidManifest");
-            Ensure(result.Error?.Message.Contains("foreign or undeclared Contract", StringComparison.Ordinal) == true,
-                "dynamic registration should report the foreign Contract Codec set");
+            Ensure(result.Error?.Artifact == "ContractCodecSet",
+                "dynamic registration should attribute the failure to the Contract Codec set");
         }
         finally
         {
