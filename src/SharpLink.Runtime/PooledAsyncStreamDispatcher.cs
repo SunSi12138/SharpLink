@@ -6,6 +6,7 @@ namespace SharpLink.Runtime;
 internal sealed class PooledAsyncStreamDispatcher<T> :
     IStreamConsumptionAwareDispatcher,
     IStreamDispatchLease,
+    IStreamLocalAbortDispatcher,
     IAsyncEnumerable<T>,
     IAsyncEnumerator<T>,
     IValueTaskSource<bool>
@@ -90,11 +91,20 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private ushort _flowControlStreamId;
     private long _consumerAbandonedRequestId;
     private int _consumerTerminal;
+    private Action<long, ushort, int>? _localAbortBytesConsumed;
+    private long _localAbortRequestId;
+    private ushort _localAbortStreamId;
+    private long _localAbortRetentionLeaseState;
+    private int _localAbortDeliveryState;
+    private int _localAbortBufferRetired;
 
     private const int InitialCapacity = 16;
     private const int ShrinkThreshold = 256;
     private const int MaxBufferedElements = 4096;
     private const int MaxRetainedDispatchers = 1024;
+    private const int ConsumerTerminalLocalAbort = 3;
+    private const int LocalAbortClaimed = 0b01;
+    private const int LocalAbortDelivery = 0b10;
     private const long LeaseStatusMask = 0b11L;
     private const long LeaseInactive = 0b00L;
     private const long LeaseActive = 0b01L;
@@ -222,6 +232,12 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
+        _localAbortBytesConsumed = null;
+        _localAbortRequestId = 0;
+        _localAbortStreamId = 0;
+        Volatile.Write(ref _localAbortRetentionLeaseState, 0);
+        Volatile.Write(ref _localAbortDeliveryState, 0);
+        Volatile.Write(ref _localAbortBufferRetired, 0);
         Volatile.Write(ref _consumerTerminal, 0);
         Volatile.Write(ref _terminalDispatchStateClosed, 0);
         Volatile.Write(ref _remoteTerminalPublication, null);
@@ -447,6 +463,208 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlStreamId = streamId;
     }
 
+    void IStreamLocalAbortDispatcher.CompleteLocalAbort(Exception? exception)
+    {
+        if (!TryAcquireDispatch(out var retentionLeaseState))
+            return;
+
+        // Snapshot receive-credit ownership before publishing the local terminal. A racing
+        // consumer DisposeAsync may participate in the one-shot retirement as soon as the
+        // terminal becomes visible, so it must never observe an uninitialized credit snapshot.
+        _localAbortBytesConsumed = _bytesConsumed;
+        _localAbortRequestId = _flowControlRequestId;
+        _localAbortStreamId = _flowControlStreamId;
+        if (!TryClaimLocalAbort(exception))
+        {
+            _localAbortBytesConsumed = null;
+            _localAbortRequestId = 0;
+            _localAbortStreamId = 0;
+            ReleaseDispatch(retentionLeaseState);
+            return;
+        }
+
+        Volatile.Write(ref _localAbortRetentionLeaseState, retentionLeaseState);
+
+        var dispatchState = Volatile.Read(ref _dispatchState);
+        if (dispatchState is null)
+        {
+            Signal();
+            return;
+        }
+
+        lock (_dispatchStateGate)
+        {
+            if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
+                CloseFirstTerminalDispatchState(boundDispatchState);
+            Signal();
+        }
+    }
+
+    void IStreamLocalAbortDispatcher.RetireLocalAbortBuffer()
+    {
+        DrainLocalAbortBuffer();
+        ReleaseLocalAbortRetention();
+    }
+
+    private void DrainLocalAbortBuffer()
+    {
+        if (Volatile.Read(ref _consumerTerminal) != ConsumerTerminalLocalAbort ||
+            Interlocked.Exchange(ref _localAbortBufferRetired, 1) != 0)
+        {
+            return;
+        }
+
+        var spinner = new SpinWait();
+        while ((Volatile.Read(ref _localAbortDeliveryState) & LocalAbortDelivery) != 0)
+            spinner.SpinOnce();
+
+        var discardedBytes = 0;
+        while (TryDequeueCore(out _, out var encodedByteCount))
+            discardedBytes = checked(discardedBytes + encodedByteCount);
+        if (discardedBytes != 0)
+        {
+            _localAbortBytesConsumed?.Invoke(
+                _localAbortRequestId,
+                _localAbortStreamId,
+                discardedBytes);
+        }
+
+        _localAbortBytesConsumed = null;
+        _localAbortRequestId = 0;
+        _localAbortStreamId = 0;
+    }
+
+    private void ReleaseLocalAbortRetention()
+    {
+        var retentionLeaseState = Interlocked.Exchange(ref _localAbortRetentionLeaseState, 0);
+        if (retentionLeaseState != 0)
+            ReleaseDispatch(retentionLeaseState);
+    }
+
+    private bool TryClaimLocalAbort(Exception? exception)
+    {
+        // The local terminal and one user-visible buffered delivery arbitrate the same state.
+        // If delivery already owns the boundary, let that single item finish publishing Current
+        // and receive credit; only then may the local terminal close every later delivery.
+        var spinner = new SpinWait();
+        while (true)
+        {
+            var state = Volatile.Read(ref _localAbortDeliveryState);
+            if ((state & LocalAbortClaimed) != 0)
+                return false;
+            if ((state & LocalAbortDelivery) != 0)
+            {
+                spinner.SpinOnce();
+                continue;
+            }
+            if (Interlocked.CompareExchange(
+                    ref _localAbortDeliveryState,
+                    LocalAbortClaimed,
+                    0) == 0)
+            {
+                break;
+            }
+        }
+
+        if (Interlocked.CompareExchange(
+                ref _consumerTerminal,
+                ConsumerTerminalLocalAbort,
+                0) == 0)
+        {
+            _error = exception;
+            Volatile.Write(ref _completed, true);
+            return true;
+        }
+
+        ClearLocalAbortClaim();
+        return false;
+    }
+
+    private void ClearLocalAbortClaim()
+    {
+        while (true)
+        {
+            var state = Volatile.Read(ref _localAbortDeliveryState);
+            if ((state & LocalAbortClaimed) == 0)
+                return;
+            if (Interlocked.CompareExchange(
+                    ref _localAbortDeliveryState,
+                    state & ~LocalAbortClaimed,
+                    state) == state)
+            {
+                return;
+            }
+        }
+    }
+
+    private bool TryAcquireLocalAbortDelivery()
+    {
+        // A client response stream can have data buffered before its logical deadline. Submit
+        // each actual consumer-delivery boundary to the owning pending call before acquiring the
+        // dequeue claim, so an expired call publishes DeadlineExceeded even when its timer
+        // callback has not run. The callback target also owns normal remote terminal publication;
+        // if another thread already removed the pending slot, wait for that terminal to become
+        // visible and only preempt delivery when it is the stronger local-abort terminal.
+        if (_consumerAbandonedAsync?.Target is IStreamConsumerDeliveryGate deliveryGate &&
+            !deliveryGate.TryAcceptStreamDelivery(_consumerAbandonedRequestId))
+        {
+            var terminalSpinner = new SpinWait();
+            var terminal = Volatile.Read(ref _consumerTerminal);
+            while (terminal == 0)
+            {
+                terminalSpinner.SpinOnce();
+                terminal = Volatile.Read(ref _consumerTerminal);
+            }
+            if (terminal == ConsumerTerminalLocalAbort && Volatile.Read(ref _completed))
+                return false;
+        }
+
+        var spinner = new SpinWait();
+        while (true)
+        {
+            var state = Volatile.Read(ref _localAbortDeliveryState);
+            if ((state & LocalAbortClaimed) != 0)
+            {
+                // A claimant that later loses to a peer terminal or consumer disposal clears
+                // the bit again. Only treat the boundary as closed after the winning local
+                // terminal has published its error/completed state.
+                if (Volatile.Read(ref _consumerTerminal) == ConsumerTerminalLocalAbort &&
+                    Volatile.Read(ref _completed))
+                {
+                    return false;
+                }
+                spinner.SpinOnce();
+                continue;
+            }
+            if ((state & LocalAbortDelivery) != 0)
+                throw new InvalidOperationException("Only one stream delivery can be published at a time.");
+            if (Interlocked.CompareExchange(
+                    ref _localAbortDeliveryState,
+                    LocalAbortDelivery,
+                    0) == 0)
+            {
+                return true;
+            }
+        }
+    }
+
+    private void ReleaseLocalAbortDelivery()
+    {
+        while (true)
+        {
+            var state = Volatile.Read(ref _localAbortDeliveryState);
+            if ((state & LocalAbortDelivery) == 0)
+                return;
+            if (Interlocked.CompareExchange(
+                    ref _localAbortDeliveryState,
+                    state & ~LocalAbortDelivery,
+                    state) == state)
+            {
+                return;
+            }
+        }
+    }
+
     /// <summary>Registers a callback that cancels the remote request when the consumer abandons the stream.</summary>
     /// <param name="callback">The abandonment callback, or <see langword="null"/> to disable notification.</param>
     /// <param name="requestId">The request identifier passed to the callback.</param>
@@ -571,8 +789,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             // even though the path completes synchronously and allocates nothing (issue #218).
             if (TryDequeue(out var value, out var encodedByteCount))
             {
-                _current = value;
-                NotifyBytesConsumed(encodedByteCount);
+                PublishDequeuedItem(value, encodedByteCount);
 
                 // 如果已经 complete 且队列空且已 Dispose，则回收
                 if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
@@ -626,8 +843,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
                 if (TryDequeue(out var value, out var encodedByteCount))
                 {
-                    _current = value;
-                    NotifyBytesConsumed(encodedByteCount);
+                    PublishDequeuedItem(value, encodedByteCount);
 
                     // 如果已经 complete 且队列空且已 Dispose，则回收
                     if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
@@ -899,13 +1115,23 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     {
         try
         {
-            // A dispatch acquired before Close may have published an item or returned
-            // receive credit after DisposeAsync began. Drain only after it is quiescent.
-            var discardedBytes = 0;
-            while (TryDequeue(out _, out var encodedByteCount))
-                discardedBytes = checked(discardedBytes + encodedByteCount);
-            if (discardedBytes != 0)
-                NotifyBytesConsumed(discardedBytes);
+            if (Volatile.Read(ref _consumerTerminal) == ConsumerTerminalLocalAbort)
+            {
+                // A local lifetime terminal owns buffered retirement and receive-credit return.
+                // Dispose may race it after dispatch drain, so share the one-shot drain without
+                // releasing the terminal owner's retention lease.
+                DrainLocalAbortBuffer();
+            }
+            else
+            {
+                // A dispatch acquired before Close may have published an item or returned
+                // receive credit after DisposeAsync began. Drain only after it is quiescent.
+                var discardedBytes = 0;
+                while (TryDequeueCore(out _, out var encodedByteCount))
+                    discardedBytes = checked(discardedBytes + encodedByteCount);
+                if (discardedBytes != 0)
+                    NotifyBytesConsumed(discardedBytes);
+            }
             if (notifyConsumerAbandoned)
             {
                 if (_consumerAbandonedAsync is { } callback)
@@ -1038,6 +1264,49 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool TryDequeue(out T value, out int encodedByteCount)
+    {
+        if (!TryAcquireLocalAbortDelivery())
+        {
+            var error = _error ?? new OperationCanceledException(
+                "The response stream was terminated before buffered delivery.");
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+        }
+
+        var releaseDelivery = true;
+        try
+        {
+            if (!TryDequeueCore(out value, out encodedByteCount))
+                return false;
+
+            // A successful dequeue transfers this claim to PublishDequeuedItem. Keeping the
+            // claim active across the method boundary is what makes dequeue -> Current -> credit
+            // one indivisible user-visible publication against a local terminal.
+            releaseDelivery = false;
+            return true;
+        }
+        finally
+        {
+            if (releaseDelivery)
+                ReleaseLocalAbortDelivery();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void PublishDequeuedItem(T value, int encodedByteCount)
+    {
+        try
+        {
+            _current = value;
+            NotifyBytesConsumed(encodedByteCount);
+        }
+        finally
+        {
+            ReleaseLocalAbortDelivery();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool TryDequeueCore(out T value, out int encodedByteCount)
     {
         while (true)
         {
@@ -1194,6 +1463,12 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
+        _localAbortBytesConsumed = null;
+        _localAbortRequestId = 0;
+        _localAbortStreamId = 0;
+        Volatile.Write(ref _localAbortRetentionLeaseState, 0);
+        Volatile.Write(ref _localAbortDeliveryState, 0);
+        Volatile.Write(ref _localAbortBufferRetired, 0);
         Volatile.Write(ref _dispatchState, null);
         Volatile.Write(ref _disposeCompletion, null);
         Volatile.Write(ref _remoteTerminalPublication, null);
@@ -1274,8 +1549,8 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         get
         {
             if (_codec is not null || _error is not null || Volatile.Read(ref _dispatchState) is not null ||
-                _bytesConsumed is not null || _consumerAbandoned is not null ||
-                _consumerAbandonedAsync is not null ||
+                _bytesConsumed is not null || _localAbortBytesConsumed is not null ||
+                _consumerAbandoned is not null || _consumerAbandonedAsync is not null ||
                 _current is not null || _enumerationToken.CanBeCanceled ||
                 _additionalEnumerationToken.CanBeCanceled ||
                 !_enumerationCancellationRegistration.Equals(default) ||

@@ -239,7 +239,7 @@ public partial class RpcGenerator
                     SourceLocation = method.Location
                 };
                 foreach (var parameter in method.Parameters.Where(static parameter =>
-                             !parameter.IsCancellationToken && !parameter.IsCallOptions))
+                             !parameter.IsCancellationToken))
                 {
                     var typeName = RemoveGlobalPrefix(parameter.IsStream
                         ? parameter.StreamItemType!

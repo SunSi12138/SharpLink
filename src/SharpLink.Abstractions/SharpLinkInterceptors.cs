@@ -21,12 +21,12 @@ public sealed class SharpLinkClientInvocationContext
     internal SharpLinkClientInvocationContext(
         RpcMethodDescriptor method,
         object? request,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
     {
         Method = method;
         Request = request;
-        Options = options;
+        Metadata = metadata;
         CancellationToken = cancellationToken;
     }
 
@@ -35,7 +35,7 @@ public sealed class SharpLinkClientInvocationContext
     /// <summary>Gets the generated request value. Value-type requests are boxed only when interceptors are enabled.</summary>
     public object? Request { get; }
     /// <summary>Gets or replaces call controls before the terminal invoker runs.</summary>
-    public SharpLinkCallOptions Options { get; set; }
+    public SharpLinkMetadata? Metadata { get; set; }
     /// <summary>Gets the caller cancellation token.</summary>
     public CancellationToken CancellationToken { get; }
     /// <summary>Gets the current completion status.</summary>
@@ -67,7 +67,7 @@ public readonly record struct SharpLinkClientInvocationResult(object? Value)
 public delegate ValueTask<SharpLinkClientInvocationResult> SharpLinkClientInvocationDelegate(
     SharpLinkClientInvocationContext context);
 
-/// <summary>Intercepts a generated client call and may mutate options, short-circuit, or observe the result.</summary>
+/// <summary>Intercepts a generated client call and may mutate metadata, short-circuit, or observe the result.</summary>
 public interface ISharpLinkClientInterceptor
 {
     /// <summary>Invokes this interceptor.</summary>
@@ -86,11 +86,12 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         EndPoint? localEndPoint,
         EndPoint? remoteEndPoint,
         SharpLinkAuthenticationContext? authentication,
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
+        TimeProvider deadlineTimeProvider,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken,
         ISharpLinkServerInterceptor[]? interceptors = null)
-        : base(connectionId, authentication, deadline, metadata)
+        : base(connectionId, authentication, deadline, deadlineTimeProvider, metadata)
     {
         Interceptors = interceptors;
         Method = method;

@@ -58,6 +58,7 @@ public static class Program
         "SharpLink.Runtime.IStreamConsumptionAwareDispatcher",
         "SharpLink.Runtime.IStreamDispatchLease",
         "SharpLink.Runtime.IStreamDispatchState",
+        "SharpLink.Runtime.InboundStreamChildDispatchState",
         "SharpLink.Runtime.PooledAsyncStreamDispatcher`1",
         "SharpLink.Runtime.PreAdmissionStreamDispatcher",
         "SharpLink.Runtime.DiscardingStreamDispatcher"

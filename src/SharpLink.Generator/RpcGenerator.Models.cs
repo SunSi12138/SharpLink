@@ -35,7 +35,6 @@ internal record RpcMethodModel(
     bool IsVoid,
     bool IsOneWay,
     bool HasCancellationToken,
-    bool HasCallOptions,
     bool HasTimeoutAttribute,
     double? TimeoutSeconds,
     bool IsIdempotent,
@@ -66,7 +65,6 @@ internal record RpcParameterModel(
     bool IsNullableReference,
     bool PayloadNullable,
     bool IsCancellationToken,
-    bool IsCallOptions,
     string? EnumUnderlyingType,
     string? StreamItemEnumUnderlyingType,
     Location? Location);
@@ -87,7 +85,6 @@ internal enum InvalidRpcMethodKind
     InheritedSignatureConflict
 }
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
-internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidControlParameterOrderModel(string MethodName, Location? Location);
 internal readonly record struct InvalidStreamCountMethodModel(string MethodName, int StreamParameterCount, Location? Location);
 internal readonly record struct NonCancellableRpcMethodModel(string MethodName, Location? Location);

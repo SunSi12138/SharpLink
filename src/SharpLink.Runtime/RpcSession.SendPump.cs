@@ -214,6 +214,8 @@ internal sealed partial class RpcSession
             Exception terminalException = CreateTransportClosedException();
             var bytesAccumulated = 0;
             var batchDeadline = 0L;
+            var writtenCount = 0;
+            var deferWrites = false;
 
             try
             {
@@ -238,15 +240,19 @@ internal sealed partial class RpcSession
                         continue;
                     }
 
-                    if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
+                    if (await DrainProgressQueueAsync(pending, deferWrites).ConfigureAwait(false))
                     {
                         // Progress frames must not wait for a full batch:
                         // flush whatever the batch still holds (LowLatency
                         // already flushed per frame inside the drain).
+                        if (!deferWrites)
+                            writtenCount = pending.Count;
                         if (pending.Count > 0)
                         {
-                            await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                            await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                             bytesAccumulated = 0;
+                            writtenCount = 0;
+                            deferWrites = false;
                         }
                         batchDeadline = 0;
                     }
@@ -266,16 +272,33 @@ internal sealed partial class RpcSession
                         // WriteFrame/FlushAsync must still release the frame and complete its
                         // flush waiter through the terminal ReleaseBatch in the finally block.
                         pending.Add(frame);
-                        WriteFrame(frame);
+                        var hasTimeBudget = HasTimeBudget(frame);
+                        if (!deferWrites)
+                        {
+                            if (hasTimeBudget)
+                                deferWrites = true;
+                            else
+                            {
+                                WriteFrame(frame);
+                                writtenCount++;
+                            }
+                        }
                         bytesAccumulated += frame.Length;
 
-                        if (frame.ForceFlush ||
+                        // A deadline-bearing Request is a publication boundary. Its retained
+                        // process-local deadline is sampled only after output span/copy has
+                        // completed, and no later frame may perform local work before the flush
+                        // that publishes that budget snapshot.
+                        if (hasTimeBudget ||
+                            frame.ForceFlush ||
                             _flushMode == FlushMode.LowLatency ||
                             bytesAccumulated >= _flushSizeThreshold)
                         {
-                            await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                            await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                             bytesAccumulated = 0;
                             batchDeadline = 0;
+                            writtenCount = 0;
+                            deferWrites = false;
                         }
 
                         // Bounded progress interleave: the progress check is
@@ -287,12 +310,16 @@ internal sealed partial class RpcSession
                         if (normalFramesSinceInterleave >= NormalFramesPerInterleave)
                         {
                             normalFramesSinceInterleave = 0;
-                            if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
+                            if (await DrainProgressQueueAsync(pending, deferWrites).ConfigureAwait(false))
                             {
+                                if (!deferWrites)
+                                    writtenCount = pending.Count;
                                 if (pending.Count > 0)
                                 {
-                                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                                    await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                                     bytesAccumulated = 0;
+                                    writtenCount = 0;
+                                    deferWrites = false;
                                 }
                                 batchDeadline = 0;
                             }
@@ -318,9 +345,11 @@ internal sealed partial class RpcSession
                         continue;
                     }
 
-                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                    await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                     bytesAccumulated = 0;
                     batchDeadline = 0;
+                    writtenCount = 0;
+                    deferWrites = false;
                 }
             }
             catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
@@ -350,31 +379,41 @@ internal sealed partial class RpcSession
             }
         }
 
-        private async ValueTask<bool> DrainProgressQueueAsync(List<OwnedFrame> pending)
+        private async ValueTask<bool> DrainProgressQueueAsync(
+            List<OwnedFrame> pending,
+            bool deferWrites)
         {
             // The drain runs until the progress queue is empty so the service
-            // rate always matches the arrival rate: any threshold break here
-            // would cap progress service per check point and let the backlog
-            // grow without bound (observed with LowLatency, where the
-            // threshold is one frame). LowLatency preserves its per-frame
-            // flush contract inside the loop; the other modes flush once in
-            // the caller after the full drain.
+            // rate always matches the arrival rate. If an earlier deadline-bearing
+            // frame is deferred, progress stays behind it; otherwise preserve the
+            // original immediate-copy ordering and only delay the transport flush.
             var drained = false;
             var drainedCount = 0;
             while (drainedCount < ProgressFramesPerDrain &&
                    _progressQueue.Reader.TryRead(out var frame))
             {
                 pending.Add(frame);
-                WriteFrame(frame);
+                if (!deferWrites)
+                    WriteFrame(frame);
                 drained = true;
                 drainedCount++;
                 if (_flushMode == FlushMode.LowLatency)
                 {
-                    // The caller resets the byte accumulator after its flush.
-                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                    await FlushAndReleaseAsync(
+                        pending,
+                        deferWrites ? 0 : pending.Count).ConfigureAwait(false);
                 }
             }
             return drained;
+        }
+
+        private static bool HasTimeBudget(OwnedFrame frame)
+        {
+            var source = frame.Memory.Span;
+            return source.Length >=
+                       ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes + sizeof(long) &&
+                   (ProtocolV2FrameType)source[5] == ProtocolV2FrameType.Request &&
+                   (((ProtocolV2FrameFlags)source[6]) & ProtocolV2FrameFlags.HasTimeBudget) != 0;
         }
 
         private void WriteFrame(OwnedFrame frame)
@@ -388,8 +427,69 @@ internal sealed partial class RpcSession
             _output.Advance(source.Length);
         }
 
-        private async ValueTask FlushAndReleaseAsync(List<OwnedFrame> pending)
+        private bool TryWriteFrameAtEmission(OwnedFrame frame)
         {
+            var source = frame.Memory.Span;
+            if (source.IsEmpty)
+                return true;
+            if (!HasTimeBudget(frame))
+            {
+                WriteFrame(frame);
+                return true;
+            }
+            if (!frame.Deadline.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "A Request carrying TimeBudget must retain its process-local RpcDeadline until emission.");
+            }
+
+            var budgetOffset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
+
+            // GetSpan/copy are still local pre-publication work and may be supplied by a
+            // custom PipeWriter. Finish that work before sampling the remaining budget so
+            // it cannot silently extend the peer's lifetime.
+            var destination = _output.GetSpan(source.Length);
+            source.CopyTo(destination);
+            var remaining = frame.Deadline.GetRemaining(_timeProvider);
+            if (remaining <= TimeSpan.Zero)
+                return false;
+
+            SharpLinkTelemetry.RecordSentBytes(source.Length);
+            BinaryPrimitives.WriteInt64LittleEndian(
+                destination.Slice(budgetOffset, sizeof(long)),
+                remaining.Ticks);
+            _output.Advance(source.Length);
+            return true;
+        }
+
+        private async ValueTask FlushAndReleaseAsync(
+            List<OwnedFrame> pending,
+            int writtenCount)
+        {
+            // Only the suffix beginning with the first deadline-bearing request stays in
+            // owned buffers. Stamp its remaining TimeBudget from retained deadline metadata
+            // at the last possible point before FlushAsync.
+            for (var index = writtenCount; index < pending.Count;)
+            {
+                var frame = pending[index];
+                if (TryWriteFrameAtEmission(frame))
+                {
+                    index++;
+                    continue;
+                }
+
+                pending.RemoveAt(index);
+                CompleteReserved(
+                    frame,
+                    new SharpLinkException(
+                        SharpLinkErrorCode.DeadlineExceeded,
+                        "Request deadline expired before transport emission."),
+                    completeFlushWaiter: true);
+            }
+
+            if (pending.Count == 0)
+                return;
+
             var result = await _output.FlushAsync(_sessionCancellation).ConfigureAwait(false);
             if (result.IsCanceled || result.IsCompleted)
                 throw CreateTransportClosedException();

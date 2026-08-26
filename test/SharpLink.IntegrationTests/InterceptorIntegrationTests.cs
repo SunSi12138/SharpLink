@@ -12,7 +12,7 @@ public class InterceptorIntegrationTests
             serverInterceptor: serverInterceptor);
 
         var service = harness.Client.Get<IInterceptorTestService>();
-        var result = await service.DescribeAsync(17, default);
+        var result = await service.DescribeAsync(17);
 
         Ensure(result.Contains("client-interceptor", StringComparison.Ordinal), "client metadata reached service");
         Ensure(clientInterceptor.Method.IsIdempotent, "client descriptor idempotent marker");
@@ -703,11 +703,8 @@ public class InterceptorIntegrationTests
             SharpLinkClientInvocationDelegate next)
         {
             Method = context.Method;
-            context.Options = context.Options with
-            {
-                Metadata = new SharpLinkMetadata(
-                    new KeyValuePair<string, string>("source", "client-interceptor"))
-            };
+            context.Metadata = new SharpLinkMetadata(
+                new KeyValuePair<string, string>("source", "client-interceptor"));
             var result = await next(context);
             StatusAfterNext = context.Status;
             return result;
@@ -1115,7 +1112,7 @@ public interface IInterceptorTestService : IService
 {
     [Idempotent]
     [NonCancellable]
-    ValueTask<string> DescribeAsync(int value, SharpLinkCallOptions options);
+    ValueTask<string> DescribeAsync(int value);
     [NonCancellable]
     ValueTask<int> DescribeNumberAsync(int value);
     [NonCancellable]
@@ -1174,12 +1171,12 @@ public sealed class InterceptorTestService : IInterceptorTestService
 
     public static void ReleaseDelayedCall() => Volatile.Read(ref s_delayedCallRelease).TrySetResult(true);
 
-    public ValueTask<string> DescribeAsync(int value, SharpLinkCallOptions options)
+    public ValueTask<string> DescribeAsync(int value)
     {
-        var source = options.Metadata is { Count: > 0 } metadata
+        var context = SharpLinkCallContext.Current;
+        var source = context?.Metadata is { Count: > 0 } metadata
             ? metadata[0].Value
             : "missing";
-        var context = SharpLinkCallContext.Current;
         return ValueTask.FromResult($"{value}|{source}|{context?.SessionId}");
     }
 

@@ -211,7 +211,8 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            request = ReadRequestEnvelope(session, result.Payload, flags);
+            request = ReadRequestEnvelope(
+                session, result.Payload, flags, request.RpcDeadline);
         }
         catch (ServerDecodeExecutorClosedException)
         {

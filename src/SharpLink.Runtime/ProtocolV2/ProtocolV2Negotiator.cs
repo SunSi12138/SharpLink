@@ -40,8 +40,11 @@ internal readonly struct ProtocolV2NegotiationPolicy
         IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders)
     {
         ArgumentNullException.ThrowIfNull(compressionProviders);
-        if (minorVersion > ProtocolV2Constants.MinorVersion)
+        if (minorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion ||
+            minorVersion > ProtocolV2Constants.MinorVersion)
+        {
             throw new ArgumentOutOfRangeException(nameof(minorVersion));
+        }
         if ((supportedCapabilities & ~RpcSessionProtocolRules.KnownCapabilities) != 0)
             throw new ArgumentOutOfRangeException(nameof(supportedCapabilities));
         if (maxFramePayloadBytes < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
@@ -249,6 +252,13 @@ internal static class ProtocolV2Negotiator
             response.ConnectionReceiveWindowBytes,
             "HandshakeResponse");
 
+        if (response.MinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
+        {
+            throw Failure(
+                SharpLinkErrorCode.Unimplemented,
+                $"Server selected incompatible protocol minor version {response.MinorVersion}; " +
+                $"minimum supported is {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
+        }
         if (response.MinorVersion > offer.MinorVersion)
         {
             throw Failure(
@@ -308,6 +318,13 @@ internal static class ProtocolV2Negotiator
 
     private static void ValidatePeerOffer(in ProtocolV2HandshakeRequest offer)
     {
+        if (offer.MinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
+        {
+            throw Failure(
+                SharpLinkErrorCode.Unimplemented,
+                $"Peer protocol minor version {offer.MinorVersion} is incompatible; " +
+                $"minimum supported is {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
+        }
         ValidatePeerLimits(
             offer.MaxFramePayloadBytes,
             offer.StreamReceiveWindowBytes,
