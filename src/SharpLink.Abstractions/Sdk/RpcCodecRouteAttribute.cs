@@ -1,10 +1,10 @@
 namespace SharpLink.Sdk;
 
 /// <summary>Routes an RPC payload scope to a registered Codec adapter at compile time.</summary>
-[AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Interface, AllowMultiple = true, Inherited = false)]
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
 public sealed class RpcCodecRouteAttribute : Attribute
 {
-    /// <summary>Creates a Contract- or assembly-level Codec route.</summary>
+    /// <summary>Creates an assembly-level Codec route.</summary>
     public RpcCodecRouteAttribute(RpcCodecScope scope, Type adapterType)
     {
         Scope = scope;

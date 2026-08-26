@@ -359,16 +359,13 @@ public sealed class SharpLinkMultiClusterClientBuilder
             if (!expandPolicy)
                 continue;
 
-            foreach (var set in manifest.ContractCodecSets)
+            foreach (var dependency in manifest.ContractDependencies)
             {
-                foreach (var dependency in set.Dependencies)
-                {
-                    if (!seen.Add(dependency))
-                        continue;
-                    var dependencyAssembly = ResolveDependencyAssembly(assembly, dependency);
-                    if (dependencyAssembly is not null)
-                        pendingAssemblies.Enqueue((dependencyAssembly, false));
-                }
+                if (!seen.Add(dependency))
+                    continue;
+                var dependencyAssembly = ResolveDependencyAssembly(assembly, dependency);
+                if (dependencyAssembly is not null)
+                    pendingAssemblies.Enqueue((dependencyAssembly, false));
             }
         }
 
@@ -389,13 +386,10 @@ public sealed class SharpLinkMultiClusterClientBuilder
         if (!includeContractPolicyDependencies)
             yield break;
 
-        foreach (var set in manifest.ContractCodecSets)
+        foreach (var dependency in manifest.ContractDependencies)
         {
-            foreach (var dependency in set.Dependencies)
-            {
-                if (seen.Add(dependency))
-                    yield return dependency;
-            }
+            if (seen.Add(dependency))
+                yield return dependency;
         }
     }
 
@@ -476,8 +470,8 @@ public sealed class SharpLinkMultiClusterClientBuilder
         => assemblyOwners.TryGetValue(manifest.OwnerAssembly, out var owner) && owner == cluster;
 
     // A dependency can contribute globally published generated Codecs to multiple slots, but proxy
-    // descriptors and Contract-owned policy become visible only when its Contract-owning assembly is
-    // explicitly routed to that slot. Hidden Contracts therefore must not instantiate policy scopes.
+    // descriptors and assembly-owned RPC policy become visible only when its owning Contract assembly
+    // is explicitly routed to that slot. Hidden Contracts therefore must not instantiate policy scopes.
     private sealed class DependencyManifestView(ISharpLinkGeneratedAssemblyManifest source)
         : ISharpLinkGeneratedAssemblyManifest
     {
@@ -490,8 +484,8 @@ public sealed class SharpLinkMultiClusterClientBuilder
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => source.Codecs;
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [];
-        public IReadOnlyList<SharpLinkGeneratedContractCodecSet> ContractCodecSets => [];
         public IReadOnlyList<string> Dependencies => source.Dependencies;
+        public IReadOnlyList<string> ContractDependencies => [];
     }
 
     private sealed record ClusterConfiguration(

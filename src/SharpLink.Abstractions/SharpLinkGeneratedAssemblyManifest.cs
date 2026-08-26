@@ -42,7 +42,7 @@ public sealed record SharpLinkGeneratedContractDescriptor(
     Func<IRpcChannel, IRpcCodecProvider, object> ProxyFactory,
     Func<IRpcCodecProvider, IRpcStub> StubFactory)
 {
-    /// <summary>Compatibility constructor for descriptors that do not own a Contract-specific Codec graph.</summary>
+    /// <summary>Compatibility constructor for descriptors that do not consume an injected Codec provider.</summary>
     public SharpLinkGeneratedContractDescriptor(
         Type contractType,
         string contractName,
@@ -62,13 +62,6 @@ public sealed record SharpLinkGeneratedContractDescriptor(
     {
     }
 }
-
-/// <summary>Describes the final compile-time Codec graph owned by one RPC Contract.</summary>
-public sealed record SharpLinkGeneratedContractCodecSet(
-    Type ContractType,
-    bool HasCompileTimePolicy,
-    IReadOnlyList<IRpcGeneratedCodecFactory> Codecs,
-    IReadOnlyList<string> Dependencies);
 
 /// <summary>Describes one service-owned generated activator.</summary>
 public sealed record SharpLinkGeneratedServiceDescriptor(
@@ -106,21 +99,24 @@ public interface ISharpLinkGeneratedAssemblyManifest
     /// <summary>Gets service-owned activator descriptors.</summary>
     IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; }
 
-    /// <summary>Gets generated Codec factories owned by this assembly's global/default graph.</summary>
+    /// <summary>Gets generated Codec factories owned by this assembly's normal/global graph.</summary>
     IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
 
     /// <summary>
-    /// Legacy assembly-level Contract Codec table. API 5 generated manifests use
-    /// <see cref="ContractCodecSets"/> so same-assembly Contracts can own distinct bindings.
+    /// Gets the final immutable RPC Codec graph owned by this Contract assembly generation.
+    /// Every RPC interface in the assembly consumes this same closed-Type binding table.
+    /// Custom manifests with no RPC Codec policy may omit this member and receive an empty graph.
     /// </summary>
     IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => Array.Empty<IRpcGeneratedCodecFactory>();
 
-    /// <summary>Gets final Codec graphs keyed by the Contract that owns each compile-time policy.</summary>
-    IReadOnlyList<SharpLinkGeneratedContractCodecSet> ContractCodecSets =>
-        Array.Empty<SharpLinkGeneratedContractCodecSet>();
-
-    /// <summary>Gets generated-module dependencies required outside Contract-only Codec graphs.</summary>
+    /// <summary>Gets generated-module dependencies required outside the RPC-only Codec graph.</summary>
     IReadOnlyList<string> Dependencies { get; }
+
+    /// <summary>
+    /// Gets generated-module dependencies required only by this Contract assembly's final RPC Codec graph.
+    /// Dependency-only views may hide this closure until the assembly itself is routed as a Contract root.
+    /// </summary>
+    IReadOnlyList<string> ContractDependencies => Array.Empty<string>();
 }
 
 /// <summary>Defines generated manifest compatibility constants for the current SharpLink release line.</summary>
@@ -171,9 +167,7 @@ public static class SharpLinkGeneratedAssemblyCatalog
             Entries.Add(weakManifest);
             var loadContext = AssemblyLoadContext.GetLoadContext(manifest.OwnerAssembly);
             if (loadContext?.IsCollectible == true)
-            {
                 loadContext.Unloading += _ => Remove(weakManifest);
-            }
         }
     }
 
