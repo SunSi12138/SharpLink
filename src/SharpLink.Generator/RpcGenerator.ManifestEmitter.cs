@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v1";
+    private const string GeneratedAbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v2";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
