@@ -105,8 +105,9 @@ public interface ISharpLinkGeneratedAssemblyManifest
     /// <summary>
     /// Gets the final immutable RPC Codec graph owned by this Contract assembly generation.
     /// Every RPC interface in the assembly consumes this same closed-Type binding table.
+    /// Custom manifests with no RPC Codec policy may omit this member and receive an empty graph.
     /// </summary>
-    IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; }
+    IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => Array.Empty<IRpcGeneratedCodecFactory>();
 
     /// <summary>Gets generated-module dependencies required outside the RPC-only Codec graph.</summary>
     IReadOnlyList<string> Dependencies { get; }
