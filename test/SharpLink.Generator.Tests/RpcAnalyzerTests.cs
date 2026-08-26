@@ -105,7 +105,7 @@ public interface IPrivateNestedService : SharpLink.Sdk.IService
         Ensure(CountOccurrences(generated, "public sealed class IPrivateNestedService_Proxy") == 0 &&
                CountOccurrences(generated, "public sealed class IPrivateNestedService_Stub") == 0,
             "generated Proxy/Stub must not be public top-level contract types");
-        Ensure(generated.Contains("static channel => __CreateProxy_", StringComparison.Ordinal) &&
+        Ensure(generated.Contains("static (channel, codecs) => __CreateProxy_", StringComparison.Ordinal) &&
                generated.Contains("static codecs => __CreateStub_", StringComparison.Ordinal),
             "the manifest must use private static factories to instantiate nested artifacts");
         return Task.CompletedTask;

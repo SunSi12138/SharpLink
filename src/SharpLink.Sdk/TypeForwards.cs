@@ -7,6 +7,8 @@ using SharpLink.Sdk;
 [assembly: TypeForwardedTo(typeof(OnewayAttribute))]
 [assembly: TypeForwardedTo(typeof(RpcCodecAdapterAttribute))]
 [assembly: TypeForwardedTo(typeof(RpcCodecAdapterRegistrationAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcCodecRouteAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcCodecScope))]
 [assembly: TypeForwardedTo(typeof(RpcContractAttribute))]
 [assembly: TypeForwardedTo(typeof(RpcIgnoreAttribute))]
 [assembly: TypeForwardedTo(typeof(RpcMemberAttribute))]

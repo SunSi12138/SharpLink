@@ -30,8 +30,12 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Where(m => m != null);
 
         var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
-                AnalyzeGeneratedCodecs(compilation, ct))
+                AnalyzeGeneratedCodecsWithPolicyOwnership(compilation, ct))
             .WithComparer(DtoGenerationResultComparer.Instance);
+        var boundInterfaces = interfaces
+            .Combine(generatedCodecs)
+            .Select(static (value, _) => BindFinalCodecSelections(value.Left, value.Right))
+            .Where(static model => model is not null);
 
         var services = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
@@ -258,7 +262,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        context.RegisterSourceOutput(interfaces, (spc, model) =>
+        context.RegisterSourceOutput(boundInterfaces, (spc, model) =>
         {
             var proxyHelpers = GenerateProxyHelpers(model!);
             if (!string.IsNullOrEmpty(proxyHelpers))
@@ -298,27 +302,28 @@ public partial class RpcGenerator : IIncrementalGenerator
                     diagnostic.Detail));
             }
 
-            if (!result.Codecs.IsDefaultOrEmpty)
+            if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)
             {
                 spc.AddSource(
                     "SharpLink.GeneratedCodecs.g.cs",
-                    SourceText.From(GenerateCodecs(result.Codecs), Encoding.UTF8));
+                    SourceText.From(GenerateCodecs(result.Codecs.AddRange(result.ContractCodecs)), Encoding.UTF8));
             }
         });
 
-        var manifest = interfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
+        var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
             var interfaces = value.Left.Left;
             var services = value.Left.Right;
             var codecs = value.Right.Codecs;
+            var contractCodecs = value.Right.ContractCodecs;
             var contracts = GetContractModels(interfaces);
             var serviceModels = GetServiceModels(services);
 
-            var code = GenerateAssemblyManifest(interfaces, services, codecs);
+            var code = GenerateAssemblyManifest(interfaces, services, codecs, contractCodecs);
             if (!string.IsNullOrEmpty(code))
             {
-                var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs);
+                var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs, contractCodecs);
                 spc.AddSource(
                     "SharpLink.GeneratedAssemblyManifest.g.cs",
                     SourceText.From(code, Encoding.UTF8));
@@ -338,14 +343,14 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        var contractManifestModels = interfaces.Collect()
+        var contractManifestModels = boundInterfaces.Collect()
             .Combine(services.Collect())
             .Combine(generatedCodecs)
             .Combine(unions.Collect())
             .Select(static (value, _) => new ContractManifestModels(
                 value.Left.Left.Left,
                 value.Left.Left.Right,
-                value.Left.Right.Codecs,
+                value.Left.Right.ContractManifestCodecs,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider

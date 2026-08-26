@@ -478,25 +478,6 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task TwoClientServerPairsShouldUseIndependentDtoCodecs()
-    {
-        var firstCodec = new MarkerPersonCodec(0xA1);
-        var secondCodec = new MarkerPersonCodec(0xB2);
-        await using var first = await TestHarness.CreateAsync(personCodec: firstCodec);
-        await using var second = await TestHarness.CreateAsync(personCodec: secondCodec);
-
-        var firstResult = await first.Client.Get<ITestService>()
-            .EchoAsync(new Person { Name = "first", Age = 1, Tags = ["a"] });
-        var secondResult = await second.Client.Get<ITestService>()
-            .EchoAsync(new Person { Name = "second", Age = 2, Tags = ["b"] });
-
-        Ensure(firstResult is { Name: "first-r", Age: 2 }, "first context codec");
-        Ensure(secondResult is { Name: "second-r", Age: 3 }, "second context codec");
-        Ensure(firstCodec.SerializeCount > 0 && firstCodec.DeserializeCount > 0, "first codec should be used");
-        Ensure(secondCodec.SerializeCount > 0 && secondCodec.DeserializeCount > 0, "second codec should be used");
-    }
-
-    [Test]
     public async Task OneWayMethodTimeoutShouldCancelServerInvocationCooperatively()
     {
         TestService.ResetOneWayDeadlineCancellation();
@@ -1516,21 +1497,18 @@ public class IntegrationBehaviorTests
     {
         TestService.ResetMalformedUploadInvocations();
         await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
-        {
-            builder.UseCodec(new ThrowingPersonCodec());
             builder.UseAdmissionControl(options =>
             {
                 options.Global.UseConcurrency(1);
                 options.MaxQueuedCalls = 1;
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(2);
-            });
-        });
+            }));
         var service = harness.Client.Get<ITestService>();
         var active = service.SlowAddWithoutTimeoutAsync(8, 9).AsTask();
         await Task.Delay(75);
         var failed = service.UploadWithHeaderAsync(
-            new Person { Name = "malformed", Age = 1 },
+            new MalformedHeader(1),
             ToAsyncEnumerable(Enumerable.Range(1, 256), CancellationToken.None)).AsTask();
 
         await EnsureThrowsSharpLinkFast(
@@ -1637,7 +1615,6 @@ public class IntegrationBehaviorTests
             },
             serverConfigure: builder =>
             {
-                builder.UseCodec(new ThrowingPersonCodec());
                 builder.UseAdmissionControl(options =>
                 {
                     options.Global.UseConcurrency(1);
@@ -1651,7 +1628,7 @@ public class IntegrationBehaviorTests
         var permitOwner = service.SlowAddWithoutTimeoutAsync(10, 11).AsTask();
         await Task.Delay(75);
         var failedOneWay = service.NotifyUploadWithHeaderAsync(
-            new Person { Name = "malformed-oneway", Age = 1 },
+            new MalformedHeader(2),
             ToAsyncEnumerable(Enumerable.Range(1, 256), CancellationToken.None)).AsTask();
 
         Ensure(await permitOwner.WaitAsync(TimeSpan.FromSeconds(2)) == 21,
@@ -2044,7 +2021,6 @@ public class IntegrationBehaviorTests
             Action<SharpLinkRuntimeOptions>? serverRuntimeConfigure = null,
             Action<SharpLinkRuntimeOptions>? clientRuntimeConfigure = null,
             Action<SharpLinkServerBuilder>? serverConfigure = null,
-            IRpcCodec<Person>? personCodec = null,
             ISharpLinkClientInterceptor? clientInterceptor = null)
         {
             var cts = new CancellationTokenSource();
@@ -2052,8 +2028,6 @@ public class IntegrationBehaviorTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (codecResolver is not null)
                 serverBuilder.UseSerializer(codecResolver);
-            if (personCodec is not null)
-                serverBuilder.UseCodec(personCodec);
             if (runtimeConfigure is not null)
                 serverBuilder.UseRuntime(runtimeConfigure);
             if (serverRuntimeConfigure is not null)
@@ -2095,8 +2069,6 @@ public class IntegrationBehaviorTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (codecResolver is not null)
                 clientBuilder.UseSerializer(codecResolver);
-            if (personCodec is not null)
-                clientBuilder.UseCodec(personCodec);
             if (useSharedMemory)
                 clientBuilder.UseSharedMemory(sharedMemoryName);
             else
@@ -2232,42 +2204,6 @@ public class IntegrationBehaviorTests
                 ? throw new InvalidOperationException("Injected decompression failure.")
                 : inner.Decompress(input, output, maxOutputBytes, cancellationToken);
     }
-
-    private sealed class ThrowingPersonCodec : IRpcCodec<Person>
-    {
-        public void Serialize(in Person value, IBufferWriter<byte> buffer)
-            => throw new NotSupportedException("The server never serializes this request argument.");
-
-        public Person? Deserialize(in ReadOnlySequence<byte> buffer)
-            => throw new InvalidDataException("Injected request argument decode failure.");
-    }
-
-    private sealed class MarkerPersonCodec(byte marker) : IRpcCodec<Person>
-    {
-        private readonly byte _marker = marker;
-        private readonly IRpcCodec<Person> _inner = SharpPackRpcCodec.Create<Person>(new SharpPackSerializerContext());
-        public int SerializeCount;
-        public int DeserializeCount;
-
-        public void Serialize(in Person value, IBufferWriter<byte> buffer)
-        {
-            var markerSpan = buffer.GetSpan(1);
-            markerSpan[0] = _marker;
-            buffer.Advance(1);
-            _inner.Serialize(value, buffer);
-            Interlocked.Increment(ref SerializeCount);
-        }
-
-        public Person? Deserialize(in ReadOnlySequence<byte> buffer)
-        {
-            var reader = new SequenceReader<byte>(buffer);
-            if (!reader.TryRead(out var actualMarker) || actualMarker != _marker)
-                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DTO codec marker mismatch.");
-            Interlocked.Increment(ref DeserializeCount);
-            var payload = buffer.Slice(reader.Position);
-            return _inner.Deserialize(payload);
-        }
-    }
 }
 
 [RpcContract]
@@ -2304,7 +2240,7 @@ public interface ITestService : IService
         IAsyncEnumerable<int> values,
         CancellationToken cancellationToken = default);
     [NonCancellable]
-    ValueTask<int> UploadWithHeaderAsync(Person header, IAsyncEnumerable<int> values);
+    ValueTask<int> UploadWithHeaderAsync(MalformedHeader header, IAsyncEnumerable<int> values);
     [NonCancellable]
     IAsyncEnumerable<string> DownloadAsync(int count);
     IAsyncEnumerable<int> SlowDownloadAsync(int count, int delayMs, CancellationToken cancellationToken);
@@ -2316,7 +2252,7 @@ public interface ITestService : IService
     ValueTask NotifyAsync(string message);
     [Oneway]
     [NonCancellable]
-    ValueTask NotifyUploadWithHeaderAsync(Person header, IAsyncEnumerable<int> values);
+    ValueTask NotifyUploadWithHeaderAsync(MalformedHeader header, IAsyncEnumerable<int> values);
 }
 
 [RpcService]
@@ -2485,7 +2421,7 @@ public class TestService : ITestService
     }
 
     public async ValueTask<int> UploadWithHeaderAsync(
-        Person header,
+        MalformedHeader header,
         IAsyncEnumerable<int> values)
     {
         _ = header;
@@ -2497,7 +2433,7 @@ public class TestService : ITestService
     }
 
     public async ValueTask NotifyUploadWithHeaderAsync(
-        Person header,
+        MalformedHeader header,
         IAsyncEnumerable<int> values)
     {
         _ = header;

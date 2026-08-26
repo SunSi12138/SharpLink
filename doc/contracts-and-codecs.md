@@ -23,17 +23,24 @@ DTO 演进规则：
 - 字段 id 是 wire identity；发布后不要重用或改变含义。
 - 新增可选字段通常兼容；删除字段前确认所有对端已停止发送。
 - required、nullable、wire type 或嵌套 schema 变化可能不兼容。
-- Generator Manifest 的 schema/wire identity 用于同进程注册与替换校验，不能绕过跨版本集成测试。
+- Generator Manifest 的兼容性 identity 为 **(Contract assembly, 闭合类型 T) → Kind / SchemaId / WireFormatId**，用于同进程注册与替换校验，不能绕过跨版本集成测试。隐式最终选择（内置 Native 路径与非托管 UnsafeBlit fallback）同样物化进 manifest，使之后的显式 Adapter/Direct 选择能被检测为 wire break。
 
 ## 自定义 Codec
 
+Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。要为某个闭合 CLR 类型指定单独 Codec，在 Contract assembly 上声明精确类型绑定：
+
 ```csharp
-builder.UseCodec<MyType>(new MyTypeCodec());
+[assembly: RpcCodecAdapter(
+    typeof(MyType),
+    typeof(MyTypeCodec),
+    WireFormatId = "my-type/v1")]
 ```
 
 `IRpcCodec<T>` 必须完整写出一个值，并从完整 payload 解码。对端输入不合法时抛出带具体 code 的 `SharpLinkException`，通常是 `DataLoss`；不要把协议输入错误包装成 `Internal`。Codec 不能保留框架提供的输入序列或输出 writer。
 
-`UseSerializer(Func<Type, IRpcCodec?>)` 是实例级 fallback resolver。它不应扫描程序集或在热路径反射构造闭合类型；已知类型优先显式注册。
+同一 Contract assembly 内的所有 `[RpcContract]` 对相同闭合类型 `T` 共享同一份最终 Codec binding；不同 Contract assembly 可以为同一个 `T` 选择不同 Codec。批量路由使用 assembly 级 `RpcCodecRoute`。Client/Server builder 不提供按实例覆盖 generated RPC wire Codec 的 `UseCodec<T>`。
+
+`UseSerializer(Func<Type, IRpcCodec?>)` 是实例级 Runtime Context fallback resolver，仅用于未被 generated Contract assembly frozen graph 接管的运行时解析；它不会覆盖 generated RPC 的最终 wire Codec binding。
 
 ## Codec Adapter 与 SharpPack
 

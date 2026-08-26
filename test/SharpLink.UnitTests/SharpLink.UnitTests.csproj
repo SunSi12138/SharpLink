@@ -11,7 +11,9 @@
     <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Serializer.SharpPack\SharpLink.Serializer.SharpPack.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
+    <ProjectReference Include="..\SharpLink.MultiClusterTest.Contracts\SharpLink.MultiClusterTest.Contracts.csproj" />
     <ProjectReference Include="..\SharpLink.RollbackPlugin\SharpLink.RollbackPlugin.csproj" />
+    <ProjectReference Include="..\SharpLink.StaticCodecOwnerTest.Contracts\SharpLink.StaticCodecOwnerTest.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

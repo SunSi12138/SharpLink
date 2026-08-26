@@ -829,7 +829,7 @@ public sealed class BuildPlanBuilderTests
                 11_001,
                 new string('a', 64),
                 [],
-                static _ => null!,
+                static (_, _) => null!,
                 static _ => null!)
         ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];

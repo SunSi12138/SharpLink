@@ -497,7 +497,7 @@ public sealed class ManifestSourceIsolationTests
                 contractId,
                 new string('a', 64),
                 [],
-                channel => proxyFactory(channel),
+                (channel, _) => proxyFactory(channel),
                 static _ => throw new NotSupportedException()));
 
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
@@ -531,7 +531,7 @@ public sealed class ManifestSourceIsolationTests
                 CreateContract(
                     contractType,
                     contractId,
-                    proxyFactory,
+                    (channel, _) => proxyFactory(channel),
                     static _ => new TestStub(8_301)),
                 service: null,
                 new TestCodecFactory<TCodec>($"client-composite:{typeof(TCodec).FullName}"));
@@ -545,7 +545,7 @@ public sealed class ManifestSourceIsolationTests
             var contract = CreateContract(
                 contractType,
                 contractId,
-                static _ => throw new NotSupportedException(),
+                static (_, _) => throw new NotSupportedException(),
                 stubFactory);
             var service = new SharpLinkGeneratedServiceDescriptor(
                 contractType,
@@ -566,7 +566,7 @@ public sealed class ManifestSourceIsolationTests
         private static SharpLinkGeneratedContractDescriptor CreateContract(
             Type contractType,
             long contractId,
-            Func<IRpcChannel, object> proxyFactory,
+            Func<IRpcChannel, IRpcCodecProvider, object> proxyFactory,
             Func<IRpcCodecProvider, IRpcStub> stubFactory)
             => new(
                 contractType,

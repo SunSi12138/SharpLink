@@ -15,7 +15,7 @@ internal sealed partial class SharpLinkClient
             return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                 $"Client state '{State}' does not accept runtime assembly registration.", assembly);
 
-        RpcContractCodecSet? codecRegistration = null;
+        RpcGeneratedManifestRegistration? codecRegistration = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         var published = false;
@@ -147,7 +147,7 @@ internal sealed partial class SharpLinkClient
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
-        RpcContractCodecSet? codecRegistration = null;
+        RpcGeneratedManifestRegistration? codecRegistration = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         var published = false;
@@ -323,7 +323,8 @@ internal sealed partial class SharpLinkClient
     }
 
     internal static FrozenDictionary<Type, ClientProxyRegistration> BuildStaticProxySnapshot(
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        SharpLinkRuntimeContext runtimeContext)
     {
         var registrations = new Dictionary<Type, ClientProxyRegistration>();
         var contractIds = new Dictionary<long, ISharpLinkGeneratedAssemblyManifest>();
@@ -344,7 +345,10 @@ internal sealed partial class SharpLinkClient
                         $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(existing.OwnerAssembly)}'.");
                 }
                 contractIds.Add(contract.ContractId, manifest);
-                registrations.Add(contract.ContractType, new ClientProxyRegistration(contract, null));
+                registrations.Add(contract.ContractType, new ClientProxyRegistration(
+                    contract,
+                    null,
+                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType)));
             }
         }
         return registrations.ToFrozenDictionary();
@@ -368,7 +372,7 @@ internal sealed partial class SharpLinkClient
 
         var nextProxies = new Dictionary<Type, ClientProxyRegistration>();
         foreach (var pair in currentProxies)
-            nextProxies[pair.Key] = new ClientProxyRegistration(pair.Value.Descriptor, pair.Value.Module);
+            nextProxies[pair.Key] = new ClientProxyRegistration(pair.Value.Descriptor, pair.Value.Module, pair.Value.Codecs);
         var byId = nextProxies.Values.ToDictionary(
             static registration => registration.Descriptor.ContractId,
             static registration => registration);
@@ -380,7 +384,10 @@ internal sealed partial class SharpLinkClient
                     FindManifest(existing.Descriptor.ContractType.Assembly, currentModules), existing.Descriptor);
                 return default;
             }
-            var registration = new ClientProxyRegistration(contract, module);
+            var registration = new ClientProxyRegistration(
+                contract,
+                module,
+                RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration, contract.ContractType));
             nextProxies.Add(contract.ContractType, registration);
             byId.Add(contract.ContractId, registration);
         }
@@ -429,12 +436,10 @@ internal sealed partial class SharpLinkClient
     {
         var oldIdentity = oldModule.Manifest.OwnerAssembly.FullName;
         var newIdentity = incoming.OwnerAssembly.FullName;
-        if (string.Equals(oldIdentity, newIdentity, StringComparison.Ordinal))
-            return null;
         foreach (var candidate in _dynamicModules.Values)
         {
             if (!ReferenceEquals(candidate, oldModule) &&
-                candidate.Manifest.Dependencies.Contains(oldIdentity, StringComparer.Ordinal))
+                ManifestDependsOn(candidate.Manifest, oldIdentity))
             {
                 return CreateError(
                     SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
@@ -446,6 +451,11 @@ internal sealed partial class SharpLinkClient
         }
         return null;
     }
+
+    private static bool ManifestDependsOn(ISharpLinkGeneratedAssemblyManifest manifest, string? identity)
+        => identity is not null &&
+           (manifest.Dependencies.Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal)) ||
+            manifest.ContractDependencies.Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal)));
 
     private SharpLinkAssemblyRegistrationError? ValidateDependencies(
         ISharpLinkGeneratedAssemblyManifest incoming,
@@ -535,15 +545,19 @@ internal sealed partial class SharpLinkClient
     {
         internal ClientProxyRegistration(
             SharpLinkGeneratedContractDescriptor descriptor,
-            SharpLinkDynamicModule? module)
+            SharpLinkDynamicModule? module,
+            IRpcCodecProvider codecs)
         {
             Descriptor = descriptor;
             Module = module;
+            Codecs = codecs;
         }
 
         internal SharpLinkGeneratedContractDescriptor Descriptor { get; }
 
         internal SharpLinkDynamicModule? Module { get; }
+
+        internal IRpcCodecProvider Codecs { get; }
 
         internal object? Proxy;
     }

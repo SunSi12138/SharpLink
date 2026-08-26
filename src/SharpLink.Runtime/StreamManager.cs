@@ -455,6 +455,88 @@ internal sealed class StreamManager
         ThrowCompletionFailures(failures);
     }
 
+    /// <summary>
+    /// Removes every receive stream owned by one request and waits for StreamData dispatches that
+    /// acquired their entries before removal. Callers may release request-owned Codec/module state
+    /// only after this barrier completes.
+    /// </summary>
+    internal ValueTask CompleteRequestStreamsAfterDispatchesAsync(long requestId, Exception? exception)
+    {
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
+            return ValueTask.CompletedTask;
+
+        var entries = requestDispatchers.TakeAllForDrain();
+        if (entries.Length == 0)
+            return ValueTask.CompletedTask;
+
+        SharpLinkTelemetry.AddActiveStreams(-entries.Length);
+        Interlocked.Add(ref _activeStreamCount, -entries.Length);
+        List<Exception>? failures = null;
+        for (var index = 0; index < entries.Length; index++)
+        {
+            try
+            {
+                entries[index].Entry.Dispatcher.Complete(exception);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
+            }
+        }
+
+        if (entries.All(static item => !item.Entry.HasActiveDispatches))
+        {
+            FinalizeRequestDrain(requestId, entries, ref failures);
+            ThrowCompletionFailures(failures);
+            return ValueTask.CompletedTask;
+        }
+
+        return AwaitRequestDispatchesAndFinalizeAsync(requestId, entries, failures);
+    }
+
+    private async ValueTask AwaitRequestDispatchesAndFinalizeAsync(
+        long requestId,
+        RequestDrainEntry[] entries,
+        List<Exception>? failures)
+    {
+        for (var index = 0; index < entries.Length; index++)
+            await entries[index].Entry.WaitForDispatchesDrainedAsync().ConfigureAwait(false);
+
+        FinalizeRequestDrain(requestId, entries, ref failures);
+        ThrowCompletionFailures(failures);
+    }
+
+    private void FinalizeRequestDrain(
+        long requestId,
+        RequestDrainEntry[] entries,
+        ref List<Exception>? failures)
+    {
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var item = entries[index];
+            try
+            {
+                if (item.Entry.Dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                    consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+                _streamCompleted?.Invoke(requestId, item.StreamId);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
+            }
+            try
+            {
+                item.Entry.Detach();
+            }
+            catch (Exception detachException)
+            {
+                (failures ??= []).Add(detachException);
+            }
+        }
+    }
+
     private static void ThrowCompletionFailures(List<Exception>? failures)
     {
         if (failures is { Count: 1 })
@@ -662,6 +744,8 @@ internal sealed class StreamManager
     {
         internal Exception? Exception { get; } = exception;
     }
+
+    private readonly record struct RequestDrainEntry(ushort StreamId, DispatcherEntry Entry);
 
     private sealed class RequestDispatchers
     {
@@ -951,6 +1035,28 @@ internal sealed class StreamManager
                 entry = default!;
                 return false;
             }
+        }
+
+        public RequestDrainEntry[] TakeAllForDrain()
+        {
+            var entries = new List<RequestDrainEntry>();
+            var defaultDispatcher = Interlocked.Exchange(ref _defaultDispatcher, null);
+            if (defaultDispatcher is not null)
+            {
+                defaultDispatcher.Close();
+                entries.Add(new RequestDrainEntry(0, defaultDispatcher));
+            }
+
+            lock (_gate)
+            {
+                foreach (var pair in _byStreamId)
+                {
+                    pair.Value.Close();
+                    entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
+                }
+                _byStreamId.Clear();
+            }
+            return [.. entries];
         }
 
         public int CompleteAll(Exception? exception, ref List<Exception>? failures)

@@ -161,13 +161,27 @@ internal sealed class ClientConnection :
 
     public void EndUntrackedCall() => ReleaseAuxiliaryActiveCall();
 
-    public async Task SendClientStreamAsync<T>(
+    public Task SendClientStreamAsync<T>(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
         CancellationToken cancellationToken = default)
+        => SendClientStreamAsync(
+            requestId,
+            streamId,
+            stream,
+            Session.RuntimeContext.Codecs.GetCodec<T>(),
+            cancellationToken);
+
+    public async Task SendClientStreamAsync<T>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        IRpcCodec<T> codec,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(codec);
         cancellationToken.ThrowIfCancellationRequested();
         if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
@@ -192,6 +206,7 @@ internal sealed class ClientConnection :
                     requestId,
                     streamId,
                     enumerator.Current,
+                    codec,
                     deadline,
                     _timeProvider,
                     cancellationToken).ConfigureAwait(false);
