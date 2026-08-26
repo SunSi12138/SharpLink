@@ -15,6 +15,12 @@ internal static class SharpLinkGeneratedManifestStructureValidator
         var sets = manifest.ContractCodecSets ??
             throw new InvalidOperationException($"Generated manifest '{ownerAssembly.FullName}' has a null Contract Codec set table.");
 
+        // The default-empty interface member remains a compatibility surface for hand-written
+        // manifests that do not participate in API-5 Contract Codec ownership. Only manifests that
+        // actually publish Contract Codec sets opt into the exact per-Contract ownership table.
+        if (sets.Count == 0)
+            return;
+
         var ownedContracts = new HashSet<Type>();
         for (var index = 0; index < contracts.Count; index++)
         {
@@ -33,12 +39,6 @@ internal static class SharpLinkGeneratedManifestStructureValidator
                     $"Generated manifest '{ownerAssembly.FullName}' contains duplicate Contract Type '{contractType.FullName}'.");
             }
         }
-
-        // The default-empty interface member remains a compatibility surface for hand-written
-        // manifests that do not participate in API-5 Contract Codec ownership. Once the table is
-        // present, however, it is an exact per-Contract ownership table and must cover every Contract.
-        if (sets.Count == 0)
-            return;
 
         var seenContracts = new HashSet<Type>();
         for (var setIndex = 0; setIndex < sets.Count; setIndex++)
