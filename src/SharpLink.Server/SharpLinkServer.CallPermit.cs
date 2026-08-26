@@ -100,6 +100,91 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+        /// <summary>
+        /// Acquires decode concurrency by transferring an already-accounted retained compressed
+        /// owner into this request. This is used when admission or the decode executor must keep the
+        /// compressed frame alive before provider execution begins.
+        /// </summary>
+        internal bool TryAcquireDecodePermit(
+            ServerRetainedCompressedPermit retainedPermit,
+            out ServerDecodePermit? decodePermit)
+        {
+            ArgumentNullException.ThrowIfNull(retainedPermit);
+
+            lock (_resourceGate)
+            {
+                if (Volatile.Read(ref _state) != Reserved || _decodePermit is not null)
+                {
+                    decodePermit = null;
+                    return false;
+                }
+
+                if (!_server.ResourceGovernor.TryAcquireDecode(retainedPermit, out decodePermit))
+                    return false;
+
+                _decodePermit = decodePermit;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Ends decode-only ownership without releasing call capacity. Failed or rejected requests
+        /// use this after their physical retained/decoded buffers have been returned so response
+        /// backpressure cannot pin the global decode/byte budgets.
+        /// </summary>
+        internal void ReleaseDecodeResources()
+        {
+            ServerDecodePermit? decodePermit;
+            lock (_resourceGate)
+            {
+                var current = Volatile.Read(ref _state);
+                if (current is Activating or Active)
+                {
+                    throw new InvalidOperationException(
+                        "Decode resources cannot be detached after call activation.");
+                }
+                if (current is Releasing or Disposed)
+                    return;
+
+                decodePermit = _decodePermit;
+                _decodePermit = null;
+            }
+
+            decodePermit?.Dispose();
+        }
+
+        /// <summary>
+        /// Moves successful decoded-byte ownership onto the call-state payload owner. The call state
+        /// then releases the byte budget only after the physical decoded buffer is returned, even
+        /// when an external cancellation-state lease delays final call-state teardown.
+        /// </summary>
+        internal void TransferDecodedBytesTo(ServerCallCancellationState callState)
+        {
+            ArgumentNullException.ThrowIfNull(callState);
+
+            ServerDecodedBytesPermit? decodedBytesPermit;
+            lock (_resourceGate)
+            {
+                var decodePermit = _decodePermit;
+                if (decodePermit is null)
+                    return;
+                decodedBytesPermit = decodePermit.DetachDecodedBytesOwnership();
+            }
+
+            if (decodedBytesPermit is null)
+                return;
+
+            try
+            {
+                callState.AttachDecodedBytesPermit(decodedBytesPermit);
+            }
+            catch
+            {
+                decodedBytesPermit.Dispose();
+                throw;
+            }
+        }
+
         internal void Activate()
         {
             lock (_resourceGate)
@@ -180,7 +265,10 @@ internal sealed partial class SharpLinkServer
                 _testHooks?.ReleaseClaimed?.Invoke();
                 ServerDecodePermit? decodePermit;
                 lock (_resourceGate)
+                {
                     decodePermit = _decodePermit;
+                    _decodePermit = null;
+                }
 
                 try
                 {
