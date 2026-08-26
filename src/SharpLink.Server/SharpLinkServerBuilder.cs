@@ -77,13 +77,6 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    /// <summary>Registers an explicit codec only for servers built by this builder.</summary>
-    public SharpLinkServerBuilder UseCodec<T>(IRpcCodec<T> codec)
-    {
-        _runtimeContextBuilder.AddCodec(codec);
-        return this;
-    }
-
     /// <summary>Configures instance-scoped runtime behavior.</summary>
     public SharpLinkServerBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
     {
@@ -477,7 +470,6 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 value.CallerOwned);
             foundEnabled.Add(replacement.Key);
         }
-
         foreach (var required in _enabledServices)
         {
             if (!foundEnabled.Contains(required))
