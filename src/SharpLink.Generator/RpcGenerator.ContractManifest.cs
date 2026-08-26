@@ -102,7 +102,7 @@ public partial class RpcGenerator
     private static ContractManifestAnalysis AnalyzeContractManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
-        ImmutableArray<GeneratedContractCodecPolicy> contractPolicies,
+        ImmutableArray<GeneratedCodecModel> codecs,
         ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions,
         ImmutableArray<AdditionalText> additionalTexts,
@@ -110,7 +110,7 @@ public partial class RpcGenerator
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var document = CreateContractManifest(interfaces, services, contractPolicies, generatedEnums, unions);
+        var document = CreateContractManifest(interfaces, services, codecs, generatedEnums, unions);
         var diagnostics = ValidateCurrentContractManifest(document);
 
         if (!string.IsNullOrWhiteSpace(options.BaselinePath))
@@ -155,7 +155,7 @@ public partial class RpcGenerator
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more payload, DTO member, or Codec entries are missing required Contract/wire/Codec identity metadata",
+                            "one or more payload, DTO member, or Codec entries are missing required wire/Codec identity metadata",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -202,35 +202,26 @@ public partial class RpcGenerator
     private static ContractManifestDocument CreateContractManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
-        ImmutableArray<GeneratedContractCodecPolicy> contractPolicies,
+        ImmutableArray<GeneratedCodecModel> codecs,
         ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions)
     {
         var document = new ContractManifestDocument();
-        var policyByContract = contractPolicies.ToDictionary(
-            static policy => RemoveGlobalPrefix(policy.ContractTypeName),
-            StringComparer.Ordinal);
-
+        var wireFormats = codecs
+            .GroupBy(static codec => RemoveGlobalPrefix(codec.TypeName), StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.First().WireFormatId,
+                StringComparer.Ordinal);
         foreach (var contract in interfaces
                      .Where(static item => item is not null)
                      .Select(static item => item!)
                      .OrderBy(static item => item.Hash)
                      .ThenBy(static item => item.FullName, StringComparer.Ordinal))
         {
-            var contractName = RemoveGlobalPrefix(contract.FullName);
-            var contractCodecs = policyByContract.TryGetValue(contractName, out var policy)
-                ? policy.ManifestCodecs
-                : ImmutableArray<GeneratedCodecModel>.Empty;
-            var wireFormats = contractCodecs
-                .GroupBy(static codec => RemoveGlobalPrefix(codec.TypeName), StringComparer.Ordinal)
-                .ToDictionary(
-                    static group => group.Key,
-                    static group => group.First().WireFormatId,
-                    StringComparer.Ordinal);
-
             var manifestContract = new ContractManifestContract
             {
-                Name = contractName,
+                Name = RemoveGlobalPrefix(contract.FullName),
                 Id = contract.Hash,
                 Fingerprint = contract.Fingerprint,
                 SourceLocation = contract.Location
@@ -290,48 +281,46 @@ public partial class RpcGenerator
                 manifestContract.Methods.Add(manifestMethod);
             }
             document.Contracts.Add(manifestContract);
+        }
 
-            foreach (var codec in contractCodecs
-                         .Where(static item => item.Kind == GeneratedCodecKind.Dto && item.Location?.IsInSource == true)
-                         .OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+        foreach (var codec in codecs
+                     .Where(static item => item.Kind == GeneratedCodecKind.Dto && item.Location?.IsInSource == true)
+                     .OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+        {
+            var dto = new ContractManifestDto
             {
-                var dto = new ContractManifestDto
-                {
-                    Contract = contractName,
-                    Name = RemoveGlobalPrefix(codec.TypeName),
-                    Fingerprint = codec.SchemaId,
-                    SourceLocation = codec.Location
-                };
-                foreach (var member in codec.Members.OrderBy(static item => item.FieldId))
-                {
-                    dto.Members.Add(new ContractManifestMember
-                    {
-                        Name = member.Name,
-                        Id = member.FieldId,
-                        Type = RemoveGlobalPrefix(member.TypeName),
-                        WireType = GetMemberWireType(member),
-                        WireFormatId = GetWireFormatId(member.TypeName, wireFormats),
-                        Nullable = member.Nullable,
-                        Required = member.Required,
-                        ExplicitId = member.HasExplicitId,
-                        SourceLocation = member.Location
-                    });
-                }
-                document.Dtos.Add(dto);
-            }
-
-            foreach (var codec in contractCodecs.OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+                Name = RemoveGlobalPrefix(codec.TypeName),
+                Fingerprint = codec.SchemaId,
+                SourceLocation = codec.Location
+            };
+            foreach (var member in codec.Members.OrderBy(static item => item.FieldId))
             {
-                document.Codecs.Add(new ContractManifestCodec
+                dto.Members.Add(new ContractManifestMember
                 {
-                    Contract = contractName,
-                    Type = RemoveGlobalPrefix(codec.TypeName),
-                    WireFormatId = codec.WireFormatId,
-                    Kind = codec.Kind.ToString(),
-                    SchemaId = codec.SchemaId,
-                    SourceLocation = codec.Location
+                    Name = member.Name,
+                    Id = member.FieldId,
+                    Type = RemoveGlobalPrefix(member.TypeName),
+                    WireType = GetMemberWireType(member),
+                    WireFormatId = GetWireFormatId(member.TypeName, wireFormats),
+                    Nullable = member.Nullable,
+                    Required = member.Required,
+                    ExplicitId = member.HasExplicitId,
+                    SourceLocation = member.Location
                 });
             }
+            document.Dtos.Add(dto);
+        }
+
+        foreach (var codec in codecs.OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+        {
+            document.Codecs.Add(new ContractManifestCodec
+            {
+                Type = RemoveGlobalPrefix(codec.TypeName),
+                WireFormatId = codec.WireFormatId,
+                Kind = codec.Kind.ToString(),
+                SchemaId = codec.SchemaId,
+                SourceLocation = codec.Location
+            });
         }
 
         var enums = new Dictionary<string, ContractManifestEnum>(StringComparer.Ordinal);
@@ -365,7 +354,7 @@ public partial class RpcGenerator
                     method.Location);
             }
         }
-        foreach (var codec in contractPolicies.SelectMany(static policy => policy.ManifestCodecs))
+        foreach (var codec in codecs)
         {
             foreach (var member in codec.Members)
                 AddEnum(member.TypeName, member.EnumUnderlyingType, member.Location);
@@ -587,13 +576,10 @@ public partial class RpcGenerator
             }
         }
 
-        var currentDtos = current.Dtos.ToDictionary(
-            static item => GetContractManifestKey(item.Contract, item.Name),
-            StringComparer.Ordinal);
+        var currentDtos = current.Dtos.ToDictionary(static item => item.Name, StringComparer.Ordinal);
         foreach (var oldDto in baseline.Dtos)
         {
-            var dtoKey = GetContractManifestKey(oldDto.Contract, oldDto.Name);
-            if (!currentDtos.TryGetValue(dtoKey, out var newDto))
+            if (!currentDtos.TryGetValue(oldDto.Name, out var newDto))
                 continue;
             var newById = newDto.Members.ToDictionary(static item => item.Id);
             var newByName = newDto.Members.ToDictionary(static item => item.Name, StringComparer.Ordinal);
@@ -610,7 +596,7 @@ public partial class RpcGenerator
                         diagnostics.Add(Change(
                             ContractCompatibilityKind.WireType,
                             newMember.SourceLocation,
-                            $"{newDto.Contract}:{newDto.Name}.{newMember.Name}",
+                            $"{newDto.Name}.{newMember.Name}",
                             $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType}/{oldMember.WireFormatId} to {newMember.Type}/{newMember.WireType}/{newMember.WireFormatId}",
                             "restore the old wire type or add a new optional member ID"));
                     }
@@ -619,7 +605,7 @@ public partial class RpcGenerator
                         diagnostics.Add(Change(
                             ContractCompatibilityKind.Required,
                             newMember.SourceLocation,
-                            $"{newDto.Contract}:{newDto.Name}.{newMember.Name}",
+                            $"{newDto.Name}.{newMember.Name}",
                             $"existing member {oldMember.Id} became required",
                             "keep the field optional and enforce requirements in application code"));
                     }
@@ -632,7 +618,7 @@ public partial class RpcGenerator
                     diagnostics.Add(Change(
                         ContractCompatibilityKind.MemberId,
                         newMember.SourceLocation,
-                        $"{newDto.Contract}:{newDto.Name}.{newMember.Name}",
+                        $"{newDto.Name}.{newMember.Name}",
                         $"member ID changed from {oldMember.Id} to {newMember.Id}",
                         $"annotate the member with [RpcMember({oldMember.Id})]"));
                     continue;
@@ -651,7 +637,7 @@ public partial class RpcGenerator
                     diagnostics.Add(Change(
                         ContractCompatibilityKind.MemberId,
                         renamed[0].SourceLocation,
-                        $"{newDto.Contract}:{newDto.Name}.{renamed[0].Name}",
+                        $"{newDto.Name}.{renamed[0].Name}",
                         $"renaming '{oldMember.Name}' changed the default member ID {oldMember.Id} to {renamed[0].Id}",
                         $"annotate the renamed member with [RpcMember({oldMember.Id})]"));
                 }
@@ -660,7 +646,7 @@ public partial class RpcGenerator
                     diagnostics.Add(Change(
                         ContractCompatibilityKind.Required,
                         newDto.SourceLocation,
-                        $"{oldDto.Contract}:{oldDto.Name}.{oldMember.Name}",
+                        $"{oldDto.Name}.{oldMember.Name}",
                         $"required member {oldMember.Id} was removed",
                         "restore the required member or introduce a new DTO version"));
                 }
@@ -672,30 +658,31 @@ public partial class RpcGenerator
                 diagnostics.Add(Change(
                     ContractCompatibilityKind.Required,
                     newMember.SourceLocation,
-                    $"{newDto.Contract}:{newDto.Name}.{newMember.Name}",
+                    $"{newDto.Name}.{newMember.Name}",
                     $"new member {newMember.Id} is required",
                     "make the new member optional so older payloads remain readable"));
             }
         }
 
-        var baselineCodecs = baseline.Codecs.ToDictionary(
-            static codec => GetContractManifestKey(codec.Contract, codec.Type),
-            StringComparer.Ordinal);
-        var currentCodecs = current.Codecs.ToDictionary(
-            static codec => GetContractManifestKey(codec.Contract, codec.Type),
-            StringComparer.Ordinal);
+
+        var baselineDtoNames = new HashSet<string>(
+            baseline.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
+        var currentDtoNames = new HashSet<string>(
+            current.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
+        var baselineCodecs = baseline.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
+        var currentCodecs = current.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
         var directlyDescribedCodecTypes = new HashSet<string>(
-            baseline.Contracts.SelectMany(static contract => contract.Methods
+            baseline.Contracts
+                .SelectMany(static contract => contract.Methods)
                 .SelectMany(static method => method.Request.Append(method.Response))
-                .Select(value => GetContractManifestKey(contract.Name, value.Type)))
-                .Concat(baseline.Dtos.SelectMany(static dto => dto.Members
-                    .Select(member => GetContractManifestKey(dto.Contract, member.Type)))),
+                .Select(static value => value.Type)
+                .Concat(baseline.Dtos.SelectMany(static dto => dto.Members).Select(static member => member.Type)),
             StringComparer.Ordinal);
 
-        foreach (var key in directlyDescribedCodecTypes)
+        foreach (var type in directlyDescribedCodecTypes)
         {
-            if (!baselineCodecs.TryGetValue(key, out var oldCodec) ||
-                !currentCodecs.TryGetValue(key, out var newCodec) ||
+            if (!baselineCodecs.TryGetValue(type, out var oldCodec) ||
+                !currentCodecs.TryGetValue(type, out var newCodec) ||
                 string.IsNullOrWhiteSpace(oldCodec.Kind) ||
                 string.IsNullOrWhiteSpace(newCodec.Kind))
             {
@@ -716,16 +703,58 @@ public partial class RpcGenerator
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
                 newCodec.SourceLocation,
-                $"{newCodec.Contract}:{newCodec.Type}",
+                type,
                 $"direct Codec selection changed from {oldCodec.Kind}/{oldCodec.SchemaId ?? "unknown"} to {newCodec.Kind}/{newCodec.SchemaId ?? "unknown"}",
                 "restore the previous generated Codec selection or publish a new RPC payload type"));
         }
 
+        // Legacy format-1 baselines emitted before Kind/SchemaId still use DTO membership
+        // as the fallback codec-kind signal so their stored fingerprints remain valid.
+        foreach (var oldDto in baseline.Dtos)
+        {
+            if (currentDtoNames.Contains(oldDto.Name) ||
+                !currentCodecs.TryGetValue(oldDto.Name, out var currentCodec))
+            {
+                continue;
+            }
+            if (baselineCodecs.TryGetValue(oldDto.Name, out var baselineCodec) &&
+                !string.IsNullOrWhiteSpace(baselineCodec.Kind) &&
+                !string.IsNullOrWhiteSpace(currentCodec.Kind))
+            {
+                continue;
+            }
+            diagnostics.Add(Change(
+                ContractCompatibilityKind.WireType,
+                currentCodec.SourceLocation,
+                oldDto.Name,
+                "Codec selection changed from a SharpLink native DTO to a non-DTO Codec",
+                "restore the native DTO Codec or publish a new RPC payload type"));
+        }
+        foreach (var newDto in current.Dtos)
+        {
+            if (baselineDtoNames.Contains(newDto.Name) ||
+                !baselineCodecs.TryGetValue(newDto.Name, out var baselineCodec))
+            {
+                continue;
+            }
+            if (currentCodecs.TryGetValue(newDto.Name, out var currentCodec) &&
+                !string.IsNullOrWhiteSpace(baselineCodec.Kind) &&
+                !string.IsNullOrWhiteSpace(currentCodec.Kind))
+            {
+                continue;
+            }
+            diagnostics.Add(Change(
+                ContractCompatibilityKind.WireType,
+                newDto.SourceLocation,
+                newDto.Name,
+                "Codec selection changed from a non-DTO Codec to a SharpLink native DTO",
+                "restore the previous Codec selection or publish a new RPC payload type"));
+        }
+
         foreach (var oldCodec in baseline.Codecs)
         {
-            var key = GetContractManifestKey(oldCodec.Contract, oldCodec.Type);
-            if (directlyDescribedCodecTypes.Contains(key) ||
-                !currentCodecs.TryGetValue(key, out var newCodec))
+            if (directlyDescribedCodecTypes.Contains(oldCodec.Type) ||
+                !currentCodecs.TryGetValue(oldCodec.Type, out var newCodec))
             {
                 continue;
             }
@@ -748,7 +777,7 @@ public partial class RpcGenerator
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
                 newCodec.SourceLocation,
-                $"{newCodec.Contract}:{newCodec.Type}",
+                oldCodec.Type,
                 $"nested Codec selection changed from {oldCodec.Kind}/{oldCodec.SchemaId ?? "unknown"}/{oldCodec.WireFormatId} to {newCodec.Kind}/{newCodec.SchemaId ?? "unknown"}/{newCodec.WireFormatId}",
                 "restore the previous nested Codec selection or publish a new RPC payload type"));
         }
@@ -809,9 +838,6 @@ public partial class RpcGenerator
         return diagnostics;
     }
 
-    private static string GetContractManifestKey(string contract, string type)
-        => contract + "\u001f" + type;
-
     private static void CompareValues(
         IReadOnlyList<ContractManifestValue> baseline,
         IReadOnlyList<ContractManifestValue> current,
@@ -868,13 +894,11 @@ public partial class RpcGenerator
                    !string.IsNullOrWhiteSpace(method.Response.WireFormatId))) &&
            manifest.Dtos.All(static dto =>
                dto is not null &&
-               !string.IsNullOrWhiteSpace(dto.Contract) &&
                dto.Members is not null &&
                dto.Members.All(static member =>
                    member is not null && !string.IsNullOrWhiteSpace(member.WireFormatId))) &&
            manifest.Codecs.All(static codec =>
                codec is not null &&
-               !string.IsNullOrWhiteSpace(codec.Contract) &&
                !string.IsNullOrWhiteSpace(codec.Type) &&
                !string.IsNullOrWhiteSpace(codec.WireFormatId) &&
                !string.IsNullOrWhiteSpace(codec.Kind) &&
@@ -1015,7 +1039,7 @@ internal static class __SharpLinkContractManifest
     private sealed record ContractManifestModels(
         ImmutableArray<RpcInterfaceModel?> Interfaces,
         ImmutableArray<RpcServiceModel?> Services,
-        ImmutableArray<GeneratedContractCodecPolicy> ContractPolicies,
+        ImmutableArray<GeneratedCodecModel> Codecs,
         ImmutableArray<GeneratedEnumModel> Enums,
         ImmutableArray<RpcUnionModel?> Unions);
 
@@ -1093,7 +1117,6 @@ internal static class __SharpLinkContractManifest
 
     private sealed class ContractManifestDto
     {
-        public string Contract { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string Fingerprint { get; set; } = string.Empty;
         public List<ContractManifestMember> Members { get; set; } = [];
@@ -1102,7 +1125,6 @@ internal static class __SharpLinkContractManifest
 
     private sealed class ContractManifestCodec
     {
-        public string Contract { get; set; } = string.Empty;
         public string Type { get; set; } = string.Empty;
         public string WireFormatId { get; set; } = string.Empty;
         public string? Kind { get; set; }
