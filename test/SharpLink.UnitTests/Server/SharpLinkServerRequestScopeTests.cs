@@ -32,7 +32,7 @@ public class SharpLinkServerRequestScopeTests
         await Assert.That(syncUnary.DisposeCount).IsEqualTo(syncUnary.BeginCount);
         await Assert.That(syncUnary.MaxDepth).IsEqualTo(1);
         await Assert.That(asyncUnary.BeginCount).IsEqualTo(1);
-        await Assert.That(asyncUnary.DisposeCount).IsEqualTo(syncUnary.BeginCount);
+        await Assert.That(asyncUnary.DisposeCount).IsEqualTo(asyncUnary.BeginCount);
         await Assert.That(asyncUnary.MaxDepth).IsEqualTo(1);
         await Assert.That(syncOneWay.BeginCount).IsEqualTo(1);
         await Assert.That(syncOneWay.DisposeCount).IsEqualTo(syncOneWay.BeginCount);
