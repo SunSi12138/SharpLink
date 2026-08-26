@@ -1034,6 +1034,8 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
     internal Action? AfterKeyResolvedBeforeEntryLockForTests { get; set; }
 
+    internal Action? BeforeUpdateMutationForTests { get; set; }
+
     internal AdmissionPartitionUpdate PrepareUpdate(SharpLinkPartitionAdmissionOptions options)
         => new(this, options.CloneValidated());
 
@@ -1156,8 +1158,19 @@ internal sealed class AdmissionPartitionPool : IDisposable
             try
             {
                 prepared = new List<PreparedEntryTransition>(_entries.Count);
+                var generationCount = 0;
                 foreach (var entry in _entries.Values)
-                    prepared.Add(PrepareEntryTransitionLocked(entry, target));
+                {
+                    var transition = PrepareEntryTransitionLocked(entry, target);
+                    prepared.Add(transition);
+                    generationCount = checked(generationCount +
+                        (transition.TargetGenerations?.Count ?? entry.Generations.Count));
+                }
+
+                // Retired-generation cleanup can add at most one concurrency and one rate state per
+                // runtime generation. Reserve that storage before the first live target mutation.
+                dispose = new List<IDisposable>(checked(generationCount * 2));
+                BeforeUpdateMutationForTests?.Invoke();
             }
             catch
             {
@@ -1165,8 +1178,8 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 throw;
             }
 
-            // Everything above this point is fallible preparation only. From here the target objects
-            // are complete and validated, so the live namespace can be changed as one pool-gate epoch.
+            // Everything above this point is fallible preparation only. Target generation lists and
+            // cleanup capacity are already allocated, so the live namespace changes as one gate epoch.
             _options = target;
             foreach (var transition in prepared)
             {
@@ -1183,16 +1196,16 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 {
                     transition.Source.Retired = true;
                     transition.Entry.Current = targetGeneration;
-                    transition.Entry.Generations.Add(targetGeneration);
+                    transition.Entry.Generations = transition.TargetGenerations!;
                 }
             }
 
             foreach (var entry in _entries.Values)
                 CollectRetiredGenerationsLocked(entry, ref dispose);
-            CollectIdleEntriesLocked(
-                _timeProvider.GetTimestamp(),
-                stopAfterOne: false,
-                ref dispose);
+
+            // Idle eligibility is preserved by the historical timestamp and the new target timeout.
+            // Reclamation remains opportunistic on the next acquire/release rather than allocating
+            // key/disposal work after the live policy mutation.
         }
 
         DisposeStates(dispose);
@@ -1200,19 +1213,14 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
     internal void GrantConcurrencyWaitersAfterTargetCommit()
     {
-        ResizableConcurrencyState[] states;
         lock (_gate)
         {
-            var unique = new HashSet<ResizableConcurrencyState>(ReferenceEqualityComparer.Instance);
             foreach (var entry in _entries.Values)
+            {
                 foreach (var generation in entry.Generations)
-                    if (generation.Concurrency is { } concurrency)
-                        unique.Add(concurrency);
-            states = [.. unique];
+                    generation.Concurrency?.GrantWaitersAfterTargetCommit();
+            }
         }
-
-        foreach (var state in states)
-            state.GrantWaitersAfterTargetCommit();
     }
 
     internal int Count
@@ -1314,6 +1322,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
             }
 
             AdmissionPartitionRuntimeGeneration? targetGeneration = null;
+            List<AdmissionPartitionRuntimeGeneration>? targetGenerations = null;
             if (!ReferenceEquals(source.Concurrency, targetConcurrency) ||
                 !ReferenceEquals(source.Rate, targetRate))
             {
@@ -1321,12 +1330,16 @@ internal sealed class AdmissionPartitionPool : IDisposable
                     AdmissionRuleRuntime.CreateBound(targetConcurrency, targetRate, "partition"),
                     targetConcurrency,
                     targetRate);
+                targetGenerations = new List<AdmissionPartitionRuntimeGeneration>(entry.Generations.Count + 1);
+                targetGenerations.AddRange(entry.Generations);
+                targetGenerations.Add(targetGeneration);
             }
 
             return new PreparedEntryTransition(
                 entry,
                 source,
                 targetGeneration,
+                targetGenerations,
                 targetRate,
                 resizePermitLimit,
                 createdConcurrency,
@@ -1409,16 +1422,36 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
             entry.Generations.RemoveAt(index);
             if (generation.Concurrency is { } concurrency &&
-                !entry.Generations.Any(candidate => ReferenceEquals(candidate.Concurrency, concurrency)))
+                !ContainsConcurrencyState(entry.Generations, concurrency))
             {
                 (dispose ??= []).Add(concurrency);
             }
             if (generation.Rate is { } rate &&
-                !entry.Generations.Any(candidate => ReferenceEquals(candidate.Rate, rate)))
+                !ContainsRateState(entry.Generations, rate))
             {
                 (dispose ??= []).Add(rate);
             }
         }
+    }
+
+    private static bool ContainsConcurrencyState(
+        List<AdmissionPartitionRuntimeGeneration> generations,
+        ResizableConcurrencyState state)
+    {
+        foreach (var generation in generations)
+            if (ReferenceEquals(generation.Concurrency, state))
+                return true;
+        return false;
+    }
+
+    private static bool ContainsRateState(
+        List<AdmissionPartitionRuntimeGeneration> generations,
+        AdmissionRateState state)
+    {
+        foreach (var generation in generations)
+            if (ReferenceEquals(generation.Rate, state))
+                return true;
+        return false;
     }
 
     private static void CollectAllEntryStateLocked(
@@ -1467,6 +1500,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
         AdmissionPartitionEntry Entry,
         AdmissionPartitionRuntimeGeneration Source,
         AdmissionPartitionRuntimeGeneration? TargetGeneration,
+        List<AdmissionPartitionRuntimeGeneration>? TargetGenerations,
         AdmissionRateState? TargetRate,
         int? ResizePermitLimit,
         ResizableConcurrencyState? CreatedConcurrency,
@@ -1476,7 +1510,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
 internal sealed class AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneration generation)
 {
     internal AdmissionPartitionRuntimeGeneration Current = generation;
-    internal List<AdmissionPartitionRuntimeGeneration> Generations { get; } = [generation];
+    internal List<AdmissionPartitionRuntimeGeneration> Generations = [generation];
     internal int References;
     internal long IdleSince;
     internal bool IsIdle;
