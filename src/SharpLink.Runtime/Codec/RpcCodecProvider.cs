@@ -163,6 +163,8 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                 continue;
             }
 
+            if (targetType.IsEnum)
+                return EnumCodec<T>.Instance;
             if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
                 return UnsafeBlitCodec<T>.Instance;
 
