@@ -36,9 +36,10 @@ jobs:
       - name: Unit Tests
         run: >-
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
-          -c Release --no-build
-          --logger "trx;LogFileName=unit-tests.trx"
+          -c Release --no-build --
           --results-directory artifacts/test-results/unit
+          --report-trx
+          --report-trx-filename unit-tests.trx
 
       - name: Upload Unit Test Results
         if: always()
@@ -46,7 +47,7 @@ jobs:
         with:
           name: unit-test-results
           path: artifacts/test-results/unit/unit-tests.trx
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
