@@ -324,6 +324,24 @@ internal sealed partial class SharpLinkClient
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
     }
 
+    public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        if (metadata.Count == 0)
+            return Get<T>();
+
+        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
+        {
+            IRpcChannel channel = registration.Module is null
+                ? this
+                : new SharpLinkModuleRpcChannel(this, registration.Module);
+            channel = new SharpLinkMetadataRpcChannel(channel, metadata);
+            return (T)registration.Descriptor.ProxyFactory(channel);
+        }
+
+        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
+    }
+
     private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var authPayload = _authenticator is null
@@ -463,7 +481,9 @@ internal sealed partial class SharpLinkClient
                     {
                         var requestId = unchecked((long)header.RequestId);
                         if (header.Type == ProtocolV2FrameType.Response)
+                        {
                             connection.PendingCalls.DispatchError(requestId, exception);
+                        }
                         else if (header.Type == ProtocolV2FrameType.StreamData)
                         {
                             var streamId = RpcSession.ReadCompressedStreamId(payload);
@@ -504,9 +524,13 @@ internal sealed partial class SharpLinkClient
                                 DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
                                 break;
                             case ProtocolV2FrameType.StreamData:
-                                var dispatchTask = DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
-                                if (!dispatchTask.IsCompletedSuccessfully)
-                                    await dispatchTask;
+                                var streamRequestId = unchecked((long)header.RequestId);
+                                if (connection.PendingCalls.TryAcceptStreamData(streamRequestId))
+                                {
+                                    var dispatchTask = DispatchStreamChunkAsync(session, streamRequestId, payload);
+                                    if (!dispatchTask.IsCompletedSuccessfully)
+                                        await dispatchTask;
+                                }
                                 break;
                             case ProtocolV2FrameType.StreamComplete:
                                 DispatchStreamComplete(

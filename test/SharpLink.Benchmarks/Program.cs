@@ -9,6 +9,12 @@ public static class Program
     public static async Task Main(string[] args)
     {
         if (args.Length > 0 && string.Equals(
+            args[0], "--unsafe-blit-padding-evidence", StringComparison.Ordinal))
+        {
+            UnsafeBlitPaddingEvidenceRunner.Run(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--feature-evidence", StringComparison.Ordinal))
         {
             await FeatureEvidenceRunner.RunAsync(args[1..]);
@@ -48,24 +54,6 @@ public static class Program
             args[0], "--compression-evidence", StringComparison.Ordinal))
         {
             await CompressionEvidenceRunner.RunAsync(args[1..]);
-            return;
-        }
-        if (args.Length > 0 && string.Equals(
-            args[0], "--phase0-decode-evidence", StringComparison.Ordinal))
-        {
-            await DecodeExecutionPhase0EvidenceRunner.RunAsync(args[1..]);
-            return;
-        }
-        if (args.Length > 0 && string.Equals(
-            args[0], "--phase0-decode-backpressure-evidence", StringComparison.Ordinal))
-        {
-            await DecodeExecutorBackpressureEvidenceRunner.RunAsync(args[1..]);
-            return;
-        }
-        if (args.Length > 0 && string.Equals(
-            args[0], "--phase0-decode-blocked-writer-cancel-evidence", StringComparison.Ordinal))
-        {
-            await DecodeExecutorBlockedWriterCancellationEvidenceRunner.RunAsync(args[1..]);
             return;
         }
         if (args.Length > 0 && string.Equals(
@@ -180,6 +168,18 @@ public static class Program
             args[0], "--send-pump-isolation-evidence", StringComparison.Ordinal))
         {
             await SendPumpIsolationEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--handshake-default-evidence", StringComparison.Ordinal))
+        {
+            await HandshakeDefaultEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--handshake-threat-evidence", StringComparison.Ordinal))
+        {
+            await HandshakeThreatEvidenceRunner.RunAsync(args[1..]);
             return;
         }
         if (args.Length > 0 && string.Equals(

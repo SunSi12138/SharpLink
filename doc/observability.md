@@ -2,7 +2,7 @@
 
 ## Client Interceptor
 
-`ISharpLinkClientInterceptor` 在逻辑调用层执行，可修改 `SharpLinkCallOptions`、添加 metadata、短路调用或观察结果。每个 `next` 只能调用一次；返回前必须等待它完成，不能启动后丢弃 `ValueTask`。
+`ISharpLinkClientInterceptor` 在逻辑调用层执行，可通过 `SharpLinkClientInvocationContext.Metadata` 添加或替换 envelope metadata、短路调用或观察结果。每个 `next` 只能调用一次；返回前必须等待它完成，不能启动后丢弃 `ValueTask`。
 
 Client interceptor 开启后请求值可能装箱，结果通过 `SharpLinkClientInvocationResult` 表示。短路结果必须与生成签名匹配，否则调用以 `Internal` 失败。零 interceptor 时走不装箱的生成快路径。
 

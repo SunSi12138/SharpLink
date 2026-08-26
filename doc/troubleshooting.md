@@ -4,9 +4,9 @@
 
 - `SHARPLINKxxx`：先修契约/DTO/服务签名；不要隐藏 Generator diagnostics。
 - CS1591：发布源码公开 API 缺 XML 文档；测试和 Demo 不在该 gate。
-- 生成类型找不到 Abstractions：确认契约项目引用 2.0 SDK，且没有排除其 Abstractions 依赖；参考 `SeparatedContracts`。API 5 生成程序集不应引用 Runtime。
+- 生成类型找不到 Abstractions：确认契约项目引用 2.0 SDK，且没有排除其 Abstractions 依赖；参考 `SeparatedContracts`。API 4 生成程序集不应引用 Runtime。
 - 业务源码直接使用 Runtime 类型但找不到程序集：显式引用 `SharpLink.Runtime` 或相应 Client/Server 应用包；SDK 2.0 不再传递引入 Runtime。
-- Manifest 显示 incoming API 3 或 API 4、required API 5：进程正在加载 1.1.x 或 2.0 开发期生成程序集。统一全部 SharpLink 包为 2.0，删除所有契约、服务和插件项目的 `bin/obj` 后重新构建；2.0 不提供任何旧 Generated ABI 兼容开关。
+- Manifest 显示 incoming API 3、required API 4：进程仍在加载 1.1.1 生成程序集。统一全部 SharpLink 包为 2.0，删除所有契约、服务和插件项目的 `bin/obj` 后重新构建。开发期间出现过的中间 ABI 编号不构成兼容承诺，也不参与 2.0 的发布版本计算。
 - Manifest 版本或 schema 冲突：确认 Client/Server/SDK/Generator 包版本一致，并清理旧 `bin/obj` 后重建。
 
 ## Client 无法 Ready

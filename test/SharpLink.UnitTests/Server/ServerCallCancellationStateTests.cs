@@ -122,12 +122,8 @@ public class ServerCallCancellationStateTests
         var timeProvider = new ManualTimeProvider();
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
         using var scheduler = new ServerCallDeadlineScheduler(calls, maxCalls: 4, timeProvider);
-        var firstDeadline = RpcDeadline.Create(
-            timeProvider.GetUtcNow().AddSeconds(1),
-            timeProvider);
-        var laterDeadline = RpcDeadline.Create(
-            timeProvider.GetUtcNow().AddSeconds(2),
-            timeProvider);
+        var firstDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
+        var laterDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(2), timeProvider);
         var first = ServerCallCancellationState.Rent(
             101, firstDeadline, timeProvider,
             CancellationToken.None, CancellationToken.None,
@@ -182,14 +178,40 @@ public class ServerCallCancellationStateTests
         }
     }
 
+
+    [Test]
+    public void StreamDataAfterExpiredTimestampShouldLoseWithoutSchedulerCallback()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var state = ServerCallCancellationState.Rent(
+            106,
+            RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider),
+            timeProvider,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: true);
+        try
+        {
+            Ensure(state.TryAcceptStreamData(),
+                "client-stream data before the boundary should remain admissible");
+            timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
+            Ensure(!state.TryAcceptStreamData(),
+                "client-stream data at/after the boundary must be rejected without waiting for the scheduler");
+            Ensure(state.Reason == ServerCallCancellationReason.DeadlineExceeded,
+                "the data-path gate should publish DeadlineExceeded as the terminal reason");
+        }
+        finally
+        {
+            state.Dispose();
+        }
+    }
+
     [Test]
     public void FakeTimeSchedulerDisposeShouldDisarmItsOwnedTimer()
     {
         var timeProvider = new ManualTimeProvider();
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
-        var deadline = RpcDeadline.Create(
-            timeProvider.GetUtcNow().AddSeconds(1),
-            timeProvider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
         var state = ServerCallCancellationState.Rent(
             105, deadline, timeProvider,
             CancellationToken.None, CancellationToken.None,
@@ -748,7 +770,7 @@ public class ServerCallCancellationStateTests
         => ServerCallCancellationState.Rent(
             requestId,
             deadline is { } utcDeadline
-                ? RpcDeadline.Create(utcDeadline, deadlineTimestamp)
+                ? RpcDeadline.FromTimestamp(deadlineTimestamp)
                 : default,
             TimeProvider.System,
             connectionClosedToken,

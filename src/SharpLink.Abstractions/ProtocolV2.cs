@@ -13,7 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 3;
+    public const ushort MinorVersion = 4;
+
+    /// <summary>Old protocol minors used absolute wall-clock deadlines and are not wire-compatible.</summary>
+    public const ushort MinimumCompatibleMinorVersion = 4;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -57,8 +60,8 @@ public enum ProtocolV2FrameFlags : byte
     Error = 1 << 0,
     /// <summary>The payload was truncated to remain within a configured limit.</summary>
     Truncated = 1 << 1,
-    /// <summary>The request prefix contains a deadline.</summary>
-    HasDeadline = 1 << 2,
+    /// <summary>The request prefix contains a remaining RPC time budget.</summary>
+    HasTimeBudget = 1 << 2,
     /// <summary>The request contains metadata.</summary>
     HasMetadata = 1 << 3,
     /// <summary>The payload uses the negotiated compression profile.</summary>
