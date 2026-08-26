@@ -779,7 +779,7 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
-    public async Task ServerStopShouldPreservePendingCallCancellationReasons()
+    public async Task ServerStopShouldPreservePendingCallCancellationReasonsWithoutReenteringMapper()
     {
         var exceptionMapper = new RecordingServerStreamExceptionMapper();
         for (var iteration = 0; iteration < 10; iteration++)
@@ -809,10 +809,8 @@ public class IntegrationBehaviorTests
         }
 
         var mappedStreamErrors = exceptionMapper.GetMappedCodes();
-        Ensure(mappedStreamErrors.Length == 10, "every stopped server stream reached the exception mapper");
-        Ensure(
-            mappedStreamErrors.All(static code => code == SharpLinkErrorCode.Unavailable),
-            $"server stream stop reasons: {string.Join(", ", mappedStreamErrors.Select(static code => code?.ToString() ?? "unstructured"))}");
+        Ensure(mappedStreamErrors.Length == 0,
+            "a framework-selected server-stop terminal must not re-enter the application stream exception mapper");
     }
 
     [Test]

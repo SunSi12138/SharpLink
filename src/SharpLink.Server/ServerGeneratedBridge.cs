@@ -92,9 +92,13 @@ internal sealed class ServerGeneratedBridge(
             // Once the framework call owner has selected a terminal, this pump has lost both
             // user-code and wire-publication ownership. Do not run the application exception
             // mapper and do not publish a second StreamComplete(Error); the selected call terminal
-            // is already responsible for the externally visible outcome.
-            if (GetSelectedTerminal(requestId) is not null)
+            // is already responsible for the externally visible outcome. The local send-flow state
+            // still belongs to this pump and must be retired even though no wire terminal is sent.
+            if (GetSelectedTerminal(requestId) is { } selectedTerminal)
+            {
+                session.CompleteSendStream(requestId, streamId, selectedTerminal);
                 return;
+            }
 
             var protocolError = server.MapStreamServiceException(
                 callCancellations,
