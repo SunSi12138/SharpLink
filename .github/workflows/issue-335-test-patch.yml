@@ -1,0 +1,61 @@
+name: Issue 335 Deterministic Test Patch
+
+on:
+  push:
+    branches:
+      - evidence/issue-335-test-patch-3fa3f2a8
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-335-dynamic-admission-partition-update
+          fetch-depth: 0
+
+      - name: Make queue-delay test deterministic
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs')
+          text = path.read_text()
+
+          text = text.replace(
+              'using System.Threading;\nusing SharpLink.Server;\n',
+              'using System.Threading;\nusing SharpLink.Server;\nusing SharpLink.UnitTests.Runtime;\n',
+              1)
+
+          old = '''    [Test]\n    public async Task QueuedRequestShouldKeepCapturedMaxQueueDelay()\n    {\n        await using var server = CreateServer();\n        var publicServer = (ISharpLinkServer)server;\n        publicServer.EnableAdmissionControl(options =>\n            ConfigureQueue(options, 1, 2, 1024, TimeSpan.FromMinutes(1)));\n        var source = Current(server);\n        var context = CreateContext();\n        var holder = await source.Controller.AcquireAsync(context, 1, true, CancellationToken.None);\n        using var oldCancellation = new CancellationTokenSource();\n        var oldQueued = source.Controller.AcquireAsync(\n            context, 1, true, oldCancellation.Token).AsTask();\n        await WaitUntilAsync(() => source.Kernel.QueuedCalls == 1,\n            "old request must enter queue before delay update");\n\n        publicServer.UpdateAdmissionControl(options =>\n            ConfigureQueue(options, 1, 2, 1024, TimeSpan.FromMilliseconds(50)));\n        var replacement = Current(server);\n        Ensure(source.Controller.MaxQueueDelayForTests == TimeSpan.FromMinutes(1) &&\n               replacement.Controller.MaxQueueDelayForTests == TimeSpan.FromMilliseconds(50),\n            "program generations must keep immutable queue-delay snapshots");\n        var newQueued = replacement.Controller.AcquireAsync(\n            context, 1, true, CancellationToken.None).AsTask();\n        var newDecision = await newQueued.WaitAsync(TimeSpan.FromSeconds(2));\n        Ensure(!newDecision.IsAcquired, "new N+1 waiter must use the shorter queue delay");\n        Ensure(!oldQueued.IsCompleted,\n            "already queued N request must not have its captured longer delay retroactively shortened");\n\n        oldCancellation.Cancel();\n        Ensure(await CaptureAsyncFailure(oldQueued) is OperationCanceledException,\n            "test cancellation must terminate the old long-delay waiter without changing its policy result");\n        holder.Lease!.Dispose();\n        Ensure(replacement.Controller.QueuedCalls == 0 && replacement.Controller.QueuedBytes == 0,\n            "delay update and cancellation must release queue accounting exactly once");\n    }\n'''
+
+          new = '''    [Test]\n    public async Task QueuedRequestShouldKeepCapturedMaxQueueDelay()\n    {\n        var time = new ManualTimeProvider();\n        await using var server = CreateServer(time);\n        var publicServer = (ISharpLinkServer)server;\n        publicServer.EnableAdmissionControl(options =>\n            ConfigureQueue(options, 1, 2, 1024, TimeSpan.FromMinutes(1)));\n        var source = Current(server);\n        var context = CreateContext();\n        var holder = await source.Controller.AcquireAsync(context, 1, true, CancellationToken.None);\n        using var oldCancellation = new CancellationTokenSource();\n        var oldQueued = source.Controller.AcquireAsync(\n            context, 1, true, oldCancellation.Token).AsTask();\n        await WaitUntilAsync(() => source.Kernel.QueuedCalls == 1,\n            "old request must enter queue before delay update");\n\n        publicServer.UpdateAdmissionControl(options =>\n            ConfigureQueue(options, 1, 2, 1024, TimeSpan.FromMilliseconds(50)));\n        var replacement = Current(server);\n        Ensure(source.Controller.MaxQueueDelayForTests == TimeSpan.FromMinutes(1) &&\n               replacement.Controller.MaxQueueDelayForTests == TimeSpan.FromMilliseconds(50),\n            "program generations must keep immutable queue-delay snapshots");\n        var newQueued = replacement.Controller.AcquireAsync(\n            context, 1, true, CancellationToken.None).AsTask();\n        await WaitUntilAsync(() => source.Kernel.QueuedCalls == 2,\n            "new N+1 request must be resident before advancing deterministic time");\n\n        time.Advance(TimeSpan.FromMilliseconds(50));\n        var newDecision = await newQueued.WaitAsync(TimeSpan.FromSeconds(2));\n        Ensure(!newDecision.IsAcquired, "new N+1 waiter must use the shorter queue delay");\n        Ensure(!oldQueued.IsCompleted,\n            "already queued N request must not have its captured longer delay retroactively shortened");\n\n        oldCancellation.Cancel();\n        Ensure(await CaptureAsyncFailure(oldQueued) is OperationCanceledException,\n            "test cancellation must terminate the old long-delay waiter without changing its policy result");\n        holder.Lease!.Dispose();\n        Ensure(replacement.Controller.QueuedCalls == 0 && replacement.Controller.QueuedBytes == 0,\n            "delay update and cancellation must release queue accounting exactly once");\n    }\n'''
+
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one queue-delay test block, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old_helper = '''    private static SharpLinkServer CreateServer()\n    {\n        var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback.ToString());\n        return (SharpLinkServer)builder.Build();\n    }\n'''
+          new_helper = '''    private static SharpLinkServer CreateServer(TimeProvider? timeProvider = null)\n    {\n        var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback.ToString());\n        if (timeProvider is not null)\n            builder.UseTimeProvider(timeProvider);\n        return (SharpLinkServer)builder.Build();\n    }\n'''
+          if text.count(old_helper) != 1:
+              raise SystemExit(f'expected one CreateServer helper, found {text.count(old_helper)}')
+          text = text.replace(old_helper, new_helper, 1)
+
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Commit test fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs
+          git commit -m "test(admission): make queue-delay update deterministic"
+          git push origin HEAD:issue-335-dynamic-admission-partition-update
