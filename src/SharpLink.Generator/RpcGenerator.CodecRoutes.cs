@@ -315,17 +315,24 @@ public partial class RpcGenerator
         }
 
         private bool IsNativeCodecType(ITypeSymbol type)
+            => IsNativeCodecType(type, [], 0, type);
+
+        private bool IsNativeCodecType(
+            ITypeSymbol type,
+            List<ITypeSymbol> stack,
+            int depth,
+            ITypeSymbol blockedRouteType)
         {
             if (IsEnumOrNullableEnum(type))
                 return true;
             if (IsNonOverridableBuiltin(type))
                 return true;
             if (TryGetCollection(type, out _, out _, out _, out _))
-                return CanGenerateNativeCollection(type, [], 0, type);
+                return CanGenerateNativeCollection(type, stack, depth, blockedRouteType);
             if (type.IsUnmanagedType || IsThirdPartyType(type))
                 return false;
 
-            return CanGenerateNativeDto(type, [], 0, type);
+            return CanGenerateNativeDto(type, stack, depth, blockedRouteType);
         }
 
         private static bool IsEnumOrNullableEnum(ITypeSymbol type)
@@ -437,7 +444,7 @@ public partial class RpcGenerator
 
             if (HasResolvableExplicitAdapter(type))
                 return true;
-            if (IsNativeCodecType(type) || type.IsUnmanagedType)
+            if (IsNativeCodecType(type, stack, depth, blockedRouteType) || type.IsUnmanagedType)
                 return true;
             if (stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)))
                 return false;
