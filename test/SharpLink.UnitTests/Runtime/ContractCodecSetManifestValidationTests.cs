@@ -3,6 +3,7 @@ using System.Net;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
 using SharpLink.Server;
