@@ -215,8 +215,7 @@ public sealed class SharpLinkAdmissionContext
         RpcMethodKind methodKind,
         string connectionId,
         SharpLinkAuthenticationContext? authenticationContext,
-        SharpLinkMetadata? metadata,
-        DateTimeOffset? deadline)
+        SharpLinkMetadata? metadata)
     {
         ContractId = contractId;
         MethodId = methodId;
@@ -224,7 +223,6 @@ public sealed class SharpLinkAdmissionContext
         ConnectionId = connectionId;
         AuthenticationContext = authenticationContext;
         Metadata = metadata;
-        Deadline = deadline;
     }
 
     /// <summary>Gets the stable generated contract ID.</summary>
@@ -239,8 +237,6 @@ public sealed class SharpLinkAdmissionContext
     public SharpLinkAuthenticationContext? AuthenticationContext { get; }
     /// <summary>Gets request metadata, or <see langword="null"/> when absent.</summary>
     public SharpLinkMetadata? Metadata { get; }
-    /// <summary>Gets the absolute request deadline, when present.</summary>
-    public DateTimeOffset? Deadline { get; }
 }
 
 /// <summary>Configures optional active admission control for one SharpLink server.</summary>

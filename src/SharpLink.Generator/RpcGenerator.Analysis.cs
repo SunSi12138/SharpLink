@@ -412,24 +412,6 @@ public partial class RpcGenerator
         => IsAsyncEnumerable(method.ReturnType, out _) ||
            method.Parameters.Any(static parameter => IsAsyncEnumerable(parameter.Type, out _));
 
-    private static ImmutableArray<InvalidCallOptionsMethodModel> GetInvalidCallOptionsMethods(
-        GeneratorAttributeSyntaxContext context,
-        CancellationToken _)
-    {
-        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface ||
-            !InheritsIService(symbol))
-            return ImmutableArray<InvalidCallOptionsMethodModel>.Empty;
-
-        var list = ImmutableArray.CreateBuilder<InvalidCallOptionsMethodModel>();
-        foreach (var method in GetContractMethods(symbol))
-        {
-            if (method.Parameters.Count(IsCallOptionsParameter) <= 1)
-                continue;
-            list.Add(new InvalidCallOptionsMethodModel(method.Name, method.Locations.FirstOrDefault()));
-        }
-        return list.ToImmutable();
-    }
-
     private static ImmutableArray<InvalidControlParameterOrderModel> GetInvalidControlParameterOrderMethods(
         GeneratorAttributeSyntaxContext context,
         CancellationToken _)
@@ -441,21 +423,14 @@ public partial class RpcGenerator
         var list = ImmutableArray.CreateBuilder<InvalidControlParameterOrderModel>();
         foreach (var method in GetContractMethods(symbol))
         {
-            var optionsIndex = -1;
             var cancellationIndex = -1;
             for (var index = 0; index < method.Parameters.Length; index++)
             {
-                if (IsCallOptionsParameter(method.Parameters[index]))
-                    optionsIndex = index;
                 if (IsCancellationTokenParameter(method.Parameters[index]))
                     cancellationIndex = index;
             }
 
-            var expectedCancellationIndex = cancellationIndex >= 0 ? method.Parameters.Length - 1 : -1;
-            var expectedOptionsIndex = optionsIndex >= 0
-                ? method.Parameters.Length - (cancellationIndex >= 0 ? 2 : 1)
-                : -1;
-            if (cancellationIndex == expectedCancellationIndex && optionsIndex == expectedOptionsIndex)
+            if (cancellationIndex < 0 || cancellationIndex == method.Parameters.Length - 1)
                 continue;
             list.Add(new InvalidControlParameterOrderModel(method.Name, method.Locations.FirstOrDefault()));
         }
@@ -539,7 +514,6 @@ public partial class RpcGenerator
                 HasTypeParameter(m.ReturnType) ||
                 m.Parameters.Any(p => HasTypeParameter(p.Type)) ||
                 m.Parameters.Count(IsCancellationTokenParameter) > 1 ||
-                m.Parameters.Count(IsCallOptionsParameter) > 1 ||
                 !HasValidControlParameterOrder(m) ||
                 m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
                 HasInvalidMethodAttributes(m));
@@ -726,23 +700,10 @@ public partial class RpcGenerator
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
         => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
 
-    private static bool IsCallOptionsParameter(IParameterSymbol parameter)
-        => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::SharpLink.Sdk.SharpLinkCallOptions";
 
     private static bool HasValidControlParameterOrder(IMethodSymbol method)
-    {
-        var controls = method.Parameters.Where(p => IsCancellationTokenParameter(p) || IsCallOptionsParameter(p)).ToArray();
-        if (controls.Length == 0)
-            return true;
-        var firstControl = method.Parameters.Length - controls.Length;
-        for (var index = firstControl; index < method.Parameters.Length; index++)
-        {
-            if (!IsCancellationTokenParameter(method.Parameters[index]) && !IsCallOptionsParameter(method.Parameters[index]))
-                return false;
-        }
-        return !method.Parameters.Any(IsCancellationTokenParameter) ||
-               IsCancellationTokenParameter(method.Parameters[method.Parameters.Length - 1]);
-    }
+        => !method.Parameters.Any(IsCancellationTokenParameter) ||
+           IsCancellationTokenParameter(method.Parameters[method.Parameters.Length - 1]);
 
     private static bool InheritsIService(INamedTypeSymbol symbol)
         => symbol.AllInterfaces.Any(IsIService);
@@ -864,8 +825,7 @@ public partial class RpcGenerator
         {
             var leftParameter = left.Parameters[index];
             var rightParameter = right.Parameters[index];
-            if (IsCancellationTokenParameter(leftParameter) ||
-                IsCallOptionsParameter(leftParameter))
+            if (IsCancellationTokenParameter(leftParameter))
             {
                 continue;
             }
@@ -1113,7 +1073,6 @@ public partial class RpcGenerator
                     var isNullableReference = !isValueType && p.NullableAnnotation == NullableAnnotation.Annotated;
                     var payloadType = isStream ? pItemType! : p.Type;
                     var isCancellationToken = IsCancellationTokenParameter(p);
-                    var isCallOptions = IsCallOptionsParameter(p);
                     return new RpcParameterModel(
                         p.Name,
                         pType,
@@ -1126,7 +1085,6 @@ public partial class RpcGenerator
                         isNullableReference,
                         IsNullablePayload(payloadType),
                         isCancellationToken,
-                        isCallOptions,
                         GetEnumUnderlyingType(p.Type),
                         pItemType is null ? null : GetEnumUnderlyingType(pItemType),
                         p.Locations.FirstOrDefault());
@@ -1134,14 +1092,13 @@ public partial class RpcGenerator
 
                 var paramTypes = m.Parameters
                     .Where(static parameter =>
-                        !IsCancellationTokenParameter(parameter) &&
-                        !IsCallOptionsParameter(parameter))
+                        !IsCancellationTokenParameter(parameter))
                     .Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
                     .ToArray();
                 var methodHash = Hashing.GetMethodHash(m.Name, paramTypes);
 
                 var requestSchema = string.Join(";", paramArray
-                    .Where(static parameter => !parameter.IsCancellationToken && !parameter.IsCallOptions)
+                    .Where(static parameter => !parameter.IsCancellationToken)
                     .Select(static parameter =>
                         $"{parameter.Name}:{parameter.Type}:{(parameter.IsStream ? "stream" : "value")}:{(parameter.PayloadNullable ? "nullable" : "required")}"));
                 var responsePayload = isGenericTask
@@ -1171,7 +1128,6 @@ public partial class RpcGenerator
                     IsVoid: m.ReturnsVoid || isNonGenericTaskLike,
                     IsOneWay: isOneWay,
                     HasCancellationToken: paramArray.Any(p => p.IsCancellationToken),
-                    HasCallOptions: paramArray.Any(p => p.IsCallOptions),
                     HasTimeoutAttribute: hasTimeoutAttribute,
                     TimeoutSeconds: timeoutSeconds,
                     IsIdempotent: isIdempotent,

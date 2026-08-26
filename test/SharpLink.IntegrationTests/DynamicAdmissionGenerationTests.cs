@@ -511,7 +511,7 @@ public class DynamicAdmissionGenerationTests
     }
 
     private static SharpLinkAdmissionContext CreateAdmissionContext()
-        => new(1, 2, RpcMethodKind.Unary, "generation-test", null, null, null);
+        => new(1, 2, RpcMethodKind.Unary, "generation-test", null, null);
 
     private static async Task AssertProgramReleasedAsync(
         AdmissionProgram program,

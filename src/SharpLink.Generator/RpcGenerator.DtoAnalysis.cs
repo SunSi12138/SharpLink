@@ -125,7 +125,7 @@ public partial class RpcGenerator
             {
                 foreach (var parameter in method.Parameters)
                 {
-                    if (IsCancellationTokenParameter(parameter) || IsCallOptionsParameter(parameter))
+                    if (IsCancellationTokenParameter(parameter))
                         continue;
                     if (IsAsyncEnumerable(parameter.Type, out var streamItem))
                         AddRoot(roots, streamItem!);

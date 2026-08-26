@@ -253,7 +253,7 @@ public interface IRpcChannel : IRpcClientStreamSink
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default);
 
     /// <summary>Invokes a one-way RPC, optionally with generated client streams.</summary>
@@ -262,7 +262,7 @@ public interface IRpcChannel : IRpcClientStreamSink
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
         in TStreams streams,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter;
 
@@ -273,7 +273,7 @@ public interface IRpcChannel : IRpcClientStreamSink
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         in TStreams streams,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter;
 
@@ -283,7 +283,7 @@ public interface IRpcChannel : IRpcClientStreamSink
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default);
 
     /// <summary>Invokes a duplex-streaming RPC.</summary>
@@ -293,7 +293,7 @@ public interface IRpcChannel : IRpcClientStreamSink
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         in TStreams streams,
-        SharpLinkCallOptions options,
+        SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter;
 }

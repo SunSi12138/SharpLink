@@ -25,12 +25,14 @@ internal static class StreamManagerPreAdmissionLeaseExtensions
 
         for (var index = 1; index <= streamCount; index++)
         {
+            var retention = new PreAdmissionStreamLeaseRetention(reserveBytes);
             manager.Register(
                 requestId,
                 checked((ushort)index),
                 new PreAdmissionStreamDispatcher(
                     buffers,
-                    reserveBytes,
+                    retention.TryReserve,
+                    retention.Release,
                     capacityExceeded,
                     decodeCompressed));
         }

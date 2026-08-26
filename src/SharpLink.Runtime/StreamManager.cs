@@ -9,6 +9,8 @@ internal sealed class StreamManager
     private readonly Action<long, ushort, int>? _acceptBytes;
     private readonly Action<long, ushort, int>? _bytesConsumed;
     private readonly Action<long, ushort>? _streamCompleted;
+    private readonly int _maxActiveStreams;
+    private readonly Action<Exception>? _activeStreamCapacityExceeded;
     private long _droppedStreamFrames;
     private int _activeStreamCount;
     private Termination? _termination;
@@ -30,12 +32,32 @@ internal sealed class StreamManager
         Action<long, ushort, int>? acceptBytes,
         Action<long, ushort, int>? bytesConsumed,
         Action<long, ushort>? streamCompleted)
+        : this(
+            concurrencyOptions,
+            acceptBytes,
+            bytesConsumed,
+            streamCompleted,
+            int.MaxValue,
+            activeStreamCapacityExceeded: null)
+    {
+    }
+
+    internal StreamManager(
+        RuntimeConcurrencyOptions concurrencyOptions,
+        Action<long, ushort, int>? acceptBytes,
+        Action<long, ushort, int>? bytesConsumed,
+        Action<long, ushort>? streamCompleted,
+        int maxActiveStreams,
+        Action<Exception>? activeStreamCapacityExceeded)
     {
         ArgumentNullException.ThrowIfNull(concurrencyOptions);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxActiveStreams);
         _concurrencyOptions = concurrencyOptions.CloneValidated();
         _acceptBytes = acceptBytes;
         _bytesConsumed = bytesConsumed;
         _streamCompleted = streamCompleted;
+        _maxActiveStreams = maxActiveStreams;
+        _activeStreamCapacityExceeded = activeStreamCapacityExceeded;
     }
 
     /// <inheritdoc />
@@ -62,14 +84,36 @@ internal sealed class StreamManager
         var requestDispatchers = GetOrCreateDispatchersByRequestId().GetOrAdd(
             requestId,
             static _ => new RequestDispatchers());
-        if (requestDispatchers.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted))
+        if (dispatcher is not DiscardingStreamDispatcher &&
+            requestDispatchers.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted))
         {
             if (alreadyCompleted)
                 Unregister(requestId, streamId);
             return;
         }
+
+        var activeStreamCount = Interlocked.Increment(ref _activeStreamCount);
+        if (activeStreamCount > _maxActiveStreams)
+        {
+            Interlocked.Decrement(ref _activeStreamCount);
+            var exception = new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                $"Active inbound stream routes exceeded the per-connection limit of {_maxActiveStreams}.");
+            try
+            {
+                dispatcher.Complete(exception);
+            }
+            finally
+            {
+                RemoveEmptyRequest(requestId, requestDispatchers);
+                _activeStreamCapacityExceeded?.Invoke(exception);
+            }
+            if (ignoreExisting)
+                return;
+            throw exception;
+        }
+
         SharpLinkTelemetry.AddActiveStreams(1);
-        Interlocked.Increment(ref _activeStreamCount);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
             consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
         if (!requestDispatchers.TryRegister(streamId, dispatcher))
@@ -115,9 +159,15 @@ internal sealed class StreamManager
             Interlocked.Decrement(ref _activeStreamCount);
             try
             {
-                if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                // A stable inbound route may still have a typed child owned by replay/consumer
+                // after the parent entry is removed. Preserve that child's callback so buffered
+                // late credit can reach the receive-flow tombstone until the child is disposed.
+                if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware &&
+                    dispatcher is not PreAdmissionStreamDispatcher)
+                {
                     consumptionAware.SetBytesConsumedCallback(null, 0, 0);
-                _streamCompleted?.Invoke(requestId, streamId);
+                }
+                PublishReceiveTerminal(requestId, streamId, entry);
             }
             finally
             {
@@ -141,6 +191,7 @@ internal sealed class StreamManager
         {
             try
             {
+                ThrowIfPeerTerminal(entry);
                 var dispatcher = entry.Dispatcher;
                 var encodedByteCount = Math.Max(1, checked((int)payload.Length));
                 if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
@@ -168,6 +219,16 @@ internal sealed class StreamManager
 
         Interlocked.Increment(ref _droppedStreamFrames);
         return ValueTask.CompletedTask;
+    }
+
+    private static void ThrowIfPeerTerminal(DispatcherEntry entry)
+    {
+        if (entry.PeerTerminalReceived)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
+                "StreamData was received after the peer completed the stream.");
+        }
     }
 
     private static ValueTask CompleteDispatch(DispatcherEntry entry, ValueTask dispatch)
@@ -226,7 +287,7 @@ internal sealed class StreamManager
             return;
         }
 
-        if (requestDispatchers.TryCompletePreAdmission(streamId, exception))
+        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out _))
             return;
 
         if (requestDispatchers.TryRemove(streamId, out var entry))
@@ -237,7 +298,46 @@ internal sealed class StreamManager
             try
             {
                 dispatcher.Complete(exception);
-                _streamCompleted?.Invoke(requestId, streamId);
+                PublishReceiveTerminal(requestId, streamId, entry);
+            }
+            finally
+            {
+                entry.Detach();
+                RemoveEmptyRequest(requestId, requestDispatchers);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records an actual peer StreamComplete independently from local completion/error state.
+    /// A retained OneWay route may stay registered after this point so local abandonment can
+    /// dispose its typed child, while receive-flow terminal state is published immediately.
+    /// </summary>
+    internal void CompletePeerStream(long requestId, ushort streamId, Exception? exception)
+    {
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+            !requestDispatchers.TryMarkPeerTerminal(streamId))
+        {
+            return;
+        }
+
+        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var retainedEntry))
+        {
+            PublishReceiveTerminal(requestId, streamId, retainedEntry);
+            return;
+        }
+
+        if (requestDispatchers.TryRemove(streamId, out var entry))
+        {
+            var dispatcher = entry.Dispatcher;
+            SharpLinkTelemetry.AddActiveStreams(-1);
+            Interlocked.Decrement(ref _activeStreamCount);
+            try
+            {
+                dispatcher.Complete(exception);
+                PublishReceiveTerminal(requestId, streamId, entry);
             }
             finally
             {
@@ -310,7 +410,7 @@ internal sealed class StreamManager
         {
             if (entry.Dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 consumptionAware.SetBytesConsumedCallback(null, 0, 0);
-            _streamCompleted?.Invoke(requestId, streamId);
+            PublishReceiveTerminal(requestId, streamId, entry);
         }
         finally
         {
@@ -370,7 +470,8 @@ internal sealed class StreamManager
         Func<int, bool> reserveBytes,
         Action<int> releaseBytes,
         Action capacityExceeded,
-        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null)
+        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
+        bool retainUntilLocalCompletion = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamCount);
         for (var index = 1; index <= streamCount; index++)
@@ -383,8 +484,20 @@ internal sealed class StreamManager
                     reserveBytes,
                     releaseBytes,
                     capacityExceeded,
-                    decodeCompressed));
+                    decodeCompressed,
+                    retainUntilLocalCompletion));
         }
+    }
+
+    /// <summary>
+    /// Transitions already-installed inbound routes to discard mode without creating a route when
+    /// no stable route exists. This is the local-completion path for OneWay calls.
+    /// </summary>
+    internal void AbandonExistingRequestStreams(long requestId, int streamCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(streamCount);
+        for (var index = 1; index <= streamCount; index++)
+            _ = TryAbandonExistingStream(requestId, checked((ushort)index));
     }
 
     internal void DrainRejectedRequestStreams(long requestId, int streamCount)
@@ -393,12 +506,29 @@ internal sealed class StreamManager
         for (var index = 1; index <= streamCount; index++)
         {
             var streamId = checked((ushort)index);
+            if (TryAbandonExistingStream(requestId, streamId))
+                continue;
             Register(
                 requestId,
                 streamId,
                 new DiscardingStreamDispatcher(),
                 ignoreExisting: true);
         }
+    }
+
+    private bool TryAbandonExistingStream(long requestId, ushort streamId)
+    {
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+            !requestDispatchers.TryAbandonInboundRoute(streamId, out var peerTerminalReceived))
+        {
+            return false;
+        }
+
+        if (peerTerminalReceived)
+            Unregister(requestId, streamId);
+        return true;
     }
 
     internal bool TryDispatchPreAdmissionCompressed(
@@ -409,28 +539,43 @@ internal sealed class StreamManager
         out ValueTask dispatch)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
-        if (dispatchersByRequestId is null)
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+            !requestDispatchers.TryAcquire(streamId, out var entry))
         {
             dispatch = default;
             return false;
         }
 
-        if (dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
-            requestDispatchers.TryGetPreAdmission(streamId, out var preAdmission))
+        try
         {
-            _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-            dispatch = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
-            return true;
+            ThrowIfPeerTerminal(entry);
+            if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
+            {
+                _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+                dispatch = CompleteDispatch(
+                    entry,
+                    preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount));
+                return true;
+            }
+            if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
+            {
+                _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+                dispatch = CompleteDispatch(
+                    entry,
+                    discarding.DispatchAsync(wirePayload, originalByteCount));
+                return true;
+            }
+
+            entry.Release();
+            dispatch = default;
+            return false;
         }
-        if (dispatchersByRequestId.TryGetValue(requestId, out requestDispatchers) &&
-            requestDispatchers.TryGetDiscarding(streamId, out var discarding))
+        catch
         {
-            _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-            dispatch = discarding.DispatchAsync(wirePayload, originalByteCount);
-            return true;
+            entry.Release();
+            throw;
         }
-        dispatch = default;
-        return false;
     }
 
     private void CompleteTerminatedRegistration(
@@ -447,13 +592,19 @@ internal sealed class StreamManager
         try
         {
             entry.Dispatcher.Complete(exception);
-            _streamCompleted?.Invoke(requestId, streamId);
+            PublishReceiveTerminal(requestId, streamId, entry);
         }
         finally
         {
             entry.Detach();
             RemoveEmptyRequest(requestId, requestDispatchers);
         }
+    }
+
+    private void PublishReceiveTerminal(long requestId, ushort streamId, DispatcherEntry entry)
+    {
+        if (entry.TryPublishReceiveTerminal())
+            _streamCompleted?.Invoke(requestId, streamId);
     }
 
     private StripedLongMap<RequestDispatchers> GetOrCreateDispatchersByRequestId()
@@ -591,29 +742,119 @@ internal sealed class StreamManager
             }
         }
 
-        public bool TryCompletePreAdmission(ushort streamId, Exception? exception)
+        public bool TryAbandonInboundRoute(ushort streamId, out bool peerTerminalReceived)
         {
+            peerTerminalReceived = false;
             if (streamId == 0)
             {
-                if (Volatile.Read(ref _defaultDispatcher)?.Dispatcher is not
-                    PreAdmissionStreamDispatcher preAdmission || preAdmission.IsAttached)
+                var entry = Volatile.Read(ref _defaultDispatcher);
+                if (entry?.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                preAdmission.Complete(exception);
-                return true;
+                try
+                {
+                    preAdmission.Abandon(out _);
+                    peerTerminalReceived = entry.PeerTerminalReceived;
+                    return true;
+                }
+                finally
+                {
+                    entry.Release();
+                }
             }
 
+            DispatcherEntry? acquiredEntry;
+            PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
                 if (!_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
-                    preAdmission.IsAttached)
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                preAdmission.Complete(exception);
+                acquiredEntry = entry;
+                acquiredPreAdmission = preAdmission;
+            }
+            try
+            {
+                acquiredPreAdmission.Abandon(out _);
+                peerTerminalReceived = acquiredEntry.PeerTerminalReceived;
                 return true;
+            }
+            finally
+            {
+                acquiredEntry.Release();
+            }
+        }
+
+        public bool TryMarkPeerTerminal(ushort streamId)
+        {
+            if (streamId == 0)
+            {
+                var entry = Volatile.Read(ref _defaultDispatcher);
+                if (entry is null || !entry.TryAcquire())
+                    return false;
+                try
+                {
+                    entry.MarkPeerTerminalReceived();
+                    return true;
+                }
+                finally
+                {
+                    entry.Release();
+                }
+            }
+
+            DispatcherEntry? acquiredEntry;
+            lock (_gate)
+            {
+                if (!_byStreamId.TryGetValue(streamId, out var entry) || !entry.TryAcquire())
+                    return false;
+                acquiredEntry = entry;
+            }
+            try
+            {
+                acquiredEntry.MarkPeerTerminalReceived();
+                return true;
+            }
+            finally
+            {
+                acquiredEntry.Release();
+            }
+        }
+
+        public bool TryCompleteRetainedRoute(
+            ushort streamId,
+            Exception? exception,
+            out DispatcherEntry entry)
+        {
+            if (streamId == 0)
+            {
+                var found = Volatile.Read(ref _defaultDispatcher);
+                if (found?.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+                    preAdmission.TryCompleteAndRetain(exception))
+                {
+                    entry = found;
+                    return true;
+                }
+                entry = null!;
+                return false;
+            }
+
+            lock (_gate)
+            {
+                if (_byStreamId.TryGetValue(streamId, out var found) &&
+                    found.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+                    preAdmission.TryCompleteAndRetain(exception))
+                {
+                    entry = found;
+                    return true;
+                }
+                entry = null!;
+                return false;
             }
         }
 
@@ -777,6 +1018,9 @@ internal sealed class StreamManager
         private const int ClosedMask = int.MinValue;
         private const int CountMask = int.MaxValue;
         private int _state;
+        private int _detached;
+        private int _receiveTerminalPublished;
+        private int _peerTerminalReceived;
         // Lazily shares the distinct drain/detach completions without growing common entries.
         private DispatcherEntryCompletions? _completions;
 
@@ -793,7 +1037,13 @@ internal sealed class StreamManager
 
         public bool IsDetached => Volatile.Read(ref _detached) != 0;
 
-        private int _detached;
+        internal bool PeerTerminalReceived => Volatile.Read(ref _peerTerminalReceived) != 0;
+
+        internal void MarkPeerTerminalReceived()
+            => Volatile.Write(ref _peerTerminalReceived, 1);
+
+        internal bool TryPublishReceiveTerminal()
+            => Interlocked.CompareExchange(ref _receiveTerminalPublished, 1, 0) == 0;
 
         internal bool TryAcquire()
         {
