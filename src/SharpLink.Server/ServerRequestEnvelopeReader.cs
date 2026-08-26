@@ -7,7 +7,8 @@ internal static class ServerRequestEnvelopeReader
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
         int maxMetadataBytes,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        RpcDeadline resolvedDeadline = default)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         var reader = new SequenceReader<byte>(payload);
@@ -19,27 +20,23 @@ internal static class ServerRequestEnvelopeReader
                 "Request routing prefix is truncated.");
         }
 
-        var deadline = default(RpcDeadline);
-        if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
+        var deadline = resolvedDeadline;
+        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
-            if (!reader.TryReadLittleEndian(out long unixMilliseconds))
-                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "Request deadline is truncated.");
-            try
+            if (!reader.TryReadLittleEndian(out long timeBudgetTicks))
             {
-                var utcDeadline = DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds);
-                deadline = RpcDeadline.Create(
-                    utcDeadline,
-                    timeProvider.GetUtcNow(),
-                    timeProvider.GetTimestamp(),
-                    timeProvider.TimestampFrequency);
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request time budget is truncated.");
             }
-            catch (ArgumentOutOfRangeException exception)
+            if (timeBudgetTicks < 0)
             {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.ProtocolViolation,
-                    "Request deadline is outside the supported UTC range.",
-                    exception);
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request time budget cannot be negative.");
             }
+            if (!deadline.HasValue)
+                deadline = RpcDeadline.Create(TimeSpan.FromTicks(timeBudgetTicks), timeProvider);
         }
 
         SharpLinkMetadata? metadata = null;
@@ -78,7 +75,4 @@ internal readonly record struct ServerRequestEnvelope(
     long MethodHash,
     ReadOnlySequence<byte> Arguments,
     RpcDeadline RpcDeadline,
-    SharpLinkMetadata? Metadata)
-{
-    internal DateTimeOffset? Deadline => RpcDeadline.UtcDeadline;
-}
+    SharpLinkMetadata? Metadata);

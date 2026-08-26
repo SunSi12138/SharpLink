@@ -131,9 +131,7 @@ public partial class RpcGenerator
             ? "default(RpcNoClientStreams)"
             : $"new {streamsType}({string.Join(", ", streamParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
         var cancellationParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCancellationToken);
-        var optionsParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCallOptions);
         var cancellationToken = cancellationParameter is null ? "default" : EscapeIdentifier(cancellationParameter.Name);
-        var options = optionsParameter is null ? "default" : EscapeIdentifier(optionsParameter.Name);
         var requestLocal = GetUniqueGeneratedLocalName(method, "__request");
         var streamsLocal = GetUniqueGeneratedLocalName(method, "__streams");
 
@@ -147,23 +145,23 @@ public partial class RpcGenerator
         if (method.IsStreamReturn)
         {
             invocation = streamParameters.Length == 0
-                ? $"_channel.InvokeServerStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, {options}, {cancellationToken})"
-                : $"_channel.InvokeDuplexStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, {options}, {cancellationToken})";
+                ? $"_channel.InvokeServerStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})"
+                : $"_channel.InvokeDuplexStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
             sb.AppendLine($"        return {invocation};");
         }
         else if (method.IsOneWay)
         {
-            invocation = $"_channel.InvokeOneWayAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, {options}, {cancellationToken})";
+            invocation = $"_channel.InvokeOneWayAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: false);
         }
         else if (streamParameters.Length != 0)
         {
-            invocation = $"_channel.InvokeClientStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, {options}, {cancellationToken})";
+            invocation = $"_channel.InvokeClientStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
         else
         {
-            invocation = $"_channel.InvokeUnaryAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, {options}, {cancellationToken})";
+            invocation = $"_channel.InvokeUnaryAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
 
@@ -353,7 +351,7 @@ public partial class RpcGenerator
 
     private static RpcParameterModel[] GetPayloadParameters(RpcMethodModel method)
         => method.Parameters
-            .Where(static parameter => !parameter.IsStream && !parameter.IsCancellationToken && !parameter.IsCallOptions)
+            .Where(static parameter => !parameter.IsStream && !parameter.IsCancellationToken)
             .ToArray();
 
     private static RpcParameterModel[] GetStreamParameters(RpcMethodModel method)

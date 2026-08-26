@@ -10,7 +10,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
 {
     /// <summary>Creates a manifest locator.</summary>
     /// <param name="manifestType">A generated manifest type with a public parameterless constructor.</param>
-    public SharpLinkGeneratedAssemblyManifestAttribute(
+    internal SharpLinkGeneratedAssemblyManifestAttribute(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
         Type manifestType)
     {
@@ -22,7 +22,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
     /// <param name="apiVersion">The generated server API version.</param>
     /// <param name="protocolVersion">The generated wire protocol version.</param>
     /// <param name="generatorVersion">The source-generator version.</param>
-    public SharpLinkGeneratedAssemblyManifestAttribute(
+    internal SharpLinkGeneratedAssemblyManifestAttribute(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
         Type manifestType,
         int apiVersion,
@@ -33,6 +33,24 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
         ApiVersion = apiVersion;
         ProtocolVersion = protocolVersion;
         GeneratorVersion = generatorVersion ?? throw new ArgumentNullException(nameof(generatorVersion));
+    }
+
+    /// <summary>Creates a self-describing manifest locator with an exact generated ABI identity.</summary>
+    /// <param name="manifestType">A generated manifest type with a public parameterless constructor.</param>
+    /// <param name="apiVersion">The generated API version.</param>
+    /// <param name="protocolVersion">The generated wire protocol version.</param>
+    /// <param name="generatorVersion">The source-generator version.</param>
+    /// <param name="abiIdentity">The exact generated ABI identity within the API version.</param>
+    public SharpLinkGeneratedAssemblyManifestAttribute(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+        Type manifestType,
+        int apiVersion,
+        int protocolVersion,
+        string generatorVersion,
+        string abiIdentity)
+        : this(manifestType, apiVersion, protocolVersion, generatorVersion)
+    {
+        AbiIdentity = abiIdentity ?? throw new ArgumentNullException(nameof(abiIdentity));
     }
 
     /// <summary>Gets the generated manifest implementation type.</summary>
@@ -47,6 +65,9 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
 
     /// <summary>Gets the declared Generator version, or <see langword="null"/> for a legacy locator.</summary>
     public string? GeneratorVersion { get; }
+
+    /// <summary>Gets the exact generated ABI identity, or <see langword="null"/> for an older locator.</summary>
+    public string? AbiIdentity { get; }
 }
 
 /// <summary>Describes one generated RPC method for compatibility and conflict validation.</summary>
@@ -116,14 +137,14 @@ public interface ISharpLinkGeneratedAssemblyManifest
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>
-    /// The current generated manifest API version. API 5 is the vNext Generated ABI frozen after the
-    /// Phase 16 public-surface cut and the #167 contract-owned codec architecture: generated DTO codecs
-    /// implement <see cref="IRpcSizedCodec{T}"/>, codec factories are adapter-free with schema identity,
-    /// and custom codec bindings use <see cref="SharpLink.Sdk.RpcCodecAttribute"/>. API 3 (legacy
-    /// single-parameter locator) and API 4 (previous self-describing locator) artifacts are rejected
-    /// at registration/startup; regenerate them with the current SharpLink SDK.
+    /// The current generated manifest API version. SharpLink 2.0 performs one Generated ABI bump
+    /// from the published 1.1.1 baseline (API 3) to API 4. Intermediate development-only ABI
+    /// numbers are not compatibility boundaries; regenerate all generated artifacts with the 2.0 SDK.
     /// </summary>
-    public const int Api = 5;
+    public const int Api = 4;
+
+    /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
+    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v2";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

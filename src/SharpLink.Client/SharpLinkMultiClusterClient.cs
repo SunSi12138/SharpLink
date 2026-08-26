@@ -129,6 +129,19 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
     }
 
+    public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        var state = State;
+        if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
+
+        if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
+            return route.Slot.Client.GetWithMetadata<TContract>(metadata);
+
+        throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
+    }
+
     public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster)
         => GetSlot(cluster).Client.State;
 

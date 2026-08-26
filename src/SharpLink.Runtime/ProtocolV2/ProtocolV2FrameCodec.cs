@@ -8,7 +8,7 @@ public static class ProtocolV2FrameParser
     private const ProtocolV2FrameFlags KnownFlags =
         ProtocolV2FrameFlags.Error |
         ProtocolV2FrameFlags.Truncated |
-        ProtocolV2FrameFlags.HasDeadline |
+        ProtocolV2FrameFlags.HasTimeBudget |
         ProtocolV2FrameFlags.HasMetadata |
         ProtocolV2FrameFlags.Compressed |
         ProtocolV2FrameFlags.Cancellable |
@@ -109,7 +109,7 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.HandshakeResponse => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             ProtocolV2FrameType.Ping => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.Pong => ProtocolV2FrameFlags.None,
-            ProtocolV2FrameType.Request => ProtocolV2FrameFlags.HasDeadline |
+            ProtocolV2FrameType.Request => ProtocolV2FrameFlags.HasTimeBudget |
                                            ProtocolV2FrameFlags.HasMetadata |
                                            ProtocolV2FrameFlags.Compressed |
                                            ProtocolV2FrameFlags.Cancellable |
@@ -245,7 +245,7 @@ public static class ProtocolV2FrameParser
             throw Violation("Request payload is shorter than its routing prefix.");
         var reader = new SequenceReader<byte>(payload);
         reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
-        if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0 && !reader.TryReadLittleEndian(out long _))
+        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0 && !reader.TryReadLittleEndian(out long _))
             throw Violation("Request deadline field is truncated.");
         if ((flags & ProtocolV2FrameFlags.HasMetadata) == 0)
             return;

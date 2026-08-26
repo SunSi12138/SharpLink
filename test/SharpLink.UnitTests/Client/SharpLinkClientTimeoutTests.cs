@@ -10,13 +10,13 @@ public class SharpLinkClientTimeoutTests
     public async Task InvokeWithTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
-        await using var client = ClientBuilderTestHelper.Build(transport);
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
 
-        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
-            client,
-            new SharpLinkCallOptions { Timeout = TimeSpan.FromMilliseconds(80) }).AsTask();
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         var exception = await EnsureThrows<SharpLinkException>(invokeTask);
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout should map to DeadlineExceeded");

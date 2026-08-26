@@ -51,18 +51,10 @@ public partial class RpcGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
-    private static readonly DiagnosticDescriptor MultipleCallOptionsRule = new(
-        id: "SHARPLINK007",
-        title: "Invalid RPC SharpLinkCallOptions Signature",
-        messageFormat: "RPC method '{0}' can declare at most one SharpLinkCallOptions parameter",
-        category: "SharpLink.Generator",
-        defaultSeverity: DiagnosticSeverity.Error,
-        isEnabledByDefault: true);
-
     private static readonly DiagnosticDescriptor ControlParameterOrderRule = new(
         id: "SHARPLINK008",
-        title: "Invalid RPC Control Parameter Order",
-        messageFormat: "RPC method '{0}' must place SharpLinkCallOptions and CancellationToken last, with CancellationToken last when both are present",
+        title: "Invalid RPC CancellationToken Position",
+        messageFormat: "RPC method '{0}' must place CancellationToken last",
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
