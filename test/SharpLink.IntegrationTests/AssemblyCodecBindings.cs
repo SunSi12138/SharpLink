@@ -1,21 +1,23 @@
 using SharpLink.IntegrationTests;
 
 [assembly: RpcCodecAdapter(
-    typeof(IntegrationPersonCodec),
-    typeof(IntegrationPersonCodec),
-    WireFormatId = "sharplink-integration-person/v1")]
+    typeof(MalformedHeader),
+    typeof(MalformedHeaderCodec),
+    WireFormatId = "sharplink-integration-malformed-header/v1")]
 
 namespace SharpLink.IntegrationTests;
 
-public sealed class IntegrationPersonCodec : IRpcCodec<IntegrationPersonCodec>
+public readonly record struct MalformedHeader(int Value);
+
+public sealed class MalformedHeaderCodec : IRpcCodec<MalformedHeader>
 {
-    public void Serialize(in IntegrationPersonCodec value, IBufferWriter<byte> buffer)
+    public void Serialize(in MalformedHeader value, IBufferWriter<byte> buffer)
     {
-        var span = buffer.GetSpan(1);
-        span[0] = 0;
-        buffer.Advance(1);
+        var span = buffer.GetSpan(sizeof(int));
+        BinaryPrimitives.WriteInt32LittleEndian(span, value.Value);
+        buffer.Advance(sizeof(int));
     }
 
-    public IntegrationPersonCodec Deserialize(in ReadOnlySequence<byte> buffer)
+    public MalformedHeader Deserialize(in ReadOnlySequence<byte> buffer)
         => throw new InvalidDataException("Injected request argument decode failure.");
 }
