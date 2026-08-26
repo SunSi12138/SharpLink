@@ -3,6 +3,7 @@ name: Phase 0 Decode Strategy Evidence
 on:
   pull_request:
     branches:
+      - dev
       - issue-273-call-reservation-phase0
     paths:
       - 'test/SharpLink.Benchmarks/**'

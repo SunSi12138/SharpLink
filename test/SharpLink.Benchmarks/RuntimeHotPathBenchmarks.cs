@@ -23,7 +23,6 @@ public class RuntimeHotPathBenchmarks
     private readonly SharpLinkProtocolOptions _limits = new();
     private readonly SharpLinkCallContextSnapshot _callContext =
         new("benchmark", authentication: null);
-    private readonly DateTimeOffset _deadline = DateTimeOffset.UtcNow.AddSeconds(30);
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
     private byte[] _responsePayload = null!;
@@ -100,16 +99,6 @@ public class RuntimeHotPathBenchmarks
         _ = SharpLinkCallContext.Current;
     }
 
-    [Benchmark]
-    public void CreateDeadlinePushAndRestoreCallContext()
-    {
-        var callContext = new SharpLinkCallContextSnapshot(
-            "benchmark",
-            authentication: null,
-            _deadline);
-        using var scope = SharpLinkCallContext.Push(callContext);
-        _ = SharpLinkCallContext.Current;
-    }
 
     [Benchmark]
     public void PushAndRestoreCallContext()
@@ -487,9 +476,7 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             2,
-            RpcDeadline.Create(
-                DateTimeOffset.UtcNow.AddSeconds(30),
-                Stopwatch.GetTimestamp() + SDeadlineOffset),
+            RpcDeadline.FromTimestamp(Stopwatch.GetTimestamp() + SDeadlineOffset),
             TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
@@ -502,9 +489,7 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             3,
-            RpcDeadline.Create(
-                DateTimeOffset.UtcNow.AddSeconds(30),
-                Stopwatch.GetTimestamp() + SDeadlineOffset),
+            RpcDeadline.FromTimestamp(Stopwatch.GetTimestamp() + SDeadlineOffset),
             TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
@@ -532,7 +517,7 @@ public class ServerCallCancellationStateBenchmarks
         var requestId = ++_nextRequestId;
         var state = ServerCallCancellationState.Rent(
             requestId,
-            RpcDeadline.Create(DateTimeOffset.MaxValue, long.MaxValue),
+            RpcDeadline.FromTimestamp(long.MaxValue),
             TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,

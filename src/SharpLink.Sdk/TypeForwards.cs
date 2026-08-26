@@ -14,7 +14,6 @@ using SharpLink.Sdk;
 [assembly: TypeForwardedTo(typeof(RpcSerializableAttribute))]
 [assembly: TypeForwardedTo(typeof(RpcServiceAttribute))]
 [assembly: TypeForwardedTo(typeof(RpcUnionCaseAttribute))]
-[assembly: TypeForwardedTo(typeof(SharpLinkCallOptions))]
 [assembly: TypeForwardedTo(typeof(SharpLinkClusterContractAssemblyAttribute))]
 [assembly: TypeForwardedTo(typeof(SharpLinkMetadata))]
 [assembly: TypeForwardedTo(typeof(SharpLinkRpcContractsAttribute))]

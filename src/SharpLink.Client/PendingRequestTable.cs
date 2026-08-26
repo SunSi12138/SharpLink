@@ -72,8 +72,11 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _slotAvailable;
     private readonly ITimer _deadlineTimer;
+    private readonly Lock _deadlineGate = new();
     private long _nextId;
-    private long _approximateEarliestDeadline = long.MaxValue;
+    private RpcDeadline _approximateEarliestDeadline;
+    private long _deadlineRevision;
+    private bool _hasApproximateEarliestDeadline;
     private int _deadlineScanRunning;
     private int _activeSlots;
     private int _waiterCount;
@@ -326,9 +329,10 @@ internal sealed class PendingRequestTable : IDisposable
             current.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
         {
             // A successful Response is only the server's acknowledgement; StreamComplete owns
-            // the terminal transition for server and duplex streams. The callback shares the
-            // per-call completion gate with terminal removal, so a matching acknowledgement is
-            // observed before cancellation, deadline, or disconnect can report the terminal result.
+            // the terminal transition for server and duplex streams. Deadline equality is checked
+            // under the same completion gate so a late acknowledgement cannot beat the monotonic
+            // boundary merely because the timer callback has not run yet.
+            PendingCall? expiredCall = null;
             lock (current.CompletionGate)
             {
                 if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) ||
@@ -338,15 +342,34 @@ internal sealed class PendingRequestTable : IDisposable
                     return false;
                 }
 
-                current.CompletionObserver?.OnResponseObserved();
-                return true;
+                if (current.Deadline.IsExpired(_timeProvider))
+                {
+                    var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+                    if (!ReferenceEquals(exchanged, current))
+                        return false;
+                    current.WaitUntilRegistered();
+                    expiredCall = current;
+                }
+                else
+                {
+                    current.CompletionObserver?.OnResponseObserved();
+                    return true;
+                }
             }
+
+            var emptyPayload = ReadOnlySequence<byte>.Empty;
+            CompleteTakenCall(
+                expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+            return true;
         }
 
-        if (!TryTakeMatchingCall(id, out var call))
+        if (!TryTakeMatchingCall(id, out var call, out var deadlineExpired))
             return false;
 
-        CompleteTakenCall(call!, PendingCallCompletionReason.Response, exception: null, ref payload);
+        var reason = deadlineExpired
+            ? PendingCallCompletionReason.DeadlineExceeded
+            : PendingCallCompletionReason.Response;
+        CompleteTakenCall(call!, reason, exception: null, ref payload);
         return true;
     }
 
@@ -358,12 +381,92 @@ internal sealed class PendingRequestTable : IDisposable
         PendingCallCompletionReason reason,
         Exception? exception = null)
     {
-        if (!TryTakeMatchingCall(id, out var call))
+        if (!TryTakeMatchingCall(id, out var call, out var deadlineExpired))
             return false;
+
+        if (deadlineExpired && reason != PendingCallCompletionReason.DeadlineExceeded)
+        {
+            reason = PendingCallCompletionReason.DeadlineExceeded;
+            exception = null;
+        }
 
         var emptyPayload = ReadOnlySequence<byte>.Empty;
         CompleteTakenCall(call!, reason, exception, ref emptyPayload);
         return true;
+    }
+
+    public bool TryAcceptStreamData(long id)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return false;
+
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref slots[index]);
+        if (current is null || current.Id != id ||
+            current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
+        {
+            return false;
+        }
+
+        PendingCall? expiredCall = null;
+        lock (current.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id ||
+                current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
+            {
+                return false;
+            }
+
+            if (!current.Deadline.IsExpired(_timeProvider))
+                return true;
+
+            var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+            if (!ReferenceEquals(exchanged, current))
+                return false;
+            current.WaitUntilRegistered();
+            expiredCall = current;
+        }
+
+        var emptyPayload = ReadOnlySequence<byte>.Empty;
+        CompleteTakenCall(
+            expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+        return false;
+    }
+
+    public bool TryAcceptProducerProgress(long id)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return false;
+
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref slots[index]);
+        if (current is null || current.Id != id ||
+            current.Kind is not (PendingCallKind.OneWayClientStreaming or
+                                 PendingCallKind.ClientStreaming or
+                                 PendingCallKind.DuplexStreaming))
+        {
+            return false;
+        }
+
+        PendingCall? expiredCall = null;
+        lock (current.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
+                return false;
+            if (!current.Deadline.IsExpired(_timeProvider))
+                return true;
+            if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
+                return false;
+            current.WaitUntilRegistered();
+            expiredCall = current;
+        }
+
+        var emptyPayload = ReadOnlySequence<byte>.Empty;
+        CompleteTakenCall(
+            expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+        return false;
     }
 
     public bool Contains(long id)
@@ -388,6 +491,42 @@ internal sealed class PendingRequestTable : IDisposable
         return call.ProducerCancellationToken;
     }
 
+    public bool TryGetProducerDeadline(long id, out RpcDeadline deadline)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+        {
+            deadline = default;
+            return false;
+        }
+
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref slots[index]);
+        if (current is null || current.Id != id ||
+            current.Kind is not (PendingCallKind.OneWayClientStreaming or
+                                 PendingCallKind.ClientStreaming or
+                                 PendingCallKind.DuplexStreaming))
+        {
+            deadline = default;
+            return false;
+        }
+
+        lock (current.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id ||
+                current.Kind is not (PendingCallKind.OneWayClientStreaming or
+                                     PendingCallKind.ClientStreaming or
+                                     PendingCallKind.DuplexStreaming))
+            {
+                deadline = default;
+                return false;
+            }
+
+            deadline = current.Deadline;
+            return true;
+        }
+    }
+
     public long AllocateRequestId()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -403,14 +542,16 @@ internal sealed class PendingRequestTable : IDisposable
 
         for (var index = 0; index < slots.Length; index++)
         {
-            if (!TryTakeCallAtIndex(index, out var call))
+            if (!TryTakeCallAtIndex(index, out var call, out var deadlineExpired))
                 continue;
 
             var payload = ReadOnlySequence<byte>.Empty;
             CompleteTakenCall(
                 call!,
-                PendingCallCompletionReason.ConnectionClosed,
-                exception,
+                deadlineExpired
+                    ? PendingCallCompletionReason.DeadlineExceeded
+                    : PendingCallCompletionReason.ConnectionClosed,
+                deadlineExpired ? null : exception,
                 ref payload);
         }
     }
@@ -642,7 +783,7 @@ internal sealed class PendingRequestTable : IDisposable
         _owner.OnPendingCallRegistered();
         call.MarkRegistered();
         if (call.Deadline.HasValue)
-            UpdateEarliestDeadline(call.Deadline.Timestamp);
+            UpdateEarliestDeadline(call.Deadline);
         if (call.CancellationToken.IsCancellationRequested)
             TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
     }
@@ -653,12 +794,16 @@ internal sealed class PendingRequestTable : IDisposable
             TryComplete(call.Id, PendingCallCompletionReason.ConnectionClosed);
     }
 
-    private bool TryTakeMatchingCall(long id, out PendingCall? call)
+    private bool TryTakeMatchingCall(
+        long id,
+        out PendingCall? call,
+        out bool deadlineExpired)
     {
         var slots = Volatile.Read(ref _slots);
         if (slots is null)
         {
             call = null;
+            deadlineExpired = false;
             return false;
         }
 
@@ -669,6 +814,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (current is null || current.Id != id)
             {
                 call = null;
+                deadlineExpired = false;
                 return false;
             }
 
@@ -676,6 +822,12 @@ internal sealed class PendingRequestTable : IDisposable
             {
                 if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
                     continue;
+
+                // Sample the authoritative monotonic boundary while owning the same
+                // completion gate that claims/removes the terminal slot. A response that
+                // wins before the boundary remains a response even if completion work is
+                // descheduled until after the boundary; a response claiming after it loses.
+                deadlineExpired = current.Deadline.IsExpired(_timeProvider);
 
                 var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
                 if (!ReferenceEquals(exchanged, current))
@@ -688,7 +840,10 @@ internal sealed class PendingRequestTable : IDisposable
         }
     }
 
-    private bool TryTakeCallAtIndex(int index, out PendingCall? call)
+    private bool TryTakeCallAtIndex(
+        int index,
+        out PendingCall? call,
+        out bool deadlineExpired)
     {
         var slots = Volatile.Read(ref _slots)!;
         while (true)
@@ -697,6 +852,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (current is null)
             {
                 call = null;
+                deadlineExpired = false;
                 return false;
             }
 
@@ -705,6 +861,7 @@ internal sealed class PendingRequestTable : IDisposable
                 if (!ReferenceEquals(Volatile.Read(ref slots[index]), current))
                     continue;
 
+                deadlineExpired = current.Deadline.IsExpired(_timeProvider);
                 if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
                     continue;
 
@@ -846,24 +1003,27 @@ internal sealed class PendingRequestTable : IDisposable
         return id != 0 ? id : Interlocked.Increment(ref _nextId);
     }
 
-    private void UpdateEarliestDeadline(long deadlineTimestamp)
+    private void UpdateEarliestDeadline(RpcDeadline deadline)
     {
-        while (true)
+        lock (_deadlineGate)
         {
-            var current = Volatile.Read(ref _approximateEarliestDeadline);
-            if (current <= deadlineTimestamp)
+            if (Volatile.Read(ref _disposed) != 0)
                 return;
-            if (Interlocked.CompareExchange(
-                    ref _approximateEarliestDeadline,
-                    deadlineTimestamp,
-                    current) != current)
+
+            if (_hasApproximateEarliestDeadline &&
+                _approximateEarliestDeadline.IsEarlierOrEqual(
+                    deadline,
+                    _timeProvider.GetTimestamp()))
             {
-                continue;
+                return;
             }
 
-            ArmDeadlineTimer(deadlineTimestamp);
-            return;
+            _approximateEarliestDeadline = deadline;
+            _hasApproximateEarliestDeadline = true;
+            _deadlineRevision++;
         }
+
+        ReconcileDeadlineTimer();
     }
 
     private void ScanExpiredDeadlines()
@@ -876,45 +1036,72 @@ internal sealed class PendingRequestTable : IDisposable
 
         try
         {
-            Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
+            lock (_deadlineGate)
+            {
+                _approximateEarliestDeadline = default;
+                _hasApproximateEarliestDeadline = false;
+                _deadlineRevision++;
+            }
             var slots = Volatile.Read(ref _slots);
             if (slots is null)
                 return;
 
-            var now = _timeProvider.GetTimestamp();
             for (var index = 0; index < slots.Length; index++)
             {
                 var call = Volatile.Read(ref slots[index]);
                 if (call is null || !call.Deadline.HasValue)
                     continue;
-                if (call.Deadline.Timestamp <= now)
+                if (call.Deadline.IsExpired(_timeProvider))
                 {
                     TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
                 }
                 else
                 {
-                    UpdateEarliestDeadline(call.Deadline.Timestamp);
+                    UpdateEarliestDeadline(call.Deadline);
                 }
             }
         }
         finally
         {
             Volatile.Write(ref _deadlineScanRunning, 0);
-            var next = Volatile.Read(ref _approximateEarliestDeadline);
-            if (next != long.MaxValue)
-                ArmDeadlineTimer(next);
+            ReconcileDeadlineTimer();
         }
     }
 
-    private void ArmDeadlineTimer(long deadlineTimestamp)
+    private void ReconcileDeadlineTimer()
+    {
+        while (Volatile.Read(ref _disposed) == 0)
+        {
+            RpcDeadline next;
+            long revision;
+            lock (_deadlineGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0 || !_hasApproximateEarliestDeadline)
+                    return;
+                next = _approximateEarliestDeadline;
+                revision = _deadlineRevision;
+            }
+
+            ArmDeadlineTimer(next);
+
+            lock (_deadlineGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0 ||
+                    !_hasApproximateEarliestDeadline ||
+                    revision == _deadlineRevision)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    private void ArmDeadlineTimer(RpcDeadline deadline)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var delay = RpcDeadline.GetRemaining(
-            deadlineTimestamp,
-            _timeProvider.GetTimestamp(),
-            _timeProvider.TimestampFrequency);
+        var delay = deadline.GetRemaining(_timeProvider);
         if (delay > SharpLinkTimer.MaximumDelay)
             delay = SharpLinkTimer.MaximumDelay;
         try

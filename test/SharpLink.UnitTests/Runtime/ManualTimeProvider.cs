@@ -103,6 +103,13 @@ internal sealed class ManualTimeProvider : TimeProvider
         return timer;
     }
 
+    internal void AdvanceWithoutRunningTimers(TimeSpan elapsed)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(elapsed, TimeSpan.Zero);
+        lock (_gate)
+            MoveClock(SaturatingAdd(_timestamp, elapsed.Ticks));
+    }
+
     public void Advance(TimeSpan elapsed)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(elapsed, TimeSpan.Zero);
