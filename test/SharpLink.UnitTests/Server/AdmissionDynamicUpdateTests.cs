@@ -1,6 +1,7 @@
 using System.Net;
 using System.Threading;
 using SharpLink.Server;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
@@ -284,7 +285,8 @@ public sealed class AdmissionDynamicUpdateTests
     [Test]
     public async Task QueuedRequestShouldKeepCapturedMaxQueueDelay()
     {
-        await using var server = CreateServer();
+        var time = new ManualTimeProvider();
+        await using var server = CreateServer(time);
         var publicServer = (ISharpLinkServer)server;
         publicServer.EnableAdmissionControl(options =>
             ConfigureQueue(options, 1, 2, 1024, TimeSpan.FromMinutes(1)));
@@ -305,6 +307,10 @@ public sealed class AdmissionDynamicUpdateTests
             "program generations must keep immutable queue-delay snapshots");
         var newQueued = replacement.Controller.AcquireAsync(
             context, 1, true, CancellationToken.None).AsTask();
+        await WaitUntilAsync(() => source.Kernel.QueuedCalls == 2,
+            "new N+1 request must be resident before advancing deterministic time");
+
+        time.Advance(TimeSpan.FromMilliseconds(50));
         var newDecision = await newQueued.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(!newDecision.IsAcquired, "new N+1 waiter must use the shorter queue delay");
         Ensure(!oldQueued.IsCompleted,
@@ -682,9 +688,11 @@ public sealed class AdmissionDynamicUpdateTests
             "repeated concurrency and queue-policy updates must keep registries and accounting bounded");
     }
 
-    private static SharpLinkServer CreateServer()
+    private static SharpLinkServer CreateServer(TimeProvider? timeProvider = null)
     {
         var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback.ToString());
+        if (timeProvider is not null)
+            builder.UseTimeProvider(timeProvider);
         return (SharpLinkServer)builder.Build();
     }
 
