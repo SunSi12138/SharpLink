@@ -288,7 +288,7 @@ public sealed class AdmissionStateKernelTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "kernel-test", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "kernel-test", null, null);
 
     private static async Task WaitUntilAsync(Func<bool> condition, string scenario)
     {

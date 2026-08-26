@@ -123,6 +123,12 @@ internal sealed class ServerCallCapacityGovernor
     private void NotifyDisposeObservedActivatingForTest()
         => _testHooks?.DisposeObservedActivating?.Invoke();
 
+    private void NotifyReservationReleaseClaimedForTest()
+        => _testHooks?.ReservationReleaseClaimed?.Invoke();
+
+    private void NotifyDisposeObservedReleasingForTest()
+        => _testHooks?.DisposeObservedReleasing?.Invoke();
+
     private static int GetReserved(long state) => unchecked((int)(uint)(state >> 32));
 
     private static int GetActive(long state) => unchecked((int)(uint)state);
@@ -141,7 +147,8 @@ internal sealed class ServerCallCapacityGovernor
         private const int Reserved = 0;
         private const int Activating = 1;
         private const int Active = 2;
-        private const int Disposed = 3;
+        private const int Releasing = 3;
+        private const int Disposed = 4;
 
         private readonly ServerCallCapacityGovernor _owner;
         private int _state = Reserved;
@@ -160,7 +167,7 @@ internal sealed class ServerCallCapacityGovernor
             var observed = Interlocked.CompareExchange(ref _state, Activating, Reserved);
             if (observed != Reserved)
             {
-                if (observed == Disposed)
+                if (observed is Releasing or Disposed)
                     throw new ObjectDisposedException(nameof(ServerCallReservation));
 
                 throw new InvalidOperationException("Only a reserved call can be activated.");
@@ -188,26 +195,48 @@ internal sealed class ServerCallCapacityGovernor
                 switch (observed)
                 {
                     case Reserved:
-                        if (Interlocked.CompareExchange(ref _state, Disposed, Reserved) != Reserved)
+                        if (Interlocked.CompareExchange(ref _state, Releasing, Reserved) != Reserved)
                             continue;
 
-                        _owner.ReleaseReservation();
+                        ReleaseBackingCapacity(active: false);
                         return;
                     case Activating:
                         _owner.NotifyDisposeObservedActivatingForTest();
                         spinner.SpinOnce();
                         continue;
                     case Active:
-                        if (Interlocked.CompareExchange(ref _state, Disposed, Active) != Active)
+                        if (Interlocked.CompareExchange(ref _state, Releasing, Active) != Active)
                             continue;
 
-                        _owner.ReleaseActiveCall();
+                        ReleaseBackingCapacity(active: true);
                         return;
+                    case Releasing:
+                        _owner.NotifyDisposeObservedReleasingForTest();
+                        spinner.SpinOnce();
+                        continue;
                     case Disposed:
                         return;
                     default:
                         throw new InvalidOperationException("Unknown server call reservation state.");
                 }
+            }
+        }
+
+        private void ReleaseBackingCapacity(bool active)
+        {
+            try
+            {
+                _owner.NotifyReservationReleaseClaimedForTest();
+                if (active)
+                    _owner.ReleaseActiveCall();
+                else
+                    _owner.ReleaseReservation();
+            }
+            finally
+            {
+                // Publish the terminal state only after aggregate capacity is actually
+                // released, so a concurrent alias cannot return from Dispose early.
+                Volatile.Write(ref _state, Disposed);
             }
         }
     }
@@ -218,6 +247,10 @@ internal sealed class ServerCallCapacityGovernorTestHooks
     internal Action? ReservationEnteredActivating { get; init; }
 
     internal Action? DisposeObservedActivating { get; init; }
+
+    internal Action? ReservationReleaseClaimed { get; init; }
+
+    internal Action? DisposeObservedReleasing { get; init; }
 }
 
 internal readonly record struct ServerCallCapacitySnapshot(

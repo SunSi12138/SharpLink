@@ -25,6 +25,16 @@ public sealed class SharpLinkConnectionAdmissionOptions
     public const int DefaultMaxConcurrentConnections = 1024;
 
     /// <summary>
+    /// The default independent maximum for simultaneous TLS / Protocol v2 / authentication
+    /// handshakes (64). If <see cref="MaxConcurrentConnections"/> is configured below this
+    /// value and the handshake bound is otherwise left at its default, the effective
+    /// handshake bound is clamped to the lower connection bound.
+    /// </summary>
+    public const int DefaultMaxConcurrentHandshakes = 64;
+
+    private int? _maxConcurrentHandshakes;
+
+    /// <summary>
     /// Gets or sets the maximum simultaneously live accepted connections, including
     /// connections still handshaking and connections already Ready.
     /// </summary>
@@ -32,11 +42,21 @@ public sealed class SharpLinkConnectionAdmissionOptions
 
     /// <summary>
     /// Gets or sets the maximum connections simultaneously inside TLS / Protocol v2 /
-    /// authentication handshake. Zero means no independent handshake bound: handshake
-    /// concurrency is bounded by <see cref="MaxConcurrentConnections"/> instead.
-    /// A positive value must not exceed <see cref="MaxConcurrentConnections"/>.
+    /// authentication handshake. The secure default is
+    /// <see cref="DefaultMaxConcurrentHandshakes"/> (64), clamped to
+    /// <see cref="MaxConcurrentConnections"/> when that outer bound is lower. Explicitly
+    /// setting zero opts out of the independent handshake limit: handshake concurrency is
+    /// then bounded only by <see cref="MaxConcurrentConnections"/>. An explicitly configured
+    /// positive value must not exceed <see cref="MaxConcurrentConnections"/>.
     /// </summary>
-    public int MaxConcurrentHandshakes { get; set; }
+    public int MaxConcurrentHandshakes
+    {
+        get => _maxConcurrentHandshakes ??
+               (MaxConcurrentConnections < DefaultMaxConcurrentHandshakes
+                   ? MaxConcurrentConnections
+                   : DefaultMaxConcurrentHandshakes);
+        set => _maxConcurrentHandshakes = value;
+    }
 
     internal void Validate()
     {

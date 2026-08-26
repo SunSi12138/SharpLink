@@ -46,13 +46,15 @@ public class SharedMemoryPipelineLifecycleTests
         if (second.Exception?.GetBaseException() is not InvalidOperationException)
             throw new Exception("expected the second pending read to be rejected");
         cancellation.Cancel();
-        await Task.Delay(50);
-        var activeReadObservedCancellation = first.IsCompleted;
+        try
+        {
+            await first.WaitAsync(TimeSpan.FromSeconds(2));
+            throw new Exception("expected the active read to observe its cancellation token");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
         reader.Complete();
-        try { await first.WaitAsync(TimeSpan.FromSeconds(2)); }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
-
-        await Assert.That(activeReadObservedCancellation).IsTrue();
     }
 
     [Test]

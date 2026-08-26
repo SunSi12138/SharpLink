@@ -26,7 +26,7 @@ SharpLink.Serializer.SharpPack
 ## 各模块职责
 
 - `SharpLink.Abstractions`
-  - 保持 `SharpLink.Sdk` 命名空间的契约标记（`IService` / `RpcContract` / `RpcService` / `Oneway` / `Timeout` / `SharpLinkCallOptions`）
+  - 保持 `SharpLink.Sdk` 命名空间的契约标记（`IService` / `RpcContract` / `RpcService` / `Oneway` / `Timeout`）
   - Protocol v2 模型（`ProtocolV2FrameType` / `ProtocolV2FrameFlags` / `ProtocolV2Constants`）
   - 核心抽象（`IRpcChannel`、`IRpcStub`、`IRpcGeneratedServerBridge`、`IClientTransportFactory`、`IServerTransportListener`、`ITransportConnection`、`IRpcCodec`）
   - 结构化错误模型（`SharpLinkException` / `SharpLinkErrorCode`）
@@ -42,7 +42,7 @@ SharpLink.Serializer.SharpPack
 - `SharpLink.Sdk`
   - 作为契约项目的单一包引用入口，只传递引入 Abstractions，不再引入 Runtime
   - 携带编译期 Analyzer 与 Source Generator
-  - 生成 API 5 Proxy、Stub、Codec 与 Manifest；生成程序集只引用 Abstractions 和契约类型
+  - 生成 API 4 Proxy、Stub、Codec 与 Manifest；生成程序集只引用 Abstractions 和契约类型
   - 不承载 Builder；Builder 位于 `SharpLink.Client` 和 `SharpLink.Server`
 
 - `SharpLink.Client`
@@ -56,7 +56,7 @@ SharpLink.Serializer.SharpPack
   - `SharpLinkServerBuilder`
   - 连接接受、会话生命周期、服务分发
   - `ISharpLinkServerAuthenticator` 与显式 `RequireAuthentication()`
-  - 将当前 `sessionId + requestId + method descriptor + peer + 认证上下文 + deadline + metadata` 挂入 `SharpLinkCallContext`
+  - 将当前 `sessionId + requestId + method descriptor + peer + 认证上下文 + 本地 RpcDeadline + metadata` 挂入 `SharpLinkCallContext`
   - 通过 `SharpLinkAuthorization` 在服务方法内部执行 `scope / tenant / expiry` 校验
   - 调用 `IRpcStub` 执行真实服务方法
   - 每条连接持有 generated invocation bridge；在 Unary/client-stream/server-stream/duplex 边界调用 `IRpcExceptionMapper`，再把结构化 `SharpLinkException` 交给 Runtime 编码
@@ -113,13 +113,13 @@ SharpLink.Serializer.SharpPack
 - 固定单 endpoint 仍是默认快路径；只有显式 `UseEndpoints` 或 `UseEndpointResolver` 才会创建 endpoint candidate、selector 和后台 topology worker。单个 static endpoint 在 Build 时折叠回固定快路径。
 - static 和 dynamic cluster 都以不可变 Ready candidate snapshot 供调用路径读取；端点增减或 Ready 边界变化由单 writer 发布，选择路径不获取 topology writer lock。多 endpoint 默认 P2C，可显式选择 Random、RoundRobin、LeastPending 或同步自定义 selector。
 - Resolver snapshot 按版本验证并原子 reconcile：新 ID 创建 generation，Address/Authority 变化替换 generation 并排空旧连接，仅 Attributes 更新保留连接。空 snapshot 合法；resolver 故障或 Watch 结束保留 last-good topology 并退避恢复。
-- Retry 默认关闭，只对显式 `[Idempotent]` Unary 生效；拦截器按 logical call 执行一次，每次 attempt 重新选择 endpoint 并共享入口冻结的绝对 deadline。任何 Streaming 或 OneWay 不会被自动重试。
+- Retry 默认关闭，只对显式 `[Idempotent]` Unary 生效；拦截器按 logical call 执行一次，每次 attempt 重新选择 endpoint，并共享逻辑调用入口解析的本地 monotonic `RpcDeadline`；每次真正发包时重新计算剩余 `TimeBudget`。任何 Streaming 或 OneWay 不会被自动重试。
 - Endpoint admission 和 Circuit Breaker 只决定是否发起新 attempt，不会修改物理 connection 的 Ready 语义。Breaker 状态按 endpoint generation 隔离，以 monotonic time 惰性推进，HalfOpen 使用原子 probe permit。
 - `SharpLinkTelemetry` 无 listener 时不创建 TagList、Activity 或动态字符串。endpoint 路径提供 active/ready/draining endpoint、resolver update/failure、active/retiring connection、attempt、retry、admission rejection、breaker open 的低基数指标；endpoint ID、address 和 authority 只出现在 Activity 或结构化日志中。
 
 ## 取消与超时
 
-1. 调用侧 `CancellationToken`、monotonic deadline 或 stream consumer early-break 通过客户端 PendingCall 的单一 CAS 终态仲裁。
+1. 调用侧 `CancellationToken`、本地 monotonic `RpcDeadline` 或 stream consumer early-break 通过客户端 PendingCall 的单一 CAS 终态仲裁。
 2. Client 在协商 protocol minor 2 的 `CancellationReason` capability 后，分别发送 `UserCancellation`、`DeadlineExceeded` 或 `ConsumerAbandoned`；旧对端继续使用空载荷 Cancel。
 3. Server 先 CAS 发布稳定终止原因，再取消 invocation CTS，保证业务取消回调看到的原因已经确定。
 4. 没有业务 Token 的调用不创建 invocation CTS；客户端仍按 deadline 结束，服务端抑制迟到响应并观察 Task 到真实结束。
@@ -193,7 +193,7 @@ SharpLink.Serializer.SharpPack
 ## 调用拦截与异常边界
 
 - Client/Server interceptor 按 Builder 注册顺序在 Build 时冻结；空 pipeline 直接进入生成 invoker/stub，不创建 delegate 链。
-- Client context 可替换 `SharpLinkCallOptions` 以增加 metadata，也可返回 `SharpLinkClientInvocationResult` 短路调用。
+- Client context 可替换 `Metadata` envelope state，也可返回 `SharpLinkClientInvocationResult` 短路调用。
 - Server context 包含 method descriptor、request ID、deadline、metadata、peer、auth、status 与 elapsed，适合授权、限流与审计。
 - `IRpcExceptionMapper` 属于 Server 实例。默认 mapper 保留显式 `SharpLinkException`，其余业务异常统一为不含内部消息的 `Internal`；Unary 与 stream 共用该边界。
 - `[Idempotent]` 只写入生成 descriptor，核心不会自动重试；新版 0.7 Resilience 扩展只会把该标记作为 Unary 重试资格。

@@ -1,6 +1,29 @@
 # 服务端接入控制
 
-接入控制在请求完整校验后、服务实例创建和业务执行前申请资源。拒绝使用结构化 `ResourceExhausted`，不会关闭健康连接。
+SharpLink 有两层彼此独立的接入保护：连接在进入 Ready 前先经过 connection admission；完成握手后，RPC 调用再经过 call admission。两层都使用固定、可观测的有界资源，不用用户输入创建无界状态。
+
+## 连接与握手边界
+
+`SharpLinkConnectionAdmissionOptions` 保护 accepted/live connection 与 pre-auth handshake。默认最多保留 1024 个 live connection，同时最多允许 64 个连接处于 TLS / Protocol v2 / authentication handshake。handshake slot 在连接 Ready 时立即释放，connection slot 一直保留到该连接的 terminal cleanup。
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseTcp(5000)
+    .UseConnectionAdmission(options =>
+    {
+        options.MaxConcurrentConnections = 1024;
+        options.MaxConcurrentHandshakes = 64;
+    })
+    .Build();
+```
+
+默认 handshake 上限是独立的固定安全边界。如果只把 `MaxConcurrentConnections` 配到 64 以下而没有显式设置 handshake 上限，默认 handshake 上限会自动取更低的 connection bound。需要恢复旧的“没有独立 handshake 上限”行为时必须显式设置 `MaxConcurrentHandshakes = 0`；此时实际 handshake 并发仍受 `MaxConcurrentConnections` 限制。显式正值不能大于 connection bound。
+
+超过任一 connection admission 边界时，已 accept 的连接会立即关闭，不进入后续 TLS/Protocol/auth 生命周期，也不排队。服务启动日志会记录最终生效的 `max_connections` 与 `max_handshakes`；`sharplink.connections.handshakes.active` 和 `sharplink.connections.rejected` 可用于观察当前握手占用和拒绝。
+
+## RPC 调用接入
+
+调用接入控制在请求完整校验后、服务实例创建和业务执行前申请资源。拒绝使用结构化 `ResourceExhausted`，不会关闭健康连接。
 
 ## 限制层级
 

@@ -11,6 +11,7 @@ internal enum ClientConnectionState : byte
 internal sealed class ClientConnection :
     IPendingCallOwner,
     IRpcClientStreamSink,
+    IStreamConsumerDeliveryGate,
     IAsyncDisposable
 {
     private readonly SharpLinkClient _client;
@@ -95,6 +96,9 @@ internal sealed class ClientConnection :
     public Func<long, IStreamDispatchState?, ValueTask> ConsumerAbandonedCallback
         => _consumerAbandonedCallback;
 
+    bool IStreamConsumerDeliveryGate.TryAcceptStreamDelivery(long requestId)
+        => PendingCalls.TryAcceptStreamData(requestId);
+
     internal bool ShouldLogLateResponse(out int suppressedCount)
         => _lateResponseLogLimiter.ShouldLog(_timeProvider.GetTimestamp(), out suppressedCount);
 
@@ -163,21 +167,47 @@ internal sealed class ClientConnection :
         IAsyncEnumerable<T> stream,
         CancellationToken cancellationToken = default)
     {
-        if (!PendingCalls.Contains(requestId))
+        ArgumentNullException.ThrowIfNull(stream);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
         try
         {
-            await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
+            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+            while (true)
             {
-                await Session.SendStreamChunkAsync(
+                // MoveNextAsync is user-code re-entry. Claim progress before invoking it so an
+                // already-terminal/expired call cannot execute another producer side effect.
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.DeadlineExceeded,
+                        "RPC deadline exceeded during client stream production.");
+
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    break;
+
+                await Session.SendClientStreamChunkAsync(
                     requestId,
                     streamId,
-                    item,
+                    enumerator.Current,
+                    deadline,
+                    _timeProvider,
                     cancellationToken).ConfigureAwait(false);
             }
 
-            Session.SendStreamCompleteAsync(requestId, streamId);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.DeadlineExceeded,
+                    "RPC deadline exceeded before client stream completion.");
+            Session.SendClientStreamComplete(
+                requestId,
+                streamId,
+                deadline,
+                _timeProvider,
+                cancellationToken);
         }
         catch (Exception exception)
         {
@@ -187,9 +217,21 @@ internal sealed class ClientConnection :
                     SharpLinkErrorCode.Internal,
                     "Internal client stream error.",
                     exception);
-                Session.SendStreamErrorAsync(requestId, streamId, protocolError);
+                Session.SendClientStreamError(
+                    requestId,
+                    streamId,
+                    protocolError,
+                    deadline,
+                    _timeProvider,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The owning pending call already selected a terminal result. Error-form
+                // StreamComplete is cleanup and cannot publish after that terminal.
             }
             catch (SharpLinkException sendException) when (sendException.Code is
+                SharpLinkErrorCode.DeadlineExceeded or
                 SharpLinkErrorCode.ConnectionClosed or
                 SharpLinkErrorCode.ResourceExhausted or
                 SharpLinkErrorCode.Unavailable)
@@ -245,13 +287,20 @@ internal sealed class ClientConnection :
             }
             else if (shouldSendCancel)
             {
+                var localAbort = completion.Dispatcher as IStreamLocalAbortDispatcher;
                 ValueTask drain;
                 try
                 {
+                    // Local lifetime termination is stronger than peer StreamComplete: publish
+                    // it to the dispatcher before route teardown so buffered delivery and the
+                    // terminal result arbitrate at the same dequeue boundary.
+                    localAbort?.CompleteLocalAbort(completion.Exception);
                     drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(
                         completion.RequestId,
                         0,
                         completion.Exception);
+                    if (drain.IsCompletedSuccessfully)
+                        localAbort?.RetireLocalAbortBuffer();
                 }
                 catch (Exception exception)
                 {
@@ -277,7 +326,8 @@ internal sealed class ClientConnection :
                             FinishCancellationAfterDispatchesAsync(
                                 drain,
                                 completion.RequestId,
-                                GetCancelReason(completion.Reason)),
+                                GetCancelReason(completion.Reason),
+                                localAbort),
                             "CancellationDispatchCleanup");
                     }
                     catch
@@ -312,11 +362,13 @@ internal sealed class ClientConnection :
     private async Task FinishCancellationAfterDispatchesAsync(
         ValueTask drain,
         long requestId,
-        ProtocolV2CancelReason reason)
+        ProtocolV2CancelReason reason,
+        IStreamLocalAbortDispatcher? localAbort)
     {
         try
         {
             await drain.ConfigureAwait(false);
+            localAbort?.RetireLocalAbortBuffer();
             TrySendCancel(requestId, reason);
         }
         catch (Exception exception)
