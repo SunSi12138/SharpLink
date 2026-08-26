@@ -13,7 +13,10 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
-        if (registration.TryGetStaticSingleton(out var singleton))
+        if (registration.TryGetStaticSingleton(
+                connection.GeneratedBridge,
+                requestId,
+                out var singleton))
         {
             return InvokeServiceTrackedAsync(
                 registration.Stub,
@@ -44,6 +47,8 @@ internal sealed partial class SharpLinkServer
         {
             if (registration.TryAcquireDynamicSingleton(
                     isStream,
+                    connection.GeneratedBridge,
+                    requestId,
                     out var dynamicSingleton,
                     out dynamicSingletonLease))
             {
@@ -97,7 +102,11 @@ internal sealed partial class SharpLinkServer
         ValueTask<ServiceLease> acquisition;
         try
         {
-            acquisition = registration.AcquireAsync(connection, isStream);
+            acquisition = registration.AcquireAsync(
+                connection,
+                isStream,
+                connection.GeneratedBridge,
+                requestId);
         }
         catch (Exception exception)
         {
@@ -496,7 +505,8 @@ internal sealed partial class SharpLinkServer
                 methodId,
                 requestId,
                 callContext.Authentication,
-                callContext.Deadline,
+                callContext.LocalRpcDeadline,
+                callContext.DeadlineTimeProvider ?? _runtimeContext.TimeProvider,
                 callContext.Metadata,
                 cancellationToken);
         return MapServiceException(exception, invocationContext);
@@ -637,6 +647,11 @@ internal sealed partial class SharpLinkServer
         {
             if (index >= _interceptors.Length)
                 return InvokeTerminalTrackedAsync(context);
+
+            // Every interceptor invocation is a user-code re-entry boundary. Route it through
+            // the same Server call-state/deadline claimant used by generated service methods
+            // and server-stream MoveNextAsync so no later interceptor can run after terminal.
+            _generatedBridge.EnsureUserCodeEntry(_requestId);
 
             var continuation = new ServerInterceptorContinuation(
                 ServerContinuationState.Rent(this, index + 1));

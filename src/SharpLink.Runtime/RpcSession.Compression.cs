@@ -292,7 +292,7 @@ internal sealed partial class RpcSession
         if (reader.Remaining < ProtocolV2Constants.RequestPrefixBytes)
             throw ProtocolV2FrameParser.Violation("Request routing prefix is truncated.");
         reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
-        if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
+        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
             if (reader.Remaining < sizeof(long))
                 throw ProtocolV2FrameParser.Violation("Request deadline is truncated.");

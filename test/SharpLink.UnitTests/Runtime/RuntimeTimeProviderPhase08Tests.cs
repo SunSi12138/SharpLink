@@ -51,26 +51,23 @@ public sealed class RuntimeTimeProviderPhase08Tests
     }
 
     [Test]
-    public void RpcDeadlineShouldKeepTheWireUtcValueAndConvertItsResolvedDurationOnce()
+    public void RpcDeadlineShouldResolveDurationIntoMonotonicTimestampOnly()
     {
-        const long timestampNow = 1_000;
-        const long frequency = 100;
-        var utcDeadline = UtcStart.AddMilliseconds(250);
+        var provider = new MutableTimeProvider(UtcStart);
+        provider.SetTimestamp(1_000);
 
-        var deadline = RpcDeadline.Create(utcDeadline, UtcStart, timestampNow, frequency);
+        var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(250), provider);
 
         Ensure(deadline.HasValue, "a created deadline must carry a value");
-        Ensure(deadline.UtcDeadline == utcDeadline,
-            "the original UTC value must remain stable for wire serialization");
-        Ensure(deadline.Timestamp == 1_025,
-            "the resolved duration must be converted with the provider timestamp frequency");
+        Ensure(deadline.Timestamp == 2_501_000,
+            "the duration must be resolved using only the provider timestamp frequency");
     }
 
     [Test]
     public void RpcDeadlineShouldExpireInclusivelyAtTheExactMonotonicBoundary()
     {
         const long deadlineTimestamp = 50;
-        var deadline = RpcDeadline.Create(UtcStart.AddSeconds(5), deadlineTimestamp);
+        var deadline = RpcDeadline.FromTimestamp(deadlineTimestamp);
 
         Ensure(!deadline.IsExpired(deadlineTimestamp - 1),
             "one provider timestamp before the boundary must remain live");
@@ -84,7 +81,7 @@ public sealed class RuntimeTimeProviderPhase08Tests
     public void RpcDeadlineShouldTreatADelayEndingAtTheDeadlineAsExpired()
     {
         var provider = new MutableTimeProvider(UtcStart);
-        var deadline = RpcDeadline.Create(UtcStart.AddSeconds(5), provider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
 
         Ensure(!deadline.WouldExpireBeforeOrAt(
                 TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)), provider),
@@ -96,20 +93,18 @@ public sealed class RuntimeTimeProviderPhase08Tests
     [Test]
     public void RpcDeadlineShouldSaturateTimestampConversionInsteadOfOverflowing()
     {
-        var frequencySaturation = RpcDeadline.Create(
-            UtcStart.AddSeconds(2),
-            UtcStart,
-            timestampNow: 123,
+        var frequencySaturation = SharpLinkTime.AddDuration(
+            timestamp: 123,
+            TimeSpan.FromSeconds(2),
             timestampFrequency: long.MaxValue);
-        var additionSaturation = RpcDeadline.Create(
-            UtcStart.AddSeconds(1),
-            UtcStart,
-            timestampNow: long.MaxValue - 1,
+        var additionSaturation = SharpLinkTime.AddDuration(
+            timestamp: long.MaxValue - 1,
+            TimeSpan.FromSeconds(1),
             timestampFrequency: TimeSpan.TicksPerSecond);
 
-        Ensure(frequencySaturation.Timestamp == long.MaxValue,
+        Ensure(frequencySaturation == long.MaxValue,
             "duration conversion beyond Int64 timestamp space must saturate");
-        Ensure(additionSaturation.Timestamp == long.MaxValue,
+        Ensure(additionSaturation == long.MaxValue,
             "adding a valid duration near Int64.MaxValue must saturate");
     }
 
@@ -129,8 +124,7 @@ public sealed class RuntimeTimeProviderPhase08Tests
     public void RpcDeadlineShouldIgnoreUtcJumpsAfterResolution()
     {
         var provider = new MutableTimeProvider(UtcStart);
-        var wireDeadline = UtcStart.AddSeconds(10);
-        var deadline = RpcDeadline.Create(wireDeadline, provider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), provider);
 
         provider.SetUtcNow(UtcStart.AddDays(1));
 
@@ -138,9 +132,6 @@ public sealed class RuntimeTimeProviderPhase08Tests
             "a forward UTC jump must not expire a locally resolved monotonic deadline");
         Ensure(deadline.GetRemaining(provider) == TimeSpan.FromSeconds(10),
             "remaining time must be derived only from the monotonic timestamp");
-        Ensure(deadline.UtcDeadline == wireDeadline,
-            "a UTC jump must not rewrite the wire deadline");
-
         provider.SetTimestamp(TimeSpan.FromSeconds(10).Ticks);
         Ensure(deadline.IsExpired(provider),
             "the deadline must expire when its monotonic boundary is reached");
@@ -189,7 +180,7 @@ public sealed class RuntimeTimeProviderPhase08Tests
         var provider = new ManualTimeProvider(UtcStart);
         var neverCompletes = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var deadline = RpcDeadline.Create(UtcStart.AddSeconds(2), provider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(2), provider);
         var wait = SharpLinkTimer.WaitAsync(
             neverCompletes.Task, deadline, provider).AsTask();
 
@@ -209,7 +200,7 @@ public sealed class RuntimeTimeProviderPhase08Tests
         var provider = new ManualTimeProvider(UtcStart);
         var neverCompletes = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var deadline = RpcDeadline.Create(UtcStart.AddMinutes(1), provider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromMinutes(1), provider);
         using var cancellation = new CancellationTokenSource();
         var wait = SharpLinkTimer.WaitAsync(
             neverCompletes.Task, deadline, provider, cancellation.Token).AsTask();
@@ -229,7 +220,7 @@ public sealed class RuntimeTimeProviderPhase08Tests
     {
         var provider = new ManualTimeProvider(UtcStart);
         using var semaphore = new SemaphoreSlim(0, 1);
-        var deadline = RpcDeadline.Create(UtcStart.AddSeconds(1), provider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
         var wait = SharpLinkTimer.WaitAsync(
             semaphore, deadline, provider, CancellationToken.None).AsTask();
         using var releaseAtDeadline = provider.CreateTimer(

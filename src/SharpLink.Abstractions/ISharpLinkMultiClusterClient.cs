@@ -20,6 +20,9 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     /// <summary>Creates a proxy by looking up the contract's cluster route exactly once.</summary>
     TContract Get<TContract>() where TContract : IService;
 
+    /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>
+    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
+
     /// <summary>Gets the lifecycle state of one configured cluster slot.</summary>
     SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster);
 

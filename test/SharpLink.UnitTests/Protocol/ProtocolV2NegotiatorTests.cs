@@ -163,7 +163,7 @@ public class ProtocolV2NegotiatorTests
     }
 
     [Test]
-    public void ServerNegotiationShouldIntersectMinorAndLimitsAtBoundaries()
+    public void ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries()
     {
         var cases = new[]
         {
@@ -171,17 +171,17 @@ public class ProtocolV2NegotiatorTests
             {
                 Offer = CreatePolicy(
                     ProtocolV2Capabilities.None,
-                    minorVersion: 3,
+                    minorVersion: ProtocolV2Constants.MinorVersion,
                     maxFramePayloadBytes: 8192,
                     streamReceiveWindowBytes: 4096,
                     connectionReceiveWindowBytes: 8192),
                 Server = CreatePolicy(
                     ProtocolV2Capabilities.None,
-                    minorVersion: 1,
+                    minorVersion: ProtocolV2Constants.MinorVersion,
                     maxFramePayloadBytes: 4096,
                     streamReceiveWindowBytes: 2048,
                     connectionReceiveWindowBytes: 4096),
-                ExpectedMinor = (ushort)1,
+                ExpectedMinor = ProtocolV2Constants.MinorVersion,
                 ExpectedFrame = 4096,
                 ExpectedStream = 2048,
                 ExpectedConnection = 4096
@@ -190,16 +190,17 @@ public class ProtocolV2NegotiatorTests
             {
                 Offer = CreatePolicy(
                     ProtocolV2Capabilities.None,
-                    minorVersion: 0,
+                    minorVersion: ProtocolV2Constants.MinorVersion,
                     maxFramePayloadBytes: SharpLinkProtocolOptions.MinMaxFramePayloadBytes,
                     streamReceiveWindowBytes: 1,
                     connectionReceiveWindowBytes: 1),
                 Server = CreatePolicy(
                     ProtocolV2Capabilities.None,
+                    minorVersion: ProtocolV2Constants.MinorVersion,
                     maxFramePayloadBytes: SharpLinkProtocolOptions.MaxMaxFramePayloadBytes,
                     streamReceiveWindowBytes: int.MaxValue,
                     connectionReceiveWindowBytes: int.MaxValue),
-                ExpectedMinor = (ushort)0,
+                ExpectedMinor = ProtocolV2Constants.MinorVersion,
                 ExpectedFrame = SharpLinkProtocolOptions.MinMaxFramePayloadBytes,
                 ExpectedStream = 1,
                 ExpectedConnection = 1
@@ -438,7 +439,7 @@ public class ProtocolV2NegotiatorTests
         var serverPolicy = CreatePolicy(
             offeredCapabilities,
             serverProviders,
-            minorVersion: 2,
+            minorVersion: ProtocolV2Constants.MinorVersion,
             maxFramePayloadBytes: 8192,
             streamReceiveWindowBytes: 4096,
             connectionReceiveWindowBytes: 8192);

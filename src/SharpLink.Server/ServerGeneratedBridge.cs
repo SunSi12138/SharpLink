@@ -11,18 +11,58 @@ internal sealed class ServerGeneratedBridge(
 {
     private readonly RpcSessionGeneratedServerBridge _protocolBridge = new(session);
 
+    public void EnsureUserCodeEntry(long requestId)
+    {
+        if (callCancellations.TryCapture(
+                requestId,
+                static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
+                out var callLease) &&
+            callLease.TryAcquire())
+        {
+            try
+            {
+                // User-code entry and inbound StreamData acceptance are both progress claims:
+                // neither may pass after a strong call terminal, and both promote an already-
+                // expired monotonic deadline to the terminal reason before returning.
+                if (callLease.State.TryAcceptStreamData())
+                    return;
+                throw ServerCallTerminationMapper.CreateServerCancellationException(
+                    callLease.State.Reason,
+                    deadlineExceeded: false);
+            }
+            finally
+            {
+                callLease.ReleaseUse();
+            }
+        }
+
+        // Timed non-cooperative calls intentionally may not allocate a call state. They still
+        // carry the frozen receiver deadline in the ambient invocation context.
+        if (SharpLinkCallContext.Current is { } context &&
+            context.DeadlineTimeProvider is { } timeProvider &&
+            context.LocalRpcDeadline.IsExpired(timeProvider))
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded.");
+        }
+    }
+
     public IAsyncEnumerable<T> CreateInboundStream<T>(
         long requestId,
         ushort streamId,
         IRpcCodec<T> codec,
         bool payloadNullable,
         CancellationToken cancellationToken)
-        => _protocolBridge.CreateInboundStream(
+        => new UserCodeEntryAsyncEnumerable<T>(
+            this,
             requestId,
-            streamId,
-            codec,
-            payloadNullable,
-            cancellationToken);
+            _protocolBridge.CreateInboundStream(
+                requestId,
+                streamId,
+                codec,
+                payloadNullable,
+                cancellationToken));
 
     public async ValueTask PumpOutboundStreamAsync<T>(
         long requestId,
@@ -39,7 +79,7 @@ internal sealed class ServerGeneratedBridge(
             await _protocolBridge.PumpOutboundStreamAsync(
                 requestId,
                 streamId,
-                stream,
+                new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
                 codec,
                 payloadNullable,
                 contractId,
@@ -49,6 +89,17 @@ internal sealed class ServerGeneratedBridge(
         catch (Exception exception) when (
             exception is not OutOfMemoryException and not StackOverflowException)
         {
+            // Once the framework call owner has selected a terminal, this pump has lost both
+            // user-code and wire-publication ownership. Do not run the application exception
+            // mapper and do not publish a second StreamComplete(Error); the selected call terminal
+            // is already responsible for the externally visible outcome. The local send-flow state
+            // still belongs to this pump and must be retired even though no wire terminal is sent.
+            if (GetSelectedTerminal(requestId) is { } selectedTerminal)
+            {
+                session.CompleteSendStream(requestId, streamId, selectedTerminal);
+                return;
+            }
+
             var protocolError = server.MapStreamServiceException(
                 callCancellations,
                 session,
@@ -57,6 +108,72 @@ internal sealed class ServerGeneratedBridge(
                 methodId,
                 exception);
             session.SendStreamErrorAsync(requestId, streamId, protocolError);
+        }
+    }
+
+    private SharpLinkException? GetSelectedTerminal(long requestId)
+    {
+        if (callCancellations.TryCapture(
+                requestId,
+                static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
+                out var callLease) &&
+            callLease.TryAcquire())
+        {
+            try
+            {
+                var reason = callLease.State.Reason;
+                if (reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed))
+                {
+                    return ServerCallTerminationMapper.CreateServerCancellationException(
+                        reason,
+                        deadlineExceeded: reason == ServerCallCancellationReason.DeadlineExceeded);
+                }
+            }
+            finally
+            {
+                callLease.ReleaseUse();
+            }
+        }
+
+        if (SharpLinkCallContext.Current is { } context &&
+            context.DeadlineTimeProvider is { } timeProvider &&
+            context.LocalRpcDeadline.IsExpired(timeProvider))
+        {
+            return new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded.");
+        }
+        return null;
+    }
+
+    private sealed class UserCodeEntryAsyncEnumerable<T>(
+        ServerGeneratedBridge bridge,
+        long requestId,
+        IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
+    {
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            bridge.EnsureUserCodeEntry(requestId);
+            return new UserCodeEntryAsyncEnumerator(
+                bridge,
+                requestId,
+                stream.GetAsyncEnumerator(cancellationToken));
+        }
+
+        private sealed class UserCodeEntryAsyncEnumerator(
+            ServerGeneratedBridge bridge,
+            long requestId,
+            IAsyncEnumerator<T> enumerator) : IAsyncEnumerator<T>
+        {
+            public T Current => enumerator.Current;
+
+            public ValueTask<bool> MoveNextAsync()
+            {
+                bridge.EnsureUserCodeEntry(requestId);
+                return enumerator.MoveNextAsync();
+            }
+
+            public ValueTask DisposeAsync() => enumerator.DisposeAsync();
         }
     }
 }

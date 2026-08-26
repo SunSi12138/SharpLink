@@ -44,7 +44,9 @@ internal sealed partial class RpcSession
         ushort streamId,
         T item,
         IRpcCodec<T> codec,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcDeadline deadline = default,
+        TimeProvider? deadlineTimeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(codec);
         return SerializeUnsizedStreamChunk(
@@ -52,7 +54,9 @@ internal sealed partial class RpcSession
             streamId,
             item,
             codec,
-            cancellationToken);
+            cancellationToken,
+            deadline,
+            deadlineTimeProvider);
     }
 
     internal long PreCreditSerializedBytes
@@ -82,7 +86,9 @@ internal sealed partial class RpcSession
         ushort streamId,
         T item,
         IRpcCodec<T> codec,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcDeadline deadline,
+        TimeProvider? deadlineTimeProvider)
     {
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
@@ -116,6 +122,7 @@ internal sealed partial class RpcSession
                 creditAcquired = HasStreamFlowControl;
                 try
                 {
+                    ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
                     ownsWriter = false;
                     SendPacket(writer);
                 }
@@ -145,7 +152,9 @@ internal sealed partial class RpcSession
                 streamId,
                 encodedBytes,
                 budget,
-                cancellationToken);
+                cancellationToken,
+                deadline,
+                deadlineTimeProvider);
         }
         finally
         {
@@ -161,7 +170,9 @@ internal sealed partial class RpcSession
         ushort streamId,
         int encodedBytes,
         PreCreditSerializedBudget budget,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcDeadline deadline,
+        TimeProvider? deadlineTimeProvider)
     {
         var ownsWriter = true;
         var ownsBudget = false;
@@ -181,6 +192,7 @@ internal sealed partial class RpcSession
             budget.Release(encodedBytes);
             ownsBudget = false;
 
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
             ownsWriter = false;
             SendPacket(writer);
         }

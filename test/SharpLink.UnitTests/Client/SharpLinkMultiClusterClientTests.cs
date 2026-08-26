@@ -1952,6 +1952,13 @@ public sealed class SharpLinkMultiClusterClientTests
         public TContract Get<TContract>() where TContract : IService
             => throw new NotSupportedException();
 
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+
+
+            => throw new NotSupportedException();
+
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
@@ -2015,6 +2022,13 @@ public sealed class SharpLinkMultiClusterClientTests
         public ValueTask DisposeAsync() => StopAsync();
 
         public TContract Get<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+
+
             => throw new NotSupportedException();
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
@@ -2101,6 +2115,13 @@ public sealed class SharpLinkMultiClusterClientTests
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Unhealthy));
 
         public TContract Get<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+
+
             => throw new NotSupportedException();
 
         public ValueTask DisposeAsync() => StopAsync();

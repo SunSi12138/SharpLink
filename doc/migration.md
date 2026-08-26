@@ -1,34 +1,46 @@
 # 迁移到 2.0
 
-SharpLink 2.0 将进程内 Generated ABI 从 1.1.x 的 API 3 原子升级为最终基线 API 5，同时保持网络 Protocol v2 不变。API 4 是 2.0 开发期的中间生成面（codec 架构落地前的冻结点），从未随包发布；2.0 Runtime 同样在启动期拒绝它。升级前让同一进程中的全部 SharpLink 包使用 2.0，并在独立环境完成 Client/Server 互操作、AOT、负载和故障测试。
+SharpLink 2.0 将进程内 Generated ABI 从已发布的 1.1.1/API 3 原子升级一次到 API 4，同时把 Protocol v2 minor 升到 4，并以剩余 `TimeBudget` 取代跨机器绝对 deadline。2.0 的版本计算只以已发布的 1.1.1 为基线；开发期间出现过的中间 ABI 编号不构成兼容边界，也不会继续累加版本号。由于 `IRpcChannel` 调用 ABI 在 #287 中发生破坏性变化，所有 1.1.1/API 3 生成程序集都必须使用 2.0 SDK 重新生成。升级前让同一进程中的全部 SharpLink 包使用 2.0，并在独立环境完成 Client/Server 互操作、AOT、负载和故障测试。
 
-## Generated ABI（API 5）与重新生成
+## Generated ABI（API 4）与重新生成
 
-2.0 Generator 只生成 API 5，2.0 Runtime 也只接受 `Generated API = 5`、`Protocol = 2`。1.1.x 生成程序集是 API 3，2.0 早期开发树生成的是 API 4；2.0 会在 materialize Manifest 或发布任何运行时资源前明确拒绝两者，不提供隐藏开关、双路径或环境变量回退。版本校验只发生在 assembly load / registration / startup 边界，不进入任何调用热路径。
+2.0 Generator 只生成 API 4，2.0 Runtime 只接受 `Generated API = 4`、`Protocol = 2`，并要求 locator 携带当前 `SharpLinkGeneratedManifestVersions.AbiIdentity`。已发布的 1.1.1 生成程序集是 API 3，升级到 2.0 时会在 materialize Manifest 或发布任何运行时资源前明确拒绝 API 3，并要求重新生成。开发分支曾使用过的中间 ABI 编号不属于受支持输入，也不作为发布兼容性资产；如果旧开发 artifact 曾复用整数 API 4，但它没有当前 ABI identity，同样会在 materialize 前拒绝，避免同一整数误识别两种不兼容 binary shape。版本与 identity 校验只发生在 assembly load / registration / startup 边界，不进入任何调用热路径。
 
 升级必须同时完成：
 
 1. 把 SDK、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 统一为 2.0。
 2. 删除所有契约、服务和插件项目的旧 `bin`、`obj` 与缓存生成源码。
 3. 重新构建全部 contract assemblies 和 service assemblies。
-4. 重新构建并重新部署全部 plugin assemblies；不要把 1.1.x、API 4 与 2.0 生成程序集装入同一进程。
+4. 重新构建并重新部署全部 plugin assemblies；不要把 1.1.x/API 3 与 2.0/API 4 生成程序集装入同一进程。
 
 旧 artifact 在注册/启动期收到稳定的 version mismatch，例如：
 
 ```text
-IncompatibleManifest: Manifest compatibility mismatch: API 4/5, Protocol 2/2,
+IncompatibleManifest: Manifest compatibility mismatch: API 3/4, Protocol 2/2,
 Generator '2.0.0'. Action: delete stale generated outputs, then regenerate and
 rebuild this assembly with the SharpLink SDK version that matches the current
 Runtime.
 ```
 
-`Assembly`、`LoadContext`（dynamic）、`Expected/Actual Generated ABI`、`Expected/Actual Protocol`
-与 `GeneratorVersion` 字段在所有入口一致。修复方式始终是重新生成：删除旧输出，用当前
+`Assembly`、`LoadContext`（dynamic）、`Expected/Actual Generated ABI`、`Expected/Actual Protocol`、
+`Expected/Actual ABI identity` 与 `GeneratorVersion` 字段在所有入口一致。修复方式始终是重新生成：删除旧输出，用当前
 2.0 SDK 重新构建，而不是回退包版本或寻找兼容开关。
 
-自动生成代码的用户不需要手写 Bridge。手写生成基础设施的高级用户需要同步采用 API 5：程序集 locator 使用包含 Manifest 类型、`apiVersion: 5`、`protocolVersion: 2` 和 Generator version 的自描述构造函数；`IRpcStub` 接收 `IRpcGeneratedServerBridge`，响应写入 `IBufferWriter<byte>`；`SharpLinkGeneratedContractDescriptor.StubFactory` 接收 `IRpcCodecProvider`；生成的 DTO Codec 实现 `IRpcCodec<T>` 与 `IRpcSizedCodec<T>`；自定义 Codec 绑定使用 `RpcCodecAttribute`/`RpcCodecImplementationAttribute` 并带 schema identity。
+自动生成代码的用户不需要手写 Bridge。手写生成基础设施的高级用户需要同步采用 API 4：程序集 locator 使用包含 Manifest 类型、`apiVersion: 4`、`protocolVersion: 2`、Generator version 和 `SharpLinkGeneratedManifestVersions.AbiIdentity` 的自描述构造函数；`IRpcStub` 接收 `IRpcGeneratedServerBridge`，响应写入 `IBufferWriter<byte>`；`SharpLinkGeneratedContractDescriptor.StubFactory` 接收 `IRpcCodecProvider`；生成的 DTO Codec 实现 `IRpcCodec<T>` 与 `IRpcSizedCodec<T>`；自定义 Codec 绑定使用 `RpcCodecAttribute`/`RpcCodecImplementationAttribute` 并带 schema identity。
 
-Generated ABI 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client 与 1.1.x Server 仍可通过 Protocol v2 互操作，但每个进程只能加载与本进程 Runtime 匹配的生成程序集，并且两端契约的 wire schema 必须兼容。
+Generated ABI 与网络 minor 是独立版本轴。SharpLink 2.0 以 Protocol v2 minor 4 作为 TimeBudget wire baseline，不再提供 absolute-deadline fallback。该重构只进入 2.0，因此发布门禁只验证 2.0 Client/Server 互操作；pre-2.0 跨版本互操作不属于 2.0 的兼容性承诺。低于 minor 4 的握手会被拒绝，避免旧 absolute-deadline 字节被误解释为 TimeBudget。
+
+## `SharpLinkCallOptions` 迁移
+
+2.0 不保留 `SharpLinkCallOptions` 或兼容 options bag。旧调用点按能力迁移：
+
+- `SharpLinkCallOptions.Metadata` → `client.GetWithMetadata<TContract>(metadata)`，用于调用方为单次/一组显式 invocation 选择 metadata；横切 metadata policy 仍可使用 Client interceptor。
+- `SharpLinkCallOptions.Timeout` → 契约方法 `[Timeout]`，或普通 Unary 调用的 Client `UseRequestTimeout` / `DisableRequestTimeout` fallback policy。OneWay 和三类 Streaming 不自动继承 Client-wide fallback；它们需要方法 `[Timeout]` 或继承父调用 lifetime 才会携带对应 `TimeBudget`。timeout 不再是业务方法伪参数。
+- `SharpLinkCallOptions.Deadline` → 删除。2.0 不再公开或重建跨机器 absolute UTC deadline，也没有新的 per-call absolute-deadline 替代项；使用相对 timeout policy，并由 runtime 解析本地 monotonic `RpcDeadline`、在 wire 上只传播剩余 `TimeBudget`。
+- 调用方取消仍使用业务方法原有的 `CancellationToken` 参数；它从来不是 `SharpLinkCallOptions` 字段。删除旧 options 伪参数时保留正常的 cancellation-token 参数；没有 token 的 RPC 必须明确审计 `[NonCancellable]`。
+- `WaitForReady` 不再有每调用兼容开关；连接/readiness 使用 Client readiness API 和拓扑策略表达。
+
+因此生成的业务签名和 `IRpcChannel` ABI 都不再接收 `SharpLinkCallOptions`。迁移时应删除旧 options 参数并重新生成全部 API 4 proxy/stub，而不是创建新的通用调用控制对象。
 
 ## Runtime engine API boundary
 
@@ -36,7 +48,7 @@ Generated ABI 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client �
 `RpcSession`、`StreamManager` 和 `RpcSessionExtensions` 不再是公开扩展面。不要构造或控制 Session、读取其 PipeReader、注册 raw
 dispatcher、设置 peer activity，或直接发送 protocol control frame。自定义传输应实现
 `ITransportConnection` 并经 `IClientTransportFactory` 或 `IServerTransportListener` 配置到 Builder；
-generated server code 继续使用 API 5 的 `IRpcGeneratedServerBridge`。完整的 public API diff、保留 SPI
+generated server code 继续使用 API 4 的 `IRpcGeneratedServerBridge`。完整的 public API diff、保留 SPI
 和 ownership 说明见 [`runtime-phase-16-engine-api.md`](runtime-phase-16-engine-api.md)。
 
 ## Builder 构建计划与单次使用
@@ -54,6 +66,24 @@ options 不会影响已经编译的 plan。多集群会用同一个 child plan �
 不再存在 endpoint 预检缓存。
 
 详见 [`runtime-phase-11-build-plan.md`](runtime-phase-11-build-plan.md)。
+
+## Server handshake admission 默认值
+
+Server 的 connection admission 仍然使用现有的 `MaxConcurrentConnections` / `MaxConcurrentHandshakes` 两层边界，但 `MaxConcurrentHandshakes` 的默认行为发生了安全收紧：默认 live connection 上限仍为 1024；默认独立 handshake 上限现在为 64。handshake slot 覆盖 TLS、Protocol v2 与应用认证，并在连接进入 Ready 时立即释放。
+
+如果应用只把 `MaxConcurrentConnections` 配到 64 以下而没有显式设置 handshake 上限，默认 handshake 上限会自动取更低的 connection bound。显式正值仍不能高于 connection bound。
+
+旧版 `MaxConcurrentHandshakes = 0` 的含义保留为显式 opt-out；需要恢复“没有独立 handshake 上限、只由 connection bound 限制”的旧行为时可写：
+
+```csharp
+serverBuilder.UseConnectionAdmission(options =>
+{
+    options.MaxConcurrentConnections = 1024;
+    options.MaxConcurrentHandshakes = 0;
+});
+```
+
+默认值变化不会修改 Protocol v2、TLS wire bytes、认证协议或成功连接生命周期。因为 over-limit handshake 仍采用现有的立即关闭语义，滚动发布或大规模同时重连超过默认安全边界时应错峰/重试；确有容量数据支持时，也可以显式提高正值，但不得高于 `MaxConcurrentConnections`。启动日志会输出最终生效的 `max_connections` / `max_handshakes`。
 
 ## Client readiness API
 
@@ -95,7 +125,7 @@ options 不会影响已经编译的 plan。多集群会用同一个 child plan �
 ## 升级清单
 
 1. 统一 SDK、Generator、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 为 2.0；同一进程不混装 1.1.x。
-2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 5，并把 Generator diagnostics 当错误处理。
+2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 4，并把 Generator diagnostics 当错误处理。
 3. 为所有没有 token 的 RPC 显式确认 `[NonCancellable]` 是否合理。
 4. 验证 DTO field id、required/nullability 和 custom Codec wire identity。
 5. 验证 TLS、authentication、authorization、metadata 与错误消息不泄露敏感数据。
@@ -104,4 +134,4 @@ options 不会影响已经编译的 plan。多集群会用同一个 child plan �
 8. 若使用动态模块，验证替换期间旧调用排空与 ALC 最终回收。
 9. 对实际发布入口执行包含五种调用形态的 NativeAOT smoke（若适用）、PackageSmoke 和固定负载基线。
 
-Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。Generated ABI（API 5）与 Protocol v2 是独立版本轴；迁移到 2.0 不改变 wire frame 或 capability negotiation。
+Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。Generated ABI（API 4）与 Protocol v2 minor 是独立版本轴；2.0 的 wire lifetime baseline 是 minor-4 `TimeBudget`。pre-2.0 跨版本互操作不在本版本发布门禁范围内。

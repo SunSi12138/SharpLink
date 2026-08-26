@@ -18,7 +18,8 @@ internal sealed partial class SharpLinkServer
         var hasReturnPayload = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
         var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
-        var request = ReadRequestEnvelope(session, payload, flags);
+        var request = ReadRequestEnvelope(
+            session, payload, flags, admittedCallState?.Deadline ?? default);
         if (IsDeadlineExceeded(request.RpcDeadline))
         {
             ValueTask responseSend;
@@ -102,14 +103,17 @@ internal sealed partial class SharpLinkServer
                 ValueTask responseSend;
                 try
                 {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
+                    responseSend = PublishAdmissionError(
+                        session,
                         requestId,
+                        admittedCallState,
                         new SharpLinkException(
                             SharpLinkErrorCode.Internal,
                             "The admission partition selector failed.",
                             exception),
                         connection.ConnectionToken);
-                    SharpLinkTelemetry.RecordAdmissionRejected("partition", "partition_selector");
+                    if (admittedCallState.Reason == ServerCallCancellationReason.Completed)
+                        SharpLinkTelemetry.RecordAdmissionRejected("partition", "partition_selector");
                 }
                 finally
                 {
@@ -159,7 +163,8 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         decision,
                         oneWay: false,
-                        connection.ConnectionToken);
+                        callState: admittedCallState,
+                        cancellationToken: connection.ConnectionToken);
                 }
                 finally
                 {
@@ -241,7 +246,8 @@ internal sealed partial class SharpLinkServer
                     out decodedRequestOwner);
                 retainedAdmissionPayload?.Dispose();
                 decodePermit!.CompleteDecode();
-                request = ReadRequestEnvelope(session, payload, flags);
+                request = ReadRequestEnvelope(
+                    session, payload, flags, request.RpcDeadline);
             }
         }
         catch (SharpLinkException exception) when (
@@ -364,7 +370,7 @@ internal sealed partial class SharpLinkServer
         {
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.Deadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken);
             try
             {
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
@@ -479,7 +485,7 @@ internal sealed partial class SharpLinkServer
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         var responseCallContext = CreateCallContext(
             connection, serviceInfo.Stub, request.MethodHash, requestId,
-            request.Deadline, request.Metadata, invokeToken);
+            request.RpcDeadline, request.Metadata, invokeToken);
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);

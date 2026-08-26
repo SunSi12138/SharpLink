@@ -218,13 +218,14 @@ public class CompressionCallCapacityAdmissionTests
         var requestTimeout = TimeSpan.FromMilliseconds(100);
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
-            useAdvancedAdmission: false);
+            useAdvancedAdmission: false,
+            requestTimeout);
         var payload = Enumerable.Repeat((byte)0x44, 32 * 1024).ToArray();
 
         try
         {
             await harness.Client.Get<IDeadlineCompressionProbeService>()
-                .NotifyAsync(payload, new SharpLinkCallOptions { Timeout = requestTimeout })
+                .NotifyAsync(payload)
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(2));
             await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
@@ -488,7 +489,7 @@ public interface IDeadlineCompressionProbeService : IService
 
     [Oneway]
     [NonCancellable]
-    ValueTask NotifyAsync(byte[] value, SharpLinkCallOptions options);
+    ValueTask NotifyAsync(byte[] value);
 }
 
 [RpcService]
@@ -512,10 +513,9 @@ public sealed class DeadlineCompressionProbeService : IDeadlineCompressionProbeS
         return ValueTask.FromResult(value);
     }
 
-    public ValueTask NotifyAsync(byte[] value, SharpLinkCallOptions options)
+    public ValueTask NotifyAsync(byte[] value)
     {
         _ = value;
-        _ = options;
         Interlocked.Increment(ref s_oneWayInvocations);
         return ValueTask.CompletedTask;
     }

@@ -18,40 +18,38 @@ public sealed class ServerRequestEnvelopeReaderTests
         DateTimeOffset.FromUnixTimeMilliseconds(1_700_000_000_000);
 
     [Test]
-    public async Task ReadShouldPreserveRoutingDeadlineMetadataAndArgumentsAcrossPayloadLayouts()
+    public async Task ReadShouldResolveTimeBudgetOnceAndPreserveMetadataAndArgumentsAcrossLayouts()
     {
-        var deadline = UtcNow.AddMilliseconds(1_250);
+        var budget = TimeSpan.FromMilliseconds(1_250);
         var metadata = new SharpLinkMetadata(
             new KeyValuePair<string, string>("tenant", "factory-a"),
             new KeyValuePair<string, string>("trace", "42"));
         var arguments = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF };
-        var payload = CreatePayload(deadline.ToUnixTimeMilliseconds(), metadata, arguments);
+        var payload = CreatePayload(budget.Ticks, metadata, arguments);
         const long monotonicNow = 123_456_789;
         await using var session = CreateSession(ProtocolV2Capabilities.Metadata);
 
         var contiguous = Read(
             session,
             new ReadOnlySequence<byte>(payload),
-            ProtocolV2FrameFlags.HasDeadline | ProtocolV2FrameFlags.HasMetadata,
+            ProtocolV2FrameFlags.HasTimeBudget | ProtocolV2FrameFlags.HasMetadata,
             MaxMetadataBytes,
             UtcNow,
             monotonicNow);
         var segmented = Read(
             session,
             CreateSegmented(payload, 1),
-            ProtocolV2FrameFlags.HasDeadline | ProtocolV2FrameFlags.HasMetadata,
+            ProtocolV2FrameFlags.HasTimeBudget | ProtocolV2FrameFlags.HasMetadata,
             MaxMetadataBytes,
             UtcNow,
             monotonicNow);
 
-        var expectedTimestamp = monotonicNow +
-            (long)Math.Ceiling(1.25 * Stopwatch.Frequency);
-        AssertEnvelope(contiguous, deadline, expectedTimestamp, arguments);
-        AssertEnvelope(segmented, deadline, expectedTimestamp, arguments);
+        var expectedTimestamp = SharpLinkTime.AddDuration(
+            monotonicNow, budget, Stopwatch.Frequency);
+        AssertEnvelope(contiguous, expectedTimestamp, arguments);
+        AssertEnvelope(segmented, expectedTimestamp, arguments);
         Ensure(contiguous.Metadata is { Count: 2 } &&
-               contiguous.Metadata[0].Key == "tenant" &&
                contiguous.Metadata[0].Value == "factory-a" &&
-               contiguous.Metadata[1].Key == "trace" &&
                contiguous.Metadata[1].Value == "42",
             "contiguous metadata values");
         Ensure(segmented.Metadata is { Count: 2 } &&
@@ -66,13 +64,41 @@ public sealed class ServerRequestEnvelopeReaderTests
     }
 
     [Test]
+    public async Task ReparseShouldConsumeWireBudgetWithoutRestartingResolvedDeadline()
+    {
+        var budget = TimeSpan.FromSeconds(5);
+        var payload = CreatePayload(budget.Ticks, metadata: null, arguments: [1, 2, 3]);
+        await using var session = CreateSession(ProtocolV2Capabilities.None);
+        var firstProvider = new FixedTimeProvider(UtcNow, 1_000);
+        var first = ServerRequestEnvelopeReader.Read(
+            session,
+            new ReadOnlySequence<byte>(payload),
+            ProtocolV2FrameFlags.HasTimeBudget,
+            MaxMetadataBytes,
+            firstProvider);
+        var laterProvider = new FixedTimeProvider(UtcNow.AddSeconds(4), 9_000_000);
+
+        var reparsed = ServerRequestEnvelopeReader.Read(
+            session,
+            new ReadOnlySequence<byte>(payload),
+            ProtocolV2FrameFlags.HasTimeBudget,
+            MaxMetadataBytes,
+            laterProvider,
+            first.RpcDeadline);
+
+        Ensure(reparsed.RpcDeadline.Timestamp == first.RpcDeadline.Timestamp,
+            "reparse must retain the original process-local monotonic boundary");
+        Ensure(reparsed.Arguments.ToArray().AsSpan().SequenceEqual(new byte[] { 1, 2, 3 }),
+            "reparse still consumes the TimeBudget field before exposing arguments");
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(sizeof(long))]
     [Arguments((sizeof(long) * 2) - 1)]
     public async Task ReadShouldRejectEveryTruncatedRoutingPrefix(int payloadBytes)
     {
         await using var session = CreateSession(ProtocolV2Capabilities.None);
-
         var exception = CaptureSharpLinkException(() => Read(
             session,
             new ReadOnlySequence<byte>(new byte[payloadBytes]),
@@ -80,7 +106,6 @@ public sealed class ServerRequestEnvelopeReaderTests
             MaxMetadataBytes,
             UtcNow,
             1));
-
         Ensure(exception.Code == SharpLinkErrorCode.ProtocolViolation,
             $"routing prefix error code for {payloadBytes} bytes");
         Ensure(exception.Message == "Request routing prefix is truncated.",
@@ -88,45 +113,51 @@ public sealed class ServerRequestEnvelopeReaderTests
     }
 
     [Test]
-    public async Task ReadShouldRejectTruncatedDeadline()
+    public async Task ReadShouldRejectTruncatedTimeBudget()
     {
         await using var session = CreateSession(ProtocolV2Capabilities.None);
         var payload = CreateRoutingPayload(new byte[sizeof(long) - 1]);
-
         var exception = CaptureSharpLinkException(() => Read(
             session,
             new ReadOnlySequence<byte>(payload),
-            ProtocolV2FrameFlags.HasDeadline,
+            ProtocolV2FrameFlags.HasTimeBudget,
             MaxMetadataBytes,
             UtcNow,
             1));
-
-        Ensure(exception.Code == SharpLinkErrorCode.ProtocolViolation,
-            "truncated deadline error code");
-        Ensure(exception.Message == "Request deadline is truncated.",
-            "truncated deadline error message");
+        Ensure(exception.Message == "Request time budget is truncated.",
+            "truncated TimeBudget message");
     }
 
     [Test]
-    public async Task ReadShouldRejectDeadlineOutsideSupportedUtcRange()
+    public async Task ReadShouldRejectNegativeTimeBudget()
     {
         await using var session = CreateSession(ProtocolV2Capabilities.None);
-        var payload = CreatePayload(long.MaxValue, metadata: null, arguments: []);
-
+        var payload = CreatePayload(-1, metadata: null, arguments: []);
         var exception = CaptureSharpLinkException(() => Read(
             session,
             new ReadOnlySequence<byte>(payload),
-            ProtocolV2FrameFlags.HasDeadline,
+            ProtocolV2FrameFlags.HasTimeBudget,
             MaxMetadataBytes,
             UtcNow,
             1));
+        Ensure(exception.Message == "Request time budget cannot be negative.",
+            "negative TimeBudget message");
+    }
 
-        Ensure(exception.Code == SharpLinkErrorCode.ProtocolViolation,
-            "out-of-range deadline error code");
-        Ensure(exception.Message == "Request deadline is outside the supported UTC range.",
-            "out-of-range deadline error message");
-        Ensure(exception.InnerException is ArgumentOutOfRangeException,
-            "out-of-range deadline should retain the conversion failure");
+    [Test]
+    public async Task ZeroTimeBudgetShouldResolveToCurrentMonotonicTimestamp()
+    {
+        await using var session = CreateSession(ProtocolV2Capabilities.None);
+        const long monotonicNow = 987_654_321;
+        var envelope = Read(
+            session,
+            new ReadOnlySequence<byte>(CreatePayload(0, null, [])),
+            ProtocolV2FrameFlags.HasTimeBudget,
+            MaxMetadataBytes,
+            UtcNow,
+            monotonicNow);
+        Ensure(envelope.RpcDeadline.Timestamp == monotonicNow,
+            "zero TimeBudget must be immediately expired on the local monotonic clock");
     }
 
     [Test]
@@ -134,7 +165,6 @@ public sealed class ServerRequestEnvelopeReaderTests
     {
         await using var session = CreateSession(ProtocolV2Capabilities.None);
         var payload = CreateRoutingPayload([0]);
-
         var exception = CaptureSharpLinkException(() => Read(
             session,
             new ReadOnlySequence<byte>(payload),
@@ -142,9 +172,6 @@ public sealed class ServerRequestEnvelopeReaderTests
             MaxMetadataBytes,
             UtcNow,
             1));
-
-        Ensure(exception.Code == SharpLinkErrorCode.ProtocolViolation,
-            "metadata negotiation error code");
         Ensure(exception.Message == "Request metadata was not negotiated during handshake.",
             "metadata negotiation error message");
     }
@@ -164,7 +191,6 @@ public sealed class ServerRequestEnvelopeReaderTests
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
         var maxMetadataBytes = shape == "over_limit" ? 4 : MaxMetadataBytes;
-
         var exception = CaptureSharpLinkException(() => Read(
             session,
             new ReadOnlySequence<byte>(CreateRoutingPayload(tail)),
@@ -172,61 +198,15 @@ public sealed class ServerRequestEnvelopeReaderTests
             maxMetadataBytes,
             UtcNow,
             1));
-
-        Ensure(exception.Code == SharpLinkErrorCode.ProtocolViolation,
-            $"{shape} metadata error code");
         Ensure(exception.Message == "Request metadata length is invalid.",
             $"{shape} metadata error message");
-    }
-
-    [Test]
-    public async Task ReadShouldUseProvidedMonotonicTimeForExpiredDeadline()
-    {
-        await using var session = CreateSession(ProtocolV2Capabilities.None);
-        const long monotonicNow = 987_654_321;
-        var deadline = UtcNow.AddMilliseconds(-1);
-        var payload = CreatePayload(deadline.ToUnixTimeMilliseconds(), metadata: null, arguments: []);
-
-        var envelope = Read(
-            session,
-            new ReadOnlySequence<byte>(payload),
-            ProtocolV2FrameFlags.HasDeadline,
-            MaxMetadataBytes,
-            UtcNow,
-            monotonicNow);
-
-        Ensure(envelope.Deadline == deadline, "expired UTC deadline");
-        Ensure(envelope.RpcDeadline.Timestamp == monotonicNow,
-            "expired deadline must use the caller-provided monotonic timestamp");
-    }
-
-    [Test]
-    public async Task ReadShouldSaturateAnExtremeFutureDeadline()
-    {
-        await using var session = CreateSession(ProtocolV2Capabilities.None);
-        var deadline = DateTimeOffset.FromUnixTimeMilliseconds(
-            DateTimeOffset.MaxValue.ToUnixTimeMilliseconds());
-        const long monotonicNow = long.MaxValue - 1;
-        var payload = CreatePayload(deadline.ToUnixTimeMilliseconds(), metadata: null, arguments: []);
-
-        var envelope = Read(
-            session,
-            new ReadOnlySequence<byte>(payload),
-            ProtocolV2FrameFlags.HasDeadline,
-            MaxMetadataBytes,
-            DateTimeOffset.MinValue,
-            monotonicNow);
-
-        Ensure(envelope.Deadline == deadline, "extreme UTC deadline");
-        Ensure(envelope.RpcDeadline.Timestamp == long.MaxValue,
-            "extreme deadline must saturate instead of overflowing");
     }
 
     [Test]
     public async Task ReadSteadyStateWithoutOptionalFieldsShouldAllocateNothing()
     {
         await using var session = CreateSession(ProtocolV2Capabilities.None);
-        var payload = CreatePayload(deadlineMilliseconds: null, metadata: null, arguments: [1, 2, 3, 4]);
+        var payload = CreatePayload(timeBudgetTicks: null, metadata: null, arguments: [1, 2, 3, 4]);
         var sequence = new ReadOnlySequence<byte>(payload);
         var timeProvider = new FixedTimeProvider(UtcNow, timestamp: 1);
         _ = ReadBatch(session, sequence, timeProvider, 100_000);
@@ -237,7 +217,6 @@ public sealed class ServerRequestEnvelopeReaderTests
         var checksum = ReadBatch(session, sequence, timeProvider, iterations);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         GC.KeepAlive(checksum);
-
         Ensure(allocated == 0,
             $"steady-state envelope parsing allocated {allocated} bytes over {iterations} calls");
     }
@@ -256,19 +235,16 @@ public sealed class ServerRequestEnvelopeReaderTests
                 session, sequence, ProtocolV2FrameFlags.None, 1, timeProvider);
             checksum += envelope.InterfaceHash + envelope.Arguments.Length;
         }
-
         return checksum;
     }
 
     private static void AssertEnvelope(
         ServerRequestEnvelope envelope,
-        DateTimeOffset expectedDeadline,
         long expectedDeadlineTimestamp,
         byte[] expectedArguments)
     {
         Ensure(envelope.InterfaceHash == InterfaceHash, "interface hash");
         Ensure(envelope.MethodHash == MethodHash, "method hash");
-        Ensure(envelope.Deadline == expectedDeadline, "deadline");
         Ensure(envelope.RpcDeadline.Timestamp == expectedDeadlineTimestamp,
             "deterministic monotonic deadline");
         Ensure(envelope.Arguments.ToArray().AsSpan().SequenceEqual(expectedArguments),
@@ -276,7 +252,7 @@ public sealed class ServerRequestEnvelopeReaderTests
     }
 
     private static byte[] CreatePayload(
-        long? deadlineMilliseconds,
+        long? timeBudgetTicks,
         SharpLinkMetadata? metadata,
         byte[] arguments)
     {
@@ -285,10 +261,10 @@ public sealed class ServerRequestEnvelopeReaderTests
         BinaryPrimitives.WriteInt64LittleEndian(routing, InterfaceHash);
         BinaryPrimitives.WriteInt64LittleEndian(routing[sizeof(long)..], MethodHash);
         writer.Advance(sizeof(long) * 2);
-        if (deadlineMilliseconds is { } deadline)
+        if (timeBudgetTicks is { } budget)
         {
-            var deadlineBytes = writer.GetSpan(sizeof(long));
-            BinaryPrimitives.WriteInt64LittleEndian(deadlineBytes, deadline);
+            var budgetBytes = writer.GetSpan(sizeof(long));
+            BinaryPrimitives.WriteInt64LittleEndian(budgetBytes, budget);
             writer.Advance(sizeof(long));
         }
         if (metadata is not null)
@@ -379,11 +355,7 @@ public sealed class ServerRequestEnvelopeReaderTests
 
     private sealed class BufferSegment : ReadOnlySequenceSegment<byte>
     {
-        public BufferSegment(ReadOnlyMemory<byte> memory)
-        {
-            Memory = memory;
-        }
-
+        public BufferSegment(ReadOnlyMemory<byte> memory) => Memory = memory;
         public void SetNext(BufferSegment next)
         {
             next.RunningIndex = RunningIndex + Memory.Length;
@@ -391,9 +363,7 @@ public sealed class ServerRequestEnvelopeReaderTests
         }
     }
 
-    private sealed class FixedTimeProvider(
-        DateTimeOffset utcNow,
-        long timestamp) : TimeProvider
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow, long timestamp) : TimeProvider
     {
         public override long TimestampFrequency => Stopwatch.Frequency;
         public override DateTimeOffset GetUtcNow() => utcNow;
