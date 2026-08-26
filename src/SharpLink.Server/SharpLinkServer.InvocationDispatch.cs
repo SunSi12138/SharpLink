@@ -636,7 +636,6 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
-        using var requestScope = BeginRequestLogScope(_logger, requestId);
         try
         {
             await invokeTask.ConfigureAwait(false);
