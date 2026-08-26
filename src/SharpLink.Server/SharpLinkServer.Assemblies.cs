@@ -915,8 +915,11 @@ internal sealed partial class SharpLinkServer
     {
         foreach (var dependency in manifest.Dependencies)
             yield return dependency;
-        foreach (var dependency in manifest.ContractDependencies)
-            yield return dependency;
+        foreach (var contractSet in manifest.ContractCodecSets)
+        {
+            foreach (var dependency in contractSet.Dependencies)
+                yield return dependency;
+        }
     }
 
     private static bool ManifestDependsOn(ISharpLinkGeneratedAssemblyManifest manifest, string? identity)

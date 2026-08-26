@@ -14,7 +14,7 @@ namespace SharpLink.UnitTests.Server;
 public class StaticContractCodecProviderRegressionTests
 {
     [Test]
-    public async Task ServerBuildShouldBindAutomaticAndReplacementStubsByAssemblyProvider()
+    public async Task ServerBuildShouldBindAutomaticAndReplacementStubsByContractType()
     {
         var manifest = new TwoContractManifest();
         SharpLinkGeneratedAssemblyCatalog.Register(manifest);
@@ -28,12 +28,12 @@ public class StaticContractCodecProviderRegressionTests
                 .Build();
             try
             {
-                Ensure(ReferenceEquals(manifest.CapturedA, manifest.SharedCodec),
-                    "automatic service A must bind the assembly-owned Codec provider");
-                Ensure(ReferenceEquals(manifest.CapturedB, manifest.SharedCodec),
-                    "replacement service B must bind the assembly-owned Codec provider");
-                Ensure(ReferenceEquals(manifest.CapturedA, manifest.CapturedB),
-                    "same-assembly Contracts must share one assembly-owned Codec graph");
+                Ensure(ReferenceEquals(manifest.CapturedA, manifest.CodecA),
+                    "automatic service A must bind Contract A's Codec provider");
+                Ensure(ReferenceEquals(manifest.CapturedB, manifest.CodecB),
+                    "replacement service B must bind Contract B's Codec provider");
+                Ensure(!ReferenceEquals(manifest.CapturedA, manifest.CapturedB),
+                    "same-assembly Contracts with different policy must not share one assembly provider");
             }
             finally
             {
@@ -76,11 +76,12 @@ public class StaticContractCodecProviderRegressionTests
         private const string FingerprintB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         private readonly IReadOnlyList<SharpLinkGeneratedContractDescriptor> _contracts;
         private readonly IReadOnlyList<SharpLinkGeneratedServiceDescriptor> _services;
-        private readonly IReadOnlyList<IRpcGeneratedCodecFactory> _contractCodecs;
+        private readonly IReadOnlyList<SharpLinkGeneratedContractCodecSet> _contractCodecSets;
 
         internal TwoContractManifest()
         {
-            SharedCodec = new AssemblySharedCodec();
+            CodecA = new ContractACodec();
+            CodecB = new ContractBCodec();
             _contracts =
             [
                 new SharpLinkGeneratedContractDescriptor(
@@ -131,7 +132,19 @@ public class StaticContractCodecProviderRegressionTests
                     [],
                     static _ => new ContractBService())
             ];
-            _contractCodecs = [new DirectFactory(SharedCodec, "test/assembly-shared")];
+            _contractCodecSets =
+            [
+                new SharpLinkGeneratedContractCodecSet(
+                    typeof(IContractA),
+                    HasCompileTimePolicy: true,
+                    Codecs: [new DirectFactory(CodecA, "test/contract-a")],
+                    Dependencies: []),
+                new SharpLinkGeneratedContractCodecSet(
+                    typeof(IContractB),
+                    HasCompileTimePolicy: true,
+                    Codecs: [new DirectFactory(CodecB, "test/contract-b")],
+                    Dependencies: [])
+            ];
         }
 
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
@@ -142,10 +155,11 @@ public class StaticContractCodecProviderRegressionTests
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => _contracts;
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => _services;
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
-        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => _contractCodecs;
+        public IReadOnlyList<SharpLinkGeneratedContractCodecSet> ContractCodecSets => _contractCodecSets;
         public IReadOnlyList<string> Dependencies => [];
 
-        internal AssemblySharedCodec SharedCodec { get; }
+        internal ContractACodec CodecA { get; }
+        internal ContractBCodec CodecB { get; }
         internal IRpcCodec<SharedPayload>? CapturedA { get; private set; }
         internal IRpcCodec<SharedPayload>? CapturedB { get; private set; }
 
@@ -167,7 +181,16 @@ public class StaticContractCodecProviderRegressionTests
         }
     }
 
-    private sealed class AssemblySharedCodec : IRpcCodec<SharedPayload>
+    private sealed class ContractACodec : IRpcCodec<SharedPayload>
+    {
+        public void Serialize(in SharedPayload value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public SharedPayload Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class ContractBCodec : IRpcCodec<SharedPayload>
     {
         public void Serialize(in SharedPayload value, IBufferWriter<byte> buffer)
         {

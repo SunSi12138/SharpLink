@@ -137,7 +137,7 @@ internal static class SharpLinkAssemblyManifestLoader
             string.IsNullOrWhiteSpace(manifest.CompileTimeDescriptor) ||
             manifest.Contracts is null || manifest.Services is null ||
             manifest.Codecs is null || manifest.ContractCodecs is null ||
-            manifest.Dependencies is null)
+            manifest.ContractCodecSets is null || manifest.Dependencies is null)
         {
             return Error(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
@@ -148,7 +148,7 @@ internal static class SharpLinkAssemblyManifestLoader
 
         try
         {
-            SharpLinkGeneratedManifestStructureValidator.Validate(manifest);
+            SharpLinkGeneratedManifestStructureValidator.ValidateContractCodecSets(manifest);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
@@ -156,7 +156,7 @@ internal static class SharpLinkAssemblyManifestLoader
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 exception.Message,
                 assembly,
-                "Manifest");
+                "ContractCodecSet");
         }
 
         var contractIds = new HashSet<long>();
