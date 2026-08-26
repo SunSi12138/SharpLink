@@ -76,8 +76,8 @@ public class DynamicAdmissionGenerationTests
         var held = await original.Controller.AcquireAsync(
             CreateAdmissionContext(), 1, allowQueue: false, CancellationToken.None);
         Ensure(held.IsAcquired, "test must occupy generation N");
-        var replacementController = CreateController(options => options.Global.UseConcurrency(1));
-        var replacement = new AdmissionProgram(replacementController);
+        var replacement = harness.Server.CreateAdmissionProgramForTests(
+            options => options.Global.UseConcurrency(2));
         AdmissionProgram? captured = null;
         var hookCount = 0;
 
@@ -111,9 +111,8 @@ public class DynamicAdmissionGenerationTests
         finally
         {
             SharpLinkServer.AfterAdmissionCaptureForTests = null;
-            harness.Server.PublishAdmissionProgramForTests(original);
+            harness.Server.PublishAdmissionProgramForTests(null);
             held.Lease?.Dispose();
-            await replacementController.DisposeAsync();
         }
     }
 
@@ -125,9 +124,9 @@ public class DynamicAdmissionGenerationTests
     {
         TestService.ResetNotify();
         await using var harness = await Harness.CreateAsync();
-        var replacementController = CreateController(options => options.Global.UseConcurrency(1));
-        var replacement = new AdmissionProgram(replacementController);
-        var held = await replacementController.AcquireAsync(
+        var replacement = harness.Server.CreateAdmissionProgramForTests(
+            options => options.Global.UseConcurrency(1));
+        var held = await replacement.Controller.AcquireAsync(
             CreateAdmissionContext(), 1, allowQueue: false, CancellationToken.None);
         Ensure(held.IsAcquired, "test must occupy the replacement enabled generation");
         AdmissionProgram? captured = replacement;
@@ -173,7 +172,6 @@ public class DynamicAdmissionGenerationTests
             SharpLinkServer.AfterAdmissionCaptureForTests = null;
             harness.Server.PublishAdmissionProgramForTests(null);
             held.Lease?.Dispose();
-            await replacementController.DisposeAsync();
         }
     }
 
@@ -343,16 +341,17 @@ public class DynamicAdmissionGenerationTests
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
             var payload = Enumerable.Repeat((byte)0x2a, 16 * 1024).ToArray();
             target = harness.ClientA.Get<ICompressionService>().EchoBytesAsync(payload).AsTask();
-            await WaitUntilAsync(() => program.Controller.QueuedCalls == 1,
-                "compressed target enters admission queue before retained-budget cleanup");
-            TestService.ReleaseBlockingAdd();
-            await ObserveTerminalAsync(active);
             var failure = await CaptureFailureAsync(target);
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted } exhausted &&
                    exhausted.Message.Contains(
                        SharpLinkResourceExhaustion.ServerRetainedCompressedBytes,
                        StringComparison.Ordinal),
                 "retained compressed request budget must reject with its stable reason");
+            await WaitUntilAsync(
+                () => program.Controller.QueuedCalls == 0 && program.ActiveUses == 1,
+                "retained-budget rejection releases only the rejected generation use and queue accounting");
+            Ensure(program.DuplicateReleaseAttempts == 0,
+                "retained-budget rejection must not double-release generation use");
         }
         finally
         {
@@ -509,14 +508,6 @@ public class DynamicAdmissionGenerationTests
         Ensure(await harness.ClientA.Get<ITestService>().AddAsync(20, 22) == 42,
             "successful admitted request result");
         await AssertProgramReleasedAsync(program, "successful request terminal cleanup");
-    }
-
-    private static SharpLinkAdmissionController CreateController(
-        Action<SharpLinkAdmissionControlOptions> configure)
-    {
-        var options = new SharpLinkAdmissionControlOptions();
-        configure(options);
-        return SharpLinkAdmissionController.Create(options, []);
     }
 
     private static SharpLinkAdmissionContext CreateAdmissionContext()
