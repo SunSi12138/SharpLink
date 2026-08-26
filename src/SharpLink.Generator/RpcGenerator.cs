@@ -318,7 +318,12 @@ public partial class RpcGenerator : IIncrementalGenerator
         var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
-            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs, value.Right.ContractCodecs);
+            var code = GenerateAssemblyManifest(
+                value.Left.Left,
+                value.Left.Right,
+                value.Right.Codecs,
+                value.Right.ContractCodecs,
+                value.Right.ContractPolicies);
             if (!string.IsNullOrEmpty(code))
             {
                 spc.AddSource(
@@ -334,7 +339,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Select(static (value, _) => new ContractManifestModels(
                 value.Left.Left.Left,
                 value.Left.Left.Right,
-                value.Left.Right.ContractManifestCodecs,
+                value.Left.Right.ContractPolicies,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider
@@ -345,7 +350,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Select(static (value, ct) => AnalyzeContractManifest(
                 value.Left.Left.Interfaces,
                 value.Left.Left.Services,
-                value.Left.Left.Codecs,
+                value.Left.Left.ContractPolicies,
                 value.Left.Left.Enums,
                 value.Left.Left.Unions,
                 value.Left.Right,

@@ -43,7 +43,6 @@ public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
         string.Equals(Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC"), "1", StringComparison.Ordinal)
             ? []
             : [new RollbackCodecFactory(Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA") ?? "default")];
-    public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [];
     public IReadOnlyList<string> Dependencies => [];
 }
 
