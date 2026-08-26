@@ -32,24 +32,31 @@ public class RpcManifestCodecProviderTests
     }
 
     [Test]
-    public void NoRouteTemporaryBindingShouldMatchStaticContextCodecPrecedence()
+    public void NoRouteOwnerBindingShouldIgnoreRuntimeContextCodecRegistration()
     {
         var explicitCodec = new ExplicitNoRouteCodec();
         var ownerAssembly = typeof(RpcManifestCodecProviderTests).Assembly;
         using var context = new SharpLinkRuntimeContextBuilder()
-  .AddCodec(explicitCodec)
-  .Build(includeGeneratedAssemblyCatalog: false);
-        using var registration = context.PrepareGeneratedManifest(new NoRouteManifest(ownerAssembly));
+            .AddCodec(explicitCodec)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(new NoRouteManifest(ownerAssembly));
+        context.AdoptGeneratedManifest(registration);
+
+        Ensure(ReferenceEquals(context.Codecs.GetCodec<NoRouteValue>(), explicitCodec),
+            "the context-global provider must retain the explicit runtime Codec for non-generated consumers");
 
         var staticProvider = RpcGeneratedCodecResolver.GetProvider(context, ownerAssembly);
         var dynamicCandidateProvider = RpcGeneratedCodecResolver.GetProvider(registration);
+        var staticCodec = staticProvider.GetCodec<NoRouteValue>();
+        var dynamicCodec = dynamicCandidateProvider.GetCodec<NoRouteValue>();
 
-        Ensure(ReferenceEquals(staticProvider.GetCodec<NoRouteValue>(), explicitCodec),
-  "static no-route Contract binding must honor the explicit context Codec");
-        Ensure(ReferenceEquals(dynamicCandidateProvider.GetCodec<NoRouteValue>(), explicitCodec),
-  "dynamic candidate binding must use the same no-route precedence as static binding");
+        Ensure(staticCodec is GeneratedNoRouteCodec && dynamicCodec is GeneratedNoRouteCodec,
+            "both adopted and candidate owner providers must resolve the manifest-generated no-route Codec");
+        Ensure(ReferenceEquals(staticCodec, dynamicCodec),
+            "static and dynamic owner resolution must share one frozen assembly-owned Codec binding");
+        Ensure(!ReferenceEquals(staticCodec, explicitCodec),
+            "runtime context Codec registration must not override generated RPC owner semantics");
     }
-
 
     [Test]
     public void ContractOwnedCodecBindingsShouldCoexistForSameClrType()
