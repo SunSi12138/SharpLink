@@ -34,7 +34,19 @@ jobs:
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
       - name: Unit Tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+        run: >-
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Release --no-build
+          --logger "trx;LogFileName=unit-tests.trx"
+          --results-directory artifacts/test-results/unit
+
+      - name: Upload Unit Test Results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unit-test-results
+          path: artifacts/test-results/unit/unit-tests.trx
+          if-no-files-found: warn
 
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
