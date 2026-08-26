@@ -262,6 +262,16 @@ internal sealed partial class RpcSession
         return checked((int)unchecked((uint)originalLengthBits));
     }
 
+    internal static int ReadCompressedDecodedPayloadLength(
+        ProtocolV2FrameType type,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload)
+    {
+        var prefixLength = GetBusinessPrefixLength(type, flags, payload);
+        var originalLength = ReadCompressedOriginalLength(type, flags, payload);
+        return checked(prefixLength + originalLength);
+    }
+
     private static int GetBusinessPrefixLength(
         ProtocolV2FrameType type,
         ProtocolV2FrameFlags flags,
