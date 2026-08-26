@@ -1175,33 +1175,27 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
                 if (!capacityRejected)
                 {
-                    entry = _entries[key];
-                    var generation = FindGenerationLocked(entry, requestedPolicy) ??
+                    var liveEntry = entry!;
+                    var generation = FindGenerationLocked(liveEntry, requestedPolicy) ??
                         throw new InvalidOperationException(
                             "Captured admission partition policy generation is missing from a live entry.");
-                    entry.References++;
+                    liveEntry.References++;
                     generation.References++;
-                    entry.IsIdle = false;
-                    lease = new AdmissionPartitionLease(this, entry, generation);
+                    liveEntry.IsIdle = false;
+                    lease = new AdmissionPartitionLease(this, generation);
                 }
             }
 
             DisposeStates(dispose);
             if (capacityRejected)
                 return null;
-            if (lease is null)
-                continue;
-            if (_kernel.IsConcurrencyTargetVersionCurrent(targetVersion))
-                return lease;
-
-            lease.Dispose();
+            return lease!;
         }
     }
 
-    internal void Release(
-        AdmissionPartitionEntry entry,
-        AdmissionPartitionRuntimeGeneration generation)
+    internal void Release(AdmissionPartitionRuntimeGeneration generation)
     {
+        var entry = generation.Entry!;
         List<IDisposable>? dispose = null;
         lock (_gate)
         {
@@ -1430,6 +1424,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                     targetConcurrency,
                     targetRate,
                     targetPolicy);
+                targetGeneration.Entry = entry;
                 targetGenerations = new List<AdmissionPartitionRuntimeGeneration>(entry.Generations.Count + 1);
                 targetGenerations.AddRange(entry.Generations);
                 targetGenerations.Add(targetGeneration);
@@ -1753,10 +1748,17 @@ internal sealed class AdmissionPartitionPolicyGeneration
     }
 }
 
-internal sealed class AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneration generation)
+internal sealed class AdmissionPartitionEntry
 {
-    internal AdmissionPartitionRuntimeGeneration Current = generation;
-    internal List<AdmissionPartitionRuntimeGeneration> Generations = [generation];
+    internal AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneration generation)
+    {
+        Current = generation;
+        Generations = [generation];
+        generation.Entry = this;
+    }
+
+    internal AdmissionPartitionRuntimeGeneration Current;
+    internal List<AdmissionPartitionRuntimeGeneration> Generations;
     internal int References;
     internal long IdleSince;
     internal bool IsIdle;
@@ -1769,6 +1771,7 @@ internal sealed class AdmissionPartitionRuntimeGeneration(
     AdmissionPartitionPolicyGeneration policy)
 {
     internal AdmissionRuleRuntime Runtime { get; } = runtime;
+    internal AdmissionPartitionEntry? Entry;
     internal ResizableConcurrencyState? Concurrency { get; } = concurrency;
     internal AdmissionRateState? Rate { get; } = rate;
     internal AdmissionPartitionPolicyGeneration Policy { get; } = policy;
@@ -1778,13 +1781,12 @@ internal sealed class AdmissionPartitionRuntimeGeneration(
 
 internal sealed class AdmissionPartitionLease(
     AdmissionPartitionPool owner,
-    AdmissionPartitionEntry entry,
     AdmissionPartitionRuntimeGeneration generation) : IDisposable
 {
     private AdmissionPartitionPool? _owner = owner;
     internal AdmissionRuleRuntime Runtime => generation.Runtime;
     public void Dispose()
-        => Interlocked.Exchange(ref _owner, null)?.Release(entry, generation);
+        => Interlocked.Exchange(ref _owner, null)?.Release(generation);
 }
 
 /// <summary>Side-effect-free same-namespace target prepared before exact-source publication validation.</summary>
