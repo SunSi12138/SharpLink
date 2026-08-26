@@ -46,6 +46,7 @@ internal sealed class TestTransportConnection : ITransportConnection
 {
     private readonly Pipe _inbound = new();
     private readonly Pipe _outbound = new();
+    private readonly CallbackPipeWriter _output;
     private readonly Channel<TestSentFrame> _sentPackets = Channel.CreateUnbounded<TestSentFrame>();
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _observeOutputTask;
@@ -53,14 +54,18 @@ internal sealed class TestTransportConnection : ITransportConnection
 
     public TestTransportConnection()
     {
+        _output = new CallbackPipeWriter(_outbound.Writer);
         _observeOutputTask = ObserveOutputAsync(_disposeCts.Token);
     }
 
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public PipeReader Input => _inbound.Reader;
-    public PipeWriter Output => _outbound.Writer;
+    public PipeWriter Output => _output;
     public EndPoint? LocalEndPoint => null;
     public EndPoint? RemoteEndPoint => null;
+
+    internal void RunOnNextOutputBufferRequest(Action callback)
+        => _output.RunOnNextBufferRequest(callback);
 
     public Task InjectPacketAsync(
         ProtocolV2FrameType type,
@@ -137,7 +142,7 @@ internal sealed class TestTransportConnection : ITransportConnection
 
         _disposeCts.Cancel();
         await CompleteAsync(_inbound.Writer);
-        await CompleteAsync(_outbound.Writer);
+        await CompleteAsync(_output);
         try
         {
             await _observeOutputTask;
@@ -195,6 +200,46 @@ internal sealed class TestTransportConnection : ITransportConnection
         catch (InvalidOperationException)
         {
         }
+    }
+
+    private sealed class CallbackPipeWriter(PipeWriter inner) : PipeWriter
+    {
+        private Action? _nextBufferRequest;
+
+        internal void RunOnNextBufferRequest(Action callback)
+        {
+            ArgumentNullException.ThrowIfNull(callback);
+            if (Interlocked.CompareExchange(ref _nextBufferRequest, callback, null) is not null)
+                throw new InvalidOperationException("an output buffer callback is already armed");
+        }
+
+        public override void Advance(int bytes) => inner.Advance(bytes);
+
+        public override void CancelPendingFlush() => inner.CancelPendingFlush();
+
+        public override void Complete(Exception? exception = null) => inner.Complete(exception);
+
+        public override ValueTask CompleteAsync(Exception? exception = null)
+            => inner.CompleteAsync(exception);
+
+        public override ValueTask<FlushResult> FlushAsync(
+            CancellationToken cancellationToken = default)
+            => inner.FlushAsync(cancellationToken);
+
+        public override Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            RunCallbackIfArmed();
+            return inner.GetMemory(sizeHint);
+        }
+
+        public override Span<byte> GetSpan(int sizeHint = 0)
+        {
+            RunCallbackIfArmed();
+            return inner.GetSpan(sizeHint);
+        }
+
+        private void RunCallbackIfArmed()
+            => Interlocked.Exchange(ref _nextBufferRequest, null)?.Invoke();
     }
 }
 

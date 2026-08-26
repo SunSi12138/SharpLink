@@ -19,7 +19,6 @@ public class SdkTypeForwardingTests
         "SharpLink.Sdk.RpcSerializableAttribute",
         "SharpLink.Sdk.RpcServiceAttribute",
         "SharpLink.Sdk.RpcUnionCaseAttribute",
-        "SharpLink.Sdk.SharpLinkCallOptions",
         "SharpLink.Sdk.SharpLinkClusterContractAssemblyAttribute",
         "SharpLink.Sdk.SharpLinkMetadata",
         "SharpLink.Sdk.SharpLinkRpcContractsAttribute",

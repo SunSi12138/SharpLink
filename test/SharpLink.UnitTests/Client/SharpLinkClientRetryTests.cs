@@ -13,7 +13,8 @@ public class SharpLinkClientRetryTests
     {
         var transport = new TestClientTransportFactory();
         var policy = new RecordingRetryPolicy();
-        await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
+        await using var client = CreateRetryClient(
+            transport, policy, maxAttempts: 2, requestTimeout: TimeSpan.FromSeconds(1));
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
@@ -54,17 +55,27 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
-    public async Task RetryShouldHonorAbsoluteDeadlineAndCancellationDuringDelay()
+    public async Task RetryShouldHonorDeadlineAndCancellationDuringDelay()
     {
+        var deadlineProvider = new ManualTimeProvider();
         var deadlineTransport = new TestClientTransportFactory();
-        await using var deadlineClient = CreateRetryClient(
-            deadlineTransport, policy: null, maxAttempts: 2, initialBackoff: TimeSpan.FromMilliseconds(50));
+        var deadlinePolicy = new DelayingRetryPolicy(TimeSpan.FromSeconds(5));
+        await using var deadlineClient = ClientBuilderTestHelper.Build(deadlineTransport, builder =>
+        {
+            builder.UseTimeProvider(deadlineProvider);
+            ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
+            builder.UseRetry(deadlinePolicy);
+            builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
+        });
         await deadlineClient.ConnectAsync();
 
-        var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            deadlineClient, new SharpLinkCallOptions { Timeout = TimeSpan.FromMilliseconds(20) }).AsTask();
+        var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(deadlineClient).AsTask();
         var deadlineRequest = await deadlineTransport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(deadlineTransport, deadlineRequest, SharpLinkErrorCode.Unavailable);
+        await deadlinePolicy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(!deadlineInvocation.IsCompleted,
+            "the retry delay must remain pending before the fake deadline advances");
+        deadlineProvider.Advance(TimeSpan.FromSeconds(5));
         var deadlineError = await EnsureThrows<SharpLinkException>(deadlineInvocation);
         Ensure(deadlineError.Code == SharpLinkErrorCode.DeadlineExceeded, "retry delay deadline result");
         Ensure(!await deadlineTransport.Connection.TryWaitForSentPacket(
@@ -168,20 +179,27 @@ public class SharpLinkClientRetryTests
     [Test]
     public async Task RetryDelayBeyondDeadlineShouldNotOverflow()
     {
+        var provider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
         var policy = new HugeDelayPolicy();
-        await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseTimeProvider(provider);
+            ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
+            builder.UseRetry(policy);
+            builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
+        });
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            client,
-            new SharpLinkCallOptions { Timeout = TimeSpan.FromSeconds(1) }).AsTask();
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+        await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        provider.Advance(TimeSpan.FromSeconds(5));
 
         var exception = await EnsureThrows<SharpLinkException>(invocation);
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "oversized retry delay must map to deadline exceeded instead of overflowing");
+            "oversized retry delay must remain bounded by the frozen deadline without overflowing");
         Ensure(policy.Count == 1, "custom retry policy should be evaluated once");
     }
 
@@ -297,33 +315,6 @@ public class SharpLinkClientRetryTests
         Ensure(admission.ReportCount == 1, "only the admitted retry should report");
     }
 
-    [Test]
-    public async Task ClientStopShouldCancelRetryAdmissionDelayPromptly()
-    {
-        var transport = new TestClientTransportFactory();
-        var admission = new SignaledRejectWithRetryAfterPolicy(TimeSpan.MaxValue);
-        await using var client = ClientBuilderTestHelper.BuildEndpoint(
-            Endpoint("retry-admission", 5001), transport, builder =>
-            {
-                ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
-                builder.UseEndpointAdmission(admission);
-            });
-        await client.ConnectAsync();
-
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            client, new SharpLinkCallOptions { WaitForReady = true }).AsTask();
-        await admission.RejectionStarted.WaitAsync(TimeSpan.FromSeconds(2));
-
-        var stoppedAt = Stopwatch.GetTimestamp();
-        var stop = client.StopAsync().AsTask();
-        var exception = await EnsureThrows<SharpLinkException>(
-            invocation.WaitAsync(TimeSpan.FromSeconds(2)));
-        await stop.WaitAsync(TimeSpan.FromSeconds(2));
-
-        Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "stopped retry admission error code");
-        Ensure(Stopwatch.GetElapsedTime(stoppedAt) < TimeSpan.FromSeconds(1),
-            "client stop must cancel the retry admission delay promptly");
-    }
 
     [Test]
     public async Task RetryShouldNotDelayUntriedEndpointsAfterAnAdmittedAttemptFails()
@@ -615,7 +606,7 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
-    public async Task RetryDelayEndingAtTheSharedDeadlineShouldNotStartAWaitOrSecondAttempt()
+    public async Task RetryDelayEndingAtTheSharedDeadlineShouldWaitForTerminalArbitration()
     {
         var provider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
@@ -626,32 +617,32 @@ public class SharpLinkClientRetryTests
                 builder.UseTimeProvider(provider);
                 ConfigureRetry(builder, RetryOptions(2, TimeSpan.FromSeconds(5)));
                 builder.UseEndpointAdmission(admission);
+                builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
             });
         try
         {
             await client.ConnectAsync();
-            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-                client,
-                new SharpLinkCallOptions { Timeout = TimeSpan.FromSeconds(5) }).AsTask();
+            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
             var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-            var timersBeforeFailure = provider.ActiveTimerCount;
 
             await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+            await Task.Yield();
+            Ensure(!invocation.IsCompleted,
+                "a future deadline must remain a contender rather than completing the retry wait early");
+            Ensure(!await transport.Connection.TryWaitForSentPacket(
+                ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)),
+                "retry backoff must not publish a second request before its deadline");
+
+            provider.Advance(TimeSpan.FromSeconds(5));
             var failure = await EnsureThrows<SharpLinkException>(invocation);
 
             Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-                "a retry delay ending at the shared deadline must be rejected inclusively");
-            Ensure(admission.AcquireCount == 1 && admission.ReportCount == 1,
-                "the deadline gate must terminate after the first attempt without acquiring a second");
+                "the frozen deadline must terminate the retry wait at its boundary");
+            Ensure(!await transport.Connection.TryWaitForSentPacket(
+                ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)),
+                "deadline completion must not publish a second request");
             Ensure(client.ActiveClientCallCount == 0,
-                "the rejected retry wait must release the complete logical invocation");
-            Ensure(provider.ActiveTimerCount == timersBeforeFailure,
-                "the pre-wait deadline gate must not allocate a retry delay timer");
-
-            provider.Advance(TimeSpan.FromSeconds(5));
-            await Task.Yield();
-            Ensure(admission.AcquireCount == 1 && invocation.IsCompleted,
-                "later time advancement must not resurrect a rejected second attempt");
+                "deadline completion must release the complete logical invocation");
         }
         finally
         {
@@ -709,12 +700,15 @@ public class SharpLinkClientRetryTests
         TestClientTransportFactory transport,
         ISharpLinkRetryPolicy? policy,
         int maxAttempts,
-        TimeSpan? initialBackoff = null)
+        TimeSpan? initialBackoff = null,
+        TimeSpan? requestTimeout = null)
     {
         var options = RetryOptions(maxAttempts, initialBackoff ?? TimeSpan.Zero);
         return ClientBuilderTestHelper.Build(transport, builder =>
         {
             ConfigureRetry(builder, options);
+            if (requestTimeout is { } timeout)
+                builder.UseRequestTimeout(timeout);
             if (policy is not null)
                 builder.UseRetry(policy);
         });
@@ -842,11 +836,16 @@ public class SharpLinkClientRetryTests
 
     private sealed class HugeDelayPolicy : ISharpLinkRetryPolicy
     {
+        private readonly TaskCompletionSource _evaluationStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task EvaluationStarted => _evaluationStarted.Task;
         public int Count { get; private set; }
 
         public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
         {
             Count++;
+            _evaluationStarted.TrySetResult();
             return new SharpLinkRetryDecision(true, TimeSpan.MaxValue);
         }
     }

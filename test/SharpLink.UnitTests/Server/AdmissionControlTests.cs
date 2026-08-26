@@ -498,11 +498,15 @@ public sealed class AdmissionControlTests
             RpcMethodKind.Unary,
             "connection",
             authenticationContext: null,
-            metadata: null,
-            DateTimeOffset.UtcNow.AddMilliseconds(50));
+            metadata: null);
+        var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(50), TimeProvider.System);
 
         var rejected = await controller.AcquireAsync(
-            deadlineContext, 1, allowQueue: true, CancellationToken.None);
+            deadlineContext,
+            retainedBytes: 1,
+            allowQueue: true,
+            deadline: deadline,
+            cancellationToken: CancellationToken.None);
 
         Ensure(!rejected.IsAcquired, "deadline-limited call should be rejected");
         Ensure(rejected.ErrorCode == SharpLinkErrorCode.DeadlineExceeded,
@@ -522,9 +526,7 @@ public sealed class AdmissionControlTests
         await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
         var first = await controller.AcquireAsync(
             CreateContext(), 1, allowQueue: true, CancellationToken.None);
-        var deadline = RpcDeadline.Create(
-            provider.GetUtcNow().AddSeconds(5),
-            provider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
         var pending = controller.AcquireAsync(
             CreateContext(),
             retainedBytes: 64,
@@ -694,7 +696,7 @@ public sealed class AdmissionControlTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(1, 2, RpcMethodKind.Unary, "connection", null, null, null);
+        => new(1, 2, RpcMethodKind.Unary, "connection", null, null);
 
     private static void Ensure(bool condition, string message)
     {

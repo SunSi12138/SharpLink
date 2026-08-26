@@ -5,6 +5,12 @@ namespace SharpLink.Abstractions;
 /// </summary>
 public interface IRpcGeneratedServerBridge
 {
+    /// <summary>
+    /// Claims one boundary at which framework code is about to re-enter user code for a request.
+    /// Throws the already-selected call terminal when user code may no longer run.
+    /// </summary>
+    void EnsureUserCodeEntry(long requestId);
+
     /// <summary>Creates and atomically registers one typed inbound request stream.</summary>
     IAsyncEnumerable<T> CreateInboundStream<T>(
         long requestId,

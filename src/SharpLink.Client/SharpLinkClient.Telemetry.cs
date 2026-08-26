@@ -8,7 +8,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
@@ -18,12 +18,10 @@ internal sealed partial class SharpLinkClient
             if (interceptors.Length != 0)
             {
                 invocation = InvokeUnaryInterceptedAsync(
-                    method, request, requestCodec, responseCodec, interceptors, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else
             {
-                var control = ResolveCallControl(
-                    options, true, method.HasMethodTimeout, method.MethodTimeout);
                 invocation = InvokeUnaryWithOptionalRetryAsync(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             }
@@ -42,7 +40,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
@@ -53,12 +51,10 @@ internal sealed partial class SharpLinkClient
             if (interceptors.Length != 0)
             {
                 invocation = InvokeOneWayInterceptedAsync(
-                    method, request, requestCodec, streams, interceptors, options, cancellationToken);
+                    method, request, requestCodec, streams, interceptors, control, cancellationToken);
             }
             else
             {
-                var control = ResolveCallControl(
-                    options, false, method.HasMethodTimeout, method.MethodTimeout);
                 invocation = InvokeOneWayCoreAsync(
                     method,
                     request, requestCodec, streams, control, cancellationToken);
@@ -79,7 +75,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
@@ -90,15 +86,12 @@ internal sealed partial class SharpLinkClient
             if (interceptors.Length != 0)
             {
                 invocation = InvokeClientStreamingInterceptedAsync(
-                    method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else
             {
-                var control = ResolveCallControl(
-                    options, false, method.HasMethodTimeout, method.MethodTimeout);
                 invocation = InvokeClientStreamingCoreAsync(
-                    method,
-                    request, requestCodec, responseCodec, streams, control, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, control, cancellationToken);
             }
             return ObserveCallAsync(invocation, scope);
         }
@@ -115,14 +108,14 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
         var stream = interceptors.Length != 0
             ? InvokeServerStreamingIntercepted(
-                method, request, requestCodec, responseCodec, interceptors, options, cancellationToken)
+                method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
             : InvokeServerStreamingCore(
-                method, request, requestCodec, responseCodec, options, cancellationToken);
+                method, request, requestCodec, responseCodec, control, cancellationToken);
         return ObserveStream(method, stream);
     }
 
@@ -133,15 +126,15 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         ISharpLinkClientInterceptor[] interceptors,
-        SharpLinkCallOptions options,
+        ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
         var stream = interceptors.Length != 0
             ? InvokeDuplexStreamingIntercepted(
-                method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken)
+                method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
             : InvokeDuplexStreamingCore(
-                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+                method, request, requestCodec, responseCodec, streams, control, cancellationToken);
         return ObserveStream(method, stream);
     }
 

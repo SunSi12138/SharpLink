@@ -243,44 +243,105 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
 
-        lock (_terminalGate)
-        {
-            if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
-                (int)ServerCallCancellationReason.None)
-            {
-                return false;
-            }
-        }
+        return TryClaimTerminal(reason, signalCancellation: true, out _, out _);
+    }
 
+    public bool TryAcceptStreamData()
+        => TryClaimStreamProgress(signalCancellation: true, out _);
+
+    /// <summary>
+    /// Claims the same stream-progress terminal boundary without invoking application cancellation
+    /// callbacks on the caller thread. The caller must arrange <see cref="NotifyInvocationCancellation"/>
+    /// when <paramref name="cancellationNotificationRequired"/> is true while retaining a lease.
+    /// </summary>
+    internal bool TryAcceptStreamDataDeferredCancellation(out bool cancellationNotificationRequired)
+        => TryClaimStreamProgress(signalCancellation: false, out cancellationNotificationRequired);
+
+    public bool TryClaimResponse()
+        => TryClaimTerminal(
+               ServerCallCancellationReason.Completed,
+               signalCancellation: true,
+               out var claimedReason,
+               out _) &&
+           claimedReason == ServerCallCancellationReason.Completed;
+
+    internal void NotifyInvocationCancellation()
+    {
         try
         {
             _invocationCancellation?.Cancel();
         }
         catch
         {
-            // User cancellation callbacks cannot be allowed to escape into a protocol loop,
-            // timer callback or server shutdown path. Cancellation remains observable.
+            // User cancellation callbacks are best-effort notification after terminal ownership
+            // has already been decided. They cannot replace the selected RPC result.
         }
-        return true;
     }
 
-    public bool TryClaimResponse()
+    private bool TryClaimStreamProgress(
+        bool signalCancellation,
+        out bool cancellationNotificationRequired)
     {
+        cancellationNotificationRequired = false;
         if (Reason != ServerCallCancellationReason.None)
             return false;
 
-        if (Deadline.IsExpired(_timeProvider ?? throw new InvalidOperationException(
-                "Server call state has no time provider.")))
+        var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+            "Server call state has no time provider.");
+        if (Deadline.IsExpired(timeProvider))
         {
-            TryCancel(ServerCallCancellationReason.DeadlineExceeded);
+            _ = TryClaimTerminal(
+                ServerCallCancellationReason.DeadlineExceeded,
+                signalCancellation,
+                out _,
+                out cancellationNotificationRequired);
             return false;
         }
 
-        return Interlocked.CompareExchange(
-                   ref _reason,
-                   (int)ServerCallCancellationReason.Completed,
-                   (int)ServerCallCancellationReason.None) ==
-               (int)ServerCallCancellationReason.None;
+        return Reason == ServerCallCancellationReason.None;
+    }
+
+    private bool TryClaimTerminal(
+        ServerCallCancellationReason proposedReason,
+        bool signalCancellation,
+        out ServerCallCancellationReason claimedReason,
+        out bool cancellationNotificationRequired)
+    {
+        if (proposedReason == ServerCallCancellationReason.None)
+            throw new ArgumentOutOfRangeException(nameof(proposedReason));
+
+        var claimed = false;
+        cancellationNotificationRequired = false;
+        lock (_terminalGate)
+        {
+            var reason = proposedReason;
+            var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+                "Server call state has no time provider.");
+            if (reason != ServerCallCancellationReason.DeadlineExceeded && Deadline.IsExpired(timeProvider))
+                reason = ServerCallCancellationReason.DeadlineExceeded;
+
+            if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
+                (int)ServerCallCancellationReason.None)
+            {
+                claimedReason = Reason;
+                return false;
+            }
+
+            claimed = true;
+            claimedReason = reason;
+            if (reason != ServerCallCancellationReason.Completed)
+                cancellationNotificationRequired = _invocationCancellation is not null;
+        }
+
+        if (claimedReason == ServerCallCancellationReason.Completed)
+            return true;
+
+        if (signalCancellation && cancellationNotificationRequired)
+        {
+            NotifyInvocationCancellation();
+            cancellationNotificationRequired = false;
+        }
+        return claimed;
     }
 
     public bool TryRecordAbandoned()
