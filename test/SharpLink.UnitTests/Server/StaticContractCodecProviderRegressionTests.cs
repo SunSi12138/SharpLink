@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
+using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
@@ -186,7 +187,7 @@ public class StaticContractCodecProviderRegressionTests
         {
         }
 
-        public SharedPayload? Deserialize(in ReadOnlySequence<byte> buffer) => default;
+        public SharedPayload Deserialize(in ReadOnlySequence<byte> buffer) => default;
     }
 
     private sealed class ContractBCodec : IRpcCodec<SharedPayload>
@@ -195,7 +196,7 @@ public class StaticContractCodecProviderRegressionTests
         {
         }
 
-        public SharedPayload? Deserialize(in ReadOnlySequence<byte> buffer) => default;
+        public SharedPayload Deserialize(in ReadOnlySequence<byte> buffer) => default;
     }
 
     private sealed class StubMarker(long interfaceHash) : IRpcStub
