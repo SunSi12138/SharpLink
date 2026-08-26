@@ -12,11 +12,11 @@ public interface IRpcRuntimeContext
     IRpcBufferWriterPool Buffers { get; }
 }
 
-/// <summary>Resolves the immutable Codec provider owned by one generated RPC Contract.</summary>
+/// <summary>Resolves the immutable Codec provider owned by one generated RPC Contract assembly.</summary>
 public interface IRpcContractCodecProviderResolver
 {
-    /// <summary>Gets the Codec provider bound to <paramref name="contractType"/>.</summary>
-    IRpcCodecProvider GetContractCodecProvider(Type contractType);
+    /// <summary>Gets the Codec provider bound to <paramref name="ownerAssembly"/>.</summary>
+    IRpcCodecProvider GetContractCodecProvider(Assembly ownerAssembly);
 }
 
 /// <summary>Resolves codecs without relying on process-wide mutable configuration.</summary>
