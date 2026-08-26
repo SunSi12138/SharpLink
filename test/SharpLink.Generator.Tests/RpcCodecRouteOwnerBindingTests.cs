@@ -117,7 +117,7 @@ public sealed class SelectorAdapter : TestRouteAdapterBase
         var globalSection = manifest.Substring(globalStart, contractStart - globalStart);
         var contractSection = manifest.Substring(contractStart);
         Ensure(globalSection.Contains("new __SharpLinkGeneratedCodec_", StringComparison.Ordinal),
-            "an intrinsic selector Adapter factory must stay in the default generated provider so runtime UseCodec<T> can still override it");
+            "an intrinsic selector Adapter factory must stay in the default generated graph so the assembly-owned RPC provider can bind the shared generated default");
         Ensure(!contractSection.Contains("__SharpLinkGeneratedContractPolicyCodec_", StringComparison.Ordinal),
             "an intrinsic selector Adapter must not be mistaken for owner-specific Contract policy");
         return Task.CompletedTask;
