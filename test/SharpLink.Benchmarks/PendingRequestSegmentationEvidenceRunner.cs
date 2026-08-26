@@ -148,7 +148,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
             ChurnOneFullIdCycle(table);
 
         var operations = new RpcRequestOperation<int>[active];
-        var deadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddHours(1), timeProvider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromHours(1), timeProvider);
         for (var index = 0; index < active; index++)
         {
             operations[index] = index < deadlines
@@ -205,9 +205,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
         for (var index = 0; index < iterations; index++)
         {
             var started = Stopwatch.GetTimestamp();
-            var deadline = RpcDeadline.Create(
-                TimeProvider.System.GetUtcNow().AddMilliseconds(deadlineMilliseconds),
-                TimeProvider.System);
+            var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(deadlineMilliseconds), TimeProvider.System);
             var operation = table.Rent(
                 Int32Codec.Instance,
                 PendingCallKind.Unary,
@@ -336,9 +334,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
 
     private static async Task ObserveOneDeadlineAsync(PendingRequestTable table, int milliseconds)
     {
-        var deadline = RpcDeadline.Create(
-            TimeProvider.System.GetUtcNow().AddMilliseconds(milliseconds),
-            TimeProvider.System);
+        var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(milliseconds), TimeProvider.System);
         var operation = table.Rent(
             Int32Codec.Instance,
             PendingCallKind.Unary,

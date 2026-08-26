@@ -497,6 +497,18 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task OneWayMethodTimeoutShouldCancelServerInvocationCooperatively()
+    {
+        TestService.ResetOneWayDeadlineCancellation();
+        await using var harness = await TestHarness.CreateAsync();
+        var service = harness.Client.Get<ITestService>();
+
+        await service.WaitForOneWayDeadlineAsync(CancellationToken.None);
+        await TestService.WaitForOneWayDeadlineCancellationAsync()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
     public async Task UserCancellationShouldPropagateOperationCanceledException()
     {
         await using var harness = await TestHarness.CreateAsync();
@@ -731,37 +743,43 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task CallOptionsShouldCarryMetadataAndUseEarliestDeadline()
+    public async Task MethodTimeoutShouldExpireWithoutPublicCallContextDeadline()
     {
         await using var harness = await TestHarness.CreateAsync();
         var svc = harness.Client.Get<ITestService>();
-        var metadata = new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "factory-a"));
 
-        var summary = await svc.DescribeCallAsync(
-            42,
-            new SharpLinkCallOptions
-            {
-                Timeout = TimeSpan.FromSeconds(2),
-                Deadline = DateTimeOffset.UtcNow.AddSeconds(5),
-                Metadata = metadata
-            },
-            CancellationToken.None);
-        Ensure(summary.StartsWith("42:factory-a:deadline", StringComparison.Ordinal), "metadata/deadline call context");
+        var summary = await svc.DescribeCallAsync(42, CancellationToken.None);
+        Ensure(summary.StartsWith("42:missing:no-deadline", StringComparison.Ordinal),
+            "method timeout should not recreate a public absolute call-context deadline");
 
         await EnsureThrowsSharpLinkFast(
-            svc.SlowAddWithOptionsAsync(
-                1,
-                2,
-                new SharpLinkCallOptions { Timeout = TimeSpan.FromMilliseconds(100) },
-                CancellationToken.None).AsTask(),
-            "call options timeout",
+            svc.SlowAddWithMethodTimeoutAsync(1, 2, CancellationToken.None).AsTask(),
+            "method timeout",
             SharpLinkErrorCode.DeadlineExceeded);
     }
 
     [Test]
+    public async Task CallerSelectedMetadataShouldVaryPerInvocation()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        var tenantA = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "a")));
+        var tenantB = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "b")));
+
+        var results = await Task.WhenAll(
+            tenantA.DescribeCallAsync(1, CancellationToken.None).AsTask(),
+            tenantB.DescribeCallAsync(2, CancellationToken.None).AsTask());
+
+        Ensure(results[0].StartsWith("1:a:", StringComparison.Ordinal),
+            "caller-selected metadata A should stay bound to its invocation");
+        Ensure(results[1].StartsWith("2:b:", StringComparison.Ordinal),
+            "caller-selected metadata B should stay bound to its invocation");
+    }
+
+    [Test]
     [NotInParallel]
-    public async Task ServerStopShouldPreservePendingCallCancellationReasons()
+    public async Task ServerStopShouldPreservePendingCallCancellationReasonsWithoutReenteringMapper()
     {
         var exceptionMapper = new RecordingServerStreamExceptionMapper();
         for (var iteration = 0; iteration < 10; iteration++)
@@ -791,10 +809,8 @@ public class IntegrationBehaviorTests
         }
 
         var mappedStreamErrors = exceptionMapper.GetMappedCodes();
-        Ensure(mappedStreamErrors.Length == 10, "every stopped server stream reached the exception mapper");
-        Ensure(
-            mappedStreamErrors.All(static code => code == SharpLinkErrorCode.Unavailable),
-            $"server stream stop reasons: {string.Join(", ", mappedStreamErrors.Select(static code => code?.ToString() ?? "unstructured"))}");
+        Ensure(mappedStreamErrors.Length == 0,
+            "a framework-selected server-stop terminal must not re-enter the application stream exception mapper");
     }
 
     [Test]
@@ -1209,35 +1225,29 @@ public class IntegrationBehaviorTests
     [Test]
     public async Task PartitionSelectorShouldIsolateMetadataKeys()
     {
-        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
-            builder.UseAdmissionControl(options => options.UsePartition(
+        var metadataInterceptor = new SequencedTenantMetadataInterceptor();
+        await using var harness = await TestHarness.CreateAsync(
+            serverConfigure: builder => builder.UseAdmissionControl(options => options.UsePartition(
                 context => context.Metadata is { Count: > 0 } metadata ? metadata[0].Value : null,
                 partition =>
                 {
                     partition.MaxPartitions = 8;
                     partition.UseConcurrency(1);
-                })));
+                })),
+            clientInterceptor: metadataInterceptor);
         var service = harness.Client.Get<ITestService>();
-        using var cancellation = new CancellationTokenSource();
-        var tenantA = new SharpLinkCallOptions
-        {
-            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "a"))
-        };
-        var tenantB = new SharpLinkCallOptions
-        {
-            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "b"))
-        };
-        var active = service.SlowAddWithOptionsAsync(1, 2, tenantA, cancellation.Token).AsTask();
-        await Task.Delay(75);
+        TestService.ResetBlockingAdd();
+        var active = service.BlockingAddAsync(1, 2, CancellationToken.None).AsTask();
+        await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
 
         await EnsureThrowsSharpLinkFast(
-            service.DescribeCallAsync(1, tenantA, CancellationToken.None).AsTask(),
+            service.AddAsync(1, 1).AsTask(),
             "same partition concurrency",
             SharpLinkErrorCode.ResourceExhausted);
-        var other = await service.DescribeCallAsync(2, tenantB, CancellationToken.None);
-        Ensure(other.StartsWith("2:b:", StringComparison.Ordinal), "independent partition permit");
-        cancellation.Cancel();
-        await EnsureThrows<OperationCanceledException>(active, "partition active cancellation");
+        Ensure(await service.AddAsync(2, 2) == 4, "independent metadata partition permit");
+
+        TestService.ReleaseBlockingAdd();
+        Ensure(await active == 3, "partition active call completion");
     }
 
     [Test]
@@ -1987,6 +1997,22 @@ public class IntegrationBehaviorTests
         }
     }
 
+    private sealed class SequencedTenantMetadataInterceptor : ISharpLinkClientInterceptor
+    {
+        private int _invocationCount;
+
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            var invocation = Interlocked.Increment(ref _invocationCount);
+            var tenant = invocation <= 2 ? "a" : "b";
+            context.Metadata = new SharpLinkMetadata(
+                new KeyValuePair<string, string>("tenant", tenant));
+            return next(context);
+        }
+    }
+
     private sealed class TestHarness : IAsyncDisposable
     {
         private readonly CancellationTokenSource _serverCts;
@@ -2020,7 +2046,8 @@ public class IntegrationBehaviorTests
             Action<SharpLinkRuntimeOptions>? serverRuntimeConfigure = null,
             Action<SharpLinkRuntimeOptions>? clientRuntimeConfigure = null,
             Action<SharpLinkServerBuilder>? serverConfigure = null,
-            IRpcCodec<Person>? personCodec = null)
+            IRpcCodec<Person>? personCodec = null,
+            ISharpLinkClientInterceptor? clientInterceptor = null)
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
@@ -2082,6 +2109,8 @@ public class IntegrationBehaviorTests
                 clientBuilder.UseRuntime(clientRuntimeConfigure);
             if (poolConfigure is not null)
                 clientBuilder.UseConnectionPool(poolConfigure);
+            if (clientInterceptor is not null)
+                clientBuilder.AddInterceptor(clientInterceptor);
 
             if (disableRequestTimeout)
                 clientBuilder.DisableRequestTimeout();
@@ -2260,14 +2289,14 @@ public interface ITestService : IService
     ValueTask<int> SlowThrowWithoutTimeoutAsync();
     [NonCancellable]
     ValueTask ThrowCancellationAsync();
-    ValueTask<int> SlowAddWithOptionsAsync(
+    [Sdk.Timeout(0.1)]
+    ValueTask<int> SlowAddWithMethodTimeoutAsync(
         int left,
         int right,
-        SharpLinkCallOptions options,
         CancellationToken cancellationToken);
+    [Sdk.Timeout(2)]
     ValueTask<string> DescribeCallAsync(
         int value,
-        SharpLinkCallOptions options,
         CancellationToken cancellationToken);
     [NonCancellable]
     ValueTask<Person> EchoAsync(Person person);
@@ -2281,6 +2310,9 @@ public interface ITestService : IService
     [NonCancellable]
     IAsyncEnumerable<string> DownloadAsync(int count);
     IAsyncEnumerable<int> SlowDownloadAsync(int count, int delayMs, CancellationToken cancellationToken);
+    [Oneway]
+    [Sdk.Timeout(0.1)]
+    ValueTask WaitForOneWayDeadlineAsync(CancellationToken cancellationToken);
     [Oneway]
     [NonCancellable]
     ValueTask NotifyAsync(string message);
@@ -2304,6 +2336,7 @@ public class TestService : ITestService
     private static int s_malformedOneWayInvocations;
     private static int s_notifyCount;
     private static TaskCompletionSource s_notify = CreateCompletionSource();
+    private static TaskCompletionSource s_oneWayDeadlineCancellation = CreateCompletionSource();
 
     internal static int ActiveUploads => Volatile.Read(ref s_activeUploads);
     internal static int MalformedUploadInvocations => Volatile.Read(ref s_malformedUploadInvocations);
@@ -2320,6 +2353,12 @@ public class TestService : ITestService
         => Volatile.Write(ref s_malformedOneWayInvocations, 0);
 
     internal static Task WaitForNotifyAsync() => Volatile.Read(ref s_notify).Task;
+
+    internal static void ResetOneWayDeadlineCancellation()
+        => Interlocked.Exchange(ref s_oneWayDeadlineCancellation, CreateCompletionSource());
+
+    internal static Task WaitForOneWayDeadlineCancellationAsync()
+        => Volatile.Read(ref s_oneWayDeadlineCancellation).Task;
 
     internal static void ResetActiveUploads() => Volatile.Write(ref s_activeUploads, 0);
     internal static void ResetMalformedUploadInvocations()
@@ -2398,10 +2437,9 @@ public class TestService : ITestService
     public ValueTask ThrowCancellationAsync()
         => ValueTask.FromException(new OperationCanceledException("service-specific cancellation"));
 
-    public async ValueTask<int> SlowAddWithOptionsAsync(
+    public async ValueTask<int> SlowAddWithMethodTimeoutAsync(
         int left,
         int right,
-        SharpLinkCallOptions options,
         CancellationToken cancellationToken)
     {
         await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
@@ -2410,14 +2448,13 @@ public class TestService : ITestService
 
     public ValueTask<string> DescribeCallAsync(
         int value,
-        SharpLinkCallOptions options,
         CancellationToken cancellationToken)
     {
         var context = SharpLinkCallContext.Current;
         var tenant = context?.Metadata is { Count: > 0 } metadata
             ? metadata[0].Value
             : "missing";
-        var deadline = context?.Deadline is null ? "no-deadline" : "deadline";
+        const string deadline = "no-deadline";
         return ValueTask.FromResult($"{value}:{tenant}:{deadline}");
     }
 
@@ -2501,6 +2538,18 @@ public class TestService : ITestService
         finally
         {
             Volatile.Read(ref s_downloadDisposed).TrySetResult();
+        }
+    }
+
+    public async ValueTask WaitForOneWayDeadlineAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Volatile.Read(ref s_oneWayDeadlineCancellation).TrySetResult();
         }
     }
 

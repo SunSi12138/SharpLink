@@ -224,7 +224,7 @@ public class ServerCallDeadlineSchedulerSizingTests
         ManualTimeProvider timeProvider)
         => ServerCallCancellationState.Rent(
             requestId,
-            RpcDeadline.Create(timeProvider.GetUtcNow().Add(deadlineAfter), timeProvider),
+            RpcDeadline.Create(deadlineAfter, timeProvider),
             timeProvider,
             CancellationToken.None,
             CancellationToken.None,

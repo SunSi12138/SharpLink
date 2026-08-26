@@ -10,6 +10,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
     private int _written;
     private int _active;
     private int _maxWrittenBytes = int.MaxValue;
+    private RpcDeadline _emissionDeadline;
 
     /// <summary>Creates an independently owned writer lease.</summary>
     /// <param name="initialCapacity">The minimum initial byte capacity.</param>
@@ -66,6 +67,20 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
         }
     }
 
+    internal RpcDeadline EmissionDeadline
+    {
+        get
+        {
+            EnsureActive();
+            return _emissionDeadline;
+        }
+        set
+        {
+            EnsureActive();
+            _emissionDeadline = value;
+        }
+    }
+
     internal void Activate(int initialCapacity, int maxWrittenBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(initialCapacity);
@@ -86,6 +101,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
             }
             _written = 0;
             _maxWrittenBytes = maxWrittenBytes;
+            _emissionDeadline = default;
         }
         catch
         {
@@ -138,6 +154,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
         var buffer = Interlocked.Exchange(ref _buffer, null);
         _written = 0;
         _maxWrittenBytes = int.MaxValue;
+        _emissionDeadline = default;
         if (buffer is not null)
             ArrayPool<byte>.Shared.Return(buffer);
         return true;
@@ -150,6 +167,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
 
         _written = 0;
         _maxWrittenBytes = int.MaxValue;
+        _emissionDeadline = default;
         if (_buffer is { Length: var length } buffer && length > maxRetainedCapacityBytes)
         {
             _buffer = null;
@@ -162,6 +180,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
     {
         if (Volatile.Read(ref _active) != 0)
             throw new InvalidOperationException("Cannot release storage from an active writer lease.");
+        _emissionDeadline = default;
         var buffer = Interlocked.Exchange(ref _buffer, null);
         if (buffer is not null)
             ArrayPool<byte>.Shared.Return(buffer);

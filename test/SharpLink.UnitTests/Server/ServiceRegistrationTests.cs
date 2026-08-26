@@ -102,7 +102,7 @@ public class ServiceRegistrationTests
         Ensure(ContainsMessage(failure, "connection service disposal failed"),
             "connection cleanup must retain the service disposal failure");
         Ensure(ContainsMessage(failure, "connection scope disposal failed"),
-            "connection cleanup must retain the scope disposal failure");
+            "connection cleanup must retain the scope cleanup failure");
     }
 
     [Test]
@@ -314,6 +314,18 @@ public class ServiceRegistrationTests
         var assembly = AssemblyBuilder.DefineDynamicAssembly(
             new AssemblyName($"SharpLink.UnitTests.{name}.{Guid.NewGuid():N}"),
             AssemblyBuilderAccess.Run);
+        var locatorConstructor = typeof(SharpLinkGeneratedAssemblyManifestAttribute).GetConstructor(
+            [typeof(Type), typeof(int), typeof(int), typeof(string), typeof(string)]) ??
+            throw new Exception("cannot find current SharpLink manifest locator constructor");
+        assembly.SetCustomAttribute(new CustomAttributeBuilder(
+            locatorConstructor,
+            [
+                typeof(EmptyManifest),
+                SharpLinkGeneratedManifestVersions.Api,
+                SharpLinkGeneratedManifestVersions.Protocol,
+                "test",
+                SharpLinkGeneratedManifestVersions.AbiIdentity
+            ]));
         var manifest = new EmptyManifest(assembly);
         var runtime = (SharpLinkRuntimeContext)GetPrivateField(server, "_runtimeContext");
         var codecRegistration = runtime.PrepareGeneratedManifest(manifest);

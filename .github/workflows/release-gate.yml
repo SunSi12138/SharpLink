@@ -13,6 +13,9 @@ on:
   workflow_dispatch:
 
 jobs:
+  codec-compatibility:
+    uses: ./.github/workflows/codec-compatibility.yml
+
   matrix-build-test:
     strategy:
       fail-fast: false
@@ -224,7 +227,7 @@ jobs:
 
   release-summary:
     runs-on: ubuntu-latest
-    needs: [matrix-build-test, aot-smoke, pack, chaos-smoke]
+    needs: [codec-compatibility, matrix-build-test, aot-smoke, pack, chaos-smoke]
     if: ${{ success() }}
     steps:
       - name: Release gate passed

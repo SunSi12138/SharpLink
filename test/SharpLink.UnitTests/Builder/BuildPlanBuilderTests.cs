@@ -98,8 +98,8 @@ public sealed class BuildPlanBuilderTests
     }
 
     [Test]
-    public void MalformedApi5ManifestShouldFailDuringClientCompileBeforeMaterializingResources()
-        => AssertSemanticManifestCompileFailure(new MalformedApi5Manifest(), "malformed API 5 manifest");
+    public void MalformedApi4ManifestShouldFailDuringClientCompileBeforeMaterializingResources()
+        => AssertSemanticManifestCompileFailure(new MalformedApi4Manifest(), "malformed API 4 manifest");
 
     [Test]
     public void ForeignContractOwnershipShouldFailDuringClientCompileBeforeMaterializingResources()
@@ -460,8 +460,7 @@ public sealed class BuildPlanBuilderTests
                 methodKind: RpcMethodKind.Unary,
                 connectionId: "phase11-admission",
                 authenticationContext: null,
-                metadata: null,
-                deadline: null);
+                metadata: null);
             var first = await controller.AcquireAsync(
                 context, retainedBytes: 1, allowQueue: false, CancellationToken.None);
             var second = await controller.AcquireAsync(
@@ -802,7 +801,7 @@ public sealed class BuildPlanBuilderTests
         public IReadOnlyList<string> Dependencies => [];
     }
 
-    private sealed class MalformedApi5Manifest : ISharpLinkGeneratedAssemblyManifest
+    private sealed class MalformedApi4Manifest : ISharpLinkGeneratedAssemblyManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
