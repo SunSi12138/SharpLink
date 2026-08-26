@@ -174,8 +174,7 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
-        if (control.Deadline.IsExpired(_runtimeContext.TimeProvider))
-            throw CreateDeadlineExceededException();
+        EnsureLogicalCallProgress(control);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -257,8 +256,7 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
-        if (control.Deadline.IsExpired(_runtimeContext.TimeProvider))
-            throw CreateDeadlineExceededException();
+        EnsureLogicalCallProgress(control);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -473,7 +471,9 @@ internal sealed partial class SharpLinkClient
             SharpLinkTelemetry.RecordClientAttempt();
         try
         {
+            EnsureLogicalCallProgress(control);
             var connection = GetReadyConnection(method, retrySelection: null, outcome);
+            EnsureLogicalCallProgress(control);
             var operation = connection.PendingCalls.Rent(
                 responseCodec,
                 PendingCallKind.Unary,
@@ -497,6 +497,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
+            exception = ArbitrateLogicalCallFailure(control, exception);
             outcome?.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);
         }
@@ -567,7 +568,21 @@ internal sealed partial class SharpLinkClient
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
-        var connection = GetReadyConnection(method, retrySelection: null, outcome);
+
+        ClientConnection connection;
+        try
+        {
+            EnsureLogicalCallProgress(control);
+            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            EnsureLogicalCallProgress(control);
+        }
+        catch (Exception exception)
+        {
+            exception = ArbitrateLogicalCallFailure(control, exception);
+            outcome?.CompleteLocalFailure(exception);
+            throw exception;
+        }
+
         var flags = ProtocolV2FrameFlags.OneWay;
         if (control.Deadline.HasValue ||
             (method.HasClientStreams && cancellationToken.CanBeCanceled))
@@ -579,6 +594,7 @@ internal sealed partial class SharpLinkClient
         long requestId;
         try
         {
+            EnsureLogicalCallProgress(control);
             if (method.HasClientStreams)
             {
                 oneWayStreamLease = connection.PendingCalls.RegisterOneWayClientStream(
@@ -594,8 +610,9 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
+            exception = ArbitrateLogicalCallFailure(control, exception);
             outcome?.CompleteLocalFailure(exception);
-            throw;
+            throw exception;
         }
         var streamCancellationToken = method.HasClientStreams
             ? connection.PendingCalls.GetProducerCancellationToken(requestId)
@@ -604,17 +621,34 @@ internal sealed partial class SharpLinkClient
         {
             cancellationToken.ThrowIfCancellationRequested();
             var exception = CreateDeadlineExceededException();
+            _ = control.LogicalCall?.TryClaimDeadline();
             outcome?.CompleteLocalFailure(exception);
             throw exception;
         }
         if (!method.HasClientStreams)
+        {
             cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                EnsureLogicalCallProgress(control);
+            }
+            catch (Exception exception)
+            {
+                outcome?.CompleteLocalFailure(exception);
+                throw;
+            }
+        }
         if (!method.HasClientStreams && !connection.TryBeginUntrackedCall())
         {
-            var exception = new SharpLinkException(
+            Exception exception = new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
                 "The selected connection is draining.");
-            outcome?.CompleteWithoutPending(PendingCallCompletionReason.ConnectionClosed, exception);
+            exception = ArbitrateLogicalCallFailure(control, exception);
+            outcome?.CompleteWithoutPending(
+                exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                    ? PendingCallCompletionReason.DeadlineExceeded
+                    : PendingCallCompletionReason.ConnectionClosed,
+                exception);
             throw exception;
         }
         try
@@ -660,9 +694,14 @@ internal sealed partial class SharpLinkClient
                 }
                 else
                 {
-                    outcome?.CompleteWithoutPending(PendingCallCompletionReason.SendFailure, exception);
+                    exception = ArbitrateLogicalCallFailure(control, exception);
+                    outcome?.CompleteWithoutPending(
+                        exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                            ? PendingCallCompletionReason.DeadlineExceeded
+                            : PendingCallCompletionReason.SendFailure,
+                        exception);
                 }
-                throw;
+                throw exception;
             }
         }
         finally
@@ -691,7 +730,9 @@ internal sealed partial class SharpLinkClient
         RpcRequestOperation<TResponse> operation;
         try
         {
+            EnsureLogicalCallProgress(control);
             connection = GetReadyConnection(method, retrySelection: null, outcome);
+            EnsureLogicalCallProgress(control);
             operation = connection.PendingCalls.Rent(
                     responseCodec,
                     PendingCallKind.ClientStreaming,
@@ -704,8 +745,9 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
+            exception = ArbitrateLogicalCallFailure(control, exception);
             outcome?.CompleteLocalFailure(exception);
-            throw;
+            throw exception;
         }
         var flags = method.HasResponsePayload
             ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable
@@ -913,7 +955,9 @@ internal sealed partial class SharpLinkClient
         var requestId = 0L;
         try
         {
+            EnsureLogicalCallProgress(control);
             connection = GetReadyConnection(method, retrySelection: null, outcome);
+            EnsureLogicalCallProgress(control);
             requestId = connection.PendingCalls.RegisterStream(
                 kind,
                 dispatcher,
@@ -923,6 +967,7 @@ internal sealed partial class SharpLinkClient
             if (!connection.PendingCalls.Contains(requestId))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                _ = control.LogicalCall?.TryClaimDeadline();
                 throw CreateDeadlineExceededException();
             }
             dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
@@ -931,18 +976,23 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
+            exception = ArbitrateLogicalCallFailure(control, exception);
             if (connection is not null && requestId != 0)
             {
                 connection.PendingCalls.TryComplete(
                     requestId,
-                    PendingCallCompletionReason.SendFailure,
-                    exception);
+                    exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                        ? PendingCallCompletionReason.DeadlineExceeded
+                        : PendingCallCompletionReason.SendFailure,
+                    exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                        ? null
+                        : exception);
             }
             else
             {
                 outcome?.CompleteLocalFailure(exception);
             }
-            throw;
+            throw exception;
         }
     }
 

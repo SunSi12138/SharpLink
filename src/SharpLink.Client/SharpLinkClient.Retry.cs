@@ -111,10 +111,21 @@ internal sealed partial class SharpLinkClient
         throw lastFailure ?? new SharpLinkException(SharpLinkErrorCode.Internal, "Retry exhausted without an attempt outcome.");
     }
 
-    private static void EnsureLogicalCallProgress(in ResolvedCallControl control)
+    internal static void EnsureLogicalCallProgress(in ResolvedCallControl control)
     {
         if (control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
             throw CreateDeadlineExceededException();
+    }
+
+    internal static Exception ArbitrateLogicalCallFailure(
+        in ResolvedCallControl control,
+        Exception exception)
+    {
+        if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
+            _ = control.LogicalCall?.TryClaimDeadline();
+        if (control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
+            return CreateDeadlineExceededException();
+        return exception;
     }
 
     private SharpLinkRetryDecision EvaluateRetryDecision(
@@ -200,10 +211,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
-            if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
-                _ = control.LogicalCall?.TryClaimDeadline();
-            if (control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
-                exception = CreateDeadlineExceededException();
+            exception = ArbitrateLogicalCallFailure(control, exception);
             outcome.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);
         }

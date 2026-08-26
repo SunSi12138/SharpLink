@@ -31,21 +31,45 @@ internal sealed partial class SharpLinkClient
             ambientCall.LocalRpcDeadline.HasValue &&
             ambientCall.DeadlineTimeProvider is { } inheritedTimeProvider)
         {
-            // Reading a parent deadline can itself consume time. Project the remaining parent
-            // lifetime from a fresh child-clock sample taken after that read; anchoring it back at
-            // local invocation entry would double-charge the projection work. The local policy,
-            // however, remains anchored at logical invocation entry so that same work still ages
-            // the child's own timeout normally.
-            var inheritedRemaining = ambientCall.LocalRpcDeadline.GetRemaining(inheritedTimeProvider);
-            if (inheritedRemaining <= TimeSpan.Zero)
-                throw CreateDeadlineExceededException();
+            RpcDeadline inheritedDeadline;
+            long comparisonTimestamp;
+            if (ReferenceEquals(inheritedTimeProvider, timeProvider))
+            {
+                // One shared monotonic clock already gives us the exact parent boundary. Preserve
+                // it directly: converting the parent to a remaining duration and re-anchoring that
+                // duration can either double-charge a scheduling gap or extend the parent's hard
+                // cap, depending on which side of the two clock reads the gap lands on.
+                comparisonTimestamp = timeProvider.GetTimestamp();
+                inheritedDeadline = ambientCall.LocalRpcDeadline;
+                if (inheritedDeadline.IsExpired(comparisonTimestamp))
+                    throw CreateDeadlineExceededException();
+            }
+            else
+            {
+                // Across genuinely different providers no absolute monotonic timestamp is
+                // transferable. Project the observed parent remaining duration onto the child
+                // clock, but charge child-clock time consumed while obtaining that observation so
+                // the projection can be conservative and can never extend the observed lifetime.
+                var projectionStarted = timeProvider.GetTimestamp();
+                var inheritedRemaining = ambientCall.LocalRpcDeadline.GetRemaining(inheritedTimeProvider);
+                comparisonTimestamp = timeProvider.GetTimestamp();
+                if (inheritedRemaining <= TimeSpan.Zero)
+                    throw CreateDeadlineExceededException();
 
-            var inheritedAnchor = timeProvider.GetTimestamp();
-            var inheritedDeadline = RpcDeadline.Create(
-                inheritedRemaining,
-                inheritedAnchor,
-                timeProvider.TimestampFrequency);
-            if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, inheritedAnchor))
+                var projectionElapsed = SharpLinkTime.GetElapsed(
+                    projectionStarted,
+                    comparisonTimestamp,
+                    timeProvider.TimestampFrequency);
+                if (projectionElapsed >= inheritedRemaining)
+                    throw CreateDeadlineExceededException();
+                inheritedRemaining -= projectionElapsed;
+                inheritedDeadline = RpcDeadline.Create(
+                    inheritedRemaining,
+                    comparisonTimestamp,
+                    timeProvider.TimestampFrequency);
+            }
+
+            if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, comparisonTimestamp))
                 deadline = inheritedDeadline;
         }
 

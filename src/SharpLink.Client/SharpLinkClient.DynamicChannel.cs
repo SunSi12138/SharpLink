@@ -141,11 +141,16 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         CancellationToken callCancellation,
         [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
     {
+        SharpLinkClient.EnsureLogicalCallProgress(control);
         if (!module.TryAcquire(true, out var lease))
+        {
+            SharpLinkClient.EnsureLogicalCallProgress(control);
             throw Draining();
+        }
         var combined = Combine(callCancellation, module.ForcedCancellation);
         try
         {
+            SharpLinkClient.EnsureLogicalCallProgress(control);
             var stream = inner.InvokeServerStreamingResolved(
                 method, request, requestCodec, responseCodec, control, combined.Token);
             await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
@@ -165,19 +170,36 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
+        SharpLinkClient.EnsureLogicalCallProgress(control);
         if (!module.TryAcquire(true, out var lease))
-            throw Draining();
-        if (!module.TryAcquire(true, out var producerLease))
         {
-            lease.Dispose();
+            SharpLinkClient.EnsureLogicalCallProgress(control);
             throw Draining();
         }
+
+        SharpLinkDynamicModuleLease producerLease;
+        try
+        {
+            SharpLinkClient.EnsureLogicalCallProgress(control);
+            if (!module.TryAcquire(true, out producerLease))
+            {
+                SharpLinkClient.EnsureLogicalCallProgress(control);
+                throw Draining();
+            }
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+
         var producerLifetime = new SharpLinkClientStreamModuleLeaseOwner(producerLease);
         var combined = Combine(callCancellation, module.ForcedCancellation);
         try
         {
             using (SharpLinkClientStreamModuleLeaseContext.Push(producerLifetime))
             {
+                SharpLinkClient.EnsureLogicalCallProgress(control);
                 var stream = inner.InvokeDuplexStreamingResolved(
                     method, request, requestCodec, responseCodec, streams, control, combined.Token);
                 await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))

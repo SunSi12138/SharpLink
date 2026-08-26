@@ -109,11 +109,10 @@ public class SharpLinkClientTimeBudgetTests
             });
         await client.ConnectAsync();
 
-        // ResolveCallControl first samples the local-policy anchor, then asks the inherited
-        // deadline for its remaining lifetime. Advance the one shared monotonic clock on that
-        // second read: the parent is now at t=5 with one second left. Projecting that one second
-        // from the fresh t=5 child sample must preserve the parent's t=6 boundary; anchoring it
-        // back at t=2 would incorrectly expire three seconds early.
+        // ResolveCallControl first samples the local-policy anchor, then observes the shared parent
+        // boundary. Advance the one shared monotonic clock on that second read: the parent is now
+        // at t=5 with one second left. Preserving the original parent RpcDeadline must retain its
+        // t=6 boundary rather than anchoring the remaining second back at logical entry.
         timeProvider.AdvanceOnTimestampRead(2, TimeSpan.FromSeconds(3));
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
@@ -130,6 +129,50 @@ public class SharpLinkClientTimeBudgetTests
             "the inherited cap must equal the parent's current remaining lifetime, without double-counting the handoff delay");
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
         Ensure(await invocation == 0, "inherited handoff response");
+    }
+
+    [Test]
+    public async Task InheritedSharedClockBoundaryShouldNotBeExtendedByReanchorDelay()
+    {
+        var timeProvider = new HandoffTimeProvider();
+        var parentDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(6), timeProvider);
+        timeProvider.Advance(TimeSpan.FromSeconds(2));
+        using var scope = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
+            "parent",
+            null,
+            parentDeadline,
+            timeProvider));
+
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(timeProvider);
+                builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
+            });
+        await client.ConnectAsync();
+
+        // The old projection sampled four seconds of parent lifetime at t=2 and could then be
+        // descheduled before taking a fresh child anchor. Advancing on the third timestamp read
+        // models that gap: re-anchoring four seconds at t=5 would incorrectly extend the parent
+        // to t=9. A shared clock must preserve the original t=6 parent boundary and emit one second.
+        timeProvider.AdvanceOnTimestampRead(3, TimeSpan.FromSeconds(3));
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var invocation = channel.InvokeUnaryAsync(
+            MethodWithTimeout(TimeSpan.FromSeconds(120)),
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default).AsTask();
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+
+        Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(1),
+            "a shared parent deadline must not be extended by a remaining-duration re-anchor gap");
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
+        Ensure(await invocation == 0, "shared-parent reanchor response");
     }
 
     [Test]
@@ -184,7 +227,7 @@ public class SharpLinkClientTimeBudgetTests
     }
 
     [Test]
-    public async Task DynamicModuleServerStreamShouldFreezeDeadlineAtProxyInvocation()
+    public async Task DynamicModuleServerStreamDeadlineShouldWinBeforeDeferredModuleDrain()
     {
         var timeProvider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
@@ -220,13 +263,15 @@ public class SharpLinkClientTimeBudgetTests
             metadata: null,
             cancellationToken: default);
 
-        // The dynamic wrapper may defer module-lease acquisition to enumeration, but it must not
-        // defer the logical RPC lifetime. Delay after the proxy call therefore consumes timeout.
+        // The dynamic wrapper freezes the logical lifetime at proxy invocation. Let that lifetime
+        // expire without running timers, then make the module drain before enumeration. The earlier
+        // logical DeadlineExceeded owner must win over the later local module Unavailable state.
         timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
+        Ensure(module.TryBeginDraining(), "dynamic module should enter draining for the ordering regression");
         await using var enumerator = stream.GetAsyncEnumerator();
         var failure = await CaptureSharpLinkExceptionAsync(enumerator.MoveNextAsync().AsTask());
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "dynamic streaming must use the deadline frozen when the proxy method was invoked");
+            "dynamic streaming must submit deferred module acquisition to the frozen logical deadline owner first");
         Ensure(!await transport.Connection.TryWaitForSentPacket(ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(50)),
             "an already-expired dynamic stream must not begin a network request at enumeration time");
     }
