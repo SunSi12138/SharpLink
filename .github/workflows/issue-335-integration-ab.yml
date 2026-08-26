@@ -1,0 +1,43 @@
+name: Issue 335 Integration A-B Diagnosis
+
+on:
+  push:
+    branches:
+      - evidence/issue-335-bdn-60b7206c
+
+permissions:
+  contents: read
+
+jobs:
+  integration-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.x
+      - name: Reviewed base integration
+        continue-on-error: true
+        shell: bash
+        run: |
+          git checkout 46c1285d25b8445d26d050256e8ad590859b541b
+          dotnet restore test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj
+          dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj --no-restore -c Release -v minimal
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1 --timeout 120s
+      - name: Final head integration
+        continue-on-error: true
+        shell: bash
+        run: |
+          git clean -fdx
+          git checkout b4b142a5afbcc13c54d60eb9c7f4c1acae2f4d6c
+          dotnet restore test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj
+          dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj --no-restore -c Release -v minimal
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1 --timeout 120s
