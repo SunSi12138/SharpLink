@@ -48,7 +48,8 @@ public class ContractCodecSetManifestValidationTests
             Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 "dynamic registration should return InvalidManifest");
             Ensure(result.Error?.Artifact == "ContractCodecSet",
-                "dynamic registration should attribute the failure to the Contract Codec set");
+                $"dynamic registration should attribute the failure to the Contract Codec set; " +
+                $"artifact='{result.Error?.Artifact ?? "<null>"}', message='{result.Error?.Message ?? "<null>"}'");
         }
         finally
         {
