@@ -57,12 +57,24 @@ public class RpcEnumCodecOverrideRegressionTests
 
     private sealed class NoPolicyEnumManifest : ISharpLinkGeneratedAssemblyManifest
     {
+        private const string Fingerprint = "0000000000000000000000000000000000000000000000000000000000000000";
+
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "enum-runtime-override-regression";
         public Assembly OwnerAssembly => typeof(RpcEnumCodecOverrideRegressionTests).Assembly;
         public string CompileTimeDescriptor => "enum-runtime-override-regression";
-        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts =>
+        [
+            new(
+                typeof(NoPolicyContract),
+                typeof(NoPolicyContract).FullName ?? nameof(NoPolicyContract),
+                ContractId: 1,
+                Fingerprint,
+                Methods: [],
+                ProxyFactory: static (_, _) => throw new NotSupportedException(),
+                StubFactory: static _ => throw new NotSupportedException())
+        ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<SharpLinkGeneratedContractCodecSet> ContractCodecSets =>
