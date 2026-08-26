@@ -98,6 +98,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ArgumentNullException.ThrowIfNull(manifest);
         ValidateGeneratedManifestCompatibility(manifest);
+        SharpLinkGeneratedManifestStructureValidator.ValidateContractCodecSets(manifest);
         return RpcGeneratedManifestRegistration.Create(manifest, Codecs);
     }
 
