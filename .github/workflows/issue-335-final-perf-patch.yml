@@ -28,39 +28,17 @@ jobs:
 
           path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
           text = path.read_text()
-
-          old_find = '''    private static AdmissionPartitionRuntimeGeneration? FindGenerationLocked(
-              AdmissionPartitionEntry entry,
-              AdmissionPartitionPolicyGeneration policy)
-          {
-              foreach (var generation in entry.Generations)
-                  if (ReferenceEquals(generation.Policy, policy))
-                      return generation;
-              return null;
-          }
-          '''
-          new_find = '''    private static AdmissionPartitionRuntimeGeneration? FindGenerationLocked(
-              AdmissionPartitionEntry entry,
-              AdmissionPartitionPolicyGeneration policy)
-          {
-              if (ReferenceEquals(entry.Current.Policy, policy))
-                  return entry.Current;
-              foreach (var generation in entry.Generations)
-                  if (ReferenceEquals(generation.Policy, policy))
-                      return generation;
-              return null;
-          }
-          '''
+          old_find = "        AdmissionPartitionPolicyGeneration policy)\n    {\n        foreach (var generation in entry.Generations)"
+          new_find = "        AdmissionPartitionPolicyGeneration policy)\n    {\n        if (ReferenceEquals(entry.Current.Policy, policy))\n            return entry.Current;\n        foreach (var generation in entry.Generations)"
           old_runtime = '    internal AdmissionRuleRuntime Runtime { get; } = generation.Runtime;\n'
           new_runtime = '    internal AdmissionRuleRuntime Runtime => generation.Runtime;\n'
 
           if text.count(old_find) != 1:
-              raise SystemExit(f'expected one FindGenerationLocked block, found {text.count(old_find)}')
+              raise SystemExit(f'expected one generation lookup anchor, found {text.count(old_find)}')
           if text.count(old_runtime) != 1:
               raise SystemExit(f'expected one lease Runtime property, found {text.count(old_runtime)}')
 
-          text = text.replace(old_find, new_find).replace(old_runtime, new_runtime)
-          path.write_text(text)
+          path.write_text(text.replace(old_find, new_find).replace(old_runtime, new_runtime))
           PY
           git diff --check
           git diff -- src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs
