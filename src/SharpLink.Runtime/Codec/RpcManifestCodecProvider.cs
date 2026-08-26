@@ -21,6 +21,18 @@ public static class RpcGeneratedCodecResolver
             $"Runtime context '{runtimeContext.GetType().FullName}' must implement {nameof(IRpcContractCodecProviderResolver)} to construct generated Contract artifacts.");
     }
 
+    /// <summary>
+    /// Compatibility overload for generated source that still names a Contract Type. The Type does
+    /// not define an independent policy namespace; it is canonicalized to its owner assembly.
+    /// </summary>
+    public static IRpcCodecProvider GetProvider(
+        IRpcRuntimeContext runtimeContext,
+        Type contractType)
+    {
+        ArgumentNullException.ThrowIfNull(contractType);
+        return GetProvider(runtimeContext, contractType.Assembly);
+    }
+
     internal static IRpcCodecProvider GetProvider(RpcGeneratedManifestRegistration registration)
     {
         ArgumentNullException.ThrowIfNull(registration);
@@ -28,6 +40,20 @@ public static class RpcGeneratedCodecResolver
         return OwnerProviders.GetValue(
             registration,
             static owner => new RpcManifestCodecProvider(owner, owner.BaseProvider));
+    }
+
+    internal static IRpcCodecProvider GetProvider(
+        RpcGeneratedManifestRegistration registration,
+        Type contractType)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        ArgumentNullException.ThrowIfNull(contractType);
+        if (!ReferenceEquals(contractType.Assembly, registration.Manifest.OwnerAssembly))
+        {
+            throw new InvalidOperationException(
+                $"Contract '{contractType.FullName}' is not owned by generated manifest '{registration.Manifest.OwnerAssembly.FullName}'.");
+        }
+        return GetProvider(registration);
     }
 }
 
