@@ -3,6 +3,7 @@ using System.Net;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
+using System.Runtime.Loader;
 using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
@@ -42,14 +43,30 @@ public class ContractCodecSetManifestValidationTests
         try
         {
             var assembly = CreateForeignManifestAssembly();
-            var result = server.RegisterAssembly(assembly);
+            var loadContext = AssemblyLoadContext.GetLoadContext(assembly) ?? AssemblyLoadContext.Default;
+            Assembly? ResolveDynamicAssembly(AssemblyLoadContext _, AssemblyName requested)
+                => string.Equals(requested.Name, assembly.GetName().Name, StringComparison.Ordinal)
+                    ? assembly
+                    : null;
 
-            Ensure(!result.Succeeded, "dynamic registration must reject a foreign Contract Codec set");
-            Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
-                "dynamic registration should return InvalidManifest");
-            Ensure(result.Error?.Artifact == "ContractCodecSet",
-                $"dynamic registration should attribute the failure to the Contract Codec set; " +
-                $"artifact='{result.Error?.Artifact ?? "<null>"}', message='{result.Error?.Message ?? "<null>"}'");
+            loadContext.Resolving += ResolveDynamicAssembly;
+            try
+            {
+                var result = server.RegisterAssembly(assembly);
+
+                Ensure(!result.Succeeded, "dynamic registration must reject a foreign Contract Codec set");
+                Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    "dynamic registration should return InvalidManifest");
+                Ensure(result.Error?.Artifact == "ContractCodecSet",
+                    $"dynamic registration should attribute the failure to the Contract Codec set; " +
+                    $"artifact='{result.Error?.Artifact ?? "<null>"}', message='{result.Error?.Message ?? "<null>"}'");
+                Ensure(result.Error.Message.Contains("foreign or undeclared Contract", StringComparison.Ordinal),
+                    "dynamic registration should report the foreign Contract Codec set");
+            }
+            finally
+            {
+                loadContext.Resolving -= ResolveDynamicAssembly;
+            }
         }
         finally
         {
