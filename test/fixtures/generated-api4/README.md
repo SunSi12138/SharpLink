@@ -8,11 +8,12 @@ commit recorded in `PROVENANCE.md` — i.e., the last generated surface that sti
 The fixture contains one generated DTO codec (implementing the API 4 sized-codec surface) and all
 five RPC call shapes: Unary, OneWay, ClientStreaming, ServerStreaming, and DuplexStreaming.
 
-The API 5 Runtime rejects this binary at every registration boundary (direct loader, Client,
-Server, multi-cluster registration and replacement) with an expected/actual version mismatch,
-before manifest materialization, without publishing snapshots, and without retaining the
-collectible load context. This proves the previous self-describing ABI is recognized and rejected
-early rather than adapted.
+This fixture is not a supported compatibility boundary. It is retained as a discriminator-collision
+sentinel: this development binary already stamped integer API 4 but uses the pre-#287
+`IRpcChannel(... SharpLinkCallOptions ...)` shape. The 2.0 line also uses API 4 because version
+numbering is anchored to the published 1.1.1/API3 baseline, so the current runtime additionally
+requires an exact ABI identity in the self-describing locator. This frozen binary must therefore be
+rejected before manifest materialization even though its integer API value is also 4.
 
 The SHA-256 file records the checksum of the decompressed DLL. Regeneration must build against
 the pre-bump repository commit recorded in `PROVENANCE.md` and must update the provenance file,

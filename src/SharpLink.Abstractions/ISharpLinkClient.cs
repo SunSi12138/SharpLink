@@ -116,4 +116,9 @@ public interface ISharpLinkClient : IAsyncDisposable
     /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;
+
+    /// <summary>Creates a generated proxy that attaches one immutable metadata snapshot to every invocation.</summary>
+    /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
+    /// <param name="metadata">Envelope metadata attached without adding a business-contract parameter.</param>
+    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
 }

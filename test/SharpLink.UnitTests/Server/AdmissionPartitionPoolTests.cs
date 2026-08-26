@@ -394,7 +394,7 @@ public sealed class AdmissionPartitionPoolTests
     }
 
     private static SharpLinkAdmissionContext CreateContext(string connectionId = "partition-test")
-        => new(1, 2, RpcMethodKind.Unary, connectionId, null, null, null);
+        => new(1, 2, RpcMethodKind.Unary, connectionId, null, null);
 
     private static void Ensure(bool condition, string message)
     {

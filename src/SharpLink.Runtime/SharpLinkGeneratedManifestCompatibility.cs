@@ -55,6 +55,59 @@ internal static class SharpLinkGeneratedManifestCompatibility
                 "Manifest");
         }
 
+        var owner = expectedOwner ?? manifest.OwnerAssembly;
+        if (owner is not null)
+        {
+            var locatorFound = false;
+            foreach (var attribute in owner.GetCustomAttributesData())
+            {
+                if (!string.Equals(
+                        attribute.AttributeType.FullName,
+                        typeof(SharpLinkGeneratedAssemblyManifestAttribute).FullName,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                locatorFound = true;
+                var actualIdentity = attribute.ConstructorArguments.Count >= 5
+                    ? attribute.ConstructorArguments[4].Value as string
+                    : null;
+                if (!string.Equals(
+                        actualIdentity,
+                        SharpLinkGeneratedManifestVersions.AbiIdentity,
+                        StringComparison.Ordinal))
+                {
+                    return Error(
+                        SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                        FormatVersionMismatch(
+                            apiVersion,
+                            protocolVersion,
+                            TryGetGeneratorVersion(manifest),
+                            actualIdentity ?? "<missing: pre-current ABI locator>"),
+                        owner,
+                        "Manifest");
+                }
+                break;
+            }
+
+            // Loader validation supplies expectedOwner only after it has already parsed and
+            // validated the locator. Catalog/static registration has no such preflight, so the
+            // exact ABI identity must be present here rather than falling back to API integer 4.
+            if (expectedOwner is null && !locatorFound)
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    FormatVersionMismatch(
+                        apiVersion,
+                        protocolVersion,
+                        TryGetGeneratorVersion(manifest),
+                        "<missing: no current ABI locator>"),
+                    owner,
+                    "Manifest");
+            }
+        }
+
         return null;
     }
 
@@ -73,10 +126,12 @@ internal static class SharpLinkGeneratedManifestCompatibility
     internal static string FormatVersionMismatch(
         int actualApiVersion,
         int actualProtocolVersion,
-        string? generatorVersion)
+        string? generatorVersion,
+        string? actualAbiIdentity = null)
         => $"Manifest compatibility mismatch: " +
            $"API {actualApiVersion}/{SharpLinkGeneratedManifestVersions.Api}, " +
            $"Protocol {actualProtocolVersion}/{SharpLinkGeneratedManifestVersions.Protocol}, " +
+           $"ABI '{(string.IsNullOrWhiteSpace(actualAbiIdentity) ? "<unknown>" : actualAbiIdentity)}'/{SharpLinkGeneratedManifestVersions.AbiIdentity}, " +
            $"Generator '{(string.IsNullOrWhiteSpace(generatorVersion) ? "<unknown>" : generatorVersion)}'. " +
            "Action: delete stale generated outputs, then regenerate and rebuild this assembly " +
            "with the SharpLink SDK version that matches the current Runtime.";

@@ -30,7 +30,7 @@ public class AdmissionPartitionReleaseBenchmarks
         };
         options.UseConcurrency(1);
         _context = new SharpLinkAdmissionContext(
-            1, 2, RpcMethodKind.Unary, "partition-benchmark", null, null, null);
+            1, 2, RpcMethodKind.Unary, "partition-benchmark", null, null);
         _pool = new AdmissionPartitionPool(_ => _key, options, queueLimit: 0, _time);
 
         for (var index = 0; index < Partitions; index++)

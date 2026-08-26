@@ -86,9 +86,9 @@ public sealed class AdmissionPartitionQueuedOwnershipTests
 
         var first = await controller.AcquireAsync(
             CreateContext("hot"), 1, allowQueue: true, CancellationToken.None);
-        var deadline = time.GetUtcNow().Add(QueueDelay / 2);
+        var deadline = RpcDeadline.Create(QueueDelay / 2, time);
         var pending = controller.AcquireAsync(
-            CreateContext("hot", deadline), 1, allowQueue: true, CancellationToken.None).AsTask();
+            CreateContext("hot"), 1, allowQueue: true, deadline, CancellationToken.None).AsTask();
         Ensure(!pending.IsCompleted, "second request should be queued before its deadline");
 
         time.Advance(QueueDelay / 2);
@@ -155,10 +155,8 @@ public sealed class AdmissionPartitionQueuedOwnershipTests
         return SharpLinkAdmissionController.Create(options, [], time);
     }
 
-    private static SharpLinkAdmissionContext CreateContext(
-        string partition,
-        DateTimeOffset? deadline = null)
-        => new(1, 2, RpcMethodKind.Unary, partition, null, null, deadline);
+    private static SharpLinkAdmissionContext CreateContext(string partition)
+        => new(1, 2, RpcMethodKind.Unary, partition, null, null);
 
     private static async Task EnsureCapacityRecoversAsync(
         SharpLinkAdmissionController controller,

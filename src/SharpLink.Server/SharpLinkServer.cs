@@ -629,7 +629,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         IRpcStub stub,
         long methodId,
         long requestId,
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
     {
@@ -655,6 +655,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             requestId,
             connection.AuthenticationContext,
             deadline,
+            _runtimeContext.TimeProvider,
             metadata,
             cancellationToken,
             interceptors);
@@ -666,7 +667,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         long methodId,
         long requestId,
         SharpLinkAuthenticationContext? authenticationContext,
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
+        TimeProvider deadlineTimeProvider,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken,
         ISharpLinkServerInterceptor[]? interceptors = null)
@@ -680,6 +682,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             session.RemoteEndPoint,
             authenticationContext,
             deadline,
+            deadlineTimeProvider,
             metadata,
             cancellationToken,
             interceptors);

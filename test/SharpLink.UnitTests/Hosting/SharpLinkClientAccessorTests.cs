@@ -351,6 +351,13 @@ public class SharpLinkClientAccessorTests
         public T Get<T>() where T : IService
             => throw new NotSupportedException();
 
+
+
+        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+
+
+            => throw new NotSupportedException();
+
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => default;
 
@@ -442,6 +449,13 @@ public class SharpLinkClientAccessorTests
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
 
         public T Get<T>() where T : IService => throw new NotSupportedException();
+
+
+
+        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+
+
+            => throw new NotSupportedException();
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly) => default;
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,
@@ -481,6 +495,11 @@ public class SharpLinkClientAccessorTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
         public T Get<T>() where T : IService => throw new NotSupportedException();
+
+
+        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+
+            => throw new NotSupportedException();
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly) => default;
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,

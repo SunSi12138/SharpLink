@@ -61,7 +61,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task UnknownOneWayMethodShapeAfterCompressedDecodeFailureShouldTerminateBeforeStreamWindowStalls()
+    public async Task UnknownOneWayMethodShapeShouldTerminateBeforeCompressedDecodeAndStreamWindowStalls()
     {
         OneWayInboundDrainService.Reset();
         var compression = new CorruptingCompressionProvider();
@@ -83,14 +83,14 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
             Ensure(Volatile.Read(ref compression.CompressCount) > 0,
                 "the large OneWay request payload must use the negotiated compression provider");
-            Ensure(Volatile.Read(ref compression.DecompressCount) > 0,
-                "the server must reach compressed request decoding before applying the unresolved-shape policy");
+            Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
+                "an unresolved OneWay method shape must terminate before invoking the request decompressor");
             Ensure(failure is not null,
-                "an unresolved raw OneWay shape after decode failure should terminate the connection");
+                "an unresolved compressed OneWay shape should terminate the connection");
             Ensure(failure is not TimeoutException,
-                "decode failure with an unresolved raw OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
+                "an unresolved compressed OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
             Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                "a corrupt compressed OneWay request with unresolved shape must not invoke the service method");
+                "an unresolved compressed OneWay request must not invoke the service method");
         }
     }
 

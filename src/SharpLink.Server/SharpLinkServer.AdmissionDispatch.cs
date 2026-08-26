@@ -15,7 +15,8 @@ internal sealed partial class SharpLinkServer
     {
         var session = connection.Session;
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
-        var request = ReadRequestEnvelope(session, payload, flags);
+        var request = ReadRequestEnvelope(
+            session, payload, flags, admittedCallState?.Deadline ?? default);
         if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
         {
             if (admittedCallState is not null)
@@ -152,7 +153,8 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? decodedRequestOwner = null;
         try
         {
-            if (_admissionController is not null)
+            if (_admissionController is not null ||
+                (flags & ProtocolV2FrameFlags.Compressed) != 0)
             {
                 payload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.Request,
@@ -160,7 +162,8 @@ internal sealed partial class SharpLinkServer
                     payload,
                     admittedCallState?.InvocationToken ?? serverLoopToken,
                     out decodedRequestOwner);
-                request = ReadRequestEnvelope(session, payload, flags);
+                request = ReadRequestEnvelope(
+                    session, payload, flags, request.RpcDeadline);
             }
         }
         catch (SharpLinkException exception) when (
@@ -214,7 +217,7 @@ internal sealed partial class SharpLinkServer
 
         var callContext = CreateCallContext(
             connection, serviceInfo.Stub, request.MethodHash, requestId,
-            request.Deadline, request.Metadata, invokeToken);
+            request.RpcDeadline, request.Metadata, invokeToken);
         try
         {
             // #299 deliberately excludes OneWay from generic pre-invocation reservation. Install
@@ -406,7 +409,8 @@ internal sealed partial class SharpLinkServer
                     requestId,
                     decision,
                     oneWay: false,
-                    connection.ConnectionToken).ConfigureAwait(false);
+                    callState: callState,
+                    cancellationToken: connection.ConnectionToken).ConfigureAwait(false);
                 return;
             }
 
@@ -463,8 +467,7 @@ internal sealed partial class SharpLinkServer
             descriptor.Kind,
             connection.Session.Id,
             connection.AuthenticationContext,
-            request.Metadata,
-            request.Deadline);
+            request.Metadata);
 
     private static ValueTask TerminateUnresolvableOneWayRequest(
         RpcSession session,
@@ -481,8 +484,17 @@ internal sealed partial class SharpLinkServer
         long requestId,
         AdmissionDecision decision,
         bool oneWay,
+        ServerCallCancellationState? callState = null,
         CancellationToken cancellationToken = default)
     {
+        if (!oneWay && callState is not null && !callState.TryClaimResponse())
+        {
+            return session.SendRpcErrorWithBackpressureAsync(
+                requestId,
+                MapServerCancellationException(callState, callState.Deadline),
+                cancellationToken);
+        }
+
         var scope = decision.Scope ?? "server";
         var reason = decision.Reason ?? "unknown";
         var resourceExhaustionReason = GetAdmissionResourceExhaustionReason(reason);
@@ -512,6 +524,22 @@ internal sealed partial class SharpLinkServer
         return session.SendRpcErrorWithBackpressureAsync(
             requestId,
             rejection,
+            cancellationToken);
+    }
+
+    private ValueTask PublishAdmissionError(
+        RpcSession session,
+        long requestId,
+        ServerCallCancellationState callState,
+        SharpLinkException admissionError,
+        CancellationToken cancellationToken)
+    {
+        var terminalError = callState.TryClaimResponse()
+            ? admissionError
+            : MapServerCancellationException(callState, callState.Deadline);
+        return session.SendRpcErrorWithBackpressureAsync(
+            requestId,
+            terminalError,
             cancellationToken);
     }
 

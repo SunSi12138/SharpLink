@@ -29,18 +29,20 @@ public class ServerConnectionStateTests
             throw new Exception("ready connection must publish a default call context");
         Ensure(callContext.SessionId == state.Session.Id, "call context session ID");
         Ensure(ReferenceEquals(authentication, callContext.Authentication), "call context authentication");
-        Ensure(callContext.Deadline is null, "default call context deadline");
+        Ensure(!callContext.LocalRpcDeadline.HasValue, "default call context deadline");
         Ensure(callContext.Metadata is null, "default call context metadata");
-        Ensure(ReferenceEquals(callContext, state.GetCallContextSnapshot(null, null)),
+        Ensure(ReferenceEquals(callContext, state.GetCallContextSnapshot(default, null)),
             "plain calls must reuse the default call context");
 
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(30), TimeProvider.System);
         var deadlineContext = state.GetCallContextSnapshot(deadline, null);
         Ensure(!ReferenceEquals(callContext, deadlineContext), "deadline calls must not reuse the default context");
-        Ensure(deadlineContext.Deadline == deadline, "deadline call context");
+        Ensure(deadlineContext.LocalRpcDeadline.HasValue &&
+               deadlineContext.LocalRpcDeadline.Timestamp == deadline.Timestamp,
+            "deadline call context");
 
         var metadata = new SharpLinkMetadata();
-        var metadataContext = state.GetCallContextSnapshot(null, metadata);
+        var metadataContext = state.GetCallContextSnapshot(default, metadata);
         Ensure(!ReferenceEquals(callContext, metadataContext), "metadata calls must not reuse the default context");
         Ensure(ReferenceEquals(metadata, metadataContext.Metadata), "metadata call context");
         Ensure(state.TryRecordAcceptedRequest(42), "ready connection should accept request IDs");

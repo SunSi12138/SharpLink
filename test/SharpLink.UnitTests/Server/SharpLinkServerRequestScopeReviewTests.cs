@@ -134,9 +134,9 @@ public class SharpLinkServerRequestScopeReviewTests
 
         await harness.DispatchRequest(
             requestId,
-            ProtocolV2FrameFlags.HasDeadline,
+            ProtocolV2FrameFlags.HasTimeBudget,
             CancellationToken.None,
-            DateTimeOffset.UtcNow.AddMinutes(-1));
+            TimeSpan.Zero);
 
         var snapshot = loggerFactory.Snapshot();
         await Assert.That(stub.InvocationCount).IsEqualTo(0);
@@ -363,27 +363,27 @@ public class SharpLinkServerRequestScopeReviewTests
             long requestId,
             ProtocolV2FrameFlags flags = ProtocolV2FrameFlags.None,
             CancellationToken serverLoopToken = default,
-            DateTimeOffset? deadline = null)
+            TimeSpan? timeBudget = null)
             => (Task)DispatchRequestMethod.Invoke(Server,
             [
                 Connection,
                 requestId,
                 flags,
-                CreateRequestPayload(deadline),
+                CreateRequestPayload(timeBudget),
                 Connection.CallCancellations,
                 serverLoopToken
             ])!;
 
-        private ReadOnlySequence<byte> CreateRequestPayload(DateTimeOffset? deadline)
+        private ReadOnlySequence<byte> CreateRequestPayload(TimeSpan? timeBudget)
         {
-            var request = new byte[sizeof(long) * (deadline.HasValue ? 3 : 2)];
+            var request = new byte[sizeof(long) * (timeBudget.HasValue ? 3 : 2)];
             BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
             BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
-            if (deadline is { } value)
+            if (timeBudget is { } value)
             {
                 BinaryPrimitives.WriteInt64LittleEndian(
                     request.AsSpan(sizeof(long) * 2),
-                    value.ToUnixTimeMilliseconds());
+                    value.Ticks);
             }
             return new ReadOnlySequence<byte>(request);
         }

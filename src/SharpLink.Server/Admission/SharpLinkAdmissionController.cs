@@ -165,9 +165,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             context,
             retainedBytes,
             allowQueue,
-            context.Deadline is { } deadline
-                ? RpcDeadline.Create(deadline, _timeProvider)
-                : default,
+            default,
             cancellationToken);
 
     internal ValueTask<AdmissionDecision> AcquireAsync(
@@ -253,17 +251,18 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var started = _timeProvider.GetTimestamp();
-        var maximumDelay = _maxQueueDelay;
-        var deadlineLimitsWait = false;
-        if (deadline.HasValue && deadline.WouldExpireBeforeOrAt(maximumDelay, _timeProvider))
-        {
-            maximumDelay = deadline.GetRemaining(_timeProvider);
-            deadlineLimitsWait = true;
-        }
-        using var timeoutCancellation = maximumDelay <= TimeSpan.Zero
+        var queueDeadline = RpcDeadline.Create(
+            _maxQueueDelay,
+            started,
+            _timeProvider.TimestampFrequency);
+        var deadlineLimitsWait =
+            deadline.HasValue && deadline.WouldExpireBeforeOrAt(_maxQueueDelay, _timeProvider);
+        var waitDeadline = deadlineLimitsWait ? deadline : queueDeadline;
+        var waitDelay = waitDeadline.GetRemaining(_timeProvider);
+        using var timeoutCancellation = waitDelay <= TimeSpan.Zero
             ? new CancellationTokenSource()
-            : new CancellationTokenSource(maximumDelay, _timeProvider);
-        if (maximumDelay <= TimeSpan.Zero)
+            : new CancellationTokenSource(waitDelay, _timeProvider);
+        if (waitDelay <= TimeSpan.Zero)
             timeoutCancellation.Cancel();
         using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -284,17 +283,35 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 catch (OperationCanceledException) when (
                     _draining.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
+                    if (waitDeadline.IsExpired(_timeProvider))
+                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
                     return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    // The admission timer and the server deadline scheduler intentionally race.
-                    // Preserve the deadline result when this local bounded-wait timer wins;
-                    // otherwise identical calls could surface ResourceExhausted or
-                    // DeadlineExceeded depending on scheduler timing.
-                    return deadlineLimitsWait
-                        ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
-                        : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
+                    if (waitDeadline.IsExpired(_timeProvider))
+                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
+                    throw;
+                }
+                catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested)
+                {
+                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
+                }
+
+                if (waitDeadline.IsExpired(_timeProvider))
+                {
+                    waitedLease.Dispose();
+                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
+                }
+                if (_draining.IsCancellationRequested)
+                {
+                    waitedLease.Dispose();
+                    return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
+                }
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    waitedLease.Dispose();
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
 
                 if (!waitedLease.IsAcquired)
@@ -321,6 +338,13 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             request.Dispose();
         }
     }
+
+    private static AdmissionDecision RejectExpiredAdmissionWait(
+        AdmissionLimiterSlot failedSlot,
+        bool deadlineLimitsWait)
+        => deadlineLimitsWait
+            ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
+            : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
 
     private bool TryReserveQueue(int retainedBytes, out string reason)
     {
