@@ -163,7 +163,7 @@ jobs:
         shell: bash
         run: |
           git clean -fdx
-          git checkout 60b7206c997aa58734c46043eba03a435a6a46b9
+          git checkout 43f82776b503d5141ae96c5d7b2e80009460d643
           cp "$RUNNER_TEMP/Issue335ComparablePartitionBenchmarks.cs" test/SharpLink.Benchmarks/
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           mkdir -p "$RUNNER_TEMP/issue335-partition/head"
@@ -184,7 +184,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-335-partition-comparable-60b7206c
+          name: issue-335-partition-comparable-43f82776
           path: ${{ runner.temp }}/issue335-partition
           if-no-files-found: error
           retention-days: 30
