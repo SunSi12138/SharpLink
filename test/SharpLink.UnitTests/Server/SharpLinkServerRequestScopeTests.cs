@@ -379,7 +379,8 @@ public class SharpLinkServerRequestScopeTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
-                false
+                false,
+                null
             ])!;
 
         internal ValueTask DispatchOneWay(long requestId)
@@ -393,7 +394,8 @@ public class SharpLinkServerRequestScopeTests
                 CancellationToken.None,
                 null,
                 false,
-                0
+                0,
+                null
             ])!;
 
         internal Task Observe(ValueTask dispatchTask, long requestId)

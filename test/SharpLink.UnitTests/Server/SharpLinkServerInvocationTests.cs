@@ -1352,7 +1352,8 @@ public class SharpLinkServerInvocationTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
-                (flags & ProtocolV2FrameFlags.Cancellable) != 0
+                (flags & ProtocolV2FrameFlags.Cancellable) != 0,
+                null
             ])!;
         }
 
