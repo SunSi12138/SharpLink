@@ -5,8 +5,8 @@ using System.Reflection;
 using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
-using SharpLink.Sdk;
 using SharpLink.Server;
+using SharpLink.StaticCodecOwnerTest.Contracts;
 using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
@@ -51,24 +51,6 @@ public class StaticContractCodecProviderRegressionTests
         if (!condition)
             throw new Exception(message);
     }
-
-    private interface IContractA : IService
-    {
-    }
-
-    private interface IContractB : IService
-    {
-    }
-
-    private sealed class ContractAService : IContractA
-    {
-    }
-
-    private sealed class ContractBService : IContractB
-    {
-    }
-
-    private readonly record struct SharedPayload(int Value);
 
     private sealed class TwoContractManifest : ISharpLinkGeneratedAssemblyManifest
     {
@@ -137,7 +119,7 @@ public class StaticContractCodecProviderRegressionTests
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
-        public Assembly OwnerAssembly => typeof(StaticContractCodecProviderRegressionTests).Assembly;
+        public Assembly OwnerAssembly => typeof(IContractA).Assembly;
         public string CompileTimeDescriptor => "test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => _contracts;
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => _services;
