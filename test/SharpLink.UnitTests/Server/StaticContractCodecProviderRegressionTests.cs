@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 using SharpLink.Server;
 using SharpLink.StaticCodecOwnerTest.Contracts;
 using SharpLink.UnitTests.Runtime;
