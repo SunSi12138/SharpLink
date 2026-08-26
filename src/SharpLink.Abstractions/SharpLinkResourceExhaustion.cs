@@ -15,6 +15,7 @@ internal static class SharpLinkResourceExhaustion
     private const char ServerDecodeConcurrencyWireCode = '\u000A';
     private const char ServerRetainedCompressedBytesWireCode = '\u000B';
     private const char ServerDecodedBytesWireCode = '\u000C';
+    private const char ServerDecodeQueueWireCode = '\u000D';
     private static readonly string[] s_knownReasons =
     [
         ServerCallCapacity,
@@ -28,7 +29,8 @@ internal static class SharpLinkResourceExhaustion
         SendQueueCapacity,
         ServerDecodeConcurrency,
         ServerRetainedCompressedBytes,
-        ServerDecodedBytes
+        ServerDecodedBytes,
+        ServerDecodeQueue
     ];
 
     internal const string Unspecified = "unspecified";
@@ -44,6 +46,7 @@ internal static class SharpLinkResourceExhaustion
     internal const string ServerDecodeConcurrency = "server_decode_concurrency";
     internal const string ServerRetainedCompressedBytes = "server_retained_compressed_bytes";
     internal const string ServerDecodedBytes = "server_decoded_bytes";
+    internal const string ServerDecodeQueue = "server_decode_queue";
 
     internal static SharpLinkException Create(string reason, string message)
     {
@@ -92,6 +95,7 @@ internal static class SharpLinkResourceExhaustion
             ServerDecodeConcurrency => ServerDecodeConcurrencyWireCode,
             ServerRetainedCompressedBytes => ServerRetainedCompressedBytesWireCode,
             ServerDecodedBytes => ServerDecodedBytesWireCode,
+            ServerDecodeQueue => ServerDecodeQueueWireCode,
             _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "A known resource exhaustion reason is required.")
         };
 
@@ -111,6 +115,7 @@ internal static class SharpLinkResourceExhaustion
             ServerDecodeConcurrencyWireCode => ServerDecodeConcurrency,
             ServerRetainedCompressedBytesWireCode => ServerRetainedCompressedBytes,
             ServerDecodedBytesWireCode => ServerDecodedBytes,
+            ServerDecodeQueueWireCode => ServerDecodeQueue,
             _ => Unspecified
         };
         return reason != Unspecified;

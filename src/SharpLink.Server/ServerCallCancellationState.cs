@@ -54,6 +54,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private static int s_retainedCount;
 
     private readonly Lock _lifetimeGate = new();
+    private readonly Lock _terminalGate = new();
     private CancellationTokenSource? _invocationCancellation;
     private CancellationTokenRegistration _serverStoppingRegistration;
     private CancellationTokenRegistration _connectionClosedRegistration;
@@ -212,6 +213,18 @@ internal sealed class ServerCallCancellationState : IDisposable
         }
     }
 
+    internal bool TryActivateRequest(SharpLinkServer.ServerRequestPermit requestPermit)
+    {
+        ArgumentNullException.ThrowIfNull(requestPermit);
+        lock (_terminalGate)
+        {
+            if (Reason != ServerCallCancellationReason.None)
+                return false;
+            requestPermit.Activate();
+            return true;
+        }
+    }
+
     public void ReleaseUse()
     {
         var shouldDispose = false;
@@ -297,31 +310,38 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (proposedReason == ServerCallCancellationReason.None)
             throw new ArgumentOutOfRangeException(nameof(proposedReason));
 
+        var claimed = false;
         cancellationNotificationRequired = false;
-        var reason = proposedReason;
-        var timeProvider = _timeProvider ?? throw new InvalidOperationException(
-            "Server call state has no time provider.");
-        if (reason != ServerCallCancellationReason.DeadlineExceeded && Deadline.IsExpired(timeProvider))
-            reason = ServerCallCancellationReason.DeadlineExceeded;
-
-        if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
-            (int)ServerCallCancellationReason.None)
+        lock (_terminalGate)
         {
-            claimedReason = Reason;
-            return false;
+            var reason = proposedReason;
+            var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+                "Server call state has no time provider.");
+            if (reason != ServerCallCancellationReason.DeadlineExceeded && Deadline.IsExpired(timeProvider))
+                reason = ServerCallCancellationReason.DeadlineExceeded;
+
+            if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
+                (int)ServerCallCancellationReason.None)
+            {
+                claimedReason = Reason;
+                return false;
+            }
+
+            claimed = true;
+            claimedReason = reason;
+            if (reason != ServerCallCancellationReason.Completed)
+                cancellationNotificationRequired = _invocationCancellation is not null;
         }
 
-        claimedReason = reason;
-        if (reason == ServerCallCancellationReason.Completed)
+        if (claimedReason == ServerCallCancellationReason.Completed)
             return true;
 
-        cancellationNotificationRequired = _invocationCancellation is not null;
-        if (signalCancellation)
+        if (signalCancellation && cancellationNotificationRequired)
         {
             NotifyInvocationCancellation();
             cancellationNotificationRequired = false;
         }
-        return true;
+        return claimed;
     }
 
     public bool TryRecordAbandoned()
