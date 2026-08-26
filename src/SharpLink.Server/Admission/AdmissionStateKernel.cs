@@ -396,11 +396,13 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                 _partitionStates.TryGetValue(published.Key, out var publishedEntry) &&
                 ReferenceEquals(publishedEntry.Pool, published.Pool))
             {
+                published.Pool.AddPolicyProgramReference(published.Policy);
                 publishedEntry.ProgramReferences++;
                 return new AdmissionPartitionStateBinding(
                     published.Key,
                     published.Pool,
-                    published.Selector);
+                    published.Selector,
+                    published.Policy);
             }
 
             if (!_hasPublishedPartitionLineage)
@@ -412,8 +414,14 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                     {
                         continue;
                     }
+                    var policy = pair.Value.Pool.CurrentPolicyForBinding;
+                    pair.Value.Pool.AddPolicyProgramReference(policy);
                     pair.Value.ProgramReferences++;
-                    return new AdmissionPartitionStateBinding(pair.Key, pair.Value.Pool, pair.Value.Selector);
+                    return new AdmissionPartitionStateBinding(
+                        pair.Key,
+                        pair.Value.Pool,
+                        pair.Value.Selector,
+                        policy);
                 }
             }
 
@@ -435,9 +443,16 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                 _partitionStates.TryGetValue(source.Key, out var sourceEntry) &&
                 ReferenceEquals(sourceEntry.Pool, source.Pool))
             {
+                var targetPolicy = source.Pool.AcquirePolicyForUpdate(
+                    source.Policy,
+                    options,
+                    out partitionUpdate);
                 sourceEntry.ProgramReferences++;
-                partitionUpdate = source.Pool.PrepareUpdate(options);
-                return new AdmissionPartitionStateBinding(source.Key, source.Pool, source.Selector);
+                return new AdmissionPartitionStateBinding(
+                    source.Key,
+                    source.Pool,
+                    source.Selector,
+                    targetPolicy);
             }
 
             partitionUpdate = null;
@@ -852,7 +867,11 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         var key = new AdmissionPartitionStateKey(++_nextPartitionStateGeneration);
         var pool = new AdmissionPartitionPool(selector, options, _timeProvider, this);
         _partitionStates.Add(key, new PartitionStateEntry(pool, selector, 1));
-        return new AdmissionPartitionStateBinding(key, pool, selector);
+        return new AdmissionPartitionStateBinding(
+            key,
+            pool,
+            selector,
+            pool.CurrentPolicyForBinding);
     }
 
     private static bool SelectorsAreCompatible(
@@ -925,6 +944,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             _partitionStates.TryGetValue(partitionBinding.Key, out var partitionEntry) &&
             ReferenceEquals(partitionEntry.Pool, partitionBinding.Pool))
         {
+            partitionBinding.Pool.ReleasePolicyProgramReference(partitionBinding.Policy);
             if (--partitionEntry.ProgramReferences < 0)
                 throw new InvalidOperationException("Admission partition state reference count underflowed.");
             if (partitionEntry.ProgramReferences == 0)
@@ -1078,7 +1098,8 @@ internal readonly record struct AdmissionRuleStateBinding(
 internal readonly record struct AdmissionPartitionStateBinding(
     AdmissionPartitionStateKey Key,
     AdmissionPartitionPool Pool,
-    Func<SharpLinkAdmissionContext, string?> Selector);
+    Func<SharpLinkAdmissionContext, string?> Selector,
+    AdmissionPartitionPolicyGeneration Policy);
 
 internal readonly record struct AdmissionConcurrencyResize(
     ResizableConcurrencyState State,

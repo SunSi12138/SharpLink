@@ -418,7 +418,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         AdmissionPartitionLease? partitionLease = null;
         if (_partitions is not null)
         {
-            partitionLease = _partitions.TryAcquire(context);
+            partitionLease = _partitions.TryAcquire(context, _partitionStateBinding!.Value.Policy);
             if (partitionLease is null)
                 return ValueTask.FromResult(AdmissionDecision.Reject("partition_capacity"));
         }
@@ -1018,6 +1018,8 @@ internal sealed class AdmissionPartitionPool : IDisposable
     private readonly Lock _gate = new();
     private readonly Dictionary<AdmissionPartitionKey, AdmissionPartitionEntry> _entries = [];
     private SharpLinkPartitionAdmissionOptions _options;
+    private AdmissionPartitionPolicyGeneration _currentPolicy;
+    private List<AdmissionPartitionPolicyGeneration> _policies;
     private int _disposed;
 
     internal AdmissionPartitionPool(
@@ -1030,14 +1032,85 @@ internal sealed class AdmissionPartitionPool : IDisposable
         _options = options.CloneValidated();
         _timeProvider = timeProvider;
         _kernel = kernel;
+        _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);
+        _policies = [_currentPolicy];
     }
 
     internal Action? AfterKeyResolvedBeforeEntryLockForTests { get; set; }
 
     internal Action? BeforeUpdateMutationForTests { get; set; }
 
-    internal AdmissionPartitionUpdate PrepareUpdate(SharpLinkPartitionAdmissionOptions options)
-        => new(this, options.CloneValidated());
+    internal AdmissionPartitionPolicyGeneration CurrentPolicyForBinding
+    {
+        get
+        {
+            lock (_gate)
+                return _currentPolicy;
+        }
+    }
+
+    internal AdmissionPartitionPolicyGeneration AcquirePolicyForUpdate(
+        AdmissionPartitionPolicyGeneration sourcePolicy,
+        SharpLinkPartitionAdmissionOptions options,
+        out AdmissionPartitionUpdate update)
+    {
+        ArgumentNullException.ThrowIfNull(sourcePolicy);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!ReferenceEquals(sourcePolicy.Owner, this))
+            throw new InvalidOperationException("Admission partition policy belongs to a different namespace.");
+
+        var target = options.CloneValidated();
+        AdmissionPartitionPolicyGeneration targetPolicy;
+        if (sourcePolicy.Definition == AdmissionRuleStateDefinition.Create(target))
+        {
+            sourcePolicy.AddProgramReference();
+            targetPolicy = sourcePolicy;
+        }
+        else
+        {
+            targetPolicy = new AdmissionPartitionPolicyGeneration(
+                this,
+                target,
+                checked(sourcePolicy.Sequence + 1));
+        }
+
+        try
+        {
+            update = new AdmissionPartitionUpdate(this, sourcePolicy, targetPolicy, target);
+            return targetPolicy;
+        }
+        catch
+        {
+            ReleasePolicyProgramReference(targetPolicy);
+            throw;
+        }
+    }
+
+    internal void AddPolicyProgramReference(AdmissionPartitionPolicyGeneration policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (!ReferenceEquals(policy.Owner, this))
+            throw new InvalidOperationException("Admission partition policy belongs to a different namespace.");
+        policy.AddProgramReference();
+    }
+
+    internal void ReleasePolicyProgramReference(AdmissionPartitionPolicyGeneration policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (!ReferenceEquals(policy.Owner, this))
+            throw new InvalidOperationException("Admission partition policy belongs to a different namespace.");
+        if (policy.ReleaseProgramReference() != 0)
+            return;
+
+        List<IDisposable>? dispose = null;
+        lock (_gate)
+        {
+            foreach (var entry in _entries.Values)
+                CollectRetiredGenerationsLocked(entry, ref dispose);
+            CollectRetiredPoliciesLocked();
+        }
+        DisposeStates(dispose);
+    }
 
     internal bool IsPolicyEquivalent(SharpLinkPartitionAdmissionOptions options)
     {
@@ -1051,8 +1124,14 @@ internal sealed class AdmissionPartitionPool : IDisposable
         }
     }
 
-    internal AdmissionPartitionLease? TryAcquire(SharpLinkAdmissionContext context)
+    internal AdmissionPartitionLease? TryAcquire(
+        SharpLinkAdmissionContext context,
+        AdmissionPartitionPolicyGeneration requestedPolicy)
     {
+        ArgumentNullException.ThrowIfNull(requestedPolicy);
+        if (!ReferenceEquals(requestedPolicy.Owner, this))
+            throw new InvalidOperationException("Admission partition policy belongs to a different namespace.");
+
         var selected = _selector(context);
         if (selected is { Length: > 256 })
             throw new InvalidOperationException("Admission partition keys cannot exceed 256 characters.");
@@ -1088,8 +1167,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                     }
                     else
                     {
-                        var generation = CreateInitialGenerationLocked(_options);
-                        entry = new AdmissionPartitionEntry(generation);
+                        entry = CreateEntryForLivePoliciesLocked(requestedPolicy);
                         _entries.Add(key, entry);
                         SharpLinkTelemetry.AddAdmissionActivePartitions(1);
                     }
@@ -1097,11 +1175,14 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
                 if (!capacityRejected)
                 {
-                    var current = _entries[key].Current;
-                    _entries[key].References++;
-                    current.References++;
-                    _entries[key].IsIdle = false;
-                    lease = new AdmissionPartitionLease(this, _entries[key], current);
+                    entry = _entries[key];
+                    var generation = FindGenerationLocked(entry, requestedPolicy) ??
+                        throw new InvalidOperationException(
+                            "Captured admission partition policy generation is missing from a live entry.");
+                    entry.References++;
+                    generation.References++;
+                    entry.IsIdle = false;
+                    lease = new AdmissionPartitionLease(this, entry, generation);
                 }
             }
 
@@ -1130,6 +1211,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 throw new InvalidOperationException("Admission partition reference count underflowed.");
 
             CollectRetiredGenerationsLocked(entry, ref dispose);
+            CollectRetiredPoliciesLocked();
             if (entry.References == 0)
             {
                 entry.IdleSince = _timeProvider.GetTimestamp();
@@ -1143,28 +1225,54 @@ internal sealed class AdmissionPartitionPool : IDisposable
         DisposeStates(dispose);
     }
 
-    internal void CommitUpdate(SharpLinkPartitionAdmissionOptions targetOptions)
+    internal void CommitUpdate(
+        AdmissionPartitionPolicyGeneration sourcePolicy,
+        AdmissionPartitionPolicyGeneration targetPolicy,
+        SharpLinkPartitionAdmissionOptions targetOptions)
     {
+        ArgumentNullException.ThrowIfNull(sourcePolicy);
+        ArgumentNullException.ThrowIfNull(targetPolicy);
         ArgumentNullException.ThrowIfNull(targetOptions);
+        if (!ReferenceEquals(sourcePolicy.Owner, this) || !ReferenceEquals(targetPolicy.Owner, this))
+            throw new InvalidOperationException("Admission partition policy belongs to a different namespace.");
+
         var target = targetOptions.CloneValidated();
         List<IDisposable>? dispose = null;
         List<PreparedEntryTransition>? prepared = null;
+        List<AdmissionPartitionPolicyGeneration>? targetPolicies = null;
 
         lock (_gate)
         {
             if (_disposed != 0)
                 throw new ObjectDisposedException(nameof(AdmissionPartitionPool));
+            if (!ReferenceEquals(_currentPolicy, sourcePolicy))
+                throw new InvalidOperationException(
+                    "Admission partition update source policy is no longer current.");
 
             try
             {
                 prepared = new List<PreparedEntryTransition>(_entries.Count);
+                if (!ReferenceEquals(sourcePolicy, targetPolicy))
+                {
+                    targetPolicies = new List<AdmissionPartitionPolicyGeneration>(_policies.Count + 1);
+                    targetPolicies.AddRange(_policies);
+                    targetPolicies.Add(targetPolicy);
+                }
+
                 var generationCount = 0;
                 foreach (var entry in _entries.Values)
                 {
-                    var transition = PrepareEntryTransitionLocked(entry, target);
-                    prepared.Add(transition);
-                    generationCount = checked(generationCount +
-                        (transition.TargetGenerations?.Count ?? entry.Generations.Count));
+                    if (!ReferenceEquals(sourcePolicy, targetPolicy))
+                    {
+                        var transition = PrepareEntryTransitionLocked(entry, targetPolicy);
+                        prepared.Add(transition);
+                        generationCount = checked(generationCount +
+                            (transition.TargetGenerations?.Count ?? entry.Generations.Count));
+                    }
+                    else
+                    {
+                        generationCount = checked(generationCount + entry.Generations.Count);
+                    }
                 }
 
                 // Retired-generation cleanup can add at most one concurrency and one rate state per
@@ -1178,30 +1286,19 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 throw;
             }
 
-            // Everything above this point is fallible preparation only. Target generation lists and
-            // cleanup capacity are already allocated, so the live namespace changes as one gate epoch.
+            // Everything above this point is fallible preparation only. Target generation lists,
+            // policy lineage storage, and cleanup capacity are allocated before live mutation.
             _options = target;
+            _currentPolicy = targetPolicy;
+            if (targetPolicies is not null)
+                _policies = targetPolicies;
+
             foreach (var transition in prepared)
-            {
-                if (transition.Source.Rate is { } sourceRate &&
-                    !ReferenceEquals(sourceRate, transition.TargetRate))
-                {
-                    sourceRate.CommitTransitionTo(transition.TargetRate);
-                }
-
-                if (transition.ResizePermitLimit is { } permitLimit)
-                    transition.Source.Concurrency!.Resize(permitLimit);
-
-                if (transition.TargetGeneration is { } targetGeneration)
-                {
-                    transition.Source.Retired = true;
-                    transition.Entry.Current = targetGeneration;
-                    transition.Entry.Generations = transition.TargetGenerations!;
-                }
-            }
+                ApplyPreparedEntryTransitionLocked(transition);
 
             foreach (var entry in _entries.Values)
                 CollectRetiredGenerationsLocked(entry, ref dispose);
+            CollectRetiredPoliciesLocked();
 
             // Idle eligibility is preserved by the historical timestamp and the new target timeout.
             // Reclamation remains opportunistic on the next acquire/release rather than allocating
@@ -1279,8 +1376,9 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
     private PreparedEntryTransition PrepareEntryTransitionLocked(
         AdmissionPartitionEntry entry,
-        SharpLinkPartitionAdmissionOptions target)
+        AdmissionPartitionPolicyGeneration targetPolicy)
     {
+        var target = targetPolicy.Options;
         var source = entry.Current;
         ResizableConcurrencyState? targetConcurrency = null;
         AdmissionRateState? targetRate = null;
@@ -1323,13 +1421,15 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
             AdmissionPartitionRuntimeGeneration? targetGeneration = null;
             List<AdmissionPartitionRuntimeGeneration>? targetGenerations = null;
-            if (!ReferenceEquals(source.Concurrency, targetConcurrency) ||
+            if (!ReferenceEquals(source.Policy, targetPolicy) ||
+                !ReferenceEquals(source.Concurrency, targetConcurrency) ||
                 !ReferenceEquals(source.Rate, targetRate))
             {
                 targetGeneration = new AdmissionPartitionRuntimeGeneration(
                     AdmissionRuleRuntime.CreateBound(targetConcurrency, targetRate, "partition"),
                     targetConcurrency,
-                    targetRate);
+                    targetRate,
+                    targetPolicy);
                 targetGenerations = new List<AdmissionPartitionRuntimeGeneration>(entry.Generations.Count + 1);
                 targetGenerations.AddRange(entry.Generations);
                 targetGenerations.Add(targetGeneration);
@@ -1354,8 +1454,9 @@ internal sealed class AdmissionPartitionPool : IDisposable
     }
 
     private AdmissionPartitionRuntimeGeneration CreateInitialGenerationLocked(
-        SharpLinkPartitionAdmissionOptions options)
+        AdmissionPartitionPolicyGeneration policy)
     {
+        var options = policy.Options;
         ResizableConcurrencyState? concurrency = null;
         AdmissionRateState? rate = null;
         try
@@ -1369,13 +1470,92 @@ internal sealed class AdmissionPartitionPool : IDisposable
             return new AdmissionPartitionRuntimeGeneration(
                 AdmissionRuleRuntime.CreateBound(concurrency, rate, "partition"),
                 concurrency,
-                rate);
+                rate,
+                policy);
         }
         catch
         {
             concurrency?.Dispose();
             rate?.Dispose();
             throw;
+        }
+    }
+
+    private AdmissionPartitionEntry CreateEntryForLivePoliciesLocked(
+        AdmissionPartitionPolicyGeneration requestedPolicy)
+    {
+        AdmissionPartitionEntry? entry = null;
+        try
+        {
+            foreach (var policy in _policies)
+            {
+                if (policy.ProgramReferences == 0 &&
+                    !ReferenceEquals(policy, _currentPolicy) &&
+                    !ReferenceEquals(policy, requestedPolicy))
+                {
+                    continue;
+                }
+
+                if (entry is null)
+                {
+                    entry = new AdmissionPartitionEntry(CreateInitialGenerationLocked(policy));
+                    continue;
+                }
+
+                var transition = PrepareEntryTransitionLocked(entry, policy);
+                ApplyPreparedEntryTransitionLocked(transition);
+            }
+
+            if (entry is null || FindGenerationLocked(entry, requestedPolicy) is null)
+            {
+                throw new InvalidOperationException(
+                    "Captured admission partition policy is no longer part of the namespace lineage.");
+            }
+            if (!ReferenceEquals(entry.Current.Policy, _currentPolicy))
+            {
+                throw new InvalidOperationException(
+                    "New admission partition entry did not converge to the current policy generation.");
+            }
+            return entry;
+        }
+        catch
+        {
+            if (entry is not null)
+            {
+                List<IDisposable>? dispose = null;
+                CollectAllEntryStateLocked(entry, ref dispose);
+                DisposeStates(dispose);
+            }
+            throw;
+        }
+    }
+
+    private static AdmissionPartitionRuntimeGeneration? FindGenerationLocked(
+        AdmissionPartitionEntry entry,
+        AdmissionPartitionPolicyGeneration policy)
+    {
+        foreach (var generation in entry.Generations)
+            if (ReferenceEquals(generation.Policy, policy))
+                return generation;
+        return null;
+    }
+
+    private static void ApplyPreparedEntryTransitionLocked(PreparedEntryTransition transition)
+    {
+        if (transition.Source.Rate is { } sourceRate &&
+            !ReferenceEquals(sourceRate, transition.TargetRate))
+        {
+            sourceRate.CommitTransitionTo(transition.TargetRate);
+        }
+
+        if (transition.ResizePermitLimit is { } permitLimit)
+            transition.Source.Concurrency!.Resize(permitLimit);
+
+        if (transition.TargetGeneration is { } targetGeneration)
+        {
+            transition.Source.Retired = true;
+            transition.Entry.Current = targetGeneration;
+            transition.Entry.Generations = transition.TargetGenerations!;
         }
     }
 
@@ -1417,8 +1597,12 @@ internal sealed class AdmissionPartitionPool : IDisposable
         for (var index = entry.Generations.Count - 1; index >= 0; index--)
         {
             var generation = entry.Generations[index];
-            if (!generation.Retired || generation.References != 0)
+            if (!generation.Retired ||
+                generation.References != 0 ||
+                generation.Policy.ProgramReferences != 0)
+            {
                 continue;
+            }
 
             entry.Generations.RemoveAt(index);
             if (generation.Concurrency is { } concurrency &&
@@ -1451,6 +1635,30 @@ internal sealed class AdmissionPartitionPool : IDisposable
         foreach (var generation in generations)
             if (ReferenceEquals(generation.Rate, state))
                 return true;
+        return false;
+    }
+
+    private void CollectRetiredPoliciesLocked()
+    {
+        for (var index = _policies.Count - 1; index >= 0; index--)
+        {
+            var policy = _policies[index];
+            if (ReferenceEquals(policy, _currentPolicy) ||
+                policy.ProgramReferences != 0 ||
+                ContainsPolicyGenerationLocked(policy))
+            {
+                continue;
+            }
+            _policies.RemoveAt(index);
+        }
+    }
+
+    private bool ContainsPolicyGenerationLocked(AdmissionPartitionPolicyGeneration policy)
+    {
+        foreach (var entry in _entries.Values)
+            foreach (var generation in entry.Generations)
+                if (ReferenceEquals(generation.Policy, policy))
+                    return true;
         return false;
     }
 
@@ -1507,6 +1715,42 @@ internal sealed class AdmissionPartitionPool : IDisposable
         AdmissionRateState? CreatedRate);
 }
 
+internal sealed class AdmissionPartitionPolicyGeneration
+{
+    private int _programReferences = 1;
+
+    internal AdmissionPartitionPolicyGeneration(
+        AdmissionPartitionPool owner,
+        SharpLinkPartitionAdmissionOptions options,
+        long sequence)
+    {
+        Owner = owner ?? throw new ArgumentNullException(nameof(owner));
+        Options = options.CloneValidated();
+        Definition = AdmissionRuleStateDefinition.Create(Options);
+        Sequence = sequence;
+    }
+
+    internal AdmissionPartitionPool Owner { get; }
+    internal SharpLinkPartitionAdmissionOptions Options { get; }
+    internal AdmissionRuleStateDefinition Definition { get; }
+    internal long Sequence { get; }
+    internal int ProgramReferences => Volatile.Read(ref _programReferences);
+
+    internal void AddProgramReference()
+    {
+        if (Interlocked.Increment(ref _programReferences) <= 0)
+            throw new InvalidOperationException("Admission partition policy reference count overflowed.");
+    }
+
+    internal int ReleaseProgramReference()
+    {
+        var remaining = Interlocked.Decrement(ref _programReferences);
+        if (remaining < 0)
+            throw new InvalidOperationException("Admission partition policy reference count underflowed.");
+        return remaining;
+    }
+}
+
 internal sealed class AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneration generation)
 {
     internal AdmissionPartitionRuntimeGeneration Current = generation;
@@ -1519,11 +1763,13 @@ internal sealed class AdmissionPartitionEntry(AdmissionPartitionRuntimeGeneratio
 internal sealed class AdmissionPartitionRuntimeGeneration(
     AdmissionRuleRuntime runtime,
     ResizableConcurrencyState? concurrency,
-    AdmissionRateState? rate)
+    AdmissionRateState? rate,
+    AdmissionPartitionPolicyGeneration policy)
 {
     internal AdmissionRuleRuntime Runtime { get; } = runtime;
     internal ResizableConcurrencyState? Concurrency { get; } = concurrency;
     internal AdmissionRateState? Rate { get; } = rate;
+    internal AdmissionPartitionPolicyGeneration Policy { get; } = policy;
     internal int References;
     internal bool Retired;
 }
@@ -1542,6 +1788,8 @@ internal sealed class AdmissionPartitionLease(
 /// <summary>Side-effect-free same-namespace target prepared before exact-source publication validation.</summary>
 internal sealed class AdmissionPartitionUpdate(
     AdmissionPartitionPool pool,
+    AdmissionPartitionPolicyGeneration sourcePolicy,
+    AdmissionPartitionPolicyGeneration targetPolicy,
     SharpLinkPartitionAdmissionOptions targetOptions)
 {
     private int _committed;
@@ -1550,6 +1798,6 @@ internal sealed class AdmissionPartitionUpdate(
     {
         if (Interlocked.Exchange(ref _committed, 1) != 0)
             throw new InvalidOperationException("Admission partition update was committed more than once.");
-        pool.CommitUpdate(targetOptions);
+        pool.CommitUpdate(sourcePolicy, targetPolicy, targetOptions);
     }
 }
