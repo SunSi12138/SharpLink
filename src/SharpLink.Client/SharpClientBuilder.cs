@@ -81,13 +81,6 @@ public class SharpClientBuilder
         return this;
     }
 
-    /// <summary>Registers an explicit codec only for clients built by this builder.</summary>
-    public SharpClientBuilder UseCodec<T>(IRpcCodec<T> codec)
-    {
-        _runtimeContextBuilder.AddCodec(codec);
-        return this;
-    }
-
     /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
@@ -717,7 +710,6 @@ public class SharpClientBuilder
         }
         return transport;
     }
-
     internal static SharpLinkEndpoint[] CreateEndpointSnapshot(
         IEnumerable<SharpLinkEndpoint> source,
         bool allowEmpty)
