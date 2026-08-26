@@ -1,0 +1,66 @@
+name: Issue 335 Benchmark Evidence
+
+on:
+  push:
+    branches:
+      - evidence/issue-335-bdn-3fa3f2a8
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Benchmark reviewed base
+        shell: bash
+        run: |
+          git checkout 46c1285d25b8445d26d050256e8ad590859b541b
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          mkdir -p "$RUNNER_TEMP/issue335-bdn/base"
+          dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks -- \
+            --filter '*AdmissionRpcBenchmarks*' '*AdmissionControllerBenchmarks*' \
+            --artifacts "$RUNNER_TEMP/issue335-bdn/base/artifacts" \
+            | tee "$RUNNER_TEMP/issue335-bdn/base/console.log"
+
+      - name: Benchmark exact head and partition matrix
+        shell: bash
+        run: |
+          git clean -fdx
+          git checkout 3fa3f2a879ee0042b92fa046af5395845feb9d95
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          mkdir -p "$RUNNER_TEMP/issue335-bdn/head"
+          dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks -- \
+            --filter '*AdmissionRpcBenchmarks*' '*AdmissionControllerBenchmarks*' '*AdmissionPartitionControllerBenchmarks*' \
+            --artifacts "$RUNNER_TEMP/issue335-bdn/head/artifacts" \
+            | tee "$RUNNER_TEMP/issue335-bdn/head/console.log"
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/issue335-bdn/environment"
+          dotnet --info > "$RUNNER_TEMP/issue335-bdn/environment/dotnet-info.txt"
+          uname -a > "$RUNNER_TEMP/issue335-bdn/environment/uname.txt"
+          lscpu > "$RUNNER_TEMP/issue335-bdn/environment/cpu.txt"
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-335-benchmark-evidence-3fa3f2a8
+          path: ${{ runner.temp }}/issue335-bdn
+          if-no-files-found: error
+          retention-days: 30
