@@ -14,7 +14,6 @@ jobs:
     timeout-minutes: 40
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      ISSUE335_BENCHMARK_B64: 'dXNpbmcgU3lzdGVtOwp1c2luZyBTeXN0ZW0uVGhyZWFkaW5nOwp1c2luZyBTeXN0ZW0uVGhyZWFkaW5nLlRhc2tzOwp1c2luZyBCZW5jaG1hcmtEb3ROZXQuQXR0cmlidXRlczsKdXNpbmcgQmVuY2htYXJrRG90TmV0LkRpYWdub3NlcnM7CnVzaW5nIEJlbmNobWFya0RvdE5ldC5FbmdpbmVzOwp1c2luZyBTaGFycExpbmsuQWJzdHJhY3Rpb25zOwp1c2luZyBTaGFycExpbmsuU2VydmVyOwoKbmFtZXNwYWNlIFNoYXJwTGluay5CZW5jaG1hcmtzOwoKW01lbW9yeURpYWdub3Nlcl0KW1RocmVhZGluZ0RpYWdub3Nlcl0KW1NpbXBsZUpvYihSdW5TdHJhdGVneS5UaHJvdWdocHV0LCBsYXVuY2hDb3VudDogMSwgd2FybXVwQ291bnQ6IDMsIGl0ZXJhdGlvbkNvdW50OiAxMCldCnB1YmxpYyBjbGFzcyBJc3N1ZTMzNUNvbXBhcmFibGVQYXJ0aXRpb25CZW5jaG1hcmtzCnsKICAgIHByaXZhdGUgc3RhdGljIHJlYWRvbmx5IEZ1bmM8U2hhcnBMaW5rQWRtaXNzaW9uQ29udGV4dCwgc3RyaW5nPj4gU2VsZWN0b3IgPQogICAgICAgIHN0YXRpYyBjb250ZXh0ID0+IGNvbnRleHQuQ29ubmVjdGlvbklkOwoKICAgIHByaXZhdGUgU2hhcnBMaW5rQWRtaXNzaW9uQ29udHJvbGxlciBfcGVybWl0ID0gbnVsbCE7CiAgICBwcml2YXRlIFNoYXJwTGlua0FkbWlzc2lvbkNvbnRyb2xsZXIgX3JlamVjdCA9IG51bGwhOwogICAgcHJpdmF0ZSBTaGFycExpbmtBZG1pc3Npb25Db250cm9sbGVyIF9xdWV1ZSA9IG51bGwhOwogICAgcHJpdmF0ZSBBZG1pc3Npb25MZWFzZSBfcmVqZWN0QmxvY2tlciA9IG51bGwhOwogICAgcHJpdmF0ZSBTaGFycExpbmtBZG1pc3Npb25Db250ZXh0IF9ob3RDb250ZXh0ID0gbnVsbCE7CgogICAgW0dsb2JhbFNldHVwXQogICAgcHVibGljIGFzeW5jIFRhc2sgU2V0dXAoKQogICAgewogICAgICAgIF9ob3RDb250ZXh0ID0gQ29udGV4dCgiaG90LWtleSIpOwogICAgICAgIF9wZXJtaXQgPSBDcmVhdGVQYXJ0aXRpb25Db250cm9sbGVyKDEwMjQpOwogICAgICAgIEFjcXVpcmVBbmREaXNwb3NlKF9wZXJtaXQsIF9ob3RDb250ZXh0KTsKCiAgICAgICAgX3JlamVjdCA9IENyZWF0ZVBhcnRpdGlvbkNvbnRyb2xsZXIoMSk7CiAgICAgICAgX3JlamVjdEJsb2NrZXIgPSAoYXdhaXQgX3JlamVjdC5BY3F1aXJlQXN5bmMoCiAgICAgICAgICAgIF9ob3RDb250ZXh0LCAxLCBmYWxzZSwgQ2FuY2VsbGF0aW9uVG9rZW4uTm9uZSkpLkxlYXNlITsKCiAgICAgICAgX3F1ZXVlID0gQ3JlYXRlUGFydGl0aW9uQ29udHJvbGxlcigxLCBxdWV1ZTogdHJ1ZSk7CiAgICB9CgogICAgW0dsb2JhbENsZWFudXBdCiAgICBwdWJsaWMgYXN5bmMgVGFzayBDbGVhbnVwKCkKICAgIHsKICAgICAgICBfcmVqZWN0QmxvY2tlci5EaXNwb3NlKCk7CiAgICAgICAgYXdhaXQgX3Blcm1pdC5EaXNwb3NlQXN5bmMoKTsKICAgICAgICBhd2FpdCBfcmVqZWN0LkRpc3Bvc2VBc3luYygpOwogICAgICAgIGF3YWl0IF9xdWV1ZS5EaXNwb3NlQXN5bmMoKTsKICAgIH0KCiAgICBbQmVuY2htYXJrKEJhc2VsaW5lID0gdHJ1ZSldCiAgICBwdWJsaWMgdm9pZCBFeGlzdGluZ1BhcnRpdGlvbktleUltbWVkaWF0ZVBlcm1pdCgpCiAgICAgICAgPT4gQWNxdWlyZUFuZERpc3Bvc2UoX3Blcm1pdCwgX2hvdENvbnRleHQpOwoKICAgIFtCZW5jaG1hcmtdCiAgICBwdWJsaWMgYm9vbCBFeGlzdGluZ1BhcnRpdGlvbktleUltbWVkaWF0ZVJlamVjdCgpCiAgICAgICAgPT4gX3JlamVjdC5BY3F1aXJlQXN5bmMoCiAgICAgICAgICAgIF9ob3RDb250ZXh0LCAxLCBmYWxzZSwgQ2FuY2VsbGF0aW9uVG9rZW4uTm9uZSkuUmVzdWx0LklzQWNxdWlyZWQ7CgogICAgW0JlbmNobWFyayhPcGVyYXRpb25zUGVySW52b2tlID0gNjQpXQogICAgcHVibGljIHZvaWQgTmV3UGFydGl0aW9uS2V5Q3JlYXRpb25CYXRjaCgpCiAgICB7CiAgICAgICAgdmFyIGNvbnRyb2xsZXIgPSBDcmVhdGVQYXJ0aXRpb25Db250cm9sbGVyKDEpOwogICAgICAgIHRyeQogICAgICAgIHsKICAgICAgICAgICAgZm9yICh2YXIgaW5kZXggPSAwOyBpbmRleCA8IDY0OyBpbmRleCsrKQogICAgICAgICAgICAgICAgQWNxdWlyZUFuZERpc3Bvc2UoY29udHJvbGxlciwgQ29udGV4dCgkIm5ldy1rZXkte2luZGV4fSIpKTsKICAgICAgICB9CiAgICAgICAgZmluYWxseQogICAgICAgIHsKICAgICAgICAgICAgY29udHJvbGxlci5EaXNwb3NlQXN5bmMoKS5Bc1Rhc2soKS5HZXRBd2FpdGVyKCkuR2V0UmVzdWx0KCk7CiAgICAgICAgfQogICAgfQoKICAgIFtCZW5jaG1hcmtdCiAgICBwdWJsaWMgYXN5bmMgVmFsdWVUYXNrIFF1ZXVlQW5kUmVsZWFzZU9uUGFydGl0aW9uTGltaXRlcigpCiAgICB7CiAgICAgICAgdmFyIGJsb2NrZXIgPSAoYXdhaXQgX3F1ZXVlLkFjcXVpcmVBc3luYygKICAgICAgICAgICAgX2hvdENvbnRleHQsIDEsIHRydWUsIENhbmNlbGxhdGlvblRva2VuLk5vbmUpKS5MZWFzZSE7CiAgICAgICAgdmFyIHBlbmRpbmcgPSBfcXVldWUuQWNxdWlyZUFzeW5jKAogICAgICAgICAgICBfaG90Q29udGV4dCwgMSwgdHJ1ZSwgQ2FuY2VsbGF0aW9uVG9rZW4uTm9uZSk7CiAgICAgICAgYmxvY2tlci5EaXNwb3NlKCk7CiAgICAgICAgdmFyIGFkbWl0dGVkID0gYXdhaXQgcGVuZGluZy5Db25maWd1cmVBd2FpdChmYWxzZSk7CiAgICAgICAgYWRtaXR0ZWQuTGVhc2UhLkRpc3Bvc2UoKTsKICAgIH0KCiAgICBwcml2YXRlIHN0YXRpYyBTaGFycExpbmtBZG1pc3Npb25Db250cm9sbGVyIENyZWF0ZVBhcnRpdGlvbkNvbnRyb2xsZXIoCiAgICAgICAgaW50IGNvbmN1cnJlbmN5LAogICAgICAgIGJvb2wgcXVldWUgPSBmYWxzZSkKICAgIHsKICAgICAgICB2YXIgb3B0aW9ucyA9IG5ldyBTaGFycExpbmtBZG1pc3Npb25Db250cm9sT3B0aW9ucygpOwogICAgICAgIG9wdGlvbnMuVXNlUGFydGl0aW9uKFNlbGVjdG9yLCBwYXJ0aXRpb24gPT4KICAgICAgICB7CiAgICAgICAgICAgIHBhcnRpdGlvbi5NYXhQYXJ0aXRpb25zID0gNjQ7CiAgICAgICAgICAgIHBhcnRpdGlvbi5JZGxlVGltZW91dCA9IFRpbWVTcGFuLkZyb21Ib3VycygxKTsKICAgICAgICAgICAgcGFydGl0aW9uLlVzZUNvbmN1cnJlbmN5KGNvbmN1cnJlbmN5KTsKICAgICAgICB9KTsKICAgICAgICBpZiAocXVldWUpCiAgICAgICAgewogICAgICAgICAgICBvcHRpb25zLk1heFF1ZXVlZENhbGxzID0gNjQ7CiAgICAgICAgICAgIG9wdGlvbnMuTWF4UXVldWVkQnl0ZXMgPSA2NCAqIDEwMjQ7CiAgICAgICAgICAgIG9wdGlvbnMuTWF4UXVldWVEZWxheSA9IFRpbWVTcGFuLkZyb21TZWNvbmRzKDUpOwogICAgICAgIH0KICAgICAgICByZXR1cm4gU2hhcnBMaW5rQWRtaXNzaW9uQ29udHJvbGxlci5DcmVhdGUob3B0aW9ucywgW10pOwogICAgfQoKICAgIHByaXZhdGUgc3RhdGljIFNoYXJwTGlua0FkbWlzc2lvbkNvbnRleHQgQ29udGV4dChzdHJpbmcgY29ubmVjdGlvbklkKQogICAgICAgID0+IG5ldygxLCAyLCBScGNNZXRob2RLaW5kLlVuYXJ5LCBjb25uZWN0aW9uSWQsIG51bGwsIG51bGwsIG51bGwpOwoKICAgIHByaXZhdGUgc3RhdGljIHZvaWQgQWNxdWlyZUFuZERpc3Bvc2UoCiAgICAgICAgU2hhcnBMaW5rQWRtaXNzaW9uQ29udHJvbGxlciBjb250cm9sbGVyLAogICAgICAgIFNoYXJwTGlua0FkbWlzc2lvbkNvbnRleHQgY29udGV4dCkKICAgIHsKICAgICAgICB2YXIgZGVjaXNpb24gPSBjb250cm9sbGVyLkFjcXVpcmVBc3luYygKICAgICAgICAgICAgY29udGV4dCwgMSwgZmFsc2UsIENhbmNlbGxhdGlvblRva2VuLk5vbmUpLlJlc3VsdDsKICAgICAgICBkZWNpc2lvbi5MZWFzZSEuRGlzcG9zZSgpOwogICAgfQp9Cg=='
     steps:
       - name: Checkout evidence branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,11 +25,133 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Write shared partition benchmark
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/Issue335ComparablePartitionBenchmarks.cs" <<'CS'
+          using System;
+          using System.Threading;
+          using System.Threading.Tasks;
+          using BenchmarkDotNet.Attributes;
+          using BenchmarkDotNet.Diagnosers;
+          using BenchmarkDotNet.Engines;
+          using SharpLink.Abstractions;
+          using SharpLink.Server;
+
+          namespace SharpLink.Benchmarks;
+
+          [MemoryDiagnoser]
+          [ThreadingDiagnoser]
+          [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+          public class Issue335ComparablePartitionBenchmarks
+          {
+              private static readonly Func<SharpLinkAdmissionContext, string?> Selector =
+                  static context => context.ConnectionId;
+
+              private SharpLinkAdmissionController _permit = null!;
+              private SharpLinkAdmissionController _reject = null!;
+              private SharpLinkAdmissionController _queue = null!;
+              private AdmissionLease _rejectBlocker = null!;
+              private SharpLinkAdmissionContext _hotContext = null!;
+
+              [GlobalSetup]
+              public async Task Setup()
+              {
+                  _hotContext = Context("hot-key");
+                  _permit = CreatePartitionController(1024);
+                  AcquireAndDispose(_permit, _hotContext);
+
+                  _reject = CreatePartitionController(1);
+                  _rejectBlocker = (await _reject.AcquireAsync(
+                      _hotContext, 1, false, CancellationToken.None)).Lease!;
+
+                  _queue = CreatePartitionController(1, queue: true);
+              }
+
+              [GlobalCleanup]
+              public async Task Cleanup()
+              {
+                  _rejectBlocker.Dispose();
+                  await _permit.DisposeAsync();
+                  await _reject.DisposeAsync();
+                  await _queue.DisposeAsync();
+              }
+
+              [Benchmark(Baseline = true)]
+              public void ExistingPartitionKeyImmediatePermit()
+                  => AcquireAndDispose(_permit, _hotContext);
+
+              [Benchmark]
+              public bool ExistingPartitionKeyImmediateReject()
+                  => _reject.AcquireAsync(
+                      _hotContext, 1, false, CancellationToken.None).Result.IsAcquired;
+
+              [Benchmark(OperationsPerInvoke = 64)]
+              public void NewPartitionKeyCreationBatch()
+              {
+                  var controller = CreatePartitionController(1);
+                  try
+                  {
+                      for (var index = 0; index < 64; index++)
+                          AcquireAndDispose(controller, Context($"new-key-{index}"));
+                  }
+                  finally
+                  {
+                      controller.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                  }
+              }
+
+              [Benchmark]
+              public async ValueTask QueueAndReleaseOnPartitionLimiter()
+              {
+                  var blocker = (await _queue.AcquireAsync(
+                      _hotContext, 1, true, CancellationToken.None)).Lease!;
+                  var pending = _queue.AcquireAsync(
+                      _hotContext, 1, true, CancellationToken.None);
+                  blocker.Dispose();
+                  var admitted = await pending.ConfigureAwait(false);
+                  admitted.Lease!.Dispose();
+              }
+
+              private static SharpLinkAdmissionController CreatePartitionController(
+                  int concurrency,
+                  bool queue = false)
+              {
+                  var options = new SharpLinkAdmissionControlOptions();
+                  options.UsePartition(Selector, partition =>
+                  {
+                      partition.MaxPartitions = 64;
+                      partition.IdleTimeout = TimeSpan.FromHours(1);
+                      partition.UseConcurrency(concurrency);
+                  });
+                  if (queue)
+                  {
+                      options.MaxQueuedCalls = 64;
+                      options.MaxQueuedBytes = 64 * 1024;
+                      options.MaxQueueDelay = TimeSpan.FromSeconds(5);
+                  }
+                  return SharpLinkAdmissionController.Create(options, []);
+              }
+
+              private static SharpLinkAdmissionContext Context(string connectionId)
+                  => new(1, 2, RpcMethodKind.Unary, connectionId, null, null, null);
+
+              private static void AcquireAndDispose(
+                  SharpLinkAdmissionController controller,
+                  SharpLinkAdmissionContext context)
+              {
+                  var decision = controller.AcquireAsync(
+                      context, 1, false, CancellationToken.None).Result;
+                  decision.Lease!.Dispose();
+              }
+          }
+          CS
+
       - name: Benchmark reviewed base partition paths
         shell: bash
         run: |
           git checkout 46c1285d25b8445d26d050256e8ad590859b541b
-          printf '%s' "$ISSUE335_BENCHMARK_B64" | base64 --decode > test/SharpLink.Benchmarks/Issue335ComparablePartitionBenchmarks.cs
+          cp "$RUNNER_TEMP/Issue335ComparablePartitionBenchmarks.cs" test/SharpLink.Benchmarks/
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           mkdir -p "$RUNNER_TEMP/issue335-partition/base"
           dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks -- \
@@ -43,7 +164,7 @@ jobs:
         run: |
           git clean -fdx
           git checkout 60b7206c997aa58734c46043eba03a435a6a46b9
-          printf '%s' "$ISSUE335_BENCHMARK_B64" | base64 --decode > test/SharpLink.Benchmarks/Issue335ComparablePartitionBenchmarks.cs
+          cp "$RUNNER_TEMP/Issue335ComparablePartitionBenchmarks.cs" test/SharpLink.Benchmarks/
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           mkdir -p "$RUNNER_TEMP/issue335-partition/head"
           dotnet run -c Release --no-restore --project test/SharpLink.Benchmarks -- \
