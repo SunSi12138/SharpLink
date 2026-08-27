@@ -61,7 +61,7 @@ public sealed class StandalonePayloadCodec : SharpLink.Abstractions.IRpcCodec<St
     }
 
     [Test]
-    public Task GeneratedManifestShouldSeparateContractOnlyCodecDependencies()
+    public Task GeneratedManifestShouldKeepOrdinaryCustomCodecHelpersOutOfModuleDependencies()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
         var payload = CreateMetadataReference(
@@ -117,9 +117,9 @@ public interface IReviewPayloadContract : IService
         Ensure(!normalDependencies.Contains("ReviewPayloads", StringComparison.Ordinal),
             "an ordinary CLR payload assembly must not become a runtime module dependency");
         Ensure(!normalDependencies.Contains("ReviewPayloadCodecs", StringComparison.Ordinal),
-            "the RPC-only Codec implementation assembly must not leak into normal Dependencies");
-        Ensure(contractDependencies.Contains("ReviewPayloadCodecs", StringComparison.Ordinal),
-            "the RPC-only Codec implementation assembly must be published through ContractDependencies");
+            "the custom Codec implementation assembly must not leak into normal Dependencies");
+        Ensure(!contractDependencies.Contains("ReviewPayloadCodecs", StringComparison.Ordinal),
+            "an ordinary custom Codec implementation binary must remain a CLR dependency, not a generated Contract dependency");
         Ensure(!contractDependencies.Contains("ReviewPayloads", StringComparison.Ordinal),
             "ordinary CLR payload references must remain outside runtime module dependency tables");
         return Task.CompletedTask;
