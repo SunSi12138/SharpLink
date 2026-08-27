@@ -1,0 +1,162 @@
+name: Restack 332
+
+on:
+  push:
+    branches:
+      - issue-331-dynamic-admission-update
+
+permissions:
+  contents: write
+
+jobs:
+  restack:
+    if: contains(github.event.head_commit.message, 'stage #332 restack preflight')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Rebuild exact #332 slice on latest dev
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_branch='issue-331-dynamic-admission-update'
+          slice_sha='b2ee472d98946e428d69ee18a0c0be6f72deb57c'
+          target_head="$(git rev-parse HEAD)"
+          git fetch origin dev:refs/remotes/origin/dev
+          dev_sha="$(git rev-parse refs/remotes/origin/dev)"
+
+          echo "target_head=$target_head"
+          echo "dev_sha=$dev_sha"
+          echo "slice_sha=$slice_sha"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git reset --hard "$dev_sha"
+          git checkout "$slice_sha" -- \
+            doc/admission-control.md \
+            src/SharpLink.Server/Admission/AdmissionLimiterAliases.cs \
+            src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            src/SharpLink.Server/SharpLinkServerAdmissionControlExtensions.cs \
+            test/SharpLink.Benchmarks/AdmissionBenchmarks.cs \
+            test/SharpLink.IntegrationTests/DynamicAdmissionUpdateResourceRegressionTests.cs \
+            test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs \
+            test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateRateRetentionTests.cs \
+            test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateReviewRegressionTests.cs \
+            test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs \
+            test/SharpLink.UnitTests/Server/AdmissionReclamationRegressionTests.cs
+
+          DEV_SHA="$dev_sha" python3 <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected 1 match, found {count}")
+              return text.replace(old, new, 1)
+
+          controller_path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          text = controller_path.read_text()
+
+          old_deadline = '''        => AcquireAsync(\n            context,\n            retainedBytes,\n            allowQueue,\n            context.Deadline is { } deadline\n                ? RpcDeadline.Create(deadline, _timeProvider)\n                : default,\n            cancellationToken);'''
+          new_deadline = '''        => AcquireAsync(\n            context,\n            retainedBytes,\n            allowQueue,\n            default,\n            cancellationToken);'''
+          text = replace_once(text, old_deadline, new_deadline, 'admission deadline wrapper')
+
+          partition_type_count = text.count('AdmissionPartitionLease?')
+          if partition_type_count < 4:
+              raise RuntimeError(f'partition ownership type: expected >=4 matches, found {partition_type_count}')
+          text = text.replace('AdmissionPartitionLease?', 'AdmissionPartitionEntry?')
+
+          old_dispose = '        Interlocked.Exchange(ref _partition, null)?.Dispose();'
+          dispose_count = text.count(old_dispose)
+          if dispose_count != 2:
+              raise RuntimeError(f'partition release boundary: expected 2 matches, found {dispose_count}')
+          new_dispose = '''        var partition = Interlocked.Exchange(ref _partition, null);\n        partition?.Owner.Release(partition);'''
+          text = text.replace(old_dispose, new_dispose)
+
+          wait_start = text.index('    private async ValueTask<AdmissionDecision> WaitForAdmissionAsync(')
+          wait_end = text.index('    internal bool TryReserveAdditionalQueuedBytes', wait_start)
+          wait_method = '''    private async ValueTask<AdmissionDecision> WaitForAdmissionAsync(\n        AdmissionRequest request,\n        AdmissionLimiterSlot failedSlot,\n        int retainedBytes,\n        RpcDeadline deadline,\n        CancellationToken cancellationToken)\n    {\n        var started = _timeProvider.GetTimestamp();\n        var queueDeadline = RpcDeadline.Create(\n            _maxQueueDelay,\n            started,\n            _timeProvider.TimestampFrequency);\n        var deadlineLimitsWait =\n            deadline.HasValue && deadline.WouldExpireBeforeOrAt(_maxQueueDelay, _timeProvider);\n        var waitDeadline = deadlineLimitsWait ? deadline : queueDeadline;\n        var waitDelay = waitDeadline.GetRemaining(_timeProvider);\n        using var timeoutCancellation = waitDelay <= TimeSpan.Zero\n            ? new CancellationTokenSource()\n            : new CancellationTokenSource(waitDelay, _timeProvider);\n        if (waitDelay <= TimeSpan.Zero)\n            timeoutCancellation.Cancel();\n        using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(\n            cancellationToken,\n            _kernel.DrainingToken,\n            timeoutCancellation.Token);\n\n        try\n        {\n            while (true)\n            {\n                RateLimitLease waitedLease;\n                try\n                {\n                    waitedLease = failedSlot.Limiter is ResizableConcurrencyState concurrency\n                        ? await concurrency.AcquireAsyncForAdmission(\n                            request.TracksConcurrencyTargetVersion,\n                            waitCancellation.Token).ConfigureAwait(false)\n                        : await failedSlot.Limiter\n                            .AcquireAsync(1, waitCancellation.Token)\n                            .ConfigureAwait(false);\n                }\n                catch (OperationCanceledException) when (\n                    _kernel.IsDraining && !cancellationToken.IsCancellationRequested)\n                {\n                    if (waitDeadline.IsExpired(_timeProvider))\n                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);\n                    return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);\n                }\n                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)\n                {\n                    if (waitDeadline.IsExpired(_timeProvider))\n                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);\n                    throw;\n                }\n                catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested)\n                {\n                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);\n                }\n\n                if (waitDeadline.IsExpired(_timeProvider))\n                {\n                    waitedLease.Dispose();\n                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);\n                }\n                if (_kernel.IsDraining)\n                {\n                    waitedLease.Dispose();\n                    return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);\n                }\n                if (cancellationToken.IsCancellationRequested)\n                {\n                    waitedLease.Dispose();\n                    cancellationToken.ThrowIfCancellationRequested();\n                }\n\n                if (!waitedLease.IsAcquired)\n                {\n                    waitedLease.Dispose();\n                    return AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);\n                }\n                if (request.TryAcquireUsing(\n                        _kernel,\n                        failedSlot.Limiter,\n                        waitedLease,\n                        out var lease,\n                        out failedSlot))\n                {\n                    return AdmissionDecision.Accept(lease!);\n                }\n            }\n        }\n        finally\n        {\n            _kernel.ReleaseQueue(retainedBytes);\n            SharpLinkTelemetry.RecordAdmissionQueueDuration(\n                _timeProvider.GetElapsedTime(started));\n            request.Dispose();\n        }\n    }\n\n    private static AdmissionDecision RejectExpiredAdmissionWait(\n        AdmissionLimiterSlot failedSlot,\n        bool deadlineLimitsWait)\n        => deadlineLimitsWait\n            ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)\n            : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);\n\n'''
+          text = text[:wait_start] + wait_method + text[wait_end:]
+
+          tail_marker = '/// <summary>Kernel-owned partition namespace/state shared by compatible program generations.</summary>'
+          tail_start = text.index(tail_marker)
+          partition_tail = '''/// <summary>Kernel-owned partition namespace/state shared by compatible program generations.</summary>\ninternal sealed class AdmissionPartitionPool : IDisposable\n{\n    private readonly Func<SharpLinkAdmissionContext, string?> _selector;\n    private readonly SharpLinkPartitionAdmissionOptions _options;\n    private readonly TimeProvider _timeProvider;\n    private readonly Lock _gate = new();\n    private readonly Dictionary<AdmissionPartitionKey, AdmissionPartitionEntry> _entries = [];\n    private bool _hasIdleExpiryHint;\n    private long _earliestIdleSince;\n    private long _reclaimScanCount;\n    private long _reclaimEntriesVisited;\n    private int _disposed;\n\n    internal AdmissionPartitionPool(\n        Func<SharpLinkAdmissionContext, string?> selector,\n        SharpLinkPartitionAdmissionOptions options,\n        TimeProvider timeProvider)\n        : this(selector, options, queueLimit: 0, timeProvider)\n    {\n    }\n\n    internal AdmissionPartitionPool(\n        Func<SharpLinkAdmissionContext, string?> selector,\n        SharpLinkPartitionAdmissionOptions options,\n        int queueLimit,\n        TimeProvider timeProvider)\n    {\n        _ = queueLimit;\n        _selector = selector;\n        _options = options.CloneValidated();\n        _timeProvider = timeProvider;\n    }\n\n    internal AdmissionPartitionEntry? TryAcquire(SharpLinkAdmissionContext context)\n    {\n        var selected = _selector(context);\n        if (selected is { Length: > 256 })\n            throw new InvalidOperationException("Admission partition keys cannot exceed 256 characters.");\n        var key = string.IsNullOrEmpty(selected)\n            ? AdmissionPartitionKey.Default\n            : AdmissionPartitionKey.ForUser(selected);\n\n        List<AdmissionRuleRuntime>? evicted = null;\n        AdmissionPartitionEntry entry;\n        lock (_gate)\n        {\n            if (Volatile.Read(ref _disposed) != 0)\n                return null;\n            if (!_entries.TryGetValue(key, out entry!))\n            {\n                evicted = ReclaimIdleEntriesIfDue(_timeProvider.GetTimestamp());\n                if (_entries.Count >= _options.MaxPartitions)\n                    return null;\n                entry = new AdmissionPartitionEntry(\n                    this,\n                    AdmissionRuleRuntime.CreateOwned(_options, "partition"));\n                _entries.Add(key, entry);\n                SharpLinkTelemetry.AddAdmissionActivePartitions(1);\n            }\n            entry.References++;\n            entry.IsIdle = false;\n        }\n        DisposeRules(evicted);\n        return entry;\n    }\n\n    internal void Release(AdmissionPartitionEntry entry)\n    {\n        List<AdmissionRuleRuntime>? evicted = null;\n        lock (_gate)\n        {\n            entry.References--;\n            if (Volatile.Read(ref _disposed) != 0)\n                return;\n\n            var now = _timeProvider.GetTimestamp();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = now;\n                entry.IsIdle = true;\n                if (!_hasIdleExpiryHint)\n                {\n                    _earliestIdleSince = now;\n                    _hasIdleExpiryHint = true;\n                }\n            }\n            evicted = ReclaimIdleEntriesIfDue(now);\n        }\n        DisposeRules(evicted);\n    }\n\n    private List<AdmissionRuleRuntime>? ReclaimIdleEntriesIfDue(long now)\n    {\n        if (!_hasIdleExpiryHint ||\n            _timeProvider.GetElapsedTime(_earliestIdleSince, now) < _options.IdleTimeout)\n        {\n            return null;\n        }\n        return ReconcileExpiredIdleEntries(now);\n    }\n\n    private List<AdmissionRuleRuntime>? ReconcileExpiredIdleEntries(long now)\n    {\n        _reclaimScanCount++;\n        List<AdmissionPartitionKey>? expiredKeys = null;\n        var hasNextIdle = false;\n        var nextIdleSince = 0L;\n        var longestRemainingElapsed = TimeSpan.Zero;\n\n        foreach (var pair in _entries)\n        {\n            _reclaimEntriesVisited++;\n            var entry = pair.Value;\n            if (entry.References != 0 || !entry.IsIdle)\n                continue;\n\n            var elapsed = _timeProvider.GetElapsedTime(entry.IdleSince, now);\n            if (elapsed >= _options.IdleTimeout)\n            {\n                (expiredKeys ??= []).Add(pair.Key);\n                continue;\n            }\n\n            if (!hasNextIdle || elapsed > longestRemainingElapsed)\n            {\n                hasNextIdle = true;\n                nextIdleSince = entry.IdleSince;\n                longestRemainingElapsed = elapsed;\n            }\n        }\n\n        _hasIdleExpiryHint = hasNextIdle;\n        _earliestIdleSince = hasNextIdle ? nextIdleSince : 0;\n        if (expiredKeys is null)\n            return null;\n\n        var rules = new List<AdmissionRuleRuntime>(expiredKeys.Count);\n        foreach (var key in expiredKeys)\n        {\n            rules.Add(_entries[key].Runtime);\n            _entries.Remove(key);\n            SharpLinkTelemetry.AddAdmissionActivePartitions(-1);\n        }\n        return rules;\n    }\n\n    internal int Count\n    {\n        get\n        {\n            lock (_gate)\n                return _entries.Count;\n        }\n    }\n\n    internal long ReclaimScanCount\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimScanCount;\n        }\n    }\n\n    internal long ReclaimEntriesVisited\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimEntriesVisited;\n        }\n    }\n\n    public void Dispose()\n    {\n        if (Interlocked.Exchange(ref _disposed, 1) != 0)\n            return;\n        AdmissionRuleRuntime[] rules;\n        lock (_gate)\n        {\n            rules = _entries.Values.Select(static entry => entry.Runtime).ToArray();\n            var count = _entries.Count;\n            _entries.Clear();\n            _hasIdleExpiryHint = false;\n            _earliestIdleSince = 0;\n            if (count != 0)\n                SharpLinkTelemetry.AddAdmissionActivePartitions(-count);\n        }\n        foreach (var rule in rules)\n            rule.Dispose();\n    }\n\n    private static void DisposeRules(List<AdmissionRuleRuntime>? rules)\n    {\n        if (rules is null)\n            return;\n        foreach (var rule in rules)\n            rule.Dispose();\n    }\n\n    private readonly record struct AdmissionPartitionKey(string? Value, bool IsDefault)\n    {\n        internal static AdmissionPartitionKey Default { get; } = new(null, true);\n        internal static AdmissionPartitionKey ForUser(string value) => new(value, false);\n    }\n}\n\ninternal sealed class AdmissionPartitionEntry(\n    AdmissionPartitionPool owner,\n    AdmissionRuleRuntime runtime)\n{\n    internal AdmissionPartitionPool Owner { get; } = owner;\n    internal AdmissionRuleRuntime Runtime { get; } = runtime;\n    internal int References;\n    internal long IdleSince;\n    internal bool IsIdle;\n}\n'''
+          text = text[:tail_start] + partition_tail
+          controller_path.write_text(text)
+
+          dev_sha = os.environ['DEV_SHA']
+          doc_path = Path('doc/admission-control.md')
+          current_dev_doc = subprocess.check_output(
+              ['git', 'show', f'{dev_sha}:doc/admission-control.md'], text=True)
+          slice_doc = doc_path.read_text()
+          marker = '## RPC 调用接入'
+          marker_pos = current_dev_doc.index(marker)
+          slice_body = slice_doc.split('\n\n', 1)[1]
+          doc_path.write_text(current_dev_doc[:marker_pos] + marker + '\n\n' + slice_body)
+
+          context_files = [
+              Path('test/SharpLink.Benchmarks/AdmissionBenchmarks.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateRateRetentionTests.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateReviewRegressionTests.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs'),
+          ]
+          for path in context_files:
+              source = path.read_text()
+              old = 'null, null, null);'
+              count = source.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path}: expected one legacy 7-argument context helper, found {count}')
+              path.write_text(source.replace(old, 'null, null);', 1))
+          PY
+
+          git add -A
+
+          python3 <<'PY'
+          import subprocess
+
+          allowed = {
+              'doc/admission-control.md',
+              'src/SharpLink.Server/Admission/AdmissionLimiterAliases.cs',
+              'src/SharpLink.Server/Admission/AdmissionLimiterState.cs',
+              'src/SharpLink.Server/Admission/AdmissionStateKernel.cs',
+              'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs',
+              'src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs',
+              'src/SharpLink.Server/SharpLinkServerAdmissionControlExtensions.cs',
+              'test/SharpLink.Benchmarks/AdmissionBenchmarks.cs',
+              'test/SharpLink.IntegrationTests/DynamicAdmissionUpdateResourceRegressionTests.cs',
+              'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateMatrixTests.cs',
+              'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateRateRetentionTests.cs',
+              'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateReviewRegressionTests.cs',
+              'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs',
+              'test/SharpLink.UnitTests/Server/AdmissionReclamationRegressionTests.cs',
+          }
+          changed = set(subprocess.check_output(
+              ['git', 'diff', '--cached', '--name-only', 'HEAD'], text=True).splitlines())
+          print('changed files:', *sorted(changed), sep='\n  ')
+          if changed != allowed:
+              raise RuntimeError(f'expected exact 14-file slice; missing={sorted(allowed-changed)} extra={sorted(changed-allowed)}')
+          PY
+
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          dotnet build Sharplink.slnx -c Debug --no-restore --nologo
+
+          tree_sha="$(git write-tree)"
+          final_commit="$(printf '%s\n' 'chore(stack): restack #332 onto latest dev' | git commit-tree "$tree_sha" -p "$target_head" -p "$dev_sha")"
+          echo "tree_sha=$tree_sha"
+          echo "final_commit=$final_commit"
+          git push origin "$final_commit:refs/heads/$target_branch"
