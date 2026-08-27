@@ -195,7 +195,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
     }
 
     private static SharpLinkAdmissionContext CreateAdmissionContext()
-        => new(11, 22, RpcMethodKind.OneWay, "runtime-enable-oneway", null, null, null);
+        => new(11, 22, RpcMethodKind.OneWay, "runtime-enable-oneway", null, null);
 
     private static byte[] CreateStreamItem(byte value)
         => Enumerable.Repeat(value, StreamItemBytes).ToArray();

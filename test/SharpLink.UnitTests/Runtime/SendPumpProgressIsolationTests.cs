@@ -179,51 +179,63 @@ public class SendPumpProgressIsolationTests
     [Test]
     public async Task ProgressBurstDoesNotStarveNormalFrames()
     {
-        var clock = new ManualTimeProvider();
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
+            .Configure(options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency)
             .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
-        var output = new Pipe();
+        var output = new Pipe(new PipeOptions(pauseWriterThreshold: 1, resumeWriterThreshold: 1));
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "progress-burst-normal-interleave",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ClientOptions(
-                context,
-                new RpcSessionFlushOptions(1024 * 1024, TimeSpan.FromSeconds(10))));
+            RpcSessionTestFixture.ClientOptions(context));
         try
         {
-            // Park the pump in the timed-batch deadline wait, then queue a
-            // progress storm followed by normal frames while it is blocked.
-            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 128, requestId: 99));
-            await WaitUntilAsync(() => clock.EarliestTimerTimestamp != long.MaxValue);
+            // LowLatency flushes each progress frame from inside
+            // DrainProgressQueueAsync. Hold the first transport read without
+            // advancing it so the pump is deterministically parked inside that
+            // progress drain while the complete backlog is constructed.
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
+            var firstResult = await output.Reader.ReadAsync().AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            var firstBuffer = firstResult.Buffer;
+            Ensure(ProtocolV2FrameParser.TryReadFrame(
+                    ref firstBuffer, context.Protocol, out var firstHeader, out _),
+                "the blocked first flush must contain the leading progress frame");
+            Ensure(firstHeader.Type == ProtocolV2FrameType.Ping && firstBuffer.Length == 0,
+                "the blocked first flush must contain exactly one progress frame");
 
-            for (var index = 0; index < 24; index++)
+            const int progressBacklog = 512;
+            const int normalFrames = 10;
+            for (var index = 0; index < progressBacklog; index++)
                 session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
-            for (var index = 1; index <= 10; index++)
+            for (var index = 1; index <= normalFrames; index++)
                 session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 64, checked((ulong)index)));
-            // The pump drains the whole progress backlog first, then the
-            // complete normal queue; the reader advances the manual clock
-            // whenever the pipe has no data so every parked batch flushes
-            // deterministically.
-            var types = await ReadFrameTypesWithClockAsync(
-                output.Reader, context.Protocol, clock, expectedFrames: 35);
-            Ensure(types.Count == 35, $"expected 35 frames, read {types.Count}");
-            // Deterministic drain order after the pump wakes: the full
-            // progress backlog, then all ten normal frames. Even with a
-            // multi-burst progress backlog queued ahead of them, the normal
-            // frames are all drained in one normal-queue pass, so bulk
-            // traffic cannot starve behind protocol progress.
-            Ensure(types.Skip(1).Take(24).All(static type => type == ProtocolV2FrameType.Ping),
-                "the full progress backlog must drain first");
-            Ensure(types.Skip(25).Take(10).All(static type => type == ProtocolV2FrameType.Response),
-                "all ten normal frames must drain in one pass after the progress backlog");
+
+            // Releasing the first flush resumes the same bounded progress
+            // drain. The normal queue must receive a turn before the already
+            // queued progress backlog reaches its final frame. Do not require
+            // a more specific wire order: LowLatency flush scheduling may
+            // expose different legal interleavings after that fairness point.
+            output.Reader.AdvanceTo(firstResult.Buffer.End);
+            var types = await ReadFrameTypesAsync(
+                output.Reader,
+                context.Protocol,
+                expectedFrames: progressBacklog + normalFrames);
+            Ensure(types.Count == progressBacklog + normalFrames,
+                $"expected {progressBacklog + normalFrames} frames, read {types.Count}");
+            Ensure(types.Count(static type => type == ProtocolV2FrameType.Ping) == progressBacklog,
+                $"expected {progressBacklog} remaining progress frames");
+            Ensure(types.Count(static type => type == ProtocolV2FrameType.Response) == normalFrames,
+                $"expected {normalFrames} normal frames");
+            var firstResponseIndex = types.FindIndex(static type => type == ProtocolV2FrameType.Response);
+            var finalPingIndex = types.FindLastIndex(static type => type == ProtocolV2FrameType.Ping);
+            Ensure(firstResponseIndex >= 0 && firstResponseIndex < finalPingIndex,
+                "a normal frame must be served before the queued progress backlog completes");
         }
         finally
         {
             await session.DisposeAsync();
-            await clock.WaitForTimersDrainedAsync();
             await input.Writer.CompleteAsync();
             await output.Reader.CompleteAsync();
         }

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SharpLink.CodecCompatibility</AssemblyName>
+    <RootNamespace>SharpLink.CodecCompatibility</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <WasmMainJSPath>main.js</WasmMainJSPath>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Compile Include="../SharpLink.CodecCompatibility/CompatibilityPolicy.cs" Link="Shared/CompatibilityPolicy.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/Fixtures.cs" Link="Shared/Fixtures.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/Models.cs" Link="Shared/Models.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/PortableModels.cs" Link="Shared/PortableModels.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/PortableProbe.cs" Link="Shared/PortableProbe.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="index.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

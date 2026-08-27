@@ -65,11 +65,6 @@ public partial class RpcGenerator : IIncrementalGenerator
                 static (node, _) => node is InterfaceDeclarationSyntax,
                 static (attributeContext, ct) => GetInvalidCancellationTokenMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
-        var invalidCallOptionsMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
-                RpcContractAttributeMetadataName,
-                static (node, _) => node is InterfaceDeclarationSyntax,
-                static (attributeContext, ct) => GetInvalidCallOptionsMethods(attributeContext, ct))
-            .Where(x => x.Length > 0);
         var invalidControlParameterOrderMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
                 static (node, _) => node is InterfaceDeclarationSyntax,
@@ -138,11 +133,6 @@ public partial class RpcGenerator : IIncrementalGenerator
                     method.MethodName);
                 spc.ReportDiagnostic(diagnostic);
             }
-        });
-        context.RegisterSourceOutput(invalidCallOptionsMethods, static (spc, methods) =>
-        {
-            foreach (var method in methods)
-                spc.ReportDiagnostic(Diagnostic.Create(MultipleCallOptionsRule, method.Location, method.MethodName));
         });
         context.RegisterSourceOutput(invalidControlParameterOrderMethods, static (spc, methods) =>
         {

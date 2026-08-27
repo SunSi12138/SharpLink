@@ -662,7 +662,7 @@ public sealed class AdmissionDynamicUpdateTests
             throw new Exception("assert failed: expected enabled admission publication");
 
     private static SharpLinkAdmissionContext CreateContext(RpcMethodKind kind = RpcMethodKind.Unary)
-        => new(101, 202, kind, "dynamic-update-test", null, null, null);
+        => new(101, 202, kind, "dynamic-update-test", null, null);
 
     private static void ConfigureComposite(
         SharpLinkAdmissionControlOptions options,
