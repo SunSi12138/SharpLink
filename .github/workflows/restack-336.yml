@@ -36,7 +36,6 @@ jobs:
           overlaps=(
             'doc/admission-control.md'
             'src/SharpLink.Server/Admission/AdmissionStateKernel.cs'
-            'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs'
             'src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs'
             'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs'
           )
@@ -48,24 +47,83 @@ jobs:
             'test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionUpdateAdvancedTests.cs'
             'test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionUpdateTests.cs'
           )
+          controller='src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs'
 
           git reset --hard "$dev_sha"
           mkdir -p /tmp/restack336/base /tmp/restack336/ours /tmp/restack336/theirs
-          conflict=0
           for path in "${overlaps[@]}"; do
             mkdir -p "/tmp/restack336/base/$(dirname "$path")" "/tmp/restack336/ours/$(dirname "$path")" "/tmp/restack336/theirs/$(dirname "$path")" "$(dirname "$path")"
             git show "$base_sha:$path" > "/tmp/restack336/base/$path"
             git show "$dev_sha:$path" > "/tmp/restack336/ours/$path"
             git show "$slice_sha:$path" > "/tmp/restack336/theirs/$path"
-            if ! git merge-file -p "/tmp/restack336/ours/$path" "/tmp/restack336/base/$path" "/tmp/restack336/theirs/$path" > "$path"; then
-              echo "CONFLICT: $path"
-              grep -n -C 7 -E '^(<<<<<<<|=======|>>>>>>>)' "$path" || true
-              conflict=1
-            fi
+            git merge-file -p "/tmp/restack336/ours/$path" "/tmp/restack336/base/$path" "/tmp/restack336/theirs/$path" > "$path"
           done
-          if [ "$conflict" -ne 0 ]; then
-            exit 2
-          fi
+
+          mkdir -p "/tmp/restack336/base/$(dirname "$controller")" "/tmp/restack336/ours/$(dirname "$controller")" "/tmp/restack336/theirs/$(dirname "$controller")" "$(dirname "$controller")"
+          git show "$base_sha:$controller" > "/tmp/restack336/base/$controller"
+          git show "$dev_sha:$controller" > "/tmp/restack336/ours/$controller"
+          git show "$slice_sha:$controller" > "/tmp/restack336/theirs/$controller"
+          git merge-file -p "/tmp/restack336/ours/$controller" "/tmp/restack336/base/$controller" "/tmp/restack336/theirs/$controller" > "$controller.merged" || true
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          merged = Path(str(path) + '.merged').read_text()
+          theirs = Path('/tmp/restack336/theirs') / path
+          theirs = theirs.read_text()
+
+          start_marker = 'internal sealed class AdmissionPartitionPool : IDisposable'
+          end_marker = 'internal readonly record struct AdmissionDecision('
+
+          ms = merged.index(start_marker)
+          me = merged.index(end_marker, ms)
+          ts = theirs.index(start_marker)
+          te = theirs.index(end_marker, ts)
+          section = theirs[ts:te]
+
+          old = '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private int _disposed;'''
+          new = '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private bool _hasIdleExpiryHint;\n    private long _earliestIdleSince;\n    private long _reclaimScanCount;\n    private long _reclaimEntriesVisited;\n    private int _disposed;'''
+          if section.count(old) != 1:
+              raise RuntimeError('partition field anchor mismatch')
+          section = section.replace(old, new, 1)
+
+          old = '''                    CollectIdleEntriesLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);'''
+          new = '''                    CollectIdleEntriesIfDueLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);'''
+          if section.count(old) != 1:
+              raise RuntimeError('partition acquire reclaim anchor mismatch')
+          section = section.replace(old, new, 1)
+
+          old = '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = _timeProvider.GetTimestamp();\n                entry.IsIdle = true;\n            }\n            CollectIdleEntriesLocked(\n                _timeProvider.GetTimestamp(),\n                stopAfterOne: true,\n                ref dispose);'''
+          new = '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            var now = _timeProvider.GetTimestamp();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = now;\n                entry.IsIdle = true;\n                if (!_hasIdleExpiryHint)\n                {\n                    _earliestIdleSince = now;\n                    _hasIdleExpiryHint = true;\n                }\n            }\n            CollectIdleEntriesIfDueLocked(\n                now,\n                stopAfterOne: true,\n                ref dispose);'''
+          if section.count(old) != 1:
+              raise RuntimeError('partition release reclaim anchor mismatch')
+          section = section.replace(old, new, 1)
+
+          old = '''    private void CollectIdleEntriesLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        List<AdmissionPartitionKey>? keys = null;\n        foreach (var pair in _entries)\n        {\n            if (pair.Value.References != 0 ||\n                !pair.Value.IsIdle ||\n                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)\n            {\n                continue;\n            }\n\n            (keys ??= []).Add(pair.Key);\n            if (stopAfterOne)\n                break;\n        }\n        if (keys is null)\n            return;\n\n        foreach (var key in keys)\n        {\n            var entry = _entries[key];\n            CollectAllEntryStateLocked(entry, ref dispose);\n            _entries.Remove(key);\n            SharpLinkTelemetry.AddAdmissionActivePartitions(-1);\n        }\n    }'''
+          new = '''    private void CollectIdleEntriesIfDueLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        if (!_hasIdleExpiryHint ||\n            _timeProvider.GetElapsedTime(_earliestIdleSince, now) < _options.IdleTimeout)\n        {\n            return;\n        }\n\n        CollectIdleEntriesLocked(now, stopAfterOne, ref dispose);\n    }\n\n    private void CollectIdleEntriesLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        _reclaimScanCount++;\n        List<AdmissionPartitionKey>? keys = null;\n        foreach (var pair in _entries)\n        {\n            _reclaimEntriesVisited++;\n            if (pair.Value.References != 0 ||\n                !pair.Value.IsIdle ||\n                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)\n            {\n                continue;\n            }\n\n            (keys ??= []).Add(pair.Key);\n            if (stopAfterOne)\n                break;\n        }\n\n        if (keys is not null)\n        {\n            foreach (var key in keys)\n            {\n                var entry = _entries[key];\n                CollectAllEntryStateLocked(entry, ref dispose);\n                _entries.Remove(key);\n                SharpLinkTelemetry.AddAdmissionActivePartitions(-1);\n            }\n        }\n\n        RecomputeIdleExpiryHintLocked(now);\n    }\n\n    private void RecomputeIdleExpiryHintLocked(long now)\n    {\n        var hasIdle = false;\n        var earliestIdleSince = 0L;\n        var longestElapsed = TimeSpan.Zero;\n        foreach (var entry in _entries.Values)\n        {\n            if (entry.References != 0 || !entry.IsIdle)\n                continue;\n\n            var elapsed = _timeProvider.GetElapsedTime(entry.IdleSince, now);\n            if (!hasIdle || elapsed > longestElapsed)\n            {\n                hasIdle = true;\n                earliestIdleSince = entry.IdleSince;\n                longestElapsed = elapsed;\n            }\n        }\n\n        _hasIdleExpiryHint = hasIdle;\n        _earliestIdleSince = hasIdle ? earliestIdleSince : 0;\n    }'''
+          if section.count(old) != 1:
+              raise RuntimeError('partition reclaim method anchor mismatch')
+          section = section.replace(old, new, 1)
+
+          old = '''    internal int RuntimeGenerationCount\n    {'''
+          new = '''    internal long ReclaimScanCount\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimScanCount;\n        }\n    }\n\n    internal long ReclaimEntriesVisited\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimEntriesVisited;\n        }\n    }\n\n    internal int RuntimeGenerationCount\n    {'''
+          if section.count(old) != 1:
+              raise RuntimeError('partition diagnostics anchor mismatch')
+          section = section.replace(old, new, 1)
+
+          old = '''            var count = _entries.Count;\n            _entries.Clear();\n            if (count != 0)'''
+          new = '''            var count = _entries.Count;\n            _entries.Clear();\n            _hasIdleExpiryHint = false;\n            _earliestIdleSince = 0;\n            if (count != 0)'''
+          if section.count(old) != 1:
+              raise RuntimeError('partition dispose hint anchor mismatch')
+          section = section.replace(old, new, 1)
+
+          resolved = merged[:ms] + section + merged[me:]
+          if '<<<<<<<' in resolved or '=======' in resolved or '>>>>>>>' in resolved:
+              raise RuntimeError('unresolved conflict marker remains after partition splice')
+          path.write_text(resolved)
+          Path(str(path) + '.merged').unlink()
+          PY
 
           for path in "${additions[@]}"; do
             mkdir -p "$(dirname "$path")"
@@ -91,7 +149,7 @@ jobs:
           changed = set(subprocess.check_output(['git','diff','--cached','--name-only','HEAD'], text=True).splitlines())
           print('changed files:', *sorted(changed), sep='\n  ')
           if changed != allowed:
-            raise RuntimeError(f'exact 11-file scope mismatch: missing={sorted(allowed-changed)} extra={sorted(changed-allowed)}')
+              raise RuntimeError(f'exact 11-file scope mismatch: missing={sorted(allowed-changed)} extra={sorted(changed-allowed)}')
           PY
 
           dotnet restore Sharplink.slnx
