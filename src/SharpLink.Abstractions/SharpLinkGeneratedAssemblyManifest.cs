@@ -63,7 +63,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
     /// <summary>Gets the declared wire protocol version, or zero for a legacy locator.</summary>
     public int ProtocolVersion { get; }
 
-    /// <summary>Gets the declared Generator version, or <see langword="null"/> for a legacy locator.</summary>
+    /// <summary>Gets the source-generator version, or <see langword="null"/> for a legacy locator.</summary>
     public string? GeneratorVersion { get; }
 
     /// <summary>Gets the exact generated ABI identity, or <see langword="null"/> for an older locator.</summary>
@@ -178,7 +178,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 4;
 
     /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
-    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-metadata-v2";
+    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v3";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;
