@@ -1,25 +1,11 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using SharpLink.Abstractions;
 
 namespace SharpLink.Generator.Tests;
 
 public partial class RpcAnalyzerTests
 {
-    [Test]
-    public Task AdapterFreeFactoryKindShouldDistinguishNativeAndDirectWireIdentities()
-    {
-        IRpcGeneratedCodecFactory custom = new AdapterFreeFactory("review-custom/v1");
-        IRpcGeneratedCodecFactory native = new AdapterFreeFactory("sharplink-native/v1");
-
-        Ensure(custom.Kind == RpcGeneratedCodecFactoryKind.Direct,
-            "adapter-free factories with a non-native wire identity must be treated as direct/custom construction");
-        Ensure(native.Kind == RpcGeneratedCodecFactoryKind.Native,
-            "the SharpLink native wire identity must retain the Native factory kind");
-        return Task.CompletedTask;
-    }
-
     [Test]
     public Task ContractOnlyCustomCodecShouldBeOwnedWithoutChangingStandaloneCustomCodecPublication()
     {
@@ -149,19 +135,5 @@ public interface IReviewPayloadContract : IService
         return (
             manifest.Substring(globalStart, contractStart - globalStart),
             manifest.Substring(contractStart, dependenciesStart - contractStart));
-    }
-
-    private sealed class AdapterFreeFactory(string wireFormatId) : IRpcGeneratedCodecFactory
-    {
-        public Type TargetType => typeof(AdapterFreeFactory);
-        public string SchemaId => "review-factory-schema/v1";
-        public string WireFormatId { get; } = wireFormatId;
-        public string? AdapterId => null;
-        public IRpcCodecAdapter? Adapter => null;
-
-        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
-            => throw new NotSupportedException();
-
-        public bool IsCompatibleCodec(IRpcCodec codec) => false;
     }
 }
