@@ -452,10 +452,17 @@ internal sealed partial class SharpLinkClient
         return null;
     }
 
+    private static IEnumerable<string> EnumerateManifestDependencies(ISharpLinkGeneratedAssemblyManifest manifest)
+    {
+        foreach (var dependency in manifest.Dependencies)
+            yield return dependency;
+        foreach (var dependency in manifest.ContractDependencies)
+            yield return dependency;
+    }
+
     private static bool ManifestDependsOn(ISharpLinkGeneratedAssemblyManifest manifest, string? identity)
-        => identity is not null &&
-           (manifest.Dependencies.Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal)) ||
-            manifest.ContractDependencies.Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal)));
+        => identity is not null && EnumerateManifestDependencies(manifest)
+            .Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal));
 
     private SharpLinkAssemblyRegistrationError? ValidateDependencies(
         ISharpLinkGeneratedAssemblyManifest incoming,
@@ -471,7 +478,7 @@ internal sealed partial class SharpLinkClient
                 available.Add(module.Manifest.OwnerAssembly.FullName ?? string.Empty);
         }
         var self = incoming.OwnerAssembly.FullName;
-        foreach (var dependency in incoming.Dependencies)
+        foreach (var dependency in EnumerateManifestDependencies(incoming).Distinct(StringComparer.Ordinal))
         {
             if (string.Equals(dependency, self, StringComparison.Ordinal) || available.Contains(dependency))
                 continue;
