@@ -490,7 +490,7 @@ public partial class RpcGenerator
                         null,
                         null,
                         customCodec.WireFormatId,
-                        GetAssemblyDependencies([type, customCodec.CodecType]),
+                        GetAssemblyDependencies([type]),
                         type.Locations.FirstOrDefault());
                 }
                 return;
