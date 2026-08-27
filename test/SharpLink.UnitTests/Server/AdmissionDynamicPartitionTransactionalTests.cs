@@ -27,7 +27,6 @@ public sealed class AdmissionDynamicPartitionTransactionalTests
             RpcMethodKind.Unary,
             "tenant-a",
             null,
-            null,
             null);
 
         var holder = await source.Controller.AcquireAsync(

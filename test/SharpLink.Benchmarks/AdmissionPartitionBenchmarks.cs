@@ -12,7 +12,7 @@ namespace SharpLink.Benchmarks;
 [MemoryDiagnoser]
 [ThreadingDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
-public class AdmissionPartitionControllerBenchmarks
+public class AdmissionPartitionUpdateBenchmarks
 {
     private static readonly Func<SharpLinkAdmissionContext, string?> SelectorA =
         static context => context.ConnectionId;
@@ -249,7 +249,7 @@ public class AdmissionPartitionControllerBenchmarks
     }
 
     private static SharpLinkAdmissionContext Context(string connectionId)
-        => new(1, 2, RpcMethodKind.Unary, connectionId, null, null, null);
+        => new(1, 2, RpcMethodKind.Unary, connectionId, null, null);
 
     private static void WarmPartition(
         SharpLinkAdmissionController controller,

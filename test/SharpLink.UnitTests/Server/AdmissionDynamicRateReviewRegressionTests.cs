@@ -243,7 +243,7 @@ public sealed class AdmissionDynamicRateReviewRegressionTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-review-regression", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-review-regression", null, null);
 
     private static void Ensure(bool condition, string scenario)
     {

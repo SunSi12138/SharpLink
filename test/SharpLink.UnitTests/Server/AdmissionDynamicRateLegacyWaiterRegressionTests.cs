@@ -130,7 +130,7 @@ public sealed class AdmissionDynamicRateLegacyWaiterRegressionTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-legacy-waiter", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-legacy-waiter", null, null);
 
     private static void Ensure(bool condition, string scenario)
     {

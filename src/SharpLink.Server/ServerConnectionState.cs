@@ -13,6 +13,7 @@ internal sealed class ServerConnectionState
 {
     private readonly CancellationTokenSource _connectionCancellation;
     private readonly CancellationToken _connectionToken;
+    private readonly TimeProvider _timeProvider;
     private readonly TaskCompletionSource _sessionCompleted =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _callsDrained =
@@ -47,10 +48,11 @@ internal sealed class ServerConnectionState
         Session = session ?? throw new ArgumentNullException(nameof(session));
         GeneratedBridge = generatedBridge ?? throw new ArgumentNullException(nameof(generatedBridge));
         CallCancellations = callCancellations ?? throw new ArgumentNullException(nameof(callCancellations));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         DeadlineScheduler = new ServerCallDeadlineScheduler(
             CallCancellations,
             maxConcurrentCalls,
-            timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
+            _timeProvider);
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;
 #if DEBUG
@@ -69,10 +71,10 @@ internal sealed class ServerConnectionState
         => Volatile.Read(ref _defaultCallContext);
 
     internal SharpLinkCallContextSnapshot GetCallContextSnapshot(
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         SharpLinkMetadata? metadata)
     {
-        if (deadline is null && metadata is null &&
+        if (!deadline.HasValue && metadata is null &&
             Volatile.Read(ref _defaultCallContext) is { } defaultCallContext)
         {
             return defaultCallContext;
@@ -82,6 +84,7 @@ internal sealed class ServerConnectionState
             Session.Id,
             Volatile.Read(ref _authenticationContext),
             deadline,
+            _timeProvider,
             metadata);
     }
 
@@ -207,6 +210,17 @@ internal sealed class ServerConnectionState
     internal ValueTask<ServiceLease> AcquireServiceAsync(
         ServiceRegistration registration,
         SharpLinkDynamicModuleLease moduleLease)
+        => AcquireServiceAsync(
+            registration,
+            moduleLease,
+            generatedBridge: null,
+            requestId: 0);
+
+    internal ValueTask<ServiceLease> AcquireServiceAsync(
+        ServiceRegistration registration,
+        SharpLinkDynamicModuleLease moduleLease,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
     {
         if (LifecycleState != ServerConnectionLifecycleState.Ready)
         {
@@ -218,7 +232,7 @@ internal sealed class ServerConnectionState
         if (_services.TryGetValue(registration, out var existing))
             return AwaitConnectionServiceAsync(registration, existing, moduleLease);
 
-        var candidate = new ConnectionServiceEntry(registration);
+        var candidate = new ConnectionServiceEntry(registration, generatedBridge, requestId);
         var selected = _services.GetOrAdd(registration, candidate);
         return AwaitConnectionServiceAsync(registration, selected, moduleLease);
     }
@@ -275,7 +289,6 @@ internal sealed class ServerConnectionState
                 calls.Add(new ServerCallDiagnosticSnapshot(
                     callLease.RequestId,
                     call.Reason.ToString(),
-                    call.Deadline.UtcDeadline,
                     call.Deadline.Timestamp));
             }
             finally
@@ -432,9 +445,12 @@ internal sealed class ServerConnectionState
         private readonly Lock _disposeGate = new();
         private Task? _disposeTask;
 
-        internal ConnectionServiceEntry(ServiceRegistration registration)
+        internal ConnectionServiceEntry(
+            ServiceRegistration registration,
+            IRpcGeneratedServerBridge? generatedBridge,
+            long requestId)
             => _instance = new Lazy<Task<ConnectionServiceInstance>>(
-                () => registration.CreateConnectionServiceAsync().AsTask(),
+                () => registration.CreateConnectionServiceAsync(generatedBridge, requestId).AsTask(),
                 LazyThreadSafetyMode.ExecutionAndPublication);
 
         internal Task<ConnectionServiceInstance> GetServiceAsync() => _instance.Value;

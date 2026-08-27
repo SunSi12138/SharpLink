@@ -208,7 +208,7 @@ public class AdmissionControllerBenchmarks
     public async Task Setup()
     {
         _context = new SharpLinkAdmissionContext(
-            1, 2, RpcMethodKind.Unary, "benchmark", null, null, null);
+            1, 2, RpcMethodKind.Unary, "benchmark", null, null);
         _immediate = CreateController(queue: false);
         _reject = CreateController(queue: false);
         _queue = CreateController(queue: true);
@@ -279,7 +279,7 @@ public class AdmissionRateControllerBenchmarks
     public async Task Setup()
     {
         _context = new SharpLinkAdmissionContext(
-            1, 2, RpcMethodKind.Unary, "rate-benchmark", null, null, null);
+            1, 2, RpcMethodKind.Unary, "rate-benchmark", null, null);
         _tokenPermit = CreateRateController(RateKind.TokenBucket, 1_000_000_000);
         _tokenReject = CreateRateController(RateKind.TokenBucket, 1);
         _fixedPermit = CreateRateController(RateKind.FixedWindow, 1_000_000_000);

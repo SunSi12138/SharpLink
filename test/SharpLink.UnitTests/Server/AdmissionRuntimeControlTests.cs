@@ -382,7 +382,7 @@ public sealed class AdmissionRuntimeControlTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "runtime-control-test", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "runtime-control-test", null, null);
 
     private static async Task WaitUntilAsync(Func<bool> condition, string scenario)
     {

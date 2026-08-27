@@ -398,9 +398,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             context,
             retainedBytes,
             allowQueue,
-            context.Deadline is { } deadline
-                ? RpcDeadline.Create(deadline, _timeProvider)
-                : default,
+            default,
             cancellationToken);
 
     internal ValueTask<AdmissionDecision> AcquireAsync(
@@ -484,17 +482,18 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var started = _timeProvider.GetTimestamp();
-        var maximumDelay = _maxQueueDelay;
-        var deadlineLimitsWait = false;
-        if (deadline.HasValue && deadline.WouldExpireBeforeOrAt(maximumDelay, _timeProvider))
-        {
-            maximumDelay = deadline.GetRemaining(_timeProvider);
-            deadlineLimitsWait = true;
-        }
-        using var timeoutCancellation = maximumDelay <= TimeSpan.Zero
+        var queueDeadline = RpcDeadline.Create(
+            _maxQueueDelay,
+            started,
+            _timeProvider.TimestampFrequency);
+        var deadlineLimitsWait =
+            deadline.HasValue && deadline.WouldExpireBeforeOrAt(_maxQueueDelay, _timeProvider);
+        var waitDeadline = deadlineLimitsWait ? deadline : queueDeadline;
+        var waitDelay = waitDeadline.GetRemaining(_timeProvider);
+        using var timeoutCancellation = waitDelay <= TimeSpan.Zero
             ? new CancellationTokenSource()
-            : new CancellationTokenSource(maximumDelay, _timeProvider);
-        if (maximumDelay <= TimeSpan.Zero)
+            : new CancellationTokenSource(waitDelay, _timeProvider);
+        if (waitDelay <= TimeSpan.Zero)
             timeoutCancellation.Cancel();
         using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -519,13 +518,35 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 catch (OperationCanceledException) when (
                     _kernel.IsDraining && !cancellationToken.IsCancellationRequested)
                 {
+                    if (waitDeadline.IsExpired(_timeProvider))
+                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
                     return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    return deadlineLimitsWait
-                        ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
-                        : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
+                    if (waitDeadline.IsExpired(_timeProvider))
+                        return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
+                    throw;
+                }
+                catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested)
+                {
+                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
+                }
+
+                if (waitDeadline.IsExpired(_timeProvider))
+                {
+                    waitedLease.Dispose();
+                    return RejectExpiredAdmissionWait(failedSlot, deadlineLimitsWait);
+                }
+                if (_kernel.IsDraining)
+                {
+                    waitedLease.Dispose();
+                    return AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable);
+                }
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    waitedLease.Dispose();
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
 
                 if (!waitedLease.IsAcquired)
@@ -547,10 +568,18 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         finally
         {
             _kernel.ReleaseQueue(retainedBytes);
-            SharpLinkTelemetry.RecordAdmissionQueueDuration(_timeProvider.GetElapsedTime(started));
+            SharpLinkTelemetry.RecordAdmissionQueueDuration(
+                _timeProvider.GetElapsedTime(started));
             request.Dispose();
         }
     }
+
+    private static AdmissionDecision RejectExpiredAdmissionWait(
+        AdmissionLimiterSlot failedSlot,
+        bool deadlineLimitsWait)
+        => deadlineLimitsWait
+            ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
+            : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
 
     internal bool TryReserveAdditionalQueuedBytes(int retainedBytes)
         => _kernel.TryReserveAdditionalQueuedBytes(retainedBytes, _maxQueuedBytes);
@@ -1015,23 +1044,57 @@ internal sealed class AdmissionPartitionPool : IDisposable
     private readonly Func<SharpLinkAdmissionContext, string?> _selector;
     private readonly TimeProvider _timeProvider;
     private readonly AdmissionStateKernel _kernel;
+    private readonly bool _ownsKernel;
     private readonly Lock _gate = new();
     private readonly Dictionary<AdmissionPartitionKey, AdmissionPartitionEntry> _entries = [];
     private SharpLinkPartitionAdmissionOptions _options;
     private AdmissionPartitionPolicyGeneration _currentPolicy;
     private List<AdmissionPartitionPolicyGeneration> _policies;
+    private bool _hasIdleExpiryHint;
+    private long _earliestIdleSince;
+    private long _reclaimScanCount;
+    private long _reclaimEntriesVisited;
     private int _disposed;
+
+    internal AdmissionPartitionPool(
+        Func<SharpLinkAdmissionContext, string?> selector,
+        SharpLinkPartitionAdmissionOptions options,
+        TimeProvider timeProvider)
+        : this(selector, options, queueLimit: 0, timeProvider)
+    {
+    }
+
+    internal AdmissionPartitionPool(
+        Func<SharpLinkAdmissionContext, string?> selector,
+        SharpLinkPartitionAdmissionOptions options,
+        int queueLimit,
+        TimeProvider timeProvider)
+        : this(selector, options, timeProvider, new AdmissionStateKernel(timeProvider), ownsKernel: true)
+    {
+        _ = queueLimit;
+    }
 
     internal AdmissionPartitionPool(
         Func<SharpLinkAdmissionContext, string?> selector,
         SharpLinkPartitionAdmissionOptions options,
         TimeProvider timeProvider,
         AdmissionStateKernel kernel)
+        : this(selector, options, timeProvider, kernel, ownsKernel: false)
+    {
+    }
+
+    private AdmissionPartitionPool(
+        Func<SharpLinkAdmissionContext, string?> selector,
+        SharpLinkPartitionAdmissionOptions options,
+        TimeProvider timeProvider,
+        AdmissionStateKernel kernel,
+        bool ownsKernel)
     {
         _selector = selector;
         _options = options.CloneValidated();
         _timeProvider = timeProvider;
         _kernel = kernel;
+        _ownsKernel = ownsKernel;
         _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);
         _policies = [_currentPolicy];
     }
@@ -1124,6 +1187,9 @@ internal sealed class AdmissionPartitionPool : IDisposable
         }
     }
 
+    internal AdmissionPartitionLease? TryAcquire(SharpLinkAdmissionContext context)
+        => TryAcquire(context, CurrentPolicyForBinding);
+
     internal AdmissionPartitionLease? TryAcquire(
         SharpLinkAdmissionContext context,
         AdmissionPartitionPolicyGeneration requestedPolicy)
@@ -1157,7 +1223,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
                 if (!_entries.TryGetValue(key, out var entry))
                 {
-                    CollectIdleEntriesLocked(
+                    CollectIdleEntriesIfDueLocked(
                         _timeProvider.GetTimestamp(),
                         stopAfterOne: true,
                         ref dispose);
@@ -1193,6 +1259,12 @@ internal sealed class AdmissionPartitionPool : IDisposable
         }
     }
 
+    internal void Release(AdmissionPartitionLease lease)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+        lease.Dispose();
+    }
+
     internal void Release(AdmissionPartitionRuntimeGeneration generation)
     {
         var entry = generation.Entry!;
@@ -1206,13 +1278,19 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
             CollectRetiredGenerationsLocked(entry, ref dispose);
             CollectRetiredPoliciesLocked();
+            var now = _timeProvider.GetTimestamp();
             if (entry.References == 0)
             {
-                entry.IdleSince = _timeProvider.GetTimestamp();
+                entry.IdleSince = now;
                 entry.IsIdle = true;
+                if (!_hasIdleExpiryHint)
+                {
+                    _earliestIdleSince = now;
+                    _hasIdleExpiryHint = true;
+                }
             }
-            CollectIdleEntriesLocked(
-                _timeProvider.GetTimestamp(),
+            CollectIdleEntriesIfDueLocked(
+                now,
                 stopAfterOne: true,
                 ref dispose);
         }
@@ -1323,6 +1401,16 @@ internal sealed class AdmissionPartitionPool : IDisposable
         }
     }
 
+    internal long ReclaimScanCount
+    {
+        get { lock (_gate) return _reclaimScanCount; }
+    }
+
+    internal long ReclaimEntriesVisited
+    {
+        get { lock (_gate) return _reclaimEntriesVisited; }
+    }
+
     internal int RuntimeGenerationCount
     {
         get
@@ -1362,10 +1450,14 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 CollectAllEntryStateLocked(entry, ref dispose);
             var count = _entries.Count;
             _entries.Clear();
+            _hasIdleExpiryHint = false;
+            _earliestIdleSince = 0;
             if (count != 0)
                 SharpLinkTelemetry.AddAdmissionActivePartitions(-count);
         }
         DisposeStates(dispose);
+        if (_ownsKernel)
+            _kernel.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     private PreparedEntryTransition PrepareEntryTransitionLocked(
@@ -1556,35 +1648,64 @@ internal sealed class AdmissionPartitionPool : IDisposable
         }
     }
 
+    private void CollectIdleEntriesIfDueLocked(
+        long now,
+        bool stopAfterOne,
+        ref List<IDisposable>? dispose)
+    {
+        if (!_hasIdleExpiryHint ||
+            _timeProvider.GetElapsedTime(_earliestIdleSince, now) < _options.IdleTimeout)
+            return;
+        CollectIdleEntriesLocked(now, stopAfterOne, ref dispose);
+    }
+
     private void CollectIdleEntriesLocked(
         long now,
         bool stopAfterOne,
         ref List<IDisposable>? dispose)
     {
+        _reclaimScanCount++;
         List<AdmissionPartitionKey>? keys = null;
         foreach (var pair in _entries)
         {
-            if (pair.Value.References != 0 ||
-                !pair.Value.IsIdle ||
+            _reclaimEntriesVisited++;
+            if (pair.Value.References != 0 || !pair.Value.IsIdle ||
                 _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)
-            {
                 continue;
-            }
-
             (keys ??= []).Add(pair.Key);
             if (stopAfterOne)
                 break;
         }
-        if (keys is null)
-            return;
+        if (keys is not null)
+            foreach (var key in keys)
+            {
+                var entry = _entries[key];
+                CollectAllEntryStateLocked(entry, ref dispose);
+                _entries.Remove(key);
+                SharpLinkTelemetry.AddAdmissionActivePartitions(-1);
+            }
+        RecomputeIdleExpiryHintLocked(now);
+    }
 
-        foreach (var key in keys)
+    private void RecomputeIdleExpiryHintLocked(long now)
+    {
+        var hasIdle = false;
+        var earliest = 0L;
+        var longest = TimeSpan.Zero;
+        foreach (var entry in _entries.Values)
         {
-            var entry = _entries[key];
-            CollectAllEntryStateLocked(entry, ref dispose);
-            _entries.Remove(key);
-            SharpLinkTelemetry.AddAdmissionActivePartitions(-1);
+            if (entry.References != 0 || !entry.IsIdle)
+                continue;
+            var elapsed = _timeProvider.GetElapsedTime(entry.IdleSince, now);
+            if (!hasIdle || elapsed > longest)
+            {
+                hasIdle = true;
+                earliest = entry.IdleSince;
+                longest = elapsed;
+            }
         }
+        _hasIdleExpiryHint = hasIdle;
+        _earliestIdleSince = hasIdle ? earliest : 0;
     }
 
     private static void CollectRetiredGenerationsLocked(
@@ -1785,6 +1906,7 @@ internal sealed class AdmissionPartitionLease(
 {
     private AdmissionPartitionPool? _owner = owner;
     internal AdmissionRuleRuntime Runtime => generation.Runtime;
+    internal int References => generation.Entry?.References ?? 0;
     public void Dispose()
         => Interlocked.Exchange(ref _owner, null)?.Release(generation);
 }

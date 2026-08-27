@@ -280,7 +280,7 @@ public sealed class AdmissionDynamicUpdateReviewRegressionTests
             throw new Exception("assert failed: expected enabled admission publication");
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "dynamic-update-review", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "dynamic-update-review", null, null);
 
     private static void ConfigureQueuedScopes(
         SharpLinkAdmissionControlOptions options,

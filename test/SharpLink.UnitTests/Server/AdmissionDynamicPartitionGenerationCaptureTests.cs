@@ -114,7 +114,7 @@ public sealed class AdmissionDynamicPartitionGenerationCaptureTests
             throw new Exception("assert failed: expected enabled admission publication");
 
     private static SharpLinkAdmissionContext Context(string connectionId)
-        => new(101, 202, RpcMethodKind.Unary, connectionId, null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, connectionId, null, null);
 
     private static void Ensure(bool condition, string scenario)
     {

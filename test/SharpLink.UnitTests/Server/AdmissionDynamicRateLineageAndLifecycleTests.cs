@@ -422,7 +422,7 @@ public sealed class AdmissionDynamicRateLineageAndLifecycleTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-lineage", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-lineage", null, null);
 
     private static void Ensure(bool condition, string scenario)
     {

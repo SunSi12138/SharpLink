@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Net;
 using System.Threading;
 using SharpLink.Server;
@@ -794,7 +795,7 @@ public sealed class AdmissionDynamicPartitionUpdateAdvancedTests
             throw new Exception("assert failed: expected enabled admission publication");
 
     private static SharpLinkAdmissionContext Context(string connectionId)
-        => new(101, 202, RpcMethodKind.Unary, connectionId, null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, connectionId, null, null);
 
     private static void ConfigurePartitionConcurrency(
         SharpLinkAdmissionControlOptions options,

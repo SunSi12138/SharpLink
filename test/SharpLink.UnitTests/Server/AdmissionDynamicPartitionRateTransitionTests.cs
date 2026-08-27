@@ -347,7 +347,7 @@ public sealed class AdmissionDynamicPartitionRateTransitionTests
     }
 
     private static SharpLinkAdmissionContext Context()
-        => new(101, 202, RpcMethodKind.Unary, "partition-rate-transition", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "partition-rate-transition", null, null);
 
     private static void Ensure(bool condition, string scenario)
     {
