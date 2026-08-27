@@ -27,6 +27,7 @@
     <Project Path="src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
     <Project Path="src/SharpLink.Hosting/SharpLink.Hosting.csproj" />
     <Project Path="src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
+    <Project Path="eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj" />
     
     <Project Path="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" />
     <Project Path="test/SharpLink.LoadTestBase/SharpLink.LoadTestBase.csproj" />
