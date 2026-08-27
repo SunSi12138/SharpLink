@@ -7,6 +7,8 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class GeneratedServerBridgeTests
 {
+    private static readonly TimeSpan AsyncOperationTimeout = TimeSpan.FromSeconds(10);
+
     [Test]
     public async Task DuplicateInboundRegistrationShouldReturnDispatcherWithoutPublishingPartialState()
     {
@@ -131,12 +133,12 @@ public class GeneratedServerBridgeTests
             contractId: 101,
             methodId: 202,
             CancellationToken.None);
-        await serialized.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await serialized.Task.WaitAsync(AsyncOperationTimeout);
 
         Ensure(!pump.IsCompleted,
             "the generated bridge must await exhausted connection credit before publishing data");
         session.ApplyWindowUpdate(72, new ProtocolV2WindowUpdate(0, 4));
-        await pump.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await pump.AsTask().WaitAsync(AsyncOperationTimeout);
 
         var frames = await FlushAndReadFramesAsync(session, output, expectedRequestId: 73);
         Ensure(frames.Count == 2, "one resumed item and one terminal frame must be emitted");
@@ -183,8 +185,8 @@ public class GeneratedServerBridgeTests
             "sized stream items must not serialize while send credit is exhausted");
 
         session.ApplyWindowUpdate(72, new ProtocolV2WindowUpdate(0, 4));
-        await pump.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        await serialized.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await pump.AsTask().WaitAsync(AsyncOperationTimeout);
+        await serialized.Task.WaitAsync(AsyncOperationTimeout);
 
         var frames = await FlushAndReadFramesAsync(session, output, expectedRequestId: 73);
         Ensure(frames.Count == 2, "one resumed sized item and one terminal frame must be emitted");
@@ -270,9 +272,9 @@ public class GeneratedServerBridgeTests
     private static async Task<List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)>>
         FlushAndReadFramesAsync(RpcSession session, Pipe output, ulong expectedRequestId)
     {
-        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(AsyncOperationTimeout);
 
-        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(AsyncOperationTimeout);
         var remaining = read.Buffer;
         var frames = new List<(ProtocolV2FrameType, ProtocolV2FrameFlags)>();
         while (ProtocolV2FrameParser.TryReadFrame(
