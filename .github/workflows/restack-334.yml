@@ -64,22 +64,8 @@ jobs:
             git show "$slice_sha:$path" > "/tmp/restack334/theirs/$path"
             if ! git merge-file -p "/tmp/restack334/ours/$path" "/tmp/restack334/base/$path" "/tmp/restack334/theirs/$path" > "$path"; then
               if [ "$path" = 'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs' ]; then
-                python3 <<'PY'
-          from pathlib import Path
-          path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
-          text = path.read_text()
-          old = '''<<<<<<< /tmp/restack334/ours/src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs
-                    this,
-                    AdmissionRuleRuntime.CreateOwned(_options, "partition"));
-=======
-                    AdmissionRuleRuntime.CreateOwned(_options, "partition", _timeProvider));
->>>>>>> /tmp/restack334/theirs/src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs'''
-          new = '''                    this,
-                    AdmissionRuleRuntime.CreateOwned(_options, "partition", _timeProvider));'''
-          if old not in text:
-              raise RuntimeError('expected #334 partition conflict shape not found')
-          path.write_text(text.replace(old, new, 1))
-          PY
+                sed -i '/^<<<<<<< .*SharpLinkAdmissionController.cs$/,/^>>>>>>> .*SharpLinkAdmissionController.cs$/c\                    this,\
+                    AdmissionRuleRuntime.CreateOwned(_options, "partition", _timeProvider));' "$path"
                 echo "RESOLVED: $path (preserve #332 owner + #334 time provider)"
               else
                 echo "CONFLICT: $path"
