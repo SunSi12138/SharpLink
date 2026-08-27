@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   restack:
-    if: contains(github.event.head_commit.message, 'stage #332 restack preflight')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
