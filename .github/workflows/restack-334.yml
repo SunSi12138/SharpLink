@@ -94,6 +94,30 @@ jobs:
             git show "$slice_sha:$path" > "$path"
           done
 
+          python3 <<'PY'
+          from pathlib import Path
+          paths = [
+            'test/SharpLink.Benchmarks/AdmissionBenchmarks.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateLegacyWaiterRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateLineageAndLifecycleTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateReplacementRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateReviewRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateSemanticsTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateTransitionCarryRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateUpdateTests.cs',
+          ]
+          old = ', null, null, null)'
+          new = ', null, null)'
+          for name in paths:
+              path = Path(name)
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{name}: expected exactly one legacy 7-argument context tail, found {count}')
+              path.write_text(text.replace(old, new, 1))
+              print(f'ADAPTED: {name}')
+          PY
+
           git add -A
           python3 <<'PY'
           import subprocess
