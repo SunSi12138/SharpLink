@@ -72,7 +72,22 @@ jobs:
           start_marker = 'internal sealed class AdmissionPartitionPool : IDisposable'
           ms = merged.index(start_marker)
           ts = theirs.index(start_marker)
+          prefix = merged[:ms]
           section = theirs[ts:]
+
+          nullable_entry = 'AdmissionPartitionEntry?'
+          nullable_lease = 'AdmissionPartitionLease?'
+          nullable_count = prefix.count(nullable_entry)
+          if nullable_count < 5:
+              raise RuntimeError(f'partition lease boundary anchor mismatch: nullable entry count={nullable_count}')
+          prefix = prefix.replace(nullable_entry, nullable_lease)
+
+          old_release = '''        var partition = Interlocked.Exchange(ref _partition, null);\n        partition?.Owner.Release(partition);'''
+          new_release = '''        Interlocked.Exchange(ref _partition, null)?.Dispose();'''
+          release_count = prefix.count(old_release)
+          if release_count != 2:
+              raise RuntimeError(f'partition release boundary anchor mismatch: count={release_count}')
+          prefix = prefix.replace(old_release, new_release)
 
           replacements = [
               (
@@ -105,9 +120,9 @@ jobs:
                   raise RuntimeError(f'partition {label} anchor mismatch: count={section.count(old)}')
               section = section.replace(old, new, 1)
 
-          resolved = merged[:ms] + section
+          resolved = prefix + section
           if any(marker in resolved for marker in ('<<<<<<<', '=======', '>>>>>>>')):
-              raise RuntimeError('unresolved conflict marker remains before partition tail')
+              raise RuntimeError('unresolved conflict marker remains')
           path.write_text(resolved)
           Path(str(path) + '.merged').unlink()
           PY
