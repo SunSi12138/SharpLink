@@ -30,28 +30,41 @@ public partial class RpcGenerator
 
         // The global/default registry contains the normal generated graph. Contract-default models
         // preserve registered selector-attribute Adapter choices while omitting explicit
-        // RpcCodecAdapter bindings and assembly routes. Standalone [RpcSerializable] analysis still
-        // owns its historical explicit Adapter/direct-Codec semantics, including definitions that are
-        // shared transitively with an RPC payload. Seed from the Contract default graph and let the
-        // standalone graph win matching TypeNames so Contract-only policy never erases an existing
-        // standalone explicit binding.
-        var globalByType = contractDefault.Codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+        // RpcCodecAdapter bindings and assembly routes. Contract-only custom [RpcCodec] selections
+        // are also excluded here because their explicit provenance belongs to the Contract assembly
+        // policy graph. Standalone [RpcSerializable] analysis still owns its historical explicit
+        // Adapter/direct/custom semantics, including definitions shared transitively with an RPC
+        // payload, so standalone models win matching TypeNames below.
+        var standaloneTypes = new HashSet<string>(
+            standalone.Codecs.Select(static codec => codec.TypeName),
+            StringComparer.Ordinal);
+        var globalByType = contractDefault.Codecs
+            .Where(codec => codec.Kind != GeneratedCodecKind.Custom || standaloneTypes.Contains(codec.TypeName))
+            .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in standalone.Codecs)
             globalByType[codec.TypeName] = codec;
         var globalCodecs = globalByType.Values
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // Contract ownership is defined by explicit/route selection provenance as well as the
+        // Contract ownership is defined by explicit/route/custom selection provenance as well as the
         // resulting definition delta. Provenance matters when an explicit binding intentionally
-        // selects the same Adapter that an intrinsic selector/default definition would choose: it is still published
+        // selects the same definition that the default analysis would choose: it is still published
         // Contract policy and must not become runtime-overridable merely because the definitions
         // happen to compare equal. Native parents/dependencies are then pulled into the owner graph
         // so the changed policy remains closed over its full generated dependency graph.
+        var contractOwnedPolicyRoots = new HashSet<string>(
+            contractPolicyState.ContractOwnedPolicyRoots,
+            StringComparer.Ordinal);
+        foreach (var codec in contractPolicy.Codecs)
+        {
+            if (codec.Kind == GeneratedCodecKind.Custom)
+                contractOwnedPolicyRoots.Add(codec.TypeName);
+        }
         var contractCodecs = SelectOwnedContractCodecs(
             contractDefault.Codecs,
             contractPolicy.Codecs,
-            contractPolicyState.ContractOwnedPolicyRoots);
+            contractOwnedPolicyRoots);
         var contractManifestCodecs = contractPolicyState.BuildContractManifestCodecs(contractPolicy.Codecs);
         var diagnostics = standalone.Diagnostics
             .Concat(contractPolicy.Diagnostics)

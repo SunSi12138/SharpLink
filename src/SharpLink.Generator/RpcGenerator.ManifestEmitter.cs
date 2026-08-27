@@ -18,7 +18,12 @@ public partial class RpcGenerator
         var dependencies = serviceModels.SelectMany(static service => service.AssemblyDependencies)
             .Concat(contracts.SelectMany(static contract => contract.AssemblyDependencies))
             .Concat(codecs.SelectMany(static codec => codec.AssemblyDependencies))
-            .Concat(contractCodecs.SelectMany(static codec => codec.AssemblyDependencies))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static dependency => dependency, StringComparer.Ordinal)
+            .ToArray();
+        var dependencySet = new HashSet<string>(dependencies, StringComparer.Ordinal);
+        var contractDependencies = contractCodecs.SelectMany(static codec => codec.AssemblyDependencies)
+            .Where(dependency => !dependencySet.Contains(dependency))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static dependency => dependency, StringComparer.Ordinal)
             .ToArray();
@@ -63,16 +68,23 @@ public partial class RpcGenerator
         foreach (var dependency in dependencies)
             sb.AppendLine($"        \"{EscapeString(dependency)}\",");
         sb.AppendLine("    };");
+        sb.AppendLine("    private static readonly string[] __contractDependencies = new string[]");
+        sb.AppendLine("    {");
+        foreach (var dependency in contractDependencies)
+            sb.AppendLine($"        \"{EscapeString(dependency)}\",");
+        sb.AppendLine("    };");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedContractDescriptor> __readOnlyContracts = Array.AsReadOnly(__contracts);");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedServiceDescriptor> __readOnlyServices = Array.AsReadOnly(__services);");
         sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyCodecs = Array.AsReadOnly(__codecs);");
         sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyContractCodecs = Array.AsReadOnly(__contractCodecs);");
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");
+        sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyContractDependencies = Array.AsReadOnly(__contractDependencies);");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => __readOnlyContractCodecs;");
         sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");
+        sb.AppendLine("    public IReadOnlyList<string> ContractDependencies => __readOnlyContractDependencies;");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("internal static class __SharpLinkGeneratedAssemblyManifestInitializer");

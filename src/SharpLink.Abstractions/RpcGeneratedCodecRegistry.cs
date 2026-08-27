@@ -26,9 +26,11 @@ public interface IRpcGeneratedCodecFactory
     string WireFormatId { get; }
 
     /// <summary>Gets how this factory obtains its Codec instance.</summary>
-    RpcGeneratedCodecFactoryKind Kind => AdapterId is null
-        ? RpcGeneratedCodecFactoryKind.Native
-        : RpcGeneratedCodecFactoryKind.Adapter;
+    RpcGeneratedCodecFactoryKind Kind => AdapterId is not null
+        ? RpcGeneratedCodecFactoryKind.Adapter
+        : string.Equals(WireFormatId, "sharplink-native/v1", StringComparison.Ordinal)
+            ? RpcGeneratedCodecFactoryKind.Native
+            : RpcGeneratedCodecFactoryKind.Direct;
 
     /// <summary>Gets the adapter lifecycle identity, or null for adapter-free Codecs.</summary>
     string? AdapterId { get; }
