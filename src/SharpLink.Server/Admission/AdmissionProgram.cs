@@ -10,6 +10,7 @@ internal sealed class AdmissionProgram
     private const int RetiredMask = int.MinValue;
     private const int UseCountMask = int.MaxValue;
     private static long s_nextGenerationId;
+    private static Action? s_beforeProgramAttachForTests;
 
     private readonly SharpLinkAdmissionController? _controller;
     private readonly AdmissionStateKernel? _kernel;
@@ -28,6 +29,7 @@ internal sealed class AdmissionProgram
             throw new InvalidOperationException("Disabled admission does not create a program generation.");
         _kernel = controller.Kernel;
         GenerationId = Interlocked.Increment(ref s_nextGenerationId);
+        Volatile.Read(ref s_beforeProgramAttachForTests)?.Invoke();
         controller.AttachProgram(this);
         _kernel.RegisterProgram(this);
 
@@ -41,6 +43,16 @@ internal sealed class AdmissionProgram
     internal static AdmissionProgram Uninitialized { get; } = new(long.MinValue);
 
     internal static AdmissionProgram Disabled { get; } = new(0);
+
+    /// <summary>
+    /// Deterministic candidate-construction fault seam after state bindings are acquired but before
+    /// the candidate attaches/registers. The kernel must release those unpublished bindings.
+    /// </summary>
+    internal static Action? BeforeProgramAttachForTests
+    {
+        get => Volatile.Read(ref s_beforeProgramAttachForTests);
+        set => Volatile.Write(ref s_beforeProgramAttachForTests, value);
+    }
 
     internal long GenerationId { get; }
 

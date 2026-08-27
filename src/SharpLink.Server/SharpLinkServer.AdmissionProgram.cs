@@ -1,9 +1,11 @@
 namespace SharpLink.Server;
 
-internal sealed partial class SharpLinkServer
+internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeControl
 {
     private static Action<SharpLinkServer, long, AdmissionProgram>? s_afterAdmissionPublicationReadForTests;
     private static Action<SharpLinkServer, long, AdmissionProgram?>? s_afterAdmissionCaptureForTests;
+    private static Action<SharpLinkServer, AdmissionProgram>? s_afterAdmissionCandidateBuiltForTests;
+    private static Action<SharpLinkServer, AdmissionProgram?>? s_beforeAdmissionPublicationLockForTests;
 
     private AdmissionProgram _admissionProgram = AdmissionProgram.Uninitialized;
 
@@ -21,6 +23,25 @@ internal sealed partial class SharpLinkServer
     {
         get => Volatile.Read(ref s_afterAdmissionCaptureForTests);
         set => Volatile.Write(ref s_afterAdmissionCaptureForTests, value);
+    }
+
+    /// <summary>
+    /// Deterministic control-plane probe. It runs after a public enable candidate is fully built and
+    /// before the lifecycle writer lock is entered.
+    /// </summary>
+    internal static Action<SharpLinkServer, AdmissionProgram>? AfterAdmissionCandidateBuiltForTests
+    {
+        get => Volatile.Read(ref s_afterAdmissionCandidateBuiltForTests);
+        set => Volatile.Write(ref s_afterAdmissionCandidateBuiltForTests, value);
+    }
+
+    /// <summary>
+    /// Deterministic writer probe. A null program represents disable publication.
+    /// </summary>
+    internal static Action<SharpLinkServer, AdmissionProgram?>? BeforeAdmissionPublicationLockForTests
+    {
+        get => Volatile.Read(ref s_beforeAdmissionPublicationLockForTests);
+        set => Volatile.Write(ref s_beforeAdmissionPublicationLockForTests, value);
     }
 
     internal AdmissionProgram? CurrentAdmissionProgramForTests
@@ -43,6 +64,35 @@ internal sealed partial class SharpLinkServer
         Action<SharpLinkAdmissionControlOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
+        return CreateAdmissionProgram(configure);
+    }
+
+    internal AdmissionProgram? PublishAdmissionProgramForTests(AdmissionProgram? program)
+        => PublishAdmissionProgram(program, AdmissionPublicationIntent.TestReplacement);
+
+    void ISharpLinkAdmissionRuntimeControl.EnableAdmissionControl(
+        Action<SharpLinkAdmissionControlOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        var candidate = CreateAdmissionProgram(configure);
+        try
+        {
+            Volatile.Read(ref s_afterAdmissionCandidateBuiltForTests)?.Invoke(this, candidate);
+            PublishAdmissionProgram(candidate, AdmissionPublicationIntent.Enable);
+        }
+        catch
+        {
+            candidate.Retire();
+            throw;
+        }
+    }
+
+    void ISharpLinkAdmissionRuntimeControl.DisableAdmissionControl()
+        => PublishAdmissionProgram(null, AdmissionPublicationIntent.Disable);
+
+    private AdmissionProgram CreateAdmissionProgram(
+        Action<SharpLinkAdmissionControlOptions> configure)
+    {
         var controller = _admissionController ??
             throw new InvalidOperationException("Server admission lifecycle owner is unavailable.");
         var options = new SharpLinkAdmissionControlOptions();
@@ -51,14 +101,16 @@ internal sealed partial class SharpLinkServer
         return controller.Kernel.CreateProgram(options, _staticManifests);
     }
 
-    internal AdmissionProgram? PublishAdmissionProgramForTests(AdmissionProgram? program)
+    private AdmissionProgram? PublishAdmissionProgram(
+        AdmissionProgram? program,
+        AdmissionPublicationIntent intent)
     {
         var lifecycle = _admissionController ??
             throw new InvalidOperationException("Server admission lifecycle owner is unavailable.");
         if (program is not null && !ReferenceEquals(program.Kernel, lifecycle.Kernel))
             throw new InvalidOperationException("Admission program belongs to a different server state kernel.");
-        if (program is { IsRetired: true })
-            throw new InvalidOperationException("A retired admission program cannot be published again.");
+
+        Volatile.Read(ref s_beforeAdmissionPublicationLockForTests)?.Invoke(this, program);
 
         AdmissionProgram previous;
         lock (_registryGate)
@@ -68,11 +120,23 @@ internal sealed partial class SharpLinkServer
                 program?.Retire();
                 throw new InvalidOperationException("Admission publication is sealed because the server is stopping.");
             }
+            if (program is { IsRetired: true })
+            {
+                throw new InvalidOperationException("A retired admission program cannot be published again.");
+            }
 
             var replacement = program ?? AdmissionProgram.Disabled;
             previous = ReadAdmissionPublication();
+            if (intent == AdmissionPublicationIntent.Enable && previous.IsEnabled)
+            {
+                program!.Retire();
+                throw new InvalidOperationException("Admission control is already enabled.");
+            }
+            if (intent == AdmissionPublicationIntent.Disable && !previous.IsEnabled)
+                return null;
             if (ReferenceEquals(previous, replacement))
                 return previous.IsEnabled ? previous : null;
+
             Volatile.Write(ref _admissionProgram, replacement);
             if (previous.IsEnabled)
                 previous.Retire();
@@ -129,5 +193,12 @@ internal sealed partial class SharpLinkServer
         return ReferenceEquals(observed, AdmissionProgram.Uninitialized)
             ? initial
             : observed;
+    }
+
+    private enum AdmissionPublicationIntent
+    {
+        Enable,
+        Disable,
+        TestReplacement
     }
 }

@@ -46,6 +46,36 @@ serverBuilder.UseAdmissionControl(options =>
 });
 ```
 
+## 运行时启用和停用
+
+Server 包提供运行时控制入口，可在最初未启用接入控制的服务上原子启用，也可停用当前策略并在之后重新启用：
+
+```csharp
+ISharpLinkServer server = serverBuilder.Build();
+
+server.EnableAdmissionControl(options =>
+{
+    options.Global.UseConcurrency(256);
+});
+
+server.DisableAdmissionControl();
+
+server.EnableAdmissionControl(options =>
+{
+    options.Global.UseConcurrency(256);
+});
+```
+
+`EnableAdmissionControl` 会先在发布锁之外构造、校验并解析完整候选策略；只有候选完全可用后才原子发布。回调失败、配置校验失败、生成清单解析失败或并发启用失败都不会改变当前发布状态。回调只用于构造候选配置；方法返回后继续修改调用方保留的 options 对象不会改变已发布策略。
+
+支持的状态转换只有 Disabled → Enabled、Enabled → Disabled 和停用后的再次 Disabled → Enabled。已启用时再次调用 `EnableAdmissionControl` 不表示在线修改策略，而会抛出 `InvalidOperationException`；如需切换策略，先显式停用，再重新启用。对已停用状态重复调用 `DisableAdmissionControl` 是幂等操作。不支持这些运行时入口的自定义 `ISharpLinkServer` 实现会抛出 `NotSupportedException`。
+
+停用只影响之后捕获接入状态的请求，不会取消已经捕获旧 generation 的活动或排队请求，也不会等待这些请求结束。旧 generation 会按正常 retire/reclaim 生命周期完成；在旧 generation 尚未回收时以兼容配置重新启用，会复用稳定 kernel 中兼容的并发、速率、队列和 partition 状态，因此不会重置已消费配额或复制全局记账。
+
+普通的 `DisableAdmissionControl` 不是 Server Stop：它只切换 Admission publication，不触发 `StopAccepting`，也不取消或等待旧 generation。反过来，一旦 Server 已进入 Draining、Stopped 或 Faulted，Admission control plane 就已封口；之后的 `EnableAdmissionControl` 或 `DisableAdmissionControl` 都会抛出 `InvalidOperationException`，且不会再发布任何 program。与 Stop 并发时，结果按同一生命周期 writer lock 的线性化顺序决定。
+
+运行时停用 Admission 不会停用 `ServerResourceGovernor`。调用容量、解码/预接入预算、保留字节和流式字节等服务器资源限制始终独立生效。
+
 ## 排队
 
 只有 `MaxQueuedCalls`、`MaxQueuedBytes` 和 `MaxQueueDelay` 都允许时才等待；任何一个边界耗尽都会立即拒绝。排队仍受调用 deadline 和取消 token 约束。队列保留已解码请求字节，因此 count 与 byte 两个边界都必须配置。
