@@ -63,11 +63,41 @@ jobs:
             git show "$dev_sha:$path" > "/tmp/restack334/ours/$path"
             git show "$slice_sha:$path" > "/tmp/restack334/theirs/$path"
             if ! git merge-file -p "/tmp/restack334/ours/$path" "/tmp/restack334/base/$path" "/tmp/restack334/theirs/$path" > "$path"; then
-              echo "CONFLICT: $path"
-              grep -n -C 6 -E '^(<<<<<<<|=======|>>>>>>>)' "$path" || true
-              conflict=1
+              if [ "$path" = 'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs' ]; then
+                python3 <<'PY'
+          from pathlib import Path
+          path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          text = path.read_text()
+          old = '''<<<<<<< /tmp/restack334/ours/src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs
+                    this,
+                    AdmissionRuleRuntime.CreateOwned(_options, "partition"));
+=======
+                    AdmissionRuleRuntime.CreateOwned(_options, "partition", _timeProvider));
+>>>>>>> /tmp/restack334/theirs/src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs'''
+          new = '''                    this,
+                    AdmissionRuleRuntime.CreateOwned(_options, "partition", _timeProvider));'''
+          if old not in text:
+              raise RuntimeError('expected #334 partition conflict shape not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+                echo "RESOLVED: $path (preserve #332 owner + #334 time provider)"
+              else
+                echo "CONFLICT: $path"
+                grep -n -C 6 -E '^(<<<<<<<|=======|>>>>>>>)' "$path" || true
+                conflict=1
+              fi
             fi
           done
+          if grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' \
+              doc/admission-control.md \
+              src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
+              src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+              src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+              src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+              test/SharpLink.Benchmarks/AdmissionBenchmarks.cs \
+              test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs; then
+            conflict=1
+          fi
           if [ "$conflict" -ne 0 ]; then
             echo 'File-level three-way conflicts require explicit resolution.'
             exit 2
