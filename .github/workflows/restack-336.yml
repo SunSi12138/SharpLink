@@ -30,6 +30,7 @@ jobs:
           dev_sha="$(git rev-parse refs/remotes/origin/dev)"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
           overlaps=(
             'doc/admission-control.md'
             'src/SharpLink.Server/Admission/AdmissionStateKernel.cs'
@@ -61,7 +62,6 @@ jobs:
           git show "$dev_sha:$controller" > "/tmp/restack336/ours/$controller"
           git show "$slice_sha:$controller" > "/tmp/restack336/theirs/$controller"
           git merge-file -p "/tmp/restack336/ours/$controller" "/tmp/restack336/base/$controller" "/tmp/restack336/theirs/$controller" > "$controller.merged" || true
-          grep -n -E 'AdmissionPartitionPool|AdmissionDecision|AdmissionLease|AdmissionLimiterSlot' "$controller.merged" | tail -40 || true
 
           python3 <<'PY'
           from pathlib import Path
@@ -72,51 +72,42 @@ jobs:
           start_marker = 'internal sealed class AdmissionPartitionPool : IDisposable'
           ms = merged.index(start_marker)
           ts = theirs.index(start_marker)
-          marker = None
-          me = te = -1
-          for candidate in (
-              'internal readonly record struct AdmissionDecision',
-              'internal sealed class AdmissionLease : IDisposable'):
-              candidate_me = merged.find(candidate, ms)
-              candidate_te = theirs.find(candidate, ts)
-              if candidate_me >= 0 and candidate_te >= 0:
-                  marker = candidate
-                  me = candidate_me
-                  te = candidate_te
-                  break
-          if marker is None:
-              raise RuntimeError('partition section end marker not found')
-          print(f'partition splice marker={marker!r} merged=[{ms},{me}) theirs=[{ts},{te})')
-          section = theirs[ts:te]
+          section = theirs[ts:]
 
-          replacements = []
-          replacements.append((
-          '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private int _disposed;''',
-          '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private bool _hasIdleExpiryHint;\n    private long _earliestIdleSince;\n    private long _reclaimScanCount;\n    private long _reclaimEntriesVisited;\n    private int _disposed;''', 'fields'))
-          replacements.append((
-          '''                    CollectIdleEntriesLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);''',
-          '''                    CollectIdleEntriesIfDueLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);''', 'acquire reclaim'))
-          replacements.append((
-          '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = _timeProvider.GetTimestamp();\n                entry.IsIdle = true;\n            }\n            CollectIdleEntriesLocked(\n                _timeProvider.GetTimestamp(),\n                stopAfterOne: true,\n                ref dispose);''',
-          '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            var now = _timeProvider.GetTimestamp();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = now;\n                entry.IsIdle = true;\n                if (!_hasIdleExpiryHint)\n                {\n                    _earliestIdleSince = now;\n                    _hasIdleExpiryHint = true;\n                }\n            }\n            CollectIdleEntriesIfDueLocked(\n                now,\n                stopAfterOne: true,\n                ref dispose);''', 'release reclaim'))
-          replacements.append((
-          '''    private void CollectIdleEntriesLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        List<AdmissionPartitionKey>? keys = null;\n        foreach (var pair in _entries)\n        {\n            if (pair.Value.References != 0 ||\n                !pair.Value.IsIdle ||\n                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)\n            {\n                continue;\n            }\n\n            (keys ??= []).Add(pair.Key);\n            if (stopAfterOne)\n                break;\n        }\n        if (keys is null)\n            return;\n\n        foreach (var key in keys)\n        {\n            var entry = _entries[key];\n            CollectAllEntryStateLocked(entry, ref dispose);\n            _entries.Remove(key);\n            SharpLinkTelemetry.AddAdmissionActivePartitions(-1);\n        }\n    }''',
-          '''    private void CollectIdleEntriesIfDueLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        if (!_hasIdleExpiryHint ||\n            _timeProvider.GetElapsedTime(_earliestIdleSince, now) < _options.IdleTimeout)\n        {\n            return;\n        }\n        CollectIdleEntriesLocked(now, stopAfterOne, ref dispose);\n    }\n\n    private void CollectIdleEntriesLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        _reclaimScanCount++;\n        List<AdmissionPartitionKey>? keys = null;\n        foreach (var pair in _entries)\n        {\n            _reclaimEntriesVisited++;\n            if (pair.Value.References != 0 ||\n                !pair.Value.IsIdle ||\n                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)\n            {\n                continue;\n            }\n            (keys ??= []).Add(pair.Key);\n            if (stopAfterOne)\n                break;\n        }\n        if (keys is not null)\n        {\n            foreach (var key in keys)\n            {\n                var entry = _entries[key];\n                CollectAllEntryStateLocked(entry, ref dispose);\n                _entries.Remove(key);\n                SharpLinkTelemetry.AddAdmissionActivePartitions(-1);\n            }\n        }\n        RecomputeIdleExpiryHintLocked(now);\n    }\n\n    private void RecomputeIdleExpiryHintLocked(long now)\n    {\n        var hasIdle = false;\n        var earliestIdleSince = 0L;\n        var longestElapsed = TimeSpan.Zero;\n        foreach (var entry in _entries.Values)\n        {\n            if (entry.References != 0 || !entry.IsIdle)\n                continue;\n            var elapsed = _timeProvider.GetElapsedTime(entry.IdleSince, now);\n            if (!hasIdle || elapsed > longestElapsed)\n            {\n                hasIdle = true;\n                earliestIdleSince = entry.IdleSince;\n                longestElapsed = elapsed;\n            }\n        }\n        _hasIdleExpiryHint = hasIdle;\n        _earliestIdleSince = hasIdle ? earliestIdleSince : 0;\n    }''', 'reclaim methods'))
-          replacements.append((
-          '''    internal int RuntimeGenerationCount\n    {''',
-          '''    internal long ReclaimScanCount\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimScanCount;\n        }\n    }\n\n    internal long ReclaimEntriesVisited\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimEntriesVisited;\n        }\n    }\n\n    internal int RuntimeGenerationCount\n    {''', 'diagnostics'))
-          replacements.append((
-          '''            var count = _entries.Count;\n            _entries.Clear();\n            if (count != 0)''',
-          '''            var count = _entries.Count;\n            _entries.Clear();\n            _hasIdleExpiryHint = false;\n            _earliestIdleSince = 0;\n            if (count != 0)''', 'dispose hints'))
-
+          replacements = [
+              (
+                  '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private int _disposed;''',
+                  '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private bool _hasIdleExpiryHint;\n    private long _earliestIdleSince;\n    private long _reclaimScanCount;\n    private long _reclaimEntriesVisited;\n    private int _disposed;''',
+                  'fields'),
+              (
+                  '''                    CollectIdleEntriesLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);''',
+                  '''                    CollectIdleEntriesIfDueLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);''',
+                  'acquire reclaim'),
+              (
+                  '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = _timeProvider.GetTimestamp();\n                entry.IsIdle = true;\n            }\n            CollectIdleEntriesLocked(\n                _timeProvider.GetTimestamp(),\n                stopAfterOne: true,\n                ref dispose);''',
+                  '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            var now = _timeProvider.GetTimestamp();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = now;\n                entry.IsIdle = true;\n                if (!_hasIdleExpiryHint)\n                {\n                    _earliestIdleSince = now;\n                    _hasIdleExpiryHint = true;\n                }\n            }\n            CollectIdleEntriesIfDueLocked(\n                now,\n                stopAfterOne: true,\n                ref dispose);''',
+                  'release reclaim'),
+              (
+                  '''    private void CollectIdleEntriesLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        List<AdmissionPartitionKey>? keys = null;\n        foreach (var pair in _entries)\n        {\n            if (pair.Value.References != 0 ||\n                !pair.Value.IsIdle ||\n                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)\n            {\n                continue;\n            }\n\n            (keys ??= []).Add(pair.Key);\n            if (stopAfterOne)\n                break;\n        }\n        if (keys is null)\n            return;\n\n        foreach (var key in keys)\n        {\n            var entry = _entries[key];\n            CollectAllEntryStateLocked(entry, ref dispose);\n            _entries.Remove(key);\n            SharpLinkTelemetry.AddAdmissionActivePartitions(-1);\n        }\n    }''',
+                  '''    private void CollectIdleEntriesIfDueLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        if (!_hasIdleExpiryHint ||\n            _timeProvider.GetElapsedTime(_earliestIdleSince, now) < _options.IdleTimeout)\n        {\n            return;\n        }\n        CollectIdleEntriesLocked(now, stopAfterOne, ref dispose);\n    }\n\n    private void CollectIdleEntriesLocked(\n        long now,\n        bool stopAfterOne,\n        ref List<IDisposable>? dispose)\n    {\n        _reclaimScanCount++;\n        List<AdmissionPartitionKey>? keys = null;\n        foreach (var pair in _entries)\n        {\n            _reclaimEntriesVisited++;\n            if (pair.Value.References != 0 ||\n                !pair.Value.IsIdle ||\n                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)\n            {\n                continue;\n            }\n            (keys ??= []).Add(pair.Key);\n            if (stopAfterOne)\n                break;\n        }\n        if (keys is not null)\n        {\n            foreach (var key in keys)\n            {\n                var entry = _entries[key];\n                CollectAllEntryStateLocked(entry, ref dispose);\n                _entries.Remove(key);\n                SharpLinkTelemetry.AddAdmissionActivePartitions(-1);\n            }\n        }\n        RecomputeIdleExpiryHintLocked(now);\n    }\n\n    private void RecomputeIdleExpiryHintLocked(long now)\n    {\n        var hasIdle = false;\n        var earliestIdleSince = 0L;\n        var longestElapsed = TimeSpan.Zero;\n        foreach (var entry in _entries.Values)\n        {\n            if (entry.References != 0 || !entry.IsIdle)\n                continue;\n            var elapsed = _timeProvider.GetElapsedTime(entry.IdleSince, now);\n            if (!hasIdle || elapsed > longestElapsed)\n            {\n                hasIdle = true;\n                earliestIdleSince = entry.IdleSince;\n                longestElapsed = elapsed;\n            }\n        }\n        _hasIdleExpiryHint = hasIdle;\n        _earliestIdleSince = hasIdle ? earliestIdleSince : 0;\n    }''',
+                  'reclaim methods'),
+              (
+                  '''    internal int RuntimeGenerationCount\n    {''',
+                  '''    internal long ReclaimScanCount\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimScanCount;\n        }\n    }\n\n    internal long ReclaimEntriesVisited\n    {\n        get\n        {\n            lock (_gate)\n                return _reclaimEntriesVisited;\n        }\n    }\n\n    internal int RuntimeGenerationCount\n    {''',
+                  'diagnostics'),
+              (
+                  '''            var count = _entries.Count;\n            _entries.Clear();\n            if (count != 0)''',
+                  '''            var count = _entries.Count;\n            _entries.Clear();\n            _hasIdleExpiryHint = false;\n            _earliestIdleSince = 0;\n            if (count != 0)''',
+                  'dispose hints'),
+          ]
           for old, new, label in replacements:
               if section.count(old) != 1:
                   raise RuntimeError(f'partition {label} anchor mismatch: count={section.count(old)}')
               section = section.replace(old, new, 1)
 
-          resolved = merged[:ms] + section + merged[me:]
+          resolved = merged[:ms] + section
           if any(marker in resolved for marker in ('<<<<<<<', '=======', '>>>>>>>')):
-              raise RuntimeError('unresolved conflict marker remains after partition splice')
+              raise RuntimeError('unresolved conflict marker remains before partition tail')
           path.write_text(resolved)
           Path(str(path) + '.merged').unlink()
           PY
@@ -147,9 +138,11 @@ jobs:
           if changed != allowed:
               raise RuntimeError(f'exact 11-file scope mismatch: missing={sorted(allowed-changed)} extra={sorted(changed-allowed)}')
           PY
+
           dotnet restore Sharplink.slnx
           dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
           dotnet build Sharplink.slnx -c Debug --no-restore --nologo
+
           tree_sha="$(git write-tree)"
           final_commit="$(printf '%s\n' 'chore(stack): restack #336 onto latest dev' | git commit-tree "$tree_sha" -p "$target_head" -p "$dev_sha")"
           echo "tree_sha=$tree_sha"
