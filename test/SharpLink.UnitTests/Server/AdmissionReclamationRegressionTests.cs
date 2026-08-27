@@ -100,11 +100,11 @@ public sealed class AdmissionReclamationRegressionTests
         var kernel = new AdmissionStateKernel(TimeProvider.System);
         var original = CreateProgram(kernel, options => options.Global.UseConcurrency(1));
         var lifecycleOwner = original.Controller;
-        var oldState = lifecycleOwner.GlobalStateForTests ??
-            throw new Exception("assert failed: initial global state was not created");
+        var oldState = lifecycleOwner.GlobalConcurrencyStateForTests ??
+            throw new Exception("assert failed: initial global concurrency state was not created");
         var replacement = CreateProgram(kernel, options => options.Global.UseConcurrency(2));
         var oldProgram = new WeakReference<AdmissionProgram>(original);
-        var oldStateReference = new WeakReference<AdmissionRuleRuntime>(oldState);
+        var oldStateReference = new WeakReference<ResizableConcurrencyState>(oldState);
 
         Ensure(original.Retire(), "replacement must retire the initial generation");
         Ensure(original.IsReclaimed && original.ReclaimCount == 1,
@@ -161,5 +161,5 @@ public sealed class AdmissionReclamationRegressionTests
         SharpLinkAdmissionController LifecycleOwner,
         AdmissionProgram Replacement,
         WeakReference<AdmissionProgram> OldProgram,
-        WeakReference<AdmissionRuleRuntime> OldState);
+        WeakReference<ResizableConcurrencyState> OldState);
 }

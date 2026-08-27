@@ -26,8 +26,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
     }
 
     /// <summary>
-    /// Deterministic control-plane probe. It runs after a public enable candidate is fully built and
-    /// before the lifecycle writer lock is entered.
+    /// Deterministic control-plane probe. It runs after a public enable/update candidate is fully
+    /// built and before the lifecycle writer lock is entered.
     /// </summary>
     internal static Action<SharpLinkServer, AdmissionProgram>? AfterAdmissionCandidateBuiltForTests
     {
@@ -87,6 +87,33 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
         }
     }
 
+    void ISharpLinkAdmissionRuntimeControl.UpdateAdmissionControl(
+        Action<SharpLinkAdmissionControlOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        var source = AcquireAdmissionUpdateSource();
+        AdmissionProgram? candidate = null;
+        try
+        {
+            candidate = CreateAdmissionUpdateProgram(source, configure, out var updatePlan);
+            Volatile.Read(ref s_afterAdmissionCandidateBuiltForTests)?.Invoke(this, candidate);
+            PublishAdmissionProgram(
+                candidate,
+                AdmissionPublicationIntent.Update,
+                expectedSource: source,
+                updatePlan);
+        }
+        catch
+        {
+            candidate?.Retire();
+            throw;
+        }
+        finally
+        {
+            source.ReleaseUse();
+        }
+    }
+
     void ISharpLinkAdmissionRuntimeControl.DisableAdmissionControl()
         => PublishAdmissionProgram(null, AdmissionPublicationIntent.Disable);
 
@@ -101,9 +128,55 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
         return controller.Kernel.CreateProgram(options, _staticManifests);
     }
 
+    private AdmissionProgram CreateAdmissionUpdateProgram(
+        AdmissionProgram source,
+        Action<SharpLinkAdmissionControlOptions> configure,
+        out AdmissionUpdatePlan updatePlan)
+    {
+        var controller = _admissionController ??
+            throw new InvalidOperationException("Server admission lifecycle owner is unavailable.");
+        var options = new SharpLinkAdmissionControlOptions();
+        configure(options);
+        options.Validate();
+        return controller.Kernel.CreateUpdateProgram(
+            source,
+            options,
+            _staticManifests,
+            out updatePlan);
+    }
+
+    /// <summary>
+    /// Retains the exact enabled source generation before user configuration executes. If another
+    /// writer retires the observed publication first, retry the pointer read rather than attaching
+    /// an update to stale state. Once retained, publication later requires this exact source.
+    /// </summary>
+    private AdmissionProgram AcquireAdmissionUpdateSource()
+    {
+        while (true)
+        {
+            var source = ReadAdmissionPublication();
+            if (!source.IsEnabled)
+            {
+                throw new InvalidOperationException(
+                    "Admission control must be enabled before it can be updated.");
+            }
+
+            if (source.TryAcquireUse())
+                return source;
+
+            if (_admissionController?.Kernel.IsDraining == true)
+            {
+                throw new InvalidOperationException(
+                    "Admission publication is sealed because the server is stopping.");
+            }
+        }
+    }
+
     private AdmissionProgram? PublishAdmissionProgram(
         AdmissionProgram? program,
-        AdmissionPublicationIntent intent)
+        AdmissionPublicationIntent intent,
+        AdmissionProgram? expectedSource = null,
+        AdmissionUpdatePlan? updatePlan = null)
     {
         var lifecycle = _admissionController ??
             throw new InvalidOperationException("Server admission lifecycle owner is unavailable.");
@@ -121,12 +194,16 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
                 throw new InvalidOperationException("Admission publication is sealed because the server is stopping.");
             }
             if (program is { IsRetired: true })
-            {
                 throw new InvalidOperationException("A retired admission program cannot be published again.");
-            }
 
             var replacement = program ?? AdmissionProgram.Disabled;
             previous = ReadAdmissionPublication();
+
+            // Refresh lineage only from the actual current publication. Candidate construction and
+            // losing writers never become a compatibility source for future re-enable operations.
+            if (previous.IsEnabled)
+                lifecycle.Kernel.RecordPublishedConcurrencyLineage(previous.Controller);
+
             if (intent == AdmissionPublicationIntent.Enable && previous.IsEnabled)
             {
                 program!.Retire();
@@ -134,10 +211,51 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             }
             if (intent == AdmissionPublicationIntent.Disable && !previous.IsEnabled)
                 return null;
+            if (intent == AdmissionPublicationIntent.Update)
+            {
+                if (program is null || expectedSource is null || updatePlan is null)
+                    throw new InvalidOperationException("Admission update publication is incomplete.");
+                if (!previous.IsEnabled || !ReferenceEquals(previous, expectedSource))
+                {
+                    program.Retire();
+                    throw new InvalidOperationException(
+                        "Admission control changed while the update candidate was being prepared.");
+                }
+            }
             if (ReferenceEquals(previous, replacement))
                 return previous.IsEnabled ? previous : null;
 
-            Volatile.Write(ref _admissionProgram, replacement);
+            if (intent == AdmissionPublicationIntent.Update && updatePlan!.ResizeCount != 0)
+            {
+                // Exact-source validation has already won the writer. Keep the reader-visible epoch
+                // odd across every physical target resize and the N+1 pointer write. Request paths
+                // never take this writer lock; the complete request validates one stable epoch.
+                lifecycle.Kernel.BeginConcurrencyTargetCommit();
+                try
+                {
+                    updatePlan.Commit(lifecycle.Kernel.AfterConcurrencyResizeForTests);
+                    Volatile.Write(ref _admissionProgram, replacement);
+                }
+                finally
+                {
+                    lifecycle.Kernel.CompleteConcurrencyTargetCommit();
+                }
+
+                // Resizes intentionally do not grant while the epoch is odd. Flush the final
+                // generation synchronously after the N+1 pointer and complete target set are stable,
+                // so an increase wakes its oldest waiter before UpdateAdmissionControl returns.
+                foreach (var binding in replacement.Controller.RuleStateBindings)
+                    binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();
+            }
+            else
+            {
+                if (intent == AdmissionPublicationIntent.Update)
+                    updatePlan!.Commit(lifecycle.Kernel.AfterConcurrencyResizeForTests);
+                Volatile.Write(ref _admissionProgram, replacement);
+            }
+
+            if (replacement.IsEnabled)
+                lifecycle.Kernel.RecordPublishedConcurrencyLineage(replacement.Controller);
             if (previous.IsEnabled)
                 previous.Retire();
         }
@@ -198,6 +316,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
     private enum AdmissionPublicationIntent
     {
         Enable,
+        Update,
         Disable,
         TestReplacement
     }
