@@ -63,7 +63,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
     /// <summary>Gets the declared wire protocol version, or zero for a legacy locator.</summary>
     public int ProtocolVersion { get; }
 
-    /// <summary>Gets the source-generator version, or <see langword="null"/> for a legacy locator.</summary>
+    /// <summary>Gets the declared Generator version, or <see langword="null"/> for a legacy locator.</summary>
     public string? GeneratorVersion { get; }
 
     /// <summary>Gets the exact generated ABI identity, or <see langword="null"/> for an older locator.</summary>
