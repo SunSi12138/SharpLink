@@ -62,7 +62,8 @@ public class PendingRequestTableTests
         var timeProvider = new TrackingTimeProvider(utcNow);
         using var manager = CreateTable(1, timeProvider: timeProvider);
         var occupied = manager.Rent<int>(out _);
-        var deadline = RpcDeadline.Create(utcNow.AddTicks(-1), timeProvider);
+        var deadline = RpcDeadline.FromTimestamp(timeProvider.GetTimestamp() - 1);
+        var timestampReadsBeforeWait = timeProvider.TimestampReadCount;
 
         var failure = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
@@ -70,8 +71,11 @@ public class PendingRequestTableTests
             CancellationToken.None).AsTask());
 
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "the injected UTC source must make an already-expired capacity deadline fail immediately");
-        Ensure(timeProvider.UtcReadCount == 1, "the capacity wait must read the injected time source once");
+            "the injected monotonic source must make an already-expired capacity deadline fail immediately");
+        Ensure(timeProvider.TimestampReadCount > timestampReadsBeforeWait,
+            "the capacity wait must read the injected monotonic time source");
+        Ensure(timeProvider.UtcReadCount == 0,
+            "capacity deadline arbitration must not consult wall-clock UTC time");
         manager.FailAllPendingRequests(new IOException("test cleanup"));
         await EnsureThrows<IOException>(occupied.AsValueTask(), "test cleanup");
     }
@@ -82,9 +86,7 @@ public class PendingRequestTableTests
         var timeProvider = new ManualTimeProvider();
         using var manager = CreateTable(1, timeProvider: timeProvider);
         var occupied = manager.Rent<int>(out _);
-        var deadline = RpcDeadline.Create(
-            timeProvider.GetUtcNow().AddSeconds(2),
-            timeProvider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(2), timeProvider);
         var waiting = manager.RentAsync<int>(
             waitForSlot: true,
             deadline,
@@ -112,12 +114,8 @@ public class PendingRequestTableTests
     {
         var timeProvider = new ManualTimeProvider();
         using var manager = CreateTable(8, timeProvider: timeProvider);
-        var firstDeadline = RpcDeadline.Create(
-            timeProvider.GetUtcNow().AddSeconds(1),
-            timeProvider);
-        var laterDeadline = RpcDeadline.Create(
-            timeProvider.GetUtcNow().AddSeconds(2),
-            timeProvider);
+        var firstDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
+        var laterDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(2), timeProvider);
         var first = manager.Rent(
             new Int32Codec(), PendingCallKind.Unary, firstDeadline,
             CancellationToken.None, out _).AsValueTask().AsTask();
@@ -151,14 +149,60 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task ResponseAtExpiredTimestampShouldLoseBeforeDeadlineTimerCallbackRuns()
+    {
+        var timeProvider = new ManualTimeProvider();
+        using var manager = CreateTable(8, timeProvider: timeProvider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
+        var operation = manager.Rent(
+            new Int32Codec(),
+            PendingCallKind.Unary,
+            deadline,
+            CancellationToken.None,
+            out var requestId).AsValueTask().AsTask();
+
+        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
+        var payload = SInt32Payload;
+        Ensure(manager.Dispatch(requestId, ref payload),
+            "matching response should claim the pending slot");
+
+        var failure = await CaptureExceptionAsync(operation);
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "response processing must consult the monotonic boundary even before the timer callback runs");
+        Ensure(manager.Count == 0,
+            "deadline-gated response must release the pending slot exactly once");
+        timeProvider.Advance(TimeSpan.Zero);
+    }
+
+
+    [Test]
+    public async Task StreamDataAfterExpiredTimestampShouldBeRejectedBeforeDeadlineTimerCallbackRuns()
+    {
+        var timeProvider = new ManualTimeProvider();
+        using var manager = CreateTable(8, timeProvider: timeProvider);
+        var requestId = manager.RegisterStream(
+            PendingCallKind.ServerStreaming,
+            new NoopStreamDispatcher(),
+            RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider),
+            CancellationToken.None);
+
+        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
+
+        Ensure(!manager.TryAcceptStreamData(requestId),
+            "StreamData arriving at/after the monotonic boundary must not reach the dispatcher");
+        Ensure(manager.Count == 0,
+            "the stream-data deadline gate must atomically retire the pending stream");
+        timeProvider.Advance(TimeSpan.Zero);
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task FakeTimeCancellationAndDisposeShouldRemoveCallsAndTheOwnedTimerExactlyOnce()
     {
         var timeProvider = new ManualTimeProvider();
         var manager = CreateTable(2, timeProvider: timeProvider);
         using var cancellation = new CancellationTokenSource();
-        var deadline = RpcDeadline.Create(
-            timeProvider.GetUtcNow().AddSeconds(5),
-            timeProvider);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), timeProvider);
         var canceled = manager.Rent(
             new Int32Codec(), PendingCallKind.Unary, deadline,
             cancellation.Token, out _).AsValueTask().AsTask();
@@ -398,7 +442,7 @@ public class PendingRequestTableTests
 
         var waiting = manager.RentAsync<int>(
             waitForSlot: true,
-            RpcDeadline.Create(DateTimeOffset.UtcNow.AddSeconds(5), TimeProvider.System),
+            RpcDeadline.Create(TimeSpan.FromSeconds(5), TimeProvider.System),
             System.Threading.CancellationToken.None).AsTask();
         Ensure(!waiting.IsCompleted, "full table waiter should suspend");
 
@@ -423,7 +467,7 @@ public class PendingRequestTableTests
 
         var timeout = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            RpcDeadline.Create(DateTimeOffset.UtcNow.AddMilliseconds(20), TimeProvider.System),
+            RpcDeadline.Create(TimeSpan.FromMilliseconds(20), TimeProvider.System),
             System.Threading.CancellationToken.None).AsTask());
         Ensure(timeout is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }, "deadline error");
 
@@ -448,7 +492,7 @@ public class PendingRequestTableTests
 
         var failure = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            RpcDeadline.Create(DateTimeOffset.MaxValue, TimeProvider.System),
+            RpcDeadline.FromTimestamp(long.MaxValue),
             cancellation.Token).AsTask());
 
         Ensure(failure is OperationCanceledException,
@@ -657,7 +701,7 @@ public class PendingRequestTableTests
         var operation = manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            RpcDeadline.Create(DateTimeOffset.MaxValue, deadline),
+            RpcDeadline.FromTimestamp(deadline),
             CancellationToken.None,
             out _);
 
@@ -681,7 +725,7 @@ public class PendingRequestTableTests
             operation = manager.Rent(
                 new Int32Codec(),
                 PendingCallKind.Unary,
-                RpcDeadline.Create(DateTimeOffset.MaxValue, deadline),
+                RpcDeadline.FromTimestamp(deadline),
                 CancellationToken.None,
                 out requestId);
         }
@@ -975,6 +1019,7 @@ public class PendingRequestTableTests
 
         internal int DisposeCount { get; private set; }
         internal int UtcReadCount { get; private set; }
+        internal int TimestampReadCount { get; private set; }
 
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
 
@@ -984,7 +1029,11 @@ public class PendingRequestTableTests
             return _utcNow ?? TimeProvider.System.GetUtcNow();
         }
 
-        public override long GetTimestamp() => TimeProvider.System.GetTimestamp();
+        public override long GetTimestamp()
+        {
+            TimestampReadCount++;
+            return TimeProvider.System.GetTimestamp();
+        }
 
         public void Dispose() => DisposeCount++;
     }

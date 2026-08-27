@@ -108,7 +108,7 @@ public sealed class AdmissionDynamicUpdateRateRetentionTests
             throw new Exception("assert failed: expected enabled admission publication");
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "dynamic-update-rate-retention", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "dynamic-update-rate-retention", null, null);
 
     private static async Task WaitUntilAsync(Func<bool> condition, string scenario)
     {

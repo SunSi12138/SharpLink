@@ -229,7 +229,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
     }
 
     private static SharpLinkAdmissionContext CreateAdmissionContext()
-        => new(1, 2, RpcMethodKind.Unary, "runtime-control-integration", null, null, null);
+        => new(1, 2, RpcMethodKind.Unary, "runtime-control-integration", null, null);
 
     private static async Task<Exception?> CaptureFailureAsync(Task task)
     {

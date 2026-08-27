@@ -152,7 +152,7 @@ public sealed class AdmissionDynamicRateReplacementRegressionTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-replacement", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-replacement", null, null);
 
     private static void Ensure(bool condition, string scenario)
     {

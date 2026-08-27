@@ -12,6 +12,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  codec-compatibility:
+    uses: ./.github/workflows/codec-compatibility.yml
+
   quick:
     runs-on: ubuntu-latest
     timeout-minutes: 25

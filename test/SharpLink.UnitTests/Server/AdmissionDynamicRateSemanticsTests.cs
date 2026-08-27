@@ -297,7 +297,7 @@ public sealed class AdmissionDynamicRateSemanticsTests
     }
 
     private static SharpLinkAdmissionContext CreateContext()
-        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-semantics", null, null, null);
+        => new(101, 202, RpcMethodKind.Unary, "dynamic-rate-semantics", null, null);
 
     private static void Ensure(bool condition, string scenario)
     {

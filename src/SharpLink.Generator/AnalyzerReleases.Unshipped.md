@@ -10,7 +10,6 @@
  SHARPLINK015 | SharpLink.Generator | Error    | RPC method declares both NonCancellable and CancellationToken
  SHARPLINK005 | SharpLink.Generator | Error    | Generic Type Parameter Not Supported in RPC Contract    
  SHARPLINK006 | SharpLink.Generator | Error    | RpcContract Interface Must Inherit IService             
- SHARPLINK007 | SharpLink.Generator | Error    | More than one SharpLinkCallOptions parameter
  SHARPLINK008 | SharpLink.Generator | Error    | RPC control parameters must be trailing
  SHARPLINK009 | SharpLink.Generator | Error    | DTO type is outside the native generated Codec subset
  SHARPLINK010 | SharpLink.Generator | Error    | Cyclic DTO graph is unsupported

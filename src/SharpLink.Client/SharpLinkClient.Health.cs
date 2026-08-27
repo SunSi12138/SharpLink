@@ -17,14 +17,8 @@ internal sealed partial class SharpLinkClient
         }
 
         var timeProvider = _runtimeContext.TimeProvider;
-        var utcNow = timeProvider.GetUtcNow();
-        var timestampNow = timeProvider.GetTimestamp();
         var deadline = _hasRequestTimeout
-            ? RpcDeadline.Create(
-                AddTimeout(utcNow, _requestTimeoutValue),
-                utcNow,
-                timestampNow,
-                timeProvider.TimestampFrequency)
+            ? RpcDeadline.Create(_requestTimeoutValue, timeProvider)
             : default;
         var operation = connection.PendingCalls.Rent(
             HealthResponseCodec.Instance,

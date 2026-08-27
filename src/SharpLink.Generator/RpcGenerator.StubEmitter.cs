@@ -155,7 +155,6 @@ public partial class RpcGenerator
                 else if (parameter is
                 {
                     IsCancellationToken: false,
-                    IsCallOptions: false,
                     IsBlittable: false
                 })
                 {
@@ -188,7 +187,6 @@ public partial class RpcGenerator
                 else if (parameter is
                 {
                     IsCancellationToken: false,
-                    IsCallOptions: false,
                     IsBlittable: false
                 })
                 {
@@ -275,12 +273,11 @@ public partial class RpcGenerator
                 .Select(static (parameter, index) => (Parameter: parameter, Index: index))
                 .ToArray();
             var streamParams = indexedParameters.Where(static item => item.Parameter.IsStream).ToArray();
-            var blittableParams = method.Parameters.Where(p => !p.IsStream && p is { IsCancellationToken: false, IsCallOptions: false, IsBlittable: true }).ToList();
+            var blittableParams = method.Parameters.Where(p => !p.IsStream && p is { IsCancellationToken: false, IsBlittable: true }).ToList();
             var complexParams = indexedParameters.Where(static item =>
                 !item.Parameter.IsStream && item.Parameter is
                 {
                     IsCancellationToken: false,
-                    IsCallOptions: false,
                     IsBlittable: false
                 }).ToArray();
             var streamId = 1;
@@ -301,14 +298,6 @@ public partial class RpcGenerator
                 sb.AppendLine($"                arg_{p.Name} = cancellationToken;");
             }
 
-            foreach (var p in method.Parameters.Where(p => p.IsCallOptions))
-            {
-                sb.AppendLine($"                arg_{p.Name} = new global::SharpLink.Sdk.SharpLinkCallOptions");
-                sb.AppendLine("                {");
-                sb.AppendLine("                    Deadline = SharpLinkCallContext.Current?.Deadline,");
-                sb.AppendLine("                    Metadata = SharpLinkCallContext.Current?.Metadata");
-                sb.AppendLine("                };");
-            }
 
             foreach (var p in blittableParams)
             {
@@ -361,6 +350,7 @@ public partial class RpcGenerator
                 streamId++;
             }
 
+            sb.AppendLine("                bridge.EnsureUserCodeEntry(requestId);");
             var callArgs = string.Join(", ", method.Parameters.Select(p => p.IsStream ? $"stream_{p.Name}" : $"arg_{p.Name}"));
             var callLine = $"impl.{EscapeIdentifier(method.Name)}({callArgs})";
 
@@ -428,7 +418,7 @@ public partial class RpcGenerator
     {
         var blittableTypes = methods
             .SelectMany(m => m.Parameters)
-            .Where(p => !p.IsStream && p is { IsCancellationToken: false, IsCallOptions: false, IsBlittable: true })
+            .Where(p => !p.IsStream && p is { IsCancellationToken: false, IsBlittable: true })
             .Select(p => p.Type)
             .Distinct()
             .ToArray();
