@@ -114,14 +114,14 @@ public interface IReviewPayloadContract : IService
         var contractDependencies = manifest.Substring(
             contractDependenciesStart,
             readOnlyStart - contractDependenciesStart);
-        Ensure(normalDependencies.Contains("ReviewPayloads", StringComparison.Ordinal),
-            "the Contract payload assembly remains a normal manifest dependency");
+        Ensure(!normalDependencies.Contains("ReviewPayloads", StringComparison.Ordinal),
+            "an ordinary CLR payload assembly must not become a runtime module dependency");
         Ensure(!normalDependencies.Contains("ReviewPayloadCodecs", StringComparison.Ordinal),
             "the RPC-only Codec implementation assembly must not leak into normal Dependencies");
         Ensure(contractDependencies.Contains("ReviewPayloadCodecs", StringComparison.Ordinal),
             "the RPC-only Codec implementation assembly must be published through ContractDependencies");
         Ensure(!contractDependencies.Contains("ReviewPayloads", StringComparison.Ordinal),
-            "ContractDependencies should contain only the RPC-only dependency delta");
+            "ordinary CLR payload references must remain outside runtime module dependency tables");
         return Task.CompletedTask;
     }
 
