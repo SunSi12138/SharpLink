@@ -1,0 +1,116 @@
+name: Restack 334
+
+on:
+  push:
+    branches:
+      - issue-333-dynamic-admission-rate-update
+
+permissions:
+  contents: write
+
+jobs:
+  restack:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Merge exact #334 slice onto latest dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_branch='issue-333-dynamic-admission-rate-update'
+          base_sha='b2ee472d98946e428d69ee18a0c0be6f72deb57c'
+          slice_sha='46c1285d25b8445d26d050256e8ad590859b541b'
+          target_head="$(git rev-parse HEAD)"
+          git fetch origin dev:refs/remotes/origin/dev
+          dev_sha="$(git rev-parse refs/remotes/origin/dev)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          overlaps=(
+            'doc/admission-control.md'
+            'src/SharpLink.Server/Admission/AdmissionLimiterState.cs'
+            'src/SharpLink.Server/Admission/AdmissionStateKernel.cs'
+            'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs'
+            'src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs'
+            'test/SharpLink.Benchmarks/AdmissionBenchmarks.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs'
+          )
+          additions=(
+            'src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs'
+            'test/SharpLink.Benchmarks/AdmissionFreshRateRpcBenchmarks.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateLegacyWaiterRegressionTests.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateLineageAndLifecycleTests.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateReplacementRegressionTests.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateReviewRegressionTests.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateSemanticsTests.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateTransitionCarryRegressionTests.cs'
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateUpdateTests.cs'
+          )
+
+          git reset --hard "$dev_sha"
+          mkdir -p /tmp/restack334/base /tmp/restack334/ours /tmp/restack334/theirs
+          conflict=0
+          for path in "${overlaps[@]}"; do
+            mkdir -p "/tmp/restack334/base/$(dirname "$path")" "/tmp/restack334/ours/$(dirname "$path")" "/tmp/restack334/theirs/$(dirname "$path")" "$(dirname "$path")"
+            git show "$base_sha:$path" > "/tmp/restack334/base/$path"
+            git show "$dev_sha:$path" > "/tmp/restack334/ours/$path"
+            git show "$slice_sha:$path" > "/tmp/restack334/theirs/$path"
+            if ! git merge-file -p "/tmp/restack334/ours/$path" "/tmp/restack334/base/$path" "/tmp/restack334/theirs/$path" > "$path"; then
+              echo "CONFLICT: $path"
+              grep -n -C 6 -E '^(<<<<<<<|=======|>>>>>>>)' "$path" || true
+              conflict=1
+            fi
+          done
+          if [ "$conflict" -ne 0 ]; then
+            echo 'File-level three-way conflicts require explicit resolution.'
+            exit 2
+          fi
+
+          for path in "${additions[@]}"; do
+            mkdir -p "$(dirname "$path")"
+            git show "$slice_sha:$path" > "$path"
+          done
+
+          git add -A
+          python3 <<'PY'
+          import subprocess
+          allowed = {
+            'doc/admission-control.md',
+            'src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs',
+            'src/SharpLink.Server/Admission/AdmissionLimiterState.cs',
+            'src/SharpLink.Server/Admission/AdmissionStateKernel.cs',
+            'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs',
+            'src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs',
+            'test/SharpLink.Benchmarks/AdmissionBenchmarks.cs',
+            'test/SharpLink.Benchmarks/AdmissionFreshRateRpcBenchmarks.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateLegacyWaiterRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateLineageAndLifecycleTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateReplacementRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateReviewRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateSemanticsTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateTransitionCarryRegressionTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicRateUpdateTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs',
+          }
+          changed = set(subprocess.check_output(['git','diff','--cached','--name-only','HEAD'], text=True).splitlines())
+          print('changed files:', *sorted(changed), sep='\n  ')
+          if changed != allowed:
+            raise RuntimeError(f'exact 16-file scope mismatch: missing={sorted(allowed-changed)} extra={sorted(changed-allowed)}')
+          PY
+
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          dotnet build Sharplink.slnx -c Debug --no-restore --nologo
+
+          tree_sha="$(git write-tree)"
+          final_commit="$(printf '%s\n' 'chore(stack): restack #334 onto latest dev' | git commit-tree "$tree_sha" -p "$target_head" -p "$dev_sha")"
+          echo "tree_sha=$tree_sha"
+          echo "final_commit=$final_commit"
+          git push origin "$final_commit:refs/heads/$target_branch"
