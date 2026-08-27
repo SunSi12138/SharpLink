@@ -75,29 +75,41 @@ jobs:
           prefix = merged[:ms]
           section = theirs[ts:]
 
-          nullable_entry = 'AdmissionPartitionEntry?'
-          nullable_lease = 'AdmissionPartitionLease?'
-          nullable_count = prefix.count(nullable_entry)
-          if nullable_count < 5:
-              raise RuntimeError(f'partition lease boundary anchor mismatch: nullable entry count={nullable_count}')
-          prefix = prefix.replace(nullable_entry, nullable_lease)
-
+          # The current request/lease path keeps dev's deadline/queue behavior, but the
+          # partition handle itself is #336's generation-aware lease.
+          if prefix.count('AdmissionPartitionEntry?') < 5:
+              raise RuntimeError('partition lease boundary anchor mismatch')
+          prefix = prefix.replace('AdmissionPartitionEntry?', 'AdmissionPartitionLease?')
           old_release = '''        var partition = Interlocked.Exchange(ref _partition, null);\n        partition?.Owner.Release(partition);'''
-          new_release = '''        Interlocked.Exchange(ref _partition, null)?.Dispose();'''
-          release_count = prefix.count(old_release)
-          if release_count != 2:
-              raise RuntimeError(f'partition release boundary anchor mismatch: count={release_count}')
-          prefix = prefix.replace(old_release, new_release)
+          if prefix.count(old_release) != 2:
+              raise RuntimeError('partition release boundary anchor mismatch')
+          prefix = prefix.replace(old_release, '        Interlocked.Exchange(ref _partition, null)?.Dispose();')
 
           replacements = [
               (
+                  '''    private readonly AdmissionStateKernel _kernel;\n    private readonly Lock _gate = new();''',
+                  '''    private readonly AdmissionStateKernel _kernel;\n    private readonly bool _ownsKernel;\n    private readonly Lock _gate = new();''',
+                  'kernel ownership field'),
+              (
                   '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private int _disposed;''',
                   '''    private AdmissionPartitionPolicyGeneration _currentPolicy;\n    private List<AdmissionPartitionPolicyGeneration> _policies;\n    private bool _hasIdleExpiryHint;\n    private long _earliestIdleSince;\n    private long _reclaimScanCount;\n    private long _reclaimEntriesVisited;\n    private int _disposed;''',
-                  'fields'),
+                  'reclaim fields'),
+              (
+                  '''    internal AdmissionPartitionPool(\n        Func<SharpLinkAdmissionContext, string?> selector,\n        SharpLinkPartitionAdmissionOptions options,\n        TimeProvider timeProvider,\n        AdmissionStateKernel kernel)\n    {\n        _selector = selector;\n        _options = options.CloneValidated();\n        _timeProvider = timeProvider;\n        _kernel = kernel;\n        _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);\n        _policies = [_currentPolicy];\n    }''',
+                  '''    internal AdmissionPartitionPool(\n        Func<SharpLinkAdmissionContext, string?> selector,\n        SharpLinkPartitionAdmissionOptions options,\n        TimeProvider timeProvider)\n        : this(selector, options, queueLimit: 0, timeProvider)\n    {\n    }\n\n    internal AdmissionPartitionPool(\n        Func<SharpLinkAdmissionContext, string?> selector,\n        SharpLinkPartitionAdmissionOptions options,\n        int queueLimit,\n        TimeProvider timeProvider)\n        : this(selector, options, timeProvider, new AdmissionStateKernel(timeProvider), ownsKernel: true)\n    {\n        _ = queueLimit;\n    }\n\n    internal AdmissionPartitionPool(\n        Func<SharpLinkAdmissionContext, string?> selector,\n        SharpLinkPartitionAdmissionOptions options,\n        TimeProvider timeProvider,\n        AdmissionStateKernel kernel)\n        : this(selector, options, timeProvider, kernel, ownsKernel: false)\n    {\n    }\n\n    private AdmissionPartitionPool(\n        Func<SharpLinkAdmissionContext, string?> selector,\n        SharpLinkPartitionAdmissionOptions options,\n        TimeProvider timeProvider,\n        AdmissionStateKernel kernel,\n        bool ownsKernel)\n    {\n        _selector = selector;\n        _options = options.CloneValidated();\n        _timeProvider = timeProvider;\n        _kernel = kernel;\n        _ownsKernel = ownsKernel;\n        _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);\n        _policies = [_currentPolicy];\n    }''',
+                  'constructors'),
+              (
+                  '''    internal AdmissionPartitionLease? TryAcquire(\n        SharpLinkAdmissionContext context,\n        AdmissionPartitionPolicyGeneration requestedPolicy)''',
+                  '''    internal AdmissionPartitionLease? TryAcquire(SharpLinkAdmissionContext context)\n        => TryAcquire(context, CurrentPolicyForBinding);\n\n    internal AdmissionPartitionLease? TryAcquire(\n        SharpLinkAdmissionContext context,\n        AdmissionPartitionPolicyGeneration requestedPolicy)''',
+                  'acquire overload'),
               (
                   '''                    CollectIdleEntriesLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);''',
                   '''                    CollectIdleEntriesIfDueLocked(\n                        _timeProvider.GetTimestamp(),\n                        stopAfterOne: true,\n                        ref dispose);''',
                   'acquire reclaim'),
+              (
+                  '''    internal void Release(AdmissionPartitionRuntimeGeneration generation)\n    {''',
+                  '''    internal void Release(AdmissionPartitionLease lease)\n    {\n        ArgumentNullException.ThrowIfNull(lease);\n        lease.Dispose();\n    }\n\n    internal void Release(AdmissionPartitionRuntimeGeneration generation)\n    {''',
+                  'release overload'),
               (
                   '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = _timeProvider.GetTimestamp();\n                entry.IsIdle = true;\n            }\n            CollectIdleEntriesLocked(\n                _timeProvider.GetTimestamp(),\n                stopAfterOne: true,\n                ref dispose);''',
                   '''            CollectRetiredGenerationsLocked(entry, ref dispose);\n            CollectRetiredPoliciesLocked();\n            var now = _timeProvider.GetTimestamp();\n            if (entry.References == 0)\n            {\n                entry.IdleSince = now;\n                entry.IsIdle = true;\n                if (!_hasIdleExpiryHint)\n                {\n                    _earliestIdleSince = now;\n                    _hasIdleExpiryHint = true;\n                }\n            }\n            CollectIdleEntriesIfDueLocked(\n                now,\n                stopAfterOne: true,\n                ref dispose);''',
@@ -114,10 +126,19 @@ jobs:
                   '''            var count = _entries.Count;\n            _entries.Clear();\n            if (count != 0)''',
                   '''            var count = _entries.Count;\n            _entries.Clear();\n            _hasIdleExpiryHint = false;\n            _earliestIdleSince = 0;\n            if (count != 0)''',
                   'dispose hints'),
+              (
+                  '''        DisposeStates(dispose);\n    }\n\n    private PreparedEntryTransition PrepareEntryTransitionLocked''',
+                  '''        DisposeStates(dispose);\n        if (_ownsKernel)\n            _kernel.DisposeAsync().AsTask().GetAwaiter().GetResult();\n    }\n\n    private PreparedEntryTransition PrepareEntryTransitionLocked''',
+                  'owned kernel disposal'),
+              (
+                  '''    private AdmissionPartitionPool? _owner = owner;\n    internal AdmissionRuleRuntime Runtime => generation.Runtime;''',
+                  '''    private AdmissionPartitionPool? _owner = owner;\n    internal AdmissionRuleRuntime Runtime => generation.Runtime;\n    internal int References => generation.Entry?.References ?? 0;''',
+                  'lease references diagnostic'),
           ]
           for old, new, label in replacements:
-              if section.count(old) != 1:
-                  raise RuntimeError(f'partition {label} anchor mismatch: count={section.count(old)}')
+              count = section.count(old)
+              if count != 1:
+                  raise RuntimeError(f'partition {label} anchor mismatch: count={count}')
               section = section.replace(old, new, 1)
 
           resolved = prefix + section
@@ -131,6 +152,71 @@ jobs:
             mkdir -p "$(dirname "$path")"
             git show "$slice_sha:$path" > "$path"
           done
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          # Keep the expanded #336 benchmark evidence without colliding with the benchmark
+          # class already present on current dev.
+          benchmark = Path('test/SharpLink.Benchmarks/AdmissionPartitionBenchmarks.cs')
+          text = benchmark.read_text()
+          if text.count('public class AdmissionPartitionControllerBenchmarks') != 1:
+              raise RuntimeError('benchmark class anchor mismatch')
+          text = text.replace(
+              'public class AdmissionPartitionControllerBenchmarks',
+              'public class AdmissionPartitionUpdateBenchmarks',
+              1)
+          benchmark.write_text(text)
+
+          # #334/dev now expose the six-field admission context. These old #336 helpers each
+          # carry exactly one obsolete trailing null.
+          context_files = [
+              benchmark,
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionGenerationCaptureTests.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionRateTransitionTests.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionTransactionalTests.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionUpdateAdvancedTests.cs'),
+              Path('test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionUpdateTests.cs'),
+          ]
+          for file in context_files:
+              text = file.read_text()
+              count = text.count(', null, null, null)')
+              if count != 1:
+                  raise RuntimeError(f'{file}: expected one seven-field context helper, got {count}')
+              file.write_text(text.replace(', null, null, null)', ', null, null)', 1))
+
+          advanced = Path('test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionUpdateAdvancedTests.cs')
+          text = advanced.read_text()
+          if 'using System.Linq;' not in text:
+              anchor = 'using System.Collections.Concurrent;\n'
+              if text.count(anchor) != 1:
+                  raise RuntimeError('advanced LINQ using anchor mismatch')
+              text = text.replace(anchor, anchor + 'using System.Linq;\n', 1)
+          advanced.write_text(text)
+
+          # Current-dev ownership tests are intentionally retained. Adapt only their assertions
+          # that depended on the old entry handle identity/type; the new lease owns the same runtime
+          # generation and reference count.
+          ownership = Path('test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs')
+          text = ownership.read_text()
+          old = 'Ensure(ReferenceEquals(firstEntry, secondEntry), "same key should reuse the entry");'
+          new = 'Ensure(ReferenceEquals(firstEntry.Runtime, secondEntry.Runtime), "same key should reuse the entry runtime");'
+          if text.count(old) != 1:
+              raise RuntimeError('ownership first identity anchor mismatch')
+          text = text.replace(old, new, 1)
+          old = 'Ensure(ReferenceEquals(heldEntry, candidateEntry), "same key should reuse the resident entry");'
+          new = 'Ensure(ReferenceEquals(heldEntry.Runtime, candidateEntry.Runtime), "same key should reuse the resident runtime");'
+          if text.count(old) != 1:
+              raise RuntimeError('ownership second identity anchor mismatch')
+          ownership.write_text(text.replace(old, new, 1))
+
+          pool_tests = Path('test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs')
+          text = pool_tests.read_text()
+          old = 'AdmissionPartitionEntry? replacement = null;'
+          if text.count(old) != 1:
+              raise RuntimeError('pool race handle type anchor mismatch')
+          pool_tests.write_text(text.replace(old, 'AdmissionPartitionLease? replacement = null;', 1))
+          PY
 
           git add -A
           python3 <<'PY'
@@ -147,11 +233,13 @@ jobs:
             'test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionUpdateAdvancedTests.cs',
             'test/SharpLink.UnitTests/Server/AdmissionDynamicPartitionUpdateTests.cs',
             'test/SharpLink.UnitTests/Server/AdmissionDynamicUpdateTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionPartitionOwnershipTests.cs',
+            'test/SharpLink.UnitTests/Server/AdmissionPartitionPoolTests.cs',
           }
           changed = set(subprocess.check_output(['git','diff','--cached','--name-only','HEAD'], text=True).splitlines())
           print('changed files:', *sorted(changed), sep='\n  ')
           if changed != allowed:
-              raise RuntimeError(f'exact 11-file scope mismatch: missing={sorted(allowed-changed)} extra={sorted(changed-allowed)}')
+              raise RuntimeError(f'exact 13-file scope mismatch: missing={sorted(allowed-changed)} extra={sorted(changed-allowed)}')
           PY
 
           dotnet restore Sharplink.slnx
