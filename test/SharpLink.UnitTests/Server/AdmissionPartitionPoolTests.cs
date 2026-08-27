@@ -296,7 +296,7 @@ public sealed class AdmissionPartitionPoolTests
             time.Advance(timeout);
 
             using var start = new ManualResetEventSlim(false);
-            AdmissionPartitionEntry? replacement = null;
+            AdmissionPartitionLease? replacement = null;
             var reclaim = Task.Run(() =>
             {
                 start.Wait();

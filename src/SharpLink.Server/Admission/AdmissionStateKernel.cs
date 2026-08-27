@@ -26,8 +26,11 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     private int _activePermits;
     private long _concurrencyTargetVersion;
     private long _nextRateStateGeneration;
+    private long _nextPartitionStateGeneration;
     private bool _hasPublishedConcurrencyLineage;
     private bool _hasPublishedRateLineage;
+    private bool _hasPublishedPartitionLineage;
+    private AdmissionPartitionStateBinding? _publishedPartitionState;
     private int _disposed;
 
     internal AdmissionStateKernel(TimeProvider timeProvider)
@@ -149,6 +152,24 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         }
     }
 
+    internal int PartitionEntryCount
+    {
+        get
+        {
+            lock (_registryGate)
+                return _partitionStates.Values.Sum(static entry => entry.Pool.Count);
+        }
+    }
+
+    internal int PartitionRuntimeGenerationCount
+    {
+        get
+        {
+            lock (_registryGate)
+                return _partitionStates.Values.Sum(static entry => entry.Pool.RuntimeGenerationCount);
+        }
+    }
+
     internal void RecordPublishedConcurrencyLineage(SharpLinkAdmissionController controller)
     {
         ArgumentNullException.ThrowIfNull(controller);
@@ -200,6 +221,33 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
                     throw new InvalidOperationException("Published admission rate state is no longer registered.");
                 _publishedRateStates.Add(binding.Key, state);
             }
+        }
+    }
+
+    /// <summary>
+    /// Records only the selector namespace of the actual current publication. A removed historical
+    /// namespace is therefore never chosen merely because its selector/configuration later matches.
+    /// </summary>
+    internal void RecordPublishedPartitionLineage(SharpLinkAdmissionController controller)
+    {
+        ArgumentNullException.ThrowIfNull(controller);
+        lock (_registryGate)
+        {
+            ThrowIfDisposed();
+            _hasPublishedPartitionLineage = true;
+            var binding = controller.PartitionStateBinding;
+            if (binding is null)
+            {
+                _publishedPartitionState = null;
+                return;
+            }
+
+            if (!_partitionStates.TryGetValue(binding.Value.Key, out var entry) ||
+                !ReferenceEquals(entry.Pool, binding.Value.Pool))
+            {
+                throw new InvalidOperationException("Published admission partition namespace is no longer registered.");
+            }
+            _publishedPartitionState = binding;
         }
     }
 
@@ -335,22 +383,80 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     }
 
     internal AdmissionPartitionStateBinding AcquirePartitionState(
-        AdmissionPartitionStateKey key,
         Func<SharpLinkAdmissionContext, string?> selector,
         SharpLinkPartitionAdmissionOptions options)
     {
         lock (_registryGate)
         {
             ThrowIfDisposed();
-            if (_partitionStates.TryGetValue(key, out var existing))
+            if (_hasPublishedPartitionLineage &&
+                _publishedPartitionState is { } published &&
+                SelectorsAreCompatible(published.Selector, selector) &&
+                published.Pool.IsPolicyEquivalent(options) &&
+                _partitionStates.TryGetValue(published.Key, out var publishedEntry) &&
+                ReferenceEquals(publishedEntry.Pool, published.Pool))
             {
-                existing.ProgramReferences++;
-                return new AdmissionPartitionStateBinding(key, existing.Pool);
+                published.Pool.AddPolicyProgramReference(published.Policy);
+                publishedEntry.ProgramReferences++;
+                return new AdmissionPartitionStateBinding(
+                    published.Key,
+                    published.Pool,
+                    published.Selector,
+                    published.Policy);
             }
 
-            var pool = new AdmissionPartitionPool(selector, options, _timeProvider);
-            _partitionStates.Add(key, new PartitionStateEntry(pool, 1));
-            return new AdmissionPartitionStateBinding(key, pool);
+            if (!_hasPublishedPartitionLineage)
+            {
+                foreach (var pair in _partitionStates)
+                {
+                    if (!SelectorsAreCompatible(pair.Value.Selector, selector) ||
+                        !pair.Value.Pool.IsPolicyEquivalent(options))
+                    {
+                        continue;
+                    }
+                    var policy = pair.Value.Pool.CurrentPolicyForBinding;
+                    pair.Value.Pool.AddPolicyProgramReference(policy);
+                    pair.Value.ProgramReferences++;
+                    return new AdmissionPartitionStateBinding(
+                        pair.Key,
+                        pair.Value.Pool,
+                        pair.Value.Selector,
+                        policy);
+                }
+            }
+
+            return CreatePartitionStateLocked(selector, options);
+        }
+    }
+
+    internal AdmissionPartitionStateBinding AcquirePartitionStateForUpdate(
+        AdmissionPartitionStateBinding? sourceBinding,
+        Func<SharpLinkAdmissionContext, string?> selector,
+        SharpLinkPartitionAdmissionOptions options,
+        out AdmissionPartitionUpdate? partitionUpdate)
+    {
+        lock (_registryGate)
+        {
+            ThrowIfDisposed();
+            if (sourceBinding is { } source &&
+                SelectorsAreCompatible(source.Selector, selector) &&
+                _partitionStates.TryGetValue(source.Key, out var sourceEntry) &&
+                ReferenceEquals(sourceEntry.Pool, source.Pool))
+            {
+                var targetPolicy = source.Pool.AcquirePolicyForUpdate(
+                    source.Policy,
+                    options,
+                    out partitionUpdate);
+                sourceEntry.ProgramReferences++;
+                return new AdmissionPartitionStateBinding(
+                    source.Key,
+                    source.Pool,
+                    source.Selector,
+                    targetPolicy);
+            }
+
+            partitionUpdate = null;
+            return CreatePartitionStateLocked(selector, options);
         }
     }
 
@@ -580,6 +686,8 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             _publishedRateStates.Clear();
             _hasPublishedRateLineage = false;
             _partitionStates.Clear();
+            _publishedPartitionState = null;
+            _hasPublishedPartitionLineage = false;
             _retiredPrograms.Clear();
         }
         DisposeStates(dispose);
@@ -752,6 +860,30 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         }
     }
 
+    private AdmissionPartitionStateBinding CreatePartitionStateLocked(
+        Func<SharpLinkAdmissionContext, string?> selector,
+        SharpLinkPartitionAdmissionOptions options)
+    {
+        var key = new AdmissionPartitionStateKey(++_nextPartitionStateGeneration);
+        var pool = new AdmissionPartitionPool(selector, options, _timeProvider, this);
+        _partitionStates.Add(key, new PartitionStateEntry(pool, selector, 1));
+        return new AdmissionPartitionStateBinding(
+            key,
+            pool,
+            selector,
+            pool.CurrentPolicyForBinding);
+    }
+
+    private static bool SelectorsAreCompatible(
+        Func<SharpLinkAdmissionContext, string?> left,
+        Func<SharpLinkAdmissionContext, string?> right)
+    {
+        // Delegate value equality is intentionally conservative: it proves the same frozen method/
+        // target binding without attempting reflection-heavy semantic equivalence. Distinct closures
+        // or replacement bindings therefore create a new namespace even if they return equal strings.
+        return left.Equals(right);
+    }
+
     private void ReleaseBindingsLocked(
         SharpLinkAdmissionController controller,
         ref List<IDisposable>? dispose)
@@ -812,10 +944,16 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             _partitionStates.TryGetValue(partitionBinding.Key, out var partitionEntry) &&
             ReferenceEquals(partitionEntry.Pool, partitionBinding.Pool))
         {
+            partitionBinding.Pool.ReleasePolicyProgramReference(partitionBinding.Policy);
             if (--partitionEntry.ProgramReferences < 0)
                 throw new InvalidOperationException("Admission partition state reference count underflowed.");
             if (partitionEntry.ProgramReferences == 0)
             {
+                if (_publishedPartitionState is { } published &&
+                    ReferenceEquals(published.Pool, partitionEntry.Pool))
+                {
+                    _publishedPartitionState = null;
+                }
                 _partitionStates.Remove(partitionBinding.Key);
                 (dispose ??= []).Add(partitionEntry.Pool);
             }
@@ -860,9 +998,13 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         internal bool RetainedLineageAnchor;
     }
 
-    private sealed class PartitionStateEntry(AdmissionPartitionPool pool, int programReferences)
+    private sealed class PartitionStateEntry(
+        AdmissionPartitionPool pool,
+        Func<SharpLinkAdmissionContext, string?> selector,
+        int programReferences)
     {
         internal AdmissionPartitionPool Pool { get; } = pool;
+        internal Func<SharpLinkAdmissionContext, string?> Selector { get; } = selector;
         internal int ProgramReferences = programReferences;
     }
 }
@@ -944,21 +1086,8 @@ internal readonly record struct AdmissionRateStateKey(
     AdmissionRateStateDefinition Definition,
     long Generation);
 
-internal readonly record struct AdmissionPartitionStateKey(
-    Func<SharpLinkAdmissionContext, string?> Selector,
-    AdmissionRuleStateDefinition Definition,
-    int MaxPartitions,
-    long IdleTimeoutTicks)
-{
-    internal static AdmissionPartitionStateKey Create(
-        Func<SharpLinkAdmissionContext, string?> selector,
-        SharpLinkPartitionAdmissionOptions options)
-        => new(
-            selector,
-            AdmissionRuleStateDefinition.Create(options),
-            options.MaxPartitions,
-            options.IdleTimeout.Ticks);
-}
+/// <summary>Explicit selector namespace identity, independent of mutable partition policy.</summary>
+internal readonly record struct AdmissionPartitionStateKey(long Generation);
 
 internal readonly record struct AdmissionRuleStateBinding(
     AdmissionRuleStateKey Key,
@@ -968,7 +1097,9 @@ internal readonly record struct AdmissionRuleStateBinding(
 
 internal readonly record struct AdmissionPartitionStateBinding(
     AdmissionPartitionStateKey Key,
-    AdmissionPartitionPool Pool);
+    AdmissionPartitionPool Pool,
+    Func<SharpLinkAdmissionContext, string?> Selector,
+    AdmissionPartitionPolicyGeneration Policy);
 
 internal readonly record struct AdmissionConcurrencyResize(
     ResizableConcurrencyState State,
@@ -983,14 +1114,17 @@ internal sealed class AdmissionUpdatePlan
 {
     private readonly AdmissionConcurrencyResize[] _resizes;
     private readonly AdmissionRateTransition[] _rateTransitions;
+    private readonly AdmissionPartitionUpdate? _partitionUpdate;
     private int _committed;
 
     internal AdmissionUpdatePlan(
         IEnumerable<AdmissionConcurrencyResize> resizes,
-        IEnumerable<AdmissionRateTransition> rateTransitions)
+        IEnumerable<AdmissionRateTransition> rateTransitions,
+        AdmissionPartitionUpdate? partitionUpdate = null)
     {
         _resizes = [.. resizes];
         _rateTransitions = [.. rateTransitions];
+        _partitionUpdate = partitionUpdate;
         foreach (var resize in _resizes)
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resize.PermitLimit);
     }
@@ -999,10 +1133,18 @@ internal sealed class AdmissionUpdatePlan
 
     internal int RateTransitionCount => _rateTransitions.Length;
 
+    internal int PartitionUpdateCount => _partitionUpdate is null ? 0 : 1;
+
+    internal bool RequiresTargetCommit => _resizes.Length != 0 || _partitionUpdate is not null;
+
     internal void Commit(Action<int, int>? afterResize = null)
     {
         if (Interlocked.Exchange(ref _committed, 1) != 0)
             throw new InvalidOperationException("Admission update plan was committed more than once.");
+
+        // Partition preparation creates all per-entry target objects before mutating the pool. Run it
+        // first so an allocation/configuration failure cannot follow a successful Global/Contract/Method resize.
+        _partitionUpdate?.Commit();
 
         for (var index = 0; index < _resizes.Length; index++)
         {

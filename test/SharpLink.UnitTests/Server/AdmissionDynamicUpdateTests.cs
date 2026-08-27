@@ -1,6 +1,7 @@
 using System.Net;
 using System.Threading;
 using SharpLink.Server;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
@@ -284,7 +285,8 @@ public sealed class AdmissionDynamicUpdateTests
     [Test]
     public async Task QueuedRequestShouldKeepCapturedMaxQueueDelay()
     {
-        await using var server = CreateServer();
+        var time = new ManualTimeProvider();
+        await using var server = CreateServer(time);
         var publicServer = (ISharpLinkServer)server;
         publicServer.EnableAdmissionControl(options =>
             ConfigureQueue(options, 1, 2, 1024, TimeSpan.FromMinutes(1)));
@@ -305,6 +307,10 @@ public sealed class AdmissionDynamicUpdateTests
             "program generations must keep immutable queue-delay snapshots");
         var newQueued = replacement.Controller.AcquireAsync(
             context, 1, true, CancellationToken.None).AsTask();
+        await WaitUntilAsync(() => source.Kernel.QueuedCalls == 2,
+            "new N+1 request must be resident before advancing deterministic time");
+
+        time.Advance(TimeSpan.FromMilliseconds(50));
         var newDecision = await newQueued.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(!newDecision.IsAcquired, "new N+1 waiter must use the shorter queue delay");
         Ensure(!oldQueued.IsCompleted,
@@ -400,7 +406,7 @@ public sealed class AdmissionDynamicUpdateTests
             "consumed partition rate quota must not reset across a non-partition update");
 
         var before = replacement;
-        var failure = CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
+        publicServer.UpdateAdmissionControl(options =>
         {
             options.Global.UseConcurrency(3);
             ConfigureQueueBounds(options, 2, 1024, TimeSpan.FromSeconds(5));
@@ -415,10 +421,17 @@ public sealed class AdmissionDynamicUpdateTests
                     rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
                 });
             });
-        }));
-        Ensure(failure is InvalidOperationException && ReferenceEquals(before, Current(server)) &&
-               ReferenceEquals(pool, Current(server).Controller.PartitionStateForTests),
-            "partition configuration change must reject transactionally without publishing or replacing state");
+        });
+        var partitionUpdated = Current(server);
+        Ensure(!ReferenceEquals(before, partitionUpdated) &&
+               ReferenceEquals(pool, partitionUpdated.Controller.PartitionStateForTests) &&
+               pool.MaxPartitionsForTests == 9,
+            "same-selector partition policy update must publish while preserving the authoritative pool");
+        var stillExhausted = await partitionUpdated.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(!stillExhausted.IsAcquired && stillExhausted.Reason == "rate" &&
+               stillExhausted.Scope == "partition",
+            "MaxPartitions update must not reset consumed partition quota");
     }
 
     [Test]
@@ -474,13 +487,15 @@ public sealed class AdmissionDynamicUpdateTests
                ReferenceEquals(state, readded.Controller.GlobalConcurrencyStateForTests),
             "rate addition after removal must publish a fresh current component while preserving concurrency");
 
-        var beforePartition = readded;
-        Ensure(CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
+        publicServer.UpdateAdmissionControl(options =>
         {
             ConfigureRate(options, RateKind.TokenBucket, concurrency: 5, rateLimit: 1);
             options.UsePartition(TenantSelector, partition => partition.UseConcurrency(1));
-        })) is InvalidOperationException && ReferenceEquals(beforePartition, Current(server)),
-            "partition addition must remain transactionally unsupported in the rate-update slice");
+        });
+        var partitionAdded = Current(server);
+        Ensure(partitionAdded.Controller.PartitionStateForTests is not null &&
+               ReferenceEquals(state, partitionAdded.Controller.GlobalConcurrencyStateForTests),
+            "partition addition must publish independently while preserving unchanged non-partition state");
     }
 
     [Test]
@@ -673,9 +688,11 @@ public sealed class AdmissionDynamicUpdateTests
             "repeated concurrency and queue-policy updates must keep registries and accounting bounded");
     }
 
-    private static SharpLinkServer CreateServer()
+    private static SharpLinkServer CreateServer(TimeProvider? timeProvider = null)
     {
         var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback.ToString());
+        if (timeProvider is not null)
+            builder.UseTimeProvider(timeProvider);
         return (SharpLinkServer)builder.Build();
     }
 

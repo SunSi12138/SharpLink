@@ -43,7 +43,7 @@ public sealed class AdmissionPartitionOwnershipTests
             "successful request transfers rather than releases partition ownership");
 
         var secondEntry = pool.TryAcquire(context)!;
-        Ensure(ReferenceEquals(firstEntry, secondEntry), "same key should reuse the entry");
+        Ensure(ReferenceEquals(firstEntry.Runtime, secondEntry.Runtime), "same key should reuse the entry runtime");
         Ensure(firstEntry.References == 2, "second request adds one partition reference");
         var secondSlots = new AdmissionLimiterSlot[secondEntry.Runtime.SlotCount];
         count = 0;
@@ -99,7 +99,7 @@ public sealed class AdmissionPartitionOwnershipTests
             "setup ownership should transfer to its admitted lease");
 
         var candidateEntry = pool.TryAcquire(context)!;
-        Ensure(ReferenceEquals(heldEntry, candidateEntry), "same key should reuse the resident entry");
+        Ensure(ReferenceEquals(heldEntry.Runtime, candidateEntry.Runtime), "same key should reuse the resident runtime");
         Ensure(candidateEntry.References == 2,
             "candidate request should own a second partition reference before slot acquisition");
 
