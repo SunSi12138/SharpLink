@@ -1225,7 +1225,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 {
                     CollectIdleEntriesIfDueLocked(
                         _timeProvider.GetTimestamp(),
-                        stopAfterOne: true,
+                        stopAfterOne: false,
                         ref dispose);
                     if (_entries.Count >= _options.MaxPartitions)
                     {
@@ -1291,7 +1291,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
             }
             CollectIdleEntriesIfDueLocked(
                 now,
-                stopAfterOne: true,
+                stopAfterOne: false,
                 ref dispose);
         }
         DisposeStates(dispose);
