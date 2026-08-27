@@ -170,11 +170,9 @@ internal sealed partial class SharpLinkClient
         foreach (var candidate in _dynamicModules.Values)
         {
             if (!ReferenceEquals(candidate, module) &&
-                candidate.Manifest.Dependencies.Contains(identity, StringComparer.Ordinal))
+                ManifestDependsOn(candidate.Manifest, identity))
                 throw new InvalidOperationException(
                     $"Assembly '{identity}' cannot be unregistered while '{candidate.Manifest.OwnerAssembly.FullName}' depends on it.");
         }
     }
-
-
 }
