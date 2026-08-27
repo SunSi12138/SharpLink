@@ -202,27 +202,27 @@ static bool TryDescribeMethod(SyntaxNode node, out string name, out SyntaxNode b
     {
         case MethodDeclarationSyntax method:
             name = method.Identifier.ValueText;
-            bodyNode = (SyntaxNode?)method.Body ?? method.ExpressionBody ?? method;
+            bodyNode = (SyntaxNode?)method.Body ?? (SyntaxNode?)method.ExpressionBody ?? method;
             return true;
         case ConstructorDeclarationSyntax constructor:
             name = constructor.Identifier.ValueText;
-            bodyNode = (SyntaxNode?)constructor.Body ?? constructor.ExpressionBody ?? constructor;
+            bodyNode = (SyntaxNode?)constructor.Body ?? (SyntaxNode?)constructor.ExpressionBody ?? constructor;
             return true;
         case DestructorDeclarationSyntax destructor:
             name = "~" + destructor.Identifier.ValueText;
-            bodyNode = (SyntaxNode?)destructor.Body ?? destructor.ExpressionBody ?? destructor;
+            bodyNode = (SyntaxNode?)destructor.Body ?? (SyntaxNode?)destructor.ExpressionBody ?? destructor;
             return true;
         case OperatorDeclarationSyntax operatorDeclaration:
             name = "operator " + operatorDeclaration.OperatorToken.ValueText;
-            bodyNode = (SyntaxNode?)operatorDeclaration.Body ?? operatorDeclaration.ExpressionBody ?? operatorDeclaration;
+            bodyNode = (SyntaxNode?)operatorDeclaration.Body ?? (SyntaxNode?)operatorDeclaration.ExpressionBody ?? operatorDeclaration;
             return true;
         case ConversionOperatorDeclarationSyntax conversion:
             name = "operator " + conversion.Type;
-            bodyNode = (SyntaxNode?)conversion.Body ?? conversion.ExpressionBody ?? conversion;
+            bodyNode = (SyntaxNode?)conversion.Body ?? (SyntaxNode?)conversion.ExpressionBody ?? conversion;
             return true;
         case LocalFunctionStatementSyntax localFunction:
             name = localFunction.Identifier.ValueText;
-            bodyNode = (SyntaxNode?)localFunction.Body ?? localFunction.ExpressionBody ?? localFunction;
+            bodyNode = (SyntaxNode?)localFunction.Body ?? (SyntaxNode?)localFunction.ExpressionBody ?? localFunction;
             return true;
         default:
             name = string.Empty;
