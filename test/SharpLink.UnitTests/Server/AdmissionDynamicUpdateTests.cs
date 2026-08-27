@@ -422,43 +422,65 @@ public sealed class AdmissionDynamicUpdateTests
     }
 
     [Test]
-    public async Task UnsupportedRateAndPartitionTransitionsShouldLeaveCurrentProgramUntouched()
+    public async Task RateTransitionsShouldSucceedWhilePartitionTransitionsRemainTransactional()
     {
         await using var server = CreateServer();
         var publicServer = (ISharpLinkServer)server;
-        publicServer.EnableAdmissionControl(options => ConfigureRate(options, RateKind.TokenBucket, 10));
+        publicServer.EnableAdmissionControl(options => ConfigureRate(
+            options, RateKind.TokenBucket, concurrency: 10, rateLimit: 1));
         var source = Current(server);
         var state = source.Controller.GlobalConcurrencyStateForTests!;
-        var rate = source.Controller.GlobalRateStateForTests!;
+        var context = CreateContext();
 
-        Ensure(CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
-            ConfigureRate(options, RateKind.TokenBucket, 5, rateLimit: 2))) is InvalidOperationException,
-            "rate parameter change must reject");
-        Ensure(CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
-            ConfigureRate(options, RateKind.FixedWindow, 5))) is InvalidOperationException,
-            "rate kind change must reject");
-        Ensure(CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
-            options.Global.UseConcurrency(5))) is InvalidOperationException,
-            "rate removal must reject");
-        Ensure(ReferenceEquals(source, Current(server)) && state.PermitLimit == 10 &&
-               ReferenceEquals(rate, Current(server).Controller.GlobalRateStateForTests),
-            "all rejected rate candidates must leave publication and live concurrency target unchanged");
+        var consumed = await source.Controller.AcquireAsync(context, 1, false, CancellationToken.None);
+        Ensure(consumed.IsAcquired, "source rate permit must be consumed before the public update path is exercised");
+        consumed.Lease!.Dispose();
 
-        await using var noRateServer = CreateServer();
-        var noRatePublic = (ISharpLinkServer)noRateServer;
-        noRatePublic.EnableAdmissionControl(options => options.Global.UseConcurrency(4));
-        var noRateSource = Current(noRateServer);
-        Ensure(CaptureFailure(() => noRatePublic.UpdateAdmissionControl(options =>
-            ConfigureRate(options, RateKind.TokenBucket, 4))) is InvalidOperationException &&
-               ReferenceEquals(noRateSource, Current(noRateServer)),
-            "rate addition must also reject without publication");
+        publicServer.UpdateAdmissionControl(options => ConfigureRate(
+            options, RateKind.TokenBucket, concurrency: 5, rateLimit: 2));
+        var parameterUpdated = Current(server);
+        Ensure(!ReferenceEquals(source, parameterUpdated) &&
+               ReferenceEquals(state, parameterUpdated.Controller.GlobalConcurrencyStateForTests) &&
+               state.PermitLimit == 5,
+            "rate parameter change must publish while preserving the logical concurrency state");
+        var additional = await parameterUpdated.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(additional.IsAcquired,
+            "raising the rate limit from one to two after one consumed permit may expose exactly one additional permit");
+        additional.Lease!.Dispose();
+        var exhausted = await parameterUpdated.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(!exhausted.IsAcquired && exhausted.Reason == "rate",
+            "rate parameter update must not expose a fresh full quota");
 
-        Ensure(CaptureFailure(() => noRatePublic.UpdateAdmissionControl(options =>
+        publicServer.UpdateAdmissionControl(options => ConfigureRate(
+            options, RateKind.FixedWindow, concurrency: 5, rateLimit: 1));
+        var replaced = Current(server);
+        var replacementAttempt = await replaced.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(!replacementAttempt.IsAcquired && replacementAttempt.Reason == "rate",
+            "algorithm replacement must carry a conservative debt barrier into the target algorithm");
+
+        publicServer.UpdateAdmissionControl(options => options.Global.UseConcurrency(5));
+        var removed = Current(server);
+        Ensure(removed.Controller.GlobalRateStateForTests is null &&
+               ReferenceEquals(state, removed.Controller.GlobalConcurrencyStateForTests),
+            "rate removal must publish without replacing the unchanged concurrency state");
+
+        publicServer.UpdateAdmissionControl(options => ConfigureRate(
+            options, RateKind.TokenBucket, concurrency: 5, rateLimit: 1));
+        var readded = Current(server);
+        Ensure(readded.Controller.GlobalRateStateForTests is not null &&
+               ReferenceEquals(state, readded.Controller.GlobalConcurrencyStateForTests),
+            "rate addition after removal must publish a fresh current component while preserving concurrency");
+
+        var beforePartition = readded;
+        Ensure(CaptureFailure(() => publicServer.UpdateAdmissionControl(options =>
         {
-            options.Global.UseConcurrency(4);
+            ConfigureRate(options, RateKind.TokenBucket, concurrency: 5, rateLimit: 1);
             options.UsePartition(TenantSelector, partition => partition.UseConcurrency(1));
-        })) is InvalidOperationException && ReferenceEquals(noRateSource, Current(noRateServer)),
-            "partition addition must reject in this slice");
+        })) is InvalidOperationException && ReferenceEquals(beforePartition, Current(server)),
+            "partition addition must remain transactionally unsupported in the rate-update slice");
     }
 
     [Test]

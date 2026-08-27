@@ -145,11 +145,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             out updatePlan);
     }
 
-    /// <summary>
-    /// Retains the exact enabled source generation before user configuration executes. If another
-    /// writer retires the observed publication first, retry the pointer read rather than attaching
-    /// an update to stale state. Once retained, publication later requires this exact source.
-    /// </summary>
     private AdmissionProgram AcquireAdmissionUpdateSource()
     {
         while (true)
@@ -200,9 +195,12 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             previous = ReadAdmissionPublication();
 
             // Refresh lineage only from the actual current publication. Candidate construction and
-            // losing writers never become a compatibility source for future re-enable operations.
+            // losing writers never become compatibility sources for later re-enable operations.
             if (previous.IsEnabled)
+            {
                 lifecycle.Kernel.RecordPublishedConcurrencyLineage(previous.Controller);
+                lifecycle.Kernel.RecordPublishedRateLineage(previous.Controller);
+            }
 
             if (intent == AdmissionPublicationIntent.Enable && previous.IsEnabled)
             {
@@ -227,9 +225,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
 
             if (intent == AdmissionPublicationIntent.Update && updatePlan!.ResizeCount != 0)
             {
-                // Exact-source validation has already won the writer. Keep the reader-visible epoch
-                // odd across every physical target resize and the N+1 pointer write. Request paths
-                // never take this writer lock; the complete request validates one stable epoch.
                 lifecycle.Kernel.BeginConcurrencyTargetCommit();
                 try
                 {
@@ -241,9 +236,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
                     lifecycle.Kernel.CompleteConcurrencyTargetCommit();
                 }
 
-                // Resizes intentionally do not grant while the epoch is odd. Flush the final
-                // generation synchronously after the N+1 pointer and complete target set are stable,
-                // so an increase wakes its oldest waiter before UpdateAdmissionControl returns.
                 foreach (var binding in replacement.Controller.RuleStateBindings)
                     binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();
             }
@@ -255,7 +247,10 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             }
 
             if (replacement.IsEnabled)
+            {
                 lifecycle.Kernel.RecordPublishedConcurrencyLineage(replacement.Controller);
+                lifecycle.Kernel.RecordPublishedRateLineage(replacement.Controller);
+            }
             if (previous.IsEnabled)
                 previous.Retire();
         }
@@ -276,9 +271,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
             Volatile.Read(ref s_afterAdmissionPublicationReadForTests)?.Invoke(this, requestId, publication);
             if (!publication.TryAcquireUse())
             {
-                // Shutdown retires every live program after the server state has been sealed. The
-                // publication pointer may still name that retired object, but no admitted Request
-                // may attach to it and there is no reason to spin once shutdown cancellation is live.
                 if (_admissionController?.Kernel.IsDraining == true)
                     return null;
                 continue;
