@@ -19,6 +19,7 @@
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="SharpPack" />
   </ItemGroup>
 </Project>
