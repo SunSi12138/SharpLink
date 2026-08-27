@@ -103,18 +103,13 @@ public sealed class SharpLinkClientContractDependencyTests
         var assemblyName = new AssemblyName(
             "SharpLink.StaleGeneratedAbi." + Guid.NewGuid().ToString("N"));
         var assembly = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
-        var module = assembly.DefineDynamicModule(assemblyName.Name!);
-        var manifestType = module.DefineType(
-                "SharpLink.Generated.StaleManifest",
-                TypeAttributes.Public | TypeAttributes.Class)
-            .CreateType()!;
         var locatorConstructor = typeof(SharpLinkGeneratedAssemblyManifestAttribute).GetConstructor(
             [typeof(Type), typeof(int), typeof(int), typeof(string), typeof(string)])
             ?? throw new InvalidOperationException("Current manifest locator constructor was not found.");
         assembly.SetCustomAttribute(new CustomAttributeBuilder(
             locatorConstructor,
             [
-                manifestType,
+                typeof(TestManifest),
                 SharpLinkGeneratedManifestVersions.Api,
                 SharpLinkGeneratedManifestVersions.Protocol,
                 "stale-test",
