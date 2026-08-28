@@ -681,7 +681,6 @@ public interface IHelloService : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
-
     [Test]
     public Task MisplacedControlParameterShouldReportSharplink008()
     {
@@ -1085,8 +1084,8 @@ namespace ReferencedDtoContract
                 "OwnerAssembly => typeof(global::ReferencedDtoContract.Payload).Assembly",
                 StringComparison.Ordinal),
             "Codec-only manifests must not identify a referenced DTO assembly as their owner.");
-        Ensure(manifest.Contains("ReferencedDtoContract, Version=0.0.0.0", StringComparison.Ordinal),
-            "Codec-only manifests must depend on the assembly that owns referenced DTO types.");
+        Ensure(!manifest.Contains("ReferencedDtoContract, Version=0.0.0.0", StringComparison.Ordinal),
+            "an ordinary CLR contract/payload reference without a generated manifest must not become a generated-module dependency.");
         return Task.CompletedTask;
     }
 
@@ -3058,10 +3057,10 @@ public interface IExternalMoneyService : IService
 """;
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source, sdk, external));
-        Ensure(generated.Contains("new global::ExternalMoneyCodec()", StringComparison.Ordinal),
-            "referenced Contract assembly custom Codec binding must be discovered from the compilation reference closure");
-        Ensure(generated.Contains("\"external-wire/v1\"", StringComparison.Ordinal),
-            "referenced custom Codec wire identity must be emitted into the manifest");
+        Ensure(!generated.Contains("new global::ExternalMoneyCodec()", StringComparison.Ordinal),
+            "assembly-level custom Codec policy from a referenced assembly must not leak into the current Contract owner");
+        Ensure(!generated.Contains("\"external-wire/v1\"", StringComparison.Ordinal),
+            "referenced assembly-level custom Codec wire identity must not be inherited by the current owner");
         return Task.CompletedTask;
     }
 
@@ -3571,5 +3570,4 @@ namespace SharpLink.Sdk
         if (!condition)
             throw new Exception(message);
     }
-
 }
