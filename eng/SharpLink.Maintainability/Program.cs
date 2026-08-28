@@ -133,7 +133,13 @@ static void AnalyzeDomain(
     List<MethodMetric> methods)
 {
     var domainRoot = Path.Combine(repoRoot, directoryName);
-    var paths = Directory.EnumerateFiles(domainRoot, "*.cs", SearchOption.AllDirectories)
+    var enumerationOptions = new EnumerationOptions
+    {
+        RecurseSubdirectories = true,
+        IgnoreInaccessible = false,
+        AttributesToSkip = FileAttributes.ReparsePoint,
+    };
+    var paths = Directory.EnumerateFiles(domainRoot, "*.cs", enumerationOptions)
         .Select(path => new
         {
             FullPath = path,
