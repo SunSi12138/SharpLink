@@ -28,6 +28,21 @@ public partial class RpcGenerator
             selectorOnlyContractDefault: false);
         var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
 
+        // Compatibility/runtime publication is rooted only in Contracts owned by the current
+        // compilation. Referenced manifest-less [RpcContract] assemblies may still participate in
+        // static conflict analysis, but their payload graph is not part of this assembly's Codec
+        // ownership boundary and must not leak into either generated Codec table.
+        var contractManifestCodecs = contractPolicyState.BuildContractManifestCodecs(contractPolicy.Codecs);
+        var currentContractTypes = new HashSet<string>(
+            contractManifestCodecs.Select(static codec => codec.TypeName),
+            StringComparer.Ordinal);
+        var currentContractDefaultCodecs = contractDefault.Codecs
+            .Where(codec => currentContractTypes.Contains(codec.TypeName))
+            .ToImmutableArray();
+        var currentContractPolicyCodecs = contractPolicy.Codecs
+            .Where(codec => currentContractTypes.Contains(codec.TypeName))
+            .ToImmutableArray();
+
         // The global/default registry contains the normal generated graph. Contract-default models
         // preserve registered selector-attribute Adapter choices while omitting explicit
         // RpcCodecAdapter bindings and assembly routes. Contract-only custom [RpcCodec] selections
@@ -38,7 +53,7 @@ public partial class RpcGenerator
         var standaloneTypes = new HashSet<string>(
             standalone.Codecs.Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
-        var globalByType = contractDefault.Codecs
+        var globalByType = currentContractDefaultCodecs
             .Where(codec => codec.Kind != GeneratedCodecKind.Custom || standaloneTypes.Contains(codec.TypeName))
             .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in standalone.Codecs)
@@ -54,31 +69,40 @@ public partial class RpcGenerator
         // happen to compare equal. Native parents/dependencies are then pulled into the owner graph
         // so the changed policy remains closed over its full generated dependency graph.
         var contractOwnedPolicyRoots = new HashSet<string>(
-            contractPolicyState.ContractOwnedPolicyRoots,
+            contractPolicyState.ContractOwnedPolicyRoots.Where(currentContractTypes.Contains),
             StringComparer.Ordinal);
-        foreach (var codec in contractPolicy.Codecs)
+        foreach (var codec in currentContractPolicyCodecs)
         {
             if (codec.Kind == GeneratedCodecKind.Custom)
                 contractOwnedPolicyRoots.Add(codec.TypeName);
         }
         var contractCodecs = SelectOwnedContractCodecs(
-            contractDefault.Codecs,
-            contractPolicy.Codecs,
+            currentContractDefaultCodecs,
+            currentContractPolicyCodecs,
             contractOwnedPolicyRoots);
-        var contractManifestCodecs = contractPolicyState.BuildContractManifestCodecs(contractPolicy.Codecs);
-        var standaloneDiagnostics = HasNativeCodecRoute(compilation.Assembly)
+
+        // A Contract assembly's explicit per-type binding is authoritative even for a builtin.
+        // Standalone [RpcSerializable] analysis intentionally keeps the historical builtin override
+        // restriction, so suppress those shadow diagnostics only when this compilation actually owns
+        // RPC Contracts and the Contract-policy pass is the deciding surface.
+        var ownsRpcContracts = ContainsRpcContract(compilation.Assembly.GlobalNamespace);
+        var standaloneDiagnostics = ownsRpcContracts
             ? standalone.Diagnostics.Where(static diagnostic =>
                 diagnostic.Kind is not (DtoDiagnosticKind.BuiltinAdapterOverride or DtoDiagnosticKind.BuiltinCustomCodecOverride))
             : standalone.Diagnostics;
+        var contractDiagnostics = ownsRpcContracts
+            ? contractPolicy.Diagnostics.Where(static diagnostic =>
+                diagnostic.Kind is not (DtoDiagnosticKind.BuiltinAdapterOverride or DtoDiagnosticKind.BuiltinCustomCodecOverride))
+            : contractPolicy.Diagnostics;
         var diagnostics = standaloneDiagnostics
-            .Concat(contractPolicy.Diagnostics)
+            .Concat(contractDiagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
             .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
             .Select(static group => group.First())
             .ToImmutableArray();
         var enums = standalone.Enums
-            .Concat(contractDefault.Enums)
-            .Concat(contractPolicy.Enums)
+            .Concat(contractDefault.Enums.Where(item => currentContractTypes.Contains(item.TypeName)))
+            .Concat(contractPolicy.Enums.Where(item => currentContractTypes.Contains(item.TypeName)))
             .GroupBy(static item => item.TypeName, StringComparer.Ordinal)
             .Select(static group => group.First())
             .OrderBy(static item => item.TypeName, StringComparer.Ordinal)
@@ -90,6 +114,33 @@ public partial class RpcGenerator
             contractManifestCodecs,
             diagnostics,
             enums);
+    }
+
+    private static bool ContainsRpcContract(INamespaceSymbol namespaceSymbol)
+    {
+        foreach (var type in namespaceSymbol.GetTypeMembers())
+        {
+            if (ContainsRpcContract(type))
+                return true;
+        }
+        foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+        {
+            if (ContainsRpcContract(nestedNamespace))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsRpcContract(INamedTypeSymbol type)
+    {
+        if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
+            return true;
+        foreach (var nested in type.GetTypeMembers())
+        {
+            if (ContainsRpcContract(nested))
+                return true;
+        }
+        return false;
     }
 
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
@@ -224,6 +275,8 @@ public partial class RpcGenerator
             _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
             CollectAdapterRegistrations();
             CollectAssemblyCustomCodecBindings();
+            if (_contractMode && !selectorOnlyContractDefault)
+                CollectContractBuiltinCustomCodecBindings();
             if (!selectorOnlyContractDefault)
                 CollectAssemblyBindingsWithEnumSupport();
             if (_contractMode && !selectorOnlyContractDefault)
@@ -234,6 +287,7 @@ public partial class RpcGenerator
         {
             _ = Analyze();
             PromoteSelectedFixedMembersToCodecBindings();
+            NormalizeGeneratedModuleDependencies();
             return new DtoAnalysisPassResult(
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
                 _diagnostics.ToImmutableArray(),
@@ -319,6 +373,28 @@ public partial class RpcGenerator
             return true;
         }
 
+        private void CollectContractBuiltinCustomCodecBindings()
+        {
+            foreach (var attribute in _compilation.Assembly.GetAttributes()
+                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute"))
+                         .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
+            {
+                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
+                if (attribute.ConstructorArguments.Length != 2 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                    attribute.ConstructorArguments[1].Value is not ITypeSymbol codec ||
+                    HasTypeParameter(target))
+                {
+                    continue;
+                }
+
+                target = NormalizeAdapterTarget(target);
+                if (!IsNonOverridableBuiltin(target))
+                    continue;
+                AddCustomCodecBinding(target, codec, location);
+            }
+        }
+
         private void CollectAssemblyBindingsWithEnumSupport()
         {
             foreach (var attribute in _compilation.Assembly.GetAttributes()
@@ -342,7 +418,7 @@ public partial class RpcGenerator
                 target = NormalizeAdapterTarget(target);
                 if (IsNonOverridableBuiltin(target) &&
                     !IsEnumOrNullableEnum(target) &&
-                    !(_contractMode && HasNativeCodecRoute(_compilation.Assembly)))
+                    !_contractMode)
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
                         "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
@@ -365,8 +441,6 @@ public partial class RpcGenerator
                 roots,
                 includeSerializable: !_contractMode,
                 includeContracts: _contractMode);
-            if (_contractMode)
-                CollectReferencedContractRoots(roots);
 
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
@@ -388,18 +462,14 @@ public partial class RpcGenerator
                 for (var index = 0; index < members.Length; index++)
                 {
                     var member = members[index];
-                    if (member.Kind is not (GeneratedMemberKind.Fixed or GeneratedMemberKind.NullableFixed) ||
+                    if (member.Kind is not (GeneratedMemberKind.Fixed or GeneratedMemberKind.NullableFixed or GeneratedMemberKind.String) ||
                         !memberSymbols.TryGetValue(member.Name, out var memberSymbol))
                     {
                         continue;
                     }
 
                     var memberType = GetMemberType(memberSymbol);
-                    AdapterRegistration? selected = null;
-                    var hasSelection = _contractMode
-                        ? TrySelectContractCodecOverride(memberType, out selected)
-                        : TrySelectAdapter(memberType, out selected);
-                    if (!hasSelection || selected is null)
+                    if (!HasSelectedMemberCodec(memberType))
                         continue;
 
                     Visit(memberType, [], 0);
@@ -428,6 +498,77 @@ public partial class RpcGenerator
                 {
                     Members = finalizedMembers,
                     SchemaId = GetSchemaId(model.TypeName, schema.ToString())
+                };
+            }
+        }
+
+        private bool HasSelectedMemberCodec(ITypeSymbol memberType)
+        {
+            if (TrySelectCustomCodec(memberType, out var customCodec))
+                return customCodec is not null;
+
+            AdapterRegistration? selected = null;
+            var hasSelection = _contractMode
+                ? TrySelectContractCodecOverride(memberType, out selected)
+                : TrySelectAdapter(memberType, out selected);
+            return hasSelection && selected is not null;
+        }
+
+        private void NormalizeGeneratedModuleDependencies()
+        {
+            if (_models.Count == 0)
+                return;
+
+            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            CollectCurrentAssemblyRoots(
+                _compilation.Assembly.GlobalNamespace,
+                roots,
+                includeSerializable: !_contractMode,
+                includeContracts: _contractMode);
+            if (_contractMode)
+                CollectReferencedContractRoots(roots);
+
+            var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+            foreach (var root in roots.Values)
+                CollectFinalBindingTypes(root, symbolsByType, seen, 0);
+
+            var localFactoryTypes = new HashSet<string>(_models.Keys, StringComparer.Ordinal);
+            foreach (var model in _models.Values.ToArray())
+            {
+                if (model.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter or GeneratedCodecKind.Direct)
+                {
+                    _models[model.TypeName] = model with
+                    {
+                        AssemblyDependencies = ImmutableArray<string>.Empty
+                    };
+                    continue;
+                }
+
+                var dependencies = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var dependencyTypeName in GetCodecDependencies(model))
+                {
+                    if (localFactoryTypes.Contains(dependencyTypeName) ||
+                        !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType) ||
+                        IsBuiltin(dependencyType))
+                    {
+                        continue;
+                    }
+
+                    var assembly = dependencyType.ContainingAssembly;
+                    if (assembly is not null &&
+                        !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) &&
+                        HasGeneratedAssemblyManifest(assembly))
+                    {
+                        dependencies.Add(assembly.Identity.ToString());
+                    }
+                }
+
+                _models[model.TypeName] = model with
+                {
+                    AssemblyDependencies = dependencies
+                        .OrderBy(static identity => identity, StringComparer.Ordinal)
+                        .ToImmutableArray()
                 };
             }
         }
