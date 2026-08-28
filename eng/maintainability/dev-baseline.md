@@ -1,42 +1,42 @@
 # SharpLink maintainability report
 
 Source ref: `00e2f18c6384c785d232bd59902102d3af7ad3da`
-Tool ref: `5d4b9d9cf942aa4cc6c0dd7764189220fb9309c8`
+Tool ref: `bdb28961681e4c4e410fb6fe79582c917b22acfb`
 
 ## Summary
 
 | Domain | Files | LOC | Methods | Large methods | Complex methods |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| source | 293 | 70543 | 3226 | 80 | 63 |
-| test | 366 | 127214 | 6865 | 73 | 31 |
+| source | 293 | 70543 | 3816 | 81 | 66 |
+| test | 366 | 127214 | 10053 | 75 | 33 |
 
 ## Top source files by LOC
 
 | Path | LOC | Methods | Max method LOC | Max complexity | Using dependencies |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs` | 1930 | 81 | 135 | 31 | 1 |
-| `src/SharpLink.Generator/RpcGenerator.Analysis.cs` | 1655 | 79 | 132 | 17 | 0 |
-| `src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs` | 1638 | 77 | 132 | 29 | 0 |
-| `src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs` | 1450 | 64 | 152 | 26 | 0 |
-| `src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs` | 1379 | 55 | 151 | 27 | 0 |
-| `src/SharpLink.Client/PendingRequestTable.cs` | 1305 | 60 | 71 | 12 | 0 |
-| `src/SharpLink.Generator/RpcGenerator.DtoEmitter.cs` | 1285 | 31 | 179 | 22 | 0 |
-| `src/SharpLink.Runtime/StreamManager.cs` | 1241 | 68 | 71 | 12 | 0 |
-| `src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs` | 1193 | 32 | 190 | 24 | 0 |
-| `src/SharpLink.Server/Admission/AdmissionStateKernel.cs` | 1160 | 47 | 77 | 26 | 0 |
+| `src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs` | 1930 | 84 | 135 | 31 | 1 |
+| `src/SharpLink.Generator/RpcGenerator.Analysis.cs` | 1655 | 138 | 132 | 17 | 0 |
+| `src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs` | 1638 | 79 | 132 | 29 | 0 |
+| `src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs` | 1450 | 73 | 152 | 26 | 0 |
+| `src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs` | 1379 | 91 | 151 | 27 | 0 |
+| `src/SharpLink.Client/PendingRequestTable.cs` | 1305 | 62 | 71 | 12 | 0 |
+| `src/SharpLink.Generator/RpcGenerator.DtoEmitter.cs` | 1285 | 42 | 179 | 22 | 0 |
+| `src/SharpLink.Runtime/StreamManager.cs` | 1241 | 69 | 71 | 12 | 0 |
+| `src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs` | 1193 | 34 | 190 | 24 | 0 |
+| `src/SharpLink.Server/Admission/AdmissionStateKernel.cs` | 1160 | 50 | 77 | 26 | 0 |
 | `src/SharpLink.Runtime/Transport/SharedMemoryPipelines.cs` | 1142 | 65 | 68 | 12 | 0 |
 | `src/SharpLink.Client/SharpLinkClient.Invokers.cs` | 1099 | 31 | 154 | 23 | 0 |
-| `src/SharpLink.Generator/RpcGenerator.ContractManifest.cs` | 1098 | 19 | 281 | 42 | 4 |
-| `src/SharpLink.Client/SharpClientBuilder.cs` | 1044 | 68 | 82 | 13 | 0 |
-| `src/SharpLink.Runtime/StreamFlowController.cs` | 958 | 41 | 62 | 15 | 0 |
-| `src/SharpLink.Server/SharpLinkServer.cs` | 942 | 41 | 123 | 12 | 1 |
+| `src/SharpLink.Generator/RpcGenerator.ContractManifest.cs` | 1098 | 109 | 281 | 42 | 4 |
+| `src/SharpLink.Client/SharpClientBuilder.cs` | 1044 | 105 | 82 | 13 | 0 |
+| `src/SharpLink.Runtime/StreamFlowController.cs` | 958 | 42 | 62 | 15 | 0 |
+| `src/SharpLink.Server/SharpLinkServer.cs` | 942 | 42 | 123 | 12 | 1 |
 | `src/SharpLink.Client/SharpLinkClient.Interceptors.cs` | 924 | 60 | 71 | 13 | 0 |
-| `src/SharpLink.Server/SharpLinkServer.Interceptors.cs` | 913 | 32 | 143 | 8 | 0 |
-| `src/SharpLink.Client/SharpLinkClient.StaticCluster.cs` | 908 | 40 | 81 | 14 | 1 |
-| `src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs` | 904 | 56 | 58 | 12 | 1 |
-| `src/SharpLink.Server/SharpLinkServerBuilder.cs` | 829 | 51 | 105 | 20 | 0 |
+| `src/SharpLink.Server/SharpLinkServer.Interceptors.cs` | 913 | 33 | 143 | 8 | 0 |
+| `src/SharpLink.Client/SharpLinkClient.StaticCluster.cs` | 908 | 47 | 81 | 14 | 1 |
+| `src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs` | 904 | 58 | 58 | 12 | 1 |
+| `src/SharpLink.Server/SharpLinkServerBuilder.cs` | 829 | 90 | 105 | 20 | 0 |
 | `src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs` | 814 | 16 | 414 | 40 | 0 |
-| `src/SharpLink.Client/SharpLinkMultiClusterClient.cs` | 800 | 30 | 98 | 19 | 2 |
+| `src/SharpLink.Client/SharpLinkMultiClusterClient.cs` | 800 | 53 | 98 | 19 | 2 |
 | `src/SharpLink.Runtime/RpcSession.cs` | 786 | 44 | 65 | 11 | 0 |
 | `src/SharpLink.Runtime/RpcSession.SendPump.cs` | 765 | 32 | 170 | 28 | 0 |
 
@@ -44,31 +44,31 @@ Tool ref: `5d4b9d9cf942aa4cc6c0dd7764189220fb9309c8`
 
 | Path | LOC | Methods | Max method LOC | Max complexity | Using dependencies |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs` | 3576 | 131 | 127 | 10 | 9 |
-| `test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs` | 2692 | 169 | 86 | 15 | 0 |
-| `test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs` | 2499 | 118 | 119 | 11 | 4 |
-| `test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs` | 2155 | 79 | 119 | 7 | 6 |
-| `test/SharpLink.UnitTests/Client/SharpLinkMultiClusterClientTests.cs` | 2154 | 122 | 60 | 6 | 12 |
-| `test/SharpLink.IntegrationTests/TransportConnectionIntegrationTests.cs` | 2075 | 105 | 87 | 7 | 0 |
-| `test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleStateTests.cs` | 1857 | 101 | 66 | 8 | 10 |
-| `test/SharpLink.UnitTests/Runtime/SharpLinkRuntimeContextTests.cs` | 1552 | 94 | 54 | 6 | 5 |
-| `test/SharpLink.ChaosTests/Program.cs` | 1540 | 68 | 452 | 27 | 20 |
-| `test/SharpLink.LoadTest/Program.cs` | 1506 | 53 | 337 | 70 | 18 |
-| `test/SharpLink.IntegrationTests/DynamicEndpointIntegrationTests.cs` | 1401 | 68 | 144 | 6 | 2 |
-| `test/SharpLink.UnitTests/Server/SharpLinkServerInvocationTests.cs` | 1399 | 71 | 138 | 18 | 13 |
-| `test/SharpLink.IntegrationTests/StaticEndpointIntegrationTests.cs` | 1360 | 61 | 66 | 6 | 0 |
-| `test/SharpLink.IntegrationTests/SharedMemoryTransportConnectionIntegrationTests.cs` | 1330 | 49 | 81 | 5 | 9 |
-| `test/SharpLink.Benchmarks/SendPumpIsolationEvidenceRunner.cs` | 1318 | 57 | 143 | 15 | 13 |
-| `test/SharpLink.Benchmarks/DecodeExecutionPhase0EvidenceRunner.cs` | 1312 | 59 | 132 | 17 | 12 |
-| `test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs` | 1289 | 104 | 54 | 6 | 0 |
-| `test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs` | 1281 | 52 | 103 | 9 | 5 |
-| `test/SharpLink.UnitTests/Runtime/StreamManagerTests.cs` | 1252 | 66 | 61 | 6 | 3 |
-| `test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs` | 1095 | 64 | 69 | 5 | 5 |
-| `test/SharpLink.IntegrationTests/RpcChannelCallShapeIntegrationTests.cs` | 1056 | 213 | 114 | 3 | 1 |
-| `test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.cs` | 1047 | 48 | 63 | 6 | 2 |
-| `test/SharpLink.Generator.Tests/ContractManifestGeneratorTests.cs` | 1040 | 49 | 57 | 7 | 11 |
-| `test/SharpLink.Benchmarks/ConnectionAdmissionEvidenceRunner.cs` | 1006 | 37 | 117 | 9 | 20 |
-| `test/SharpLink.UnitTests/Client/SharpLinkClientRetryTests.cs` | 974 | 51 | 47 | 6 | 5 |
+| `test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs` | 3576 | 169 | 127 | 10 | 9 |
+| `test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs` | 2692 | 286 | 86 | 15 | 0 |
+| `test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs` | 2499 | 151 | 119 | 11 | 4 |
+| `test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs` | 2155 | 138 | 119 | 7 | 6 |
+| `test/SharpLink.UnitTests/Client/SharpLinkMultiClusterClientTests.cs` | 2154 | 276 | 60 | 6 | 12 |
+| `test/SharpLink.IntegrationTests/TransportConnectionIntegrationTests.cs` | 2075 | 143 | 87 | 7 | 0 |
+| `test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleStateTests.cs` | 1857 | 155 | 66 | 8 | 10 |
+| `test/SharpLink.UnitTests/Runtime/SharpLinkRuntimeContextTests.cs` | 1552 | 125 | 54 | 6 | 5 |
+| `test/SharpLink.ChaosTests/Program.cs` | 1540 | 100 | 452 | 27 | 20 |
+| `test/SharpLink.LoadTest/Program.cs` | 1506 | 82 | 337 | 70 | 18 |
+| `test/SharpLink.IntegrationTests/DynamicEndpointIntegrationTests.cs` | 1401 | 110 | 144 | 6 | 2 |
+| `test/SharpLink.UnitTests/Server/SharpLinkServerInvocationTests.cs` | 1399 | 80 | 138 | 18 | 13 |
+| `test/SharpLink.IntegrationTests/StaticEndpointIntegrationTests.cs` | 1360 | 107 | 66 | 6 | 0 |
+| `test/SharpLink.IntegrationTests/SharedMemoryTransportConnectionIntegrationTests.cs` | 1330 | 70 | 81 | 8 | 9 |
+| `test/SharpLink.Benchmarks/SendPumpIsolationEvidenceRunner.cs` | 1318 | 69 | 143 | 15 | 13 |
+| `test/SharpLink.Benchmarks/DecodeExecutionPhase0EvidenceRunner.cs` | 1312 | 65 | 132 | 17 | 12 |
+| `test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs` | 1289 | 106 | 54 | 6 | 0 |
+| `test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs` | 1281 | 97 | 103 | 9 | 5 |
+| `test/SharpLink.UnitTests/Runtime/StreamManagerTests.cs` | 1252 | 119 | 61 | 6 | 3 |
+| `test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs` | 1095 | 88 | 69 | 5 | 5 |
+| `test/SharpLink.IntegrationTests/RpcChannelCallShapeIntegrationTests.cs` | 1056 | 216 | 114 | 5 | 1 |
+| `test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.cs` | 1047 | 49 | 63 | 6 | 2 |
+| `test/SharpLink.Generator.Tests/ContractManifestGeneratorTests.cs` | 1040 | 93 | 57 | 7 | 11 |
+| `test/SharpLink.Benchmarks/ConnectionAdmissionEvidenceRunner.cs` | 1006 | 57 | 117 | 9 | 20 |
+| `test/SharpLink.UnitTests/Client/SharpLinkClientRetryTests.cs` | 974 | 66 | 47 | 6 | 5 |
 
 ## Top 25 large methods (>= 80 LOC)
 
@@ -132,6 +132,6 @@ Tool ref: `5d4b9d9cf942aa4cc6c0dd7764189220fb9309c8`
 ## Metric definitions
 
 - LOC: Physical line count from Roslyn SourceText; generated build output under bin/ and obj/ is excluded.
-- Method LOC: Inclusive physical line span for C# method-like declarations.
-- Cyclomatic complexity: 1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside the method body; nested local functions, lambdas, and anonymous methods are excluded.
+- Method LOC: Inclusive physical line span for C# method-like executable bodies, including local functions, lambdas, and anonymous methods.
+- Cyclomatic complexity: 1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside each executable body; nested local functions, lambdas, and anonymous methods are excluded from the parent and measured independently.
 - Using dependency count: Distinct namespace targets from non-global using directives in the file; this is a lightweight coupling proxy.
