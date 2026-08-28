@@ -88,7 +88,7 @@ jobs:
       - name: Validate sparse and index skip bits cannot affect named snapshot
         shell: bash
         run: |
-          tracked_file="$(git ls-files src | grep '\.cs$' | head -1)"
+          tracked_file="$(git ls-files src | grep '\.cs$' | tail -n 1)"
           test -n "$tracked_file"
 
           git update-index --skip-worktree "$tracked_file"
