@@ -1,0 +1,88 @@
+name: Temporary maintainability portability validation
+
+permissions:
+  contents: write
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+jobs:
+  validate:
+    if: github.event.pull_request.head.ref == 'issue-350-maintainability-report'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DEV_REF: '00e2f18c6384c785d232bd59902102d3af7ad3da'
+    steps:
+      - name: Checkout head branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Apply LF normalization fix
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('eng/SharpLink.Maintainability/Program.cs')
+          text = path.read_text()
+          old = 'File.WriteAllText(markdownPath, BuildMarkdown(report), new UTF8Encoding(false));'
+          new = 'File.WriteAllText(markdownPath, BuildMarkdown(report).ReplaceLineEndings("\\n"), new UTF8Encoding(false));'
+          if old not in text:
+              raise SystemExit('expected markdown write line not found')
+          path.write_text(text.replace(old, new, 1))
+
+          doc = Path('eng/maintainability.md')
+          text = doc.read_text()
+          old = 'The JSON schema and Markdown tables use stable ordering and contain no timestamps.'
+          new = 'The JSON schema and Markdown tables use stable ordering, contain no timestamps, and write LF line endings on every platform.'
+          if old not in text:
+              raise SystemExit('expected determinism sentence not found')
+          doc.write_text(text.replace(old, new, 1))
+
+      - name: Validate formatting and build
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format Sharplink.slnx --no-restore --verify-no-changes
+          dotnet build eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj -c Release --no-restore
+
+      - name: Validate stock macOS Bash command
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          /bin/bash --version | head -1
+          SHARPLINK_MAINTAINABILITY_SOURCE_REF="$DEV_REF" /bin/bash eng/report-maintainability.sh artifacts/macos-maintainability
+          test -s artifacts/macos-maintainability/report.json
+          test -s artifacts/macos-maintainability/report.md
+
+      - name: Validate Windows Markdown LF line endings
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet run --project eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj -c Release -- --root . --output artifacts/windows-maintainability --source-ref $env:DEV_REF
+          $bytes = [System.IO.File]::ReadAllBytes('artifacts/windows-maintainability/report.md')
+          if ($bytes -contains 13) { throw 'report.md contains CR bytes on Windows' }
+          if (-not ($bytes -contains 10)) { throw 'report.md contains no LF bytes' }
+
+      - name: Commit portability fixes
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add eng/SharpLink.Maintainability/Program.cs eng/maintainability.md
+          git commit -m "Fix maintainability report portability"
+          git push
