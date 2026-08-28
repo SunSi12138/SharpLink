@@ -131,18 +131,6 @@ public partial class RpcGenerator
         return false;
     }
 
-    private static bool ContainsRpcContract(INamedTypeSymbol type)
-    {
-        if (type.TypeKind == TypeKind.Interface && HasRpcContractAttribute(type))
-            return true;
-        foreach (var nested in type.GetTypeMembers())
-        {
-            if (ContainsRpcContract(nested))
-                return true;
-        }
-        return false;
-    }
-
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
         ImmutableArray<GeneratedCodecModel> contractDefault,
         ImmutableArray<GeneratedCodecModel> contractPolicy,
