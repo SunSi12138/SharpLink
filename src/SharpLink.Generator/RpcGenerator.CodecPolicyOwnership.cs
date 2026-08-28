@@ -274,11 +274,13 @@ public partial class RpcGenerator
             _allowedAssemblyNames = ResolveReferenceAssemblyNames(compilation);
             _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
             CollectAdapterRegistrations();
-            CollectAssemblyCustomCodecBindings();
-            if (_contractMode && !selectorOnlyContractDefault)
-                CollectContractBuiltinCustomCodecBindings();
             if (!selectorOnlyContractDefault)
+            {
+                CollectAssemblyCustomCodecBindings();
+                if (_contractMode)
+                    CollectContractBuiltinCustomCodecBindings();
                 CollectAssemblyBindingsWithEnumSupport();
+            }
             if (_contractMode && !selectorOnlyContractDefault)
                 CollectAssemblyRoutes();
         }
