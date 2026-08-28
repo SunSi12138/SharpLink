@@ -1,6 +1,7 @@
 # SharpLink maintainability report
 
 Source ref: `00e2f18c6384c785d232bd59902102d3af7ad3da`
+Tool ref: `aeabc42ce9d89393cbad33c09e2d430c6f046aa2`
 
 ## Summary
 
