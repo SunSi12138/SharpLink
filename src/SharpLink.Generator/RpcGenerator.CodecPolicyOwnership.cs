@@ -53,8 +53,13 @@ public partial class RpcGenerator
         var standaloneTypes = new HashSet<string>(
             standalone.Codecs.Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
+        var contractCustomTypes = new HashSet<string>(
+            currentContractPolicyCodecs
+                .Where(static codec => codec.Kind == GeneratedCodecKind.Custom)
+                .Select(static codec => codec.TypeName),
+            StringComparer.Ordinal);
         var globalByType = currentContractDefaultCodecs
-            .Where(codec => codec.Kind != GeneratedCodecKind.Custom || standaloneTypes.Contains(codec.TypeName))
+            .Where(codec => !contractCustomTypes.Contains(codec.TypeName) || standaloneTypes.Contains(codec.TypeName))
             .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in standalone.Codecs)
             globalByType[codec.TypeName] = codec;
