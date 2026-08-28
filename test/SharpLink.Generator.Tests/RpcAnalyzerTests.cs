@@ -2026,8 +2026,10 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(ValueTuple<int, string>), typeof(FakeAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("CreateCodec<(int Index, string Label)>()", StringComparison.Ordinal),
-            "named tuple resolves through its underlying ValueTuple binding");
+        Ensure(generated.Contains("CreateCodec<global::System.ValueTuple", StringComparison.Ordinal),
+            "named tuple resolves through one canonical underlying ValueTuple Codec identity");
+        Ensure(!generated.Contains("CreateCodec<(int Index, string Label)>()", StringComparison.Ordinal),
+            "tuple element names must not participate in the Codec graph identity");
         EnsureDoesNotHaveRule(source, "SHARPLINK009");
         return Task.CompletedTask;
     }
