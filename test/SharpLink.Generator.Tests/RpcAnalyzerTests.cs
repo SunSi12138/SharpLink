@@ -1045,7 +1045,7 @@ public interface ISemanticService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task CodecOnlyManifestShouldBeOwnedByTheGeneratedAssembly()
+    public Task ManifestlessReferencedContractShouldNotCreateConsumerCodecManifest()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
         var contract = CreateMetadataReference(
@@ -1073,19 +1073,12 @@ namespace ReferencedDtoContract
             "namespace CodecConsumer { public sealed class Marker; }",
             sdk,
             contract);
-        var manifest = generated.FirstOrDefault(static text =>
-            text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal))
-            ?? throw new Exception("Expected a codec-only assembly manifest source.");
-        Ensure(manifest.Contains(
-                "public Assembly OwnerAssembly => typeof(__SharpLinkGeneratedAssemblyManifest_",
-                StringComparison.Ordinal),
-            "Codec-only manifests must identify the assembly containing the generated manifest.");
-        Ensure(!manifest.Contains(
-                "OwnerAssembly => typeof(global::ReferencedDtoContract.Payload).Assembly",
-                StringComparison.Ordinal),
-            "Codec-only manifests must not identify a referenced DTO assembly as their owner.");
-        Ensure(!manifest.Contains("ReferencedDtoContract, Version=0.0.0.0", StringComparison.Ordinal),
-            "an ordinary CLR contract/payload reference without a generated manifest must not become a generated-module dependency.");
+        Ensure(!generated.Any(static text =>
+                text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal)),
+            "a consumer with no owned generated artifacts must not publish a manifest for a referenced manifest-less Contract.");
+        Ensure(!generated.Any(static text =>
+                text.Contains("IRpcCodec<global::ReferencedDtoContract.Payload>", StringComparison.Ordinal)),
+            "a referenced manifest-less Contract payload must not leak into the consumer Codec graph.");
         return Task.CompletedTask;
     }
 
