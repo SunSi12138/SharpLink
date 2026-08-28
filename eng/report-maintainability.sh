@@ -9,9 +9,8 @@ untracked_scanned_source_test_files() {
   git -C "$repo_root" ls-files --others -- src test |
     while IFS= read -r path; do
       [[ "$path" == *.cs ]] || continue
-      normalized="/${path,,}/"
-      case "$normalized" in
-        */bin/*|*/obj/*) continue ;;
+      case "/$path/" in
+        */[Bb][Ii][Nn]/*|*/[Oo][Bb][Jj]/*) continue ;;
       esac
       printf '%s\n' "$path"
     done
