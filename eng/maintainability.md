@@ -18,6 +18,6 @@ To reproduce a named snapshot in another output directory:
 SHARPLINK_MAINTAINABILITY_SOURCE_REF=<commit-sha> bash eng/report-maintainability.sh <output-directory>
 ```
 
-When `SHARPLINK_MAINTAINABILITY_SOURCE_REF` is set, the command resolves that commit, materializes it in a temporary detached Git worktree, disables sparse checkout there, hard-resets it to the resolved commit, and scans that isolated tree. Current working-tree changes, untracked paths, path quoting, sparse checkout, and index skip bits therefore cannot alter a named snapshot. Without an explicit ref, the command scans the current checkout and labels the report `working-tree` rather than attributing it to a commit.
+When `SHARPLINK_MAINTAINABILITY_SOURCE_REF` is set, the command pins the maintainability wrapper/analyzer and its repository-level build inputs to their latest committed tool revision, re-runs the clean wrapper from a detached tool worktree, then materializes the requested source commit in a second detached worktree and scans that isolated source tree. The report records both `sourceRef` and `toolRef`. Uncommitted changes to `src/`/`test/`, the analyzer, the wrapper, or its tracked build inputs cannot alter that named snapshot; a later committed tool change intentionally produces a different `toolRef`. Without an explicit source ref, the command scans the current checkout and labels both refs `working-tree`.
 
 This report is informational only. It does not fail CI or enforce a maintainability budget; regression enforcement belongs to the follow-up baseline issue.

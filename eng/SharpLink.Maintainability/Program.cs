@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -26,7 +25,8 @@ if (!Directory.Exists(Path.Combine(repoRoot, "src")) || !Directory.Exists(Path.C
     return 2;
 }
 
-var sourceRef = options.SourceRef ?? TryGetGitHead(repoRoot) ?? "working-tree";
+var sourceRef = options.SourceRef ?? "working-tree";
+var toolRef = options.ToolRef ?? "working-tree";
 var files = new List<FileMetric>();
 var methods = new List<MethodMetric>();
 
@@ -63,8 +63,9 @@ var complexMethods = orderedMethods
     .ToArray();
 
 var report = new Report(
-    SchemaVersion: 1,
+    SchemaVersion: 2,
     SourceRef: sourceRef,
+    ToolRef: toolRef,
     Definitions: new Definitions(
         Loc: "Physical line count from Roslyn SourceText; generated build output under bin/ and obj/ is excluded.",
         MethodLoc: "Inclusive physical line span for C# method-like declarations.",
@@ -103,6 +104,7 @@ static Options ParseOptions(string[] args)
     var root = Directory.GetCurrentDirectory();
     var output = Path.Combine("artifacts", "maintainability");
     string? sourceRef = null;
+    string? toolRef = null;
 
     for (var i = 0; i < args.Length; i++)
     {
@@ -117,12 +119,15 @@ static Options ParseOptions(string[] args)
             case "--source-ref" when i + 1 < args.Length:
                 sourceRef = args[++i];
                 break;
+            case "--tool-ref" when i + 1 < args.Length:
+                toolRef = args[++i];
+                break;
             default:
                 throw new ArgumentException($"Unknown or incomplete argument: {args[i]}");
         }
     }
 
-    return new Options(root, output, sourceRef);
+    return new Options(root, output, sourceRef, toolRef);
 }
 
 static void AnalyzeDomain(
@@ -306,6 +311,7 @@ static string BuildMarkdown(Report report)
     builder.AppendLine("# SharpLink maintainability report");
     builder.AppendLine();
     builder.Append("Source ref: `").Append(report.SourceRef).AppendLine("`");
+    builder.Append("Tool ref: `").Append(report.ToolRef).AppendLine("`");
     builder.AppendLine();
     builder.AppendLine("## Summary");
     builder.AppendLine();
@@ -376,36 +382,7 @@ static void AppendMethodTable(StringBuilder builder, string title, IEnumerable<M
     }
 }
 
-static string? TryGetGitHead(string repoRoot)
-{
-    try
-    {
-        using var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = "git",
-            Arguments = "rev-parse HEAD",
-            WorkingDirectory = repoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        });
-        if (process is null)
-        {
-            return null;
-        }
-
-        var output = process.StandardOutput.ReadToEnd().Trim();
-        process.WaitForExit();
-        return process.ExitCode == 0 && output.Length != 0 ? output : null;
-    }
-    catch (Exception)
-    {
-        return null;
-    }
-}
-
-sealed record Options(string Root, string OutputDirectory, string? SourceRef);
+sealed record Options(string Root, string OutputDirectory, string? SourceRef, string? ToolRef);
 sealed record Definitions(
     string Loc,
     string MethodLoc,
@@ -432,6 +409,7 @@ sealed record MethodMetric(
 sealed record Report(
     int SchemaVersion,
     string SourceRef,
+    string ToolRef,
     Definitions Definitions,
     IReadOnlyDictionary<string, DomainSummary> Summary,
     IReadOnlyList<FileMetric> Files,
