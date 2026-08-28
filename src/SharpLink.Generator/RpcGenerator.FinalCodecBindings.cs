@@ -9,24 +9,48 @@ public partial class RpcGenerator
         if (model is null)
             return null;
 
+        // CLR shape only says whether the Native implementation *could* inline a value. The
+        // finalized Contract Codec graph decides whether that optimization is legal on RPC wire.
         var selectedTypes = new HashSet<string>(
             codecs.ContractManifestCodecs
                 .Where(static codec => codec.Kind is not (GeneratedCodecKind.Native or GeneratedCodecKind.UnsafeBlit))
                 .Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
         var methods = model.Methods
-            .Select(method => method with
+            .Select(method =>
             {
-                Parameters = method.Parameters
-                    .Select(parameter => parameter with
-                    {
-                        // Syntax analysis records only whether the CLR payload is eligible
-                        // for the inline fixed path. The final Contract assembly Codec graph decides
-                        // whether that candidate remains inline for emitted RPC artifacts.
-                        IsBlittable = parameter.IsBlittable &&
-                                      !selectedTypes.Contains(parameter.Type)
-                    })
-                    .ToImmutableArray()
+                var responsePayloadType = method.IsStreamReturn
+                    ? method.StreamItemType
+                    : method.GenericArgumentType;
+                var responseUsesSelectedCodec = responsePayloadType is not null &&
+                                                selectedTypes.Contains(responsePayloadType);
+                return method with
+                {
+                    Parameters = method.Parameters
+                        .Select(parameter =>
+                        {
+                            var parameterUsesSelectedCodec = selectedTypes.Contains(parameter.Type);
+                            var streamItemUsesSelectedCodec = parameter.StreamItemType is not null &&
+                                                              selectedTypes.Contains(parameter.StreamItemType);
+                            return parameter with
+                            {
+                                IsBlittable = parameter.IsBlittable && !parameterUsesSelectedCodec,
+                                EnumUnderlyingType = parameterUsesSelectedCodec
+                                    ? null
+                                    : parameter.EnumUnderlyingType,
+                                StreamItemEnumUnderlyingType = streamItemUsesSelectedCodec
+                                    ? null
+                                    : parameter.StreamItemEnumUnderlyingType
+                            };
+                        })
+                        .ToImmutableArray(),
+                    ResponseEnumUnderlyingType = responseUsesSelectedCodec
+                        ? null
+                        : method.ResponseEnumUnderlyingType,
+                    StreamItemEnumUnderlyingType = method.IsStreamReturn && responseUsesSelectedCodec
+                        ? null
+                        : method.StreamItemEnumUnderlyingType
+                };
             })
             .ToImmutableArray();
 

@@ -98,9 +98,6 @@ public partial class RpcGenerator
                 roots,
                 includeSerializable: !_contractMode,
                 includeContracts: _contractMode);
-            if (_contractMode)
-                CollectReferencedContractRoots(roots);
-
             foreach (var root in roots.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
             {
                 _cancellationToken.ThrowIfCancellationRequested();

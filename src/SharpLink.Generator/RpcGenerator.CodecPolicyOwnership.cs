@@ -58,8 +58,12 @@ public partial class RpcGenerator
                 .Where(static codec => codec.Kind == GeneratedCodecKind.Custom)
                 .Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
+        var globalExcludedTypes = new HashSet<string>(
+            contractCustomTypes.Where(type => !standaloneTypes.Contains(type)),
+            StringComparer.Ordinal);
+        ExpandReverseCodecDependencyClosure(currentContractDefaultCodecs, globalExcludedTypes);
         var globalByType = currentContractDefaultCodecs
-            .Where(codec => !contractCustomTypes.Contains(codec.TypeName) || standaloneTypes.Contains(codec.TypeName))
+            .Where(codec => !globalExcludedTypes.Contains(codec.TypeName))
             .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         foreach (var codec in standalone.Codecs)
             globalByType[codec.TypeName] = codec;
@@ -86,28 +90,30 @@ public partial class RpcGenerator
             currentContractPolicyCodecs,
             contractOwnedPolicyRoots);
 
-        // A Contract assembly's explicit per-type binding is authoritative even for a builtin.
-        // Standalone [RpcSerializable] analysis intentionally keeps the historical builtin override
-        // restriction, so suppress those shadow diagnostics only when this compilation actually owns
-        // RPC Contracts and the Contract-policy pass is the deciding surface.
-        var ownsRpcContracts = ContainsRpcContract(compilation.Assembly.GlobalNamespace);
-        var standaloneDiagnostics = ownsRpcContracts
-            ? standalone.Diagnostics.Where(static diagnostic =>
-                diagnostic.Kind is not (DtoDiagnosticKind.BuiltinAdapterOverride or DtoDiagnosticKind.BuiltinCustomCodecOverride))
-            : standalone.Diagnostics;
-        var contractDiagnostics = ownsRpcContracts
-            ? contractPolicy.Diagnostics.Where(static diagnostic =>
-                diagnostic.Kind is not (DtoDiagnosticKind.BuiltinAdapterOverride or DtoDiagnosticKind.BuiltinCustomCodecOverride))
-            : contractPolicy.Diagnostics;
+        // Explicit builtin bindings are authoritative only for payload types owned by the
+        // current Contract graph. Preserve standalone diagnostics for unrelated [RpcSerializable]
+        // graphs instead of suppressing them merely because the assembly owns some RPC Contract.
+        var standaloneDiagnostics = standalone.Diagnostics.Where(diagnostic =>
+            !IsBuiltinBindingOverride(diagnostic) ||
+            !currentContractTypes.Contains(diagnostic.TypeName));
+        var contractDiagnostics = contractPolicy.Diagnostics.Where(diagnostic =>
+            !IsBuiltinBindingOverride(diagnostic) ||
+            !currentContractTypes.Contains(diagnostic.TypeName));
         var diagnostics = standaloneDiagnostics
             .Concat(contractDiagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
             .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
             .Select(static group => group.First())
             .ToImmutableArray();
+        var codecOwnedEnumTypes = new HashSet<string>(
+            contractManifestCodecs
+                .Where(static codec => codec.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter or GeneratedCodecKind.Direct)
+                .Select(static codec => codec.TypeName),
+            StringComparer.Ordinal);
         var enums = standalone.Enums
             .Concat(contractDefault.Enums.Where(item => currentContractTypes.Contains(item.TypeName)))
             .Concat(contractPolicy.Enums.Where(item => currentContractTypes.Contains(item.TypeName)))
+            .Where(item => !codecOwnedEnumTypes.Contains(item.TypeName))
             .GroupBy(static item => item.TypeName, StringComparer.Ordinal)
             .Select(static group => group.First())
             .OrderBy(static item => item.TypeName, StringComparer.Ordinal)
@@ -135,6 +141,29 @@ public partial class RpcGenerator
         }
         return false;
     }
+
+    private static void ExpandReverseCodecDependencyClosure(
+        ImmutableArray<GeneratedCodecModel> codecs,
+        HashSet<string> scopedTypes)
+    {
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (var codec in codecs)
+            {
+                if (scopedTypes.Contains(codec.TypeName))
+                    continue;
+                if (GetCodecDependencies(codec).Any(scopedTypes.Contains))
+                    changed |= scopedTypes.Add(codec.TypeName);
+            }
+        }
+        while (changed);
+    }
+
+    private static bool IsBuiltinBindingOverride(DtoDiagnosticModel diagnostic)
+        => diagnostic.Kind is DtoDiagnosticKind.BuiltinAdapterOverride or
+            DtoDiagnosticKind.BuiltinCustomCodecOverride;
 
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
         ImmutableArray<GeneratedCodecModel> contractDefault,
@@ -472,7 +501,8 @@ public partial class RpcGenerator
                     {
                         Kind = GeneratedMemberKind.Complex,
                         FixedTypeName = null,
-                        FixedSize = 0
+                        FixedSize = 0,
+                        EnumUnderlyingType = null
                     };
                     changed = true;
                 }
@@ -520,9 +550,6 @@ public partial class RpcGenerator
                 roots,
                 includeSerializable: !_contractMode,
                 includeContracts: _contractMode);
-            if (_contractMode)
-                CollectReferencedContractRoots(roots);
-
             var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
