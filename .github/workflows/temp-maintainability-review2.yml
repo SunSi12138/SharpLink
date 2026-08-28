@@ -1,0 +1,145 @@
+name: Temporary maintainability review fixes
+
+permissions:
+  contents: write
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+jobs:
+  fix-and-validate:
+    if: github.event.pull_request.head.ref == 'issue-350-maintainability-report'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DEV_REF: '00e2f18c6384c785d232bd59902102d3af7ad3da'
+    steps:
+      - name: Checkout head branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('eng/SharpLink.Maintainability/Program.cs')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '''    var domainRoot = Path.Combine(repoRoot, directoryName);\n    var paths = Directory.EnumerateFiles(domainRoot, "*.cs", SearchOption.AllDirectories)\n        .Where(static path => !ContainsIgnoredSegment(path))\n        .OrderBy(static path => path, StringComparer.Ordinal);\n\n    foreach (var fullPath in paths)\n    {\n        var relativePath = Path.GetRelativePath(repoRoot, fullPath).Replace('\\\\', '/');''',
+                  '''    var domainRoot = Path.Combine(repoRoot, directoryName);\n    var paths = Directory.EnumerateFiles(domainRoot, "*.cs", SearchOption.AllDirectories)\n        .Select(path => new\n        {\n            FullPath = path,\n            RelativePath = Path.GetRelativePath(repoRoot, path).Replace('\\\\', '/'),\n        })\n        .Where(static file => !ContainsIgnoredSegment(file.RelativePath))\n        .OrderBy(static file => file.RelativePath, StringComparer.Ordinal);\n\n    foreach (var file in paths)\n    {\n        var fullPath = file.FullPath;\n        var relativePath = file.RelativePath;'''
+              ),
+              (
+                  '''static bool ContainsIgnoredSegment(string path)\n{\n    var normalized = path.Replace('\\\\', '/');\n    return normalized.Contains("/bin/", StringComparison.OrdinalIgnoreCase)\n        || normalized.Contains("/obj/", StringComparison.OrdinalIgnoreCase);\n}''',
+                  '''static bool ContainsIgnoredSegment(string relativePath)\n{\n    var segments = relativePath.Replace('\\\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);\n    return segments.Any(static segment =>\n        string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)\n        || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase));\n}'''
+              ),
+              (
+                  'current => current == bodyNode || !IsNestedMethodLike(current),',
+                  'current => current == bodyNode || !IsNestedExecutableBody(current),'
+              ),
+              (
+                  '''static bool IsNestedMethodLike(SyntaxNode node) =>\n    node is MethodDeclarationSyntax\n        or ConstructorDeclarationSyntax\n        or DestructorDeclarationSyntax\n        or OperatorDeclarationSyntax\n        or ConversionOperatorDeclarationSyntax\n        or LocalFunctionStatementSyntax;''',
+                  '''static bool IsNestedExecutableBody(SyntaxNode node) =>\n    node is MethodDeclarationSyntax\n        or ConstructorDeclarationSyntax\n        or DestructorDeclarationSyntax\n        or OperatorDeclarationSyntax\n        or ConversionOperatorDeclarationSyntax\n        or LocalFunctionStatementSyntax\n        or SimpleLambdaExpressionSyntax\n        or ParenthesizedLambdaExpressionSyntax\n        or AnonymousMethodExpressionSyntax;'''
+              ),
+              (
+                  'CyclomaticComplexity: "1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside the method body.",',
+                  'CyclomaticComplexity: "1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside the method body; nested local functions, lambdas, and anonymous methods are excluded.",'
+              ),
+              (
+                  'AppendMethodTable(builder, $"Large methods (>= {LargeMethodLocThreshold} LOC)", report.LargeMethods);',
+                  'AppendMethodTable(builder, $"Top {TopCount} large methods (>= {LargeMethodLocThreshold} LOC)", report.LargeMethods);'
+              ),
+              (
+                  'AppendMethodTable(builder, $"Complex methods (>= {ComplexMethodThreshold})", report.ComplexMethods);',
+                  'AppendMethodTable(builder, $"Top {TopCount} complex methods (>= {ComplexMethodThreshold})", report.ComplexMethods);'
+              ),
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'expected Program.cs block not found: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+          doc = Path('eng/maintainability.md')
+          text = doc.read_text()
+          text = text.replace(
+              'The report scans C# files under `src/` and `test/` separately. It records physical file LOC, method count, maximum method LOC, maximum cyclomatic-complexity estimate, and distinct non-global `using` targets as a lightweight coupling proxy.',
+              'The report scans C# files under `src/` and `test/` separately. It records physical file LOC, method count, maximum method LOC, maximum cyclomatic-complexity estimate, and distinct non-global `using` targets as a lightweight coupling proxy. Method complexity excludes decision points inside nested local functions, lambdas, and anonymous methods.'
+          )
+          text = text.replace(
+              'including untracked files, match it before generating the report.',
+              'including ignored untracked `.cs` files that the analyzer would scan, match it before generating the report.'
+          )
+          doc.write_text(text)
+          PY
+
+      - name: Validate formatting and build
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format Sharplink.slnx --no-restore --verify-no-changes
+          dotnet build eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj -c Release --no-restore
+
+      - name: Validate ignored untracked file detection
+        shell: bash
+        run: |
+          ignored_file="src/SharpLink.Runtime/review-ignored-maintainability.cs"
+          printf '%s\n' "$ignored_file" >> .git/info/exclude
+          printf '%s\n' 'namespace SharpLink.Runtime; internal static class ReviewIgnoredMaintainability { }' > "$ignored_file"
+          if SHARPLINK_MAINTAINABILITY_SOURCE_REF="$DEV_REF" bash eng/report-maintainability.sh artifacts/should-reject-ignored; then
+            echo "Expected explicit ref validation to reject ignored untracked scanned file" >&2
+            exit 1
+          fi
+          rm "$ignored_file"
+
+      - name: Generate and validate dev baseline
+        shell: bash
+        run: |
+          SHARPLINK_MAINTAINABILITY_SOURCE_REF="$DEV_REF" bash eng/report-maintainability.sh artifacts/maintainability
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('artifacts/maintainability/report.json').read_text())
+          assert report['summary']['source']['files'] > 0
+          initialize = [m for m in report['complexMethods'] if m['path'] == 'src/SharpLink.Generator/RpcGenerator.cs' and m['name'] == 'Initialize']
+          if initialize:
+              assert initialize[0]['cyclomaticComplexity'] < 70, initialize[0]
+          PY
+          cp artifacts/maintainability/report.md eng/maintainability/dev-baseline.md
+
+      - name: Validate checkout path containing obj
+        shell: bash
+        run: |
+          mkdir -p /tmp/obj
+          ln -s "$PWD" /tmp/obj/SharpLink
+          dotnet run --project eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj -c Release -- --root /tmp/obj/SharpLink --output /tmp/obj-report --source-ref "$DEV_REF"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/obj-report/report.json').read_text())
+          assert report['summary']['source']['files'] > 0
+          assert report['summary']['test']['files'] > 0
+          PY
+
+      - name: Commit review fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add eng/SharpLink.Maintainability/Program.cs eng/maintainability.md eng/maintainability/dev-baseline.md
+          git commit -m "Address maintainability review edge cases"
+          git push
