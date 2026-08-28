@@ -68,7 +68,7 @@ var report = new Report(
     Definitions: new Definitions(
         Loc: "Physical line count from Roslyn SourceText; generated build output under bin/ and obj/ is excluded.",
         MethodLoc: "Inclusive physical line span for C# method-like declarations.",
-        CyclomaticComplexity: "1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside the method body.",
+        CyclomaticComplexity: "1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside the method body; nested local functions, lambdas, and anonymous methods are excluded.",
         UsingDependencyCount: "Distinct namespace targets from non-global using directives in the file; this is a lightweight coupling proxy.",
         LargeMethodLocThreshold: LargeMethodLocThreshold,
         ComplexMethodThreshold: ComplexMethodThreshold),
@@ -134,12 +134,18 @@ static void AnalyzeDomain(
 {
     var domainRoot = Path.Combine(repoRoot, directoryName);
     var paths = Directory.EnumerateFiles(domainRoot, "*.cs", SearchOption.AllDirectories)
-        .Where(static path => !ContainsIgnoredSegment(path))
-        .OrderBy(static path => path, StringComparer.Ordinal);
+        .Select(path => new
+        {
+            FullPath = path,
+            RelativePath = Path.GetRelativePath(repoRoot, path).Replace('\\', '/'),
+        })
+        .Where(static file => !ContainsIgnoredSegment(file.RelativePath))
+        .OrderBy(static file => file.RelativePath, StringComparer.Ordinal);
 
-    foreach (var fullPath in paths)
+    foreach (var file in paths)
     {
-        var relativePath = Path.GetRelativePath(repoRoot, fullPath).Replace('\\', '/');
+        var fullPath = file.FullPath;
+        var relativePath = file.RelativePath;
         var sourceText = SourceText.From(File.ReadAllText(fullPath, Encoding.UTF8), Encoding.UTF8);
         var tree = CSharpSyntaxTree.ParseText(sourceText, new CSharpParseOptions(LanguageVersion.Latest), path: relativePath);
         var root = tree.GetRoot();
@@ -165,11 +171,12 @@ static void AnalyzeDomain(
     }
 }
 
-static bool ContainsIgnoredSegment(string path)
+static bool ContainsIgnoredSegment(string relativePath)
 {
-    var normalized = path.Replace('\\', '/');
-    return normalized.Contains("/bin/", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("/obj/", StringComparison.OrdinalIgnoreCase);
+    var segments = relativePath.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+    return segments.Any(static segment =>
+        string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase));
 }
 
 static IEnumerable<MethodMetric> GetMethodMetrics(string domain, string path, SyntaxTree tree, SyntaxNode root)
@@ -235,7 +242,7 @@ static int ComputeCyclomaticComplexity(SyntaxNode bodyNode)
 {
     var complexity = 1;
     foreach (var node in bodyNode.DescendantNodesAndSelf(
-        current => current == bodyNode || !IsNestedMethodLike(current),
+        current => current == bodyNode || !IsNestedExecutableBody(current),
         descendIntoTrivia: false))
     {
         complexity += node switch
@@ -259,13 +266,16 @@ static int ComputeCyclomaticComplexity(SyntaxNode bodyNode)
     return complexity;
 }
 
-static bool IsNestedMethodLike(SyntaxNode node) =>
+static bool IsNestedExecutableBody(SyntaxNode node) =>
     node is MethodDeclarationSyntax
         or ConstructorDeclarationSyntax
         or DestructorDeclarationSyntax
         or OperatorDeclarationSyntax
         or ConversionOperatorDeclarationSyntax
-        or LocalFunctionStatementSyntax;
+        or LocalFunctionStatementSyntax
+        or SimpleLambdaExpressionSyntax
+        or ParenthesizedLambdaExpressionSyntax
+        or AnonymousMethodExpressionSyntax;
 
 static DomainSummary BuildSummary(
     string domain,
@@ -309,8 +319,8 @@ static string BuildMarkdown(Report report)
 
     AppendFileTable(builder, "Top source files by LOC", report.Files.Where(static file => file.Domain == "source"));
     AppendFileTable(builder, "Top test files by LOC", report.Files.Where(static file => file.Domain == "test"));
-    AppendMethodTable(builder, $"Large methods (>= {LargeMethodLocThreshold} LOC)", report.LargeMethods);
-    AppendMethodTable(builder, $"Complex methods (>= {ComplexMethodThreshold})", report.ComplexMethods);
+    AppendMethodTable(builder, $"Top {TopCount} large methods (>= {LargeMethodLocThreshold} LOC)", report.LargeMethods);
+    AppendMethodTable(builder, $"Top {TopCount} complex methods (>= {ComplexMethodThreshold})", report.ComplexMethods);
 
     builder.AppendLine("## Metric definitions");
     builder.AppendLine();
