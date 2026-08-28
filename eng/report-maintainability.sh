@@ -4,17 +4,24 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="${1:-$repo_root/artifacts/maintainability}"
 requested_source_ref="${SHARPLINK_MAINTAINABILITY_SOURCE_REF:-}"
+scan_root="$repo_root"
+temp_parent=""
+temp_worktree=""
 
-untracked_scanned_source_test_files() {
-  git -C "$repo_root" ls-files --others -- src test |
-    while IFS= read -r path; do
-      [[ "$path" == *.cs ]] || continue
-      case "/$path/" in
-        */[Bb][Ii][Nn]/*|*/[Oo][Bb][Jj]/*) continue ;;
-      esac
-      printf '%s\n' "$path"
-    done
+case "$output_dir" in
+  /*) ;;
+  *) output_dir="$repo_root/$output_dir" ;;
+esac
+
+cleanup() {
+  if [[ -n "$temp_worktree" ]]; then
+    git -C "$repo_root" worktree remove --force "$temp_worktree" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$temp_parent" ]]; then
+    rm -rf "$temp_parent"
+  fi
 }
+trap cleanup EXIT
 
 if [[ -n "$requested_source_ref" ]]; then
   if ! source_ref="$(git -C "$repo_root" rev-parse --verify "${requested_source_ref}^{commit}" 2>/dev/null)"; then
@@ -22,24 +29,17 @@ if [[ -n "$requested_source_ref" ]]; then
     exit 2
   fi
 
-  if ! git -C "$repo_root" diff --quiet "$source_ref" -- src test \
-    || [[ -n "$(untracked_scanned_source_test_files)" ]]; then
-    echo "src/ and test/ do not match requested source ref: $source_ref" >&2
-    echo "Generate the named snapshot from matching source/test contents, or omit SHARPLINK_MAINTAINABILITY_SOURCE_REF." >&2
-    exit 2
-  fi
+  temp_parent="$(mktemp -d "${TMPDIR:-/tmp}/sharplink-maintainability.XXXXXX")"
+  temp_worktree="$temp_parent/tree"
+  git -C "$repo_root" worktree add --detach "$temp_worktree" "$source_ref" >/dev/null
+  git -C "$temp_worktree" sparse-checkout disable >/dev/null
+  git -C "$temp_worktree" reset --hard "$source_ref" >/dev/null
+  scan_root="$temp_worktree"
 else
-  head_ref="$(git -C "$repo_root" rev-parse --verify HEAD 2>/dev/null || true)"
-  if [[ -n "$head_ref" ]] \
-    && git -C "$repo_root" diff --quiet "$head_ref" -- src test \
-    && [[ -z "$(untracked_scanned_source_test_files)" ]]; then
-    source_ref="$head_ref"
-  else
-    source_ref="working-tree"
-  fi
+  source_ref="working-tree"
 fi
 
-args=(--root "$repo_root" --output "$output_dir" --source-ref "$source_ref")
+args=(--root "$scan_root" --output "$output_dir" --source-ref "$source_ref")
 
 dotnet run \
   --project "$repo_root/eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj" \
