@@ -15,8 +15,10 @@ public partial class RpcGenerator
             return string.Empty;
 
         var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs, contractCodecs);
+        // Module dependencies come from generated artifacts and the finalized Codec graph. Contract
+        // signature CLR references alone are not evidence that the referenced assembly publishes a
+        // SharpLink generated manifest and therefore must not become dynamic-module dependencies.
         var dependencies = serviceModels.SelectMany(static service => service.AssemblyDependencies)
-            .Concat(contracts.SelectMany(static contract => contract.AssemblyDependencies))
             .Concat(codecs.SelectMany(static codec => codec.AssemblyDependencies))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static dependency => dependency, StringComparer.Ordinal)
