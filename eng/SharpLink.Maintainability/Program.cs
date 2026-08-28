@@ -92,7 +92,7 @@ var jsonOptions = new JsonSerializerOptions
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 };
 File.WriteAllText(jsonPath, JsonSerializer.Serialize(report, jsonOptions) + "\n", new UTF8Encoding(false));
-File.WriteAllText(markdownPath, BuildMarkdown(report), new UTF8Encoding(false));
+File.WriteAllText(markdownPath, BuildMarkdown(report).ReplaceLineEndings("\n"), new UTF8Encoding(false));
 
 Console.WriteLine(Path.GetRelativePath(repoRoot, jsonPath).Replace('\\', '/'));
 Console.WriteLine(Path.GetRelativePath(repoRoot, markdownPath).Replace('\\', '/'));
