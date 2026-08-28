@@ -63,13 +63,13 @@ var complexMethods = orderedMethods
     .ToArray();
 
 var report = new Report(
-    SchemaVersion: 2,
+    SchemaVersion: 3,
     SourceRef: sourceRef,
     ToolRef: toolRef,
     Definitions: new Definitions(
         Loc: "Physical line count from Roslyn SourceText; generated build output under bin/ and obj/ is excluded.",
-        MethodLoc: "Inclusive physical line span for C# method-like declarations.",
-        CyclomaticComplexity: "1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside the method body; nested local functions, lambdas, and anonymous methods are excluded.",
+        MethodLoc: "Inclusive physical line span for C# method-like executable bodies, including local functions, lambdas, and anonymous methods.",
+        CyclomaticComplexity: "1 plus if/loop/catch/case/switch-expression-arm/conditional-expression/&&/|| decision points inside each executable body; nested local functions, lambdas, and anonymous methods are excluded from the parent and measured independently.",
         UsingDependencyCount: "Distinct namespace targets from non-global using directives in the file; this is a lightweight coupling proxy.",
         LargeMethodLocThreshold: LargeMethodLocThreshold,
         ComplexMethodThreshold: ComplexMethodThreshold),
@@ -242,11 +242,29 @@ static bool TryDescribeMethod(SyntaxNode node, out string name, out SyntaxNode b
             name = localFunction.Identifier.ValueText;
             bodyNode = (SyntaxNode?)localFunction.Body ?? (SyntaxNode?)localFunction.ExpressionBody ?? localFunction;
             return true;
+        case SimpleLambdaExpressionSyntax simpleLambda:
+            name = DescribeAnonymousExecutable("lambda", simpleLambda);
+            bodyNode = simpleLambda.Body;
+            return true;
+        case ParenthesizedLambdaExpressionSyntax parenthesizedLambda:
+            name = DescribeAnonymousExecutable("lambda", parenthesizedLambda);
+            bodyNode = parenthesizedLambda.Body;
+            return true;
+        case AnonymousMethodExpressionSyntax anonymousMethod:
+            name = DescribeAnonymousExecutable("anonymous", anonymousMethod);
+            bodyNode = anonymousMethod.Block;
+            return true;
         default:
             name = string.Empty;
             bodyNode = node;
             return false;
     }
+}
+
+static string DescribeAnonymousExecutable(string kind, SyntaxNode node)
+{
+    var start = node.GetLocation().GetLineSpan().StartLinePosition;
+    return $"<{kind}>@{start.Line + 1}:{start.Character + 1}";
 }
 
 static int ComputeCyclomaticComplexity(SyntaxNode bodyNode)
