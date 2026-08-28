@@ -66,7 +66,11 @@ public partial class RpcGenerator
             contractPolicy.Codecs,
             contractOwnedPolicyRoots);
         var contractManifestCodecs = contractPolicyState.BuildContractManifestCodecs(contractPolicy.Codecs);
-        var diagnostics = standalone.Diagnostics
+        var standaloneDiagnostics = HasNativeCodecRoute(compilation.Assembly)
+            ? standalone.Diagnostics.Where(static diagnostic =>
+                diagnostic.Kind is not (DtoDiagnosticKind.BuiltinAdapterOverride or DtoDiagnosticKind.BuiltinCustomCodecOverride))
+            : standalone.Diagnostics;
+        var diagnostics = standaloneDiagnostics
             .Concat(contractPolicy.Diagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
             .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
@@ -336,7 +340,9 @@ public partial class RpcGenerator
                     continue;
                 }
                 target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target) && !IsEnumOrNullableEnum(target))
+                if (IsNonOverridableBuiltin(target) &&
+                    !IsEnumOrNullableEnum(target) &&
+                    !(_contractMode && HasNativeCodecRoute(_compilation.Assembly)))
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
                         "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
