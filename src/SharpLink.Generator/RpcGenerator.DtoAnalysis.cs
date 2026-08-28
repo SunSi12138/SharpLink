@@ -334,7 +334,8 @@ public partial class RpcGenerator
                     continue;
                 }
                 target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target))
+                if (IsNonOverridableBuiltin(target) &&
+                    !(_contractMode && HasNativeCodecRoute(_compilation.Assembly)))
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
                         "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
@@ -348,57 +349,34 @@ public partial class RpcGenerator
 
         private void CollectAssemblyCustomCodecBindings()
         {
-            var assemblies = new Dictionary<string, IAssemblySymbol>(StringComparer.Ordinal)
+            foreach (var attribute in _compilation.Assembly.GetAttributes()
+                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute"))
+                         .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
             {
-                [_compilation.Assembly.Identity.ToString()] = _compilation.Assembly
-            };
-            var pending = new Queue<IAssemblySymbol>();
-            pending.Enqueue(_compilation.Assembly);
-            while (pending.Count != 0)
-            {
-                var assembly = pending.Dequeue();
-                foreach (var referenced in assembly.Modules.SelectMany(static module => module.ReferencedAssemblySymbols)
-                             .OrderBy(static item => item.Identity.ToString(), StringComparer.Ordinal))
+                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
+                if (attribute.ConstructorArguments.Length != 2 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                    attribute.ConstructorArguments[1].Value is not ITypeSymbol codec)
                 {
-                    if (!assemblies.ContainsKey(referenced.Identity.ToString()) &&
-                        _allowedAssemblyNames.Contains(referenced.Identity.Name))
-                    {
-                        assemblies.Add(referenced.Identity.ToString(), referenced);
-                        pending.Enqueue(referenced);
-                    }
+                    Report(DtoDiagnosticKind.CustomCodecBindingInvalid, _compilation.Assembly,
+                        "assembly-level RpcCodec requires targetType and codecType", location);
+                    continue;
                 }
-            }
-
-            foreach (var assembly in assemblies.Values.OrderBy(static item => item.Identity.ToString(), StringComparer.Ordinal))
-            {
-                foreach (var attribute in assembly.GetAttributes()
-                             .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute"))
-                             .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
+                if (HasTypeParameter(target))
                 {
-                    var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
-                    if (attribute.ConstructorArguments.Length != 2 ||
-                        attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
-                        attribute.ConstructorArguments[1].Value is not ITypeSymbol codec)
-                    {
-                        Report(DtoDiagnosticKind.CustomCodecBindingInvalid, assembly,
-                            "assembly-level RpcCodec requires targetType and codecType", location);
-                        continue;
-                    }
-                    if (HasTypeParameter(target))
-                    {
-                        Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target,
-                            "custom Codec target must be a closed type", location);
-                        continue;
-                    }
-                    target = NormalizeAdapterTarget(target);
-                    if (IsNonOverridableBuiltin(target))
-                    {
-                        Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
-                            "built-in primitive Codecs cannot be rebound to a custom Codec", location);
-                        continue;
-                    }
-                    AddCustomCodecBinding(target, codec, location);
+                    Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target,
+                        "custom Codec target must be a closed type", location);
+                    continue;
                 }
+                target = NormalizeAdapterTarget(target);
+                if (IsNonOverridableBuiltin(target) &&
+                    !(_contractMode && HasNativeCodecRoute(_compilation.Assembly)))
+                {
+                    Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
+                        "built-in primitive Codecs cannot be rebound to a custom Codec", location);
+                    continue;
+                }
+                AddCustomCodecBinding(target, codec, location);
             }
         }
 
@@ -747,7 +725,7 @@ public partial class RpcGenerator
             var assembly = named.ContainingAssembly;
             if (assembly is not null &&
                 !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) &&
-                _allowedAssemblyNames.Contains(assembly.Identity.Name))
+                HasGeneratedAssemblyManifest(assembly))
             {
                 identities.Add(assembly.Identity.ToString());
             }
@@ -1107,6 +1085,74 @@ public partial class RpcGenerator
                    constructor.DeclaredAccessibility == Accessibility.Public &&
                    constructor.Parameters.Length == 0) &&
                ImplementsRpcCodecAdapter(type);
+
+        private bool HasResolvableCustomCodec(ITypeSymbol type)
+        {
+            var candidates = new List<ITypeSymbol>();
+            foreach (var attribute in type.GetAttributes())
+            {
+                if (!IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute"))
+                    continue;
+                if (attribute.ConstructorArguments.Length != 1 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol codec)
+                {
+                    return false;
+                }
+                candidates.Add(codec);
+            }
+
+            if (_customCodecBindings.TryGetValue(NormalizeAdapterTarget(type), out var assemblyBinding))
+                candidates.Add(assemblyBinding.CodecType);
+            if (candidates.Count == 0)
+                return false;
+
+            ITypeSymbol? selected = null;
+            foreach (var candidate in candidates)
+            {
+                if (selected is null)
+                {
+                    selected = candidate;
+                    continue;
+                }
+                if (!SymbolEqualityComparer.Default.Equals(selected, candidate))
+                    return false;
+            }
+
+            return selected is not null && IsValidCustomCodec(selected, type);
+        }
+
+        private static bool IsValidCustomCodec(ITypeSymbol codecType, ITypeSymbol targetType)
+        {
+            if (codecType is not INamedTypeSymbol named ||
+                HasTypeParameter(named) ||
+                !IsEffectivelyPublic(named) ||
+                !named.IsSealed ||
+                !named.InstanceConstructors.Any(static constructor =>
+                    constructor.DeclaredAccessibility == Accessibility.Public &&
+                    constructor.Parameters.Length == 0))
+            {
+                return false;
+            }
+
+            if (!named.AllInterfaces.Any(item =>
+                    item.Name == "IRpcCodec" &&
+                    item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
+                    item is INamedTypeSymbol { IsGenericType: true } generic &&
+                    generic.TypeArguments.Length == 1 &&
+                    SymbolEqualityComparer.Default.Equals(generic.TypeArguments[0], targetType)))
+            {
+                return false;
+            }
+
+            var identity = named.GetAttributes().FirstOrDefault(static attribute =>
+                IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecImplementationAttribute"));
+            return identity is not null &&
+                   identity.ConstructorArguments.Length == 2 &&
+                   identity.ConstructorArguments[0].Value is string wireFormatId &&
+                   identity.ConstructorArguments[1].Value is string schemaId &&
+                   IsStableIdentity(wireFormatId) &&
+                   IsStableIdentity(schemaId);
+        }
 
         private CustomCodecRegistration? ValidateCustomCodec(
             ITypeSymbol codecType,
