@@ -69,7 +69,7 @@ Source ref: `00e2f18c6384c785d232bd59902102d3af7ad3da`
 | `test/SharpLink.Benchmarks/ConnectionAdmissionEvidenceRunner.cs` | 1006 | 37 | 117 | 9 | 20 |
 | `test/SharpLink.UnitTests/Client/SharpLinkClientRetryTests.cs` | 974 | 51 | 47 | 6 | 5 |
 
-## Large methods (>= 80 LOC)
+## Top 25 large methods (>= 80 LOC)
 
 | Domain | Method | Location | LOC | Complexity |
 | --- | --- | --- | ---: | ---: |
@@ -99,7 +99,7 @@ Source ref: `00e2f18c6384c785d232bd59902102d3af7ad3da`
 | source | `ApplySnapshotAsync` | `src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs:430` | 152 | 26 |
 | source | `Visit` | `src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs:361` | 151 | 26 |
 
-## Complex methods (>= 15)
+## Top 25 complex methods (>= 15)
 
 | Domain | Method | Location | LOC | Complexity |
 | --- | --- | --- | ---: | ---: |
