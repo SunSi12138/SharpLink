@@ -443,7 +443,7 @@ public partial class RpcGenerator
                 return false;
             }
 
-            if (HasResolvableExplicitAdapter(type))
+            if (HasResolvableCustomCodec(type) || HasResolvableExplicitAdapter(type))
                 return true;
             if (IsNativeCodecType(type, stack, depth, blockedRouteType) || type.IsUnmanagedType)
                 return true;
