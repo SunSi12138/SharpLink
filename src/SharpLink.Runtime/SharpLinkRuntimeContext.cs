@@ -153,8 +153,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         }
 
         var loadedGeneratedOwner = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
-            ReferenceEquals(manifest.OwnerAssembly, ownerAssembly) &&
-            (manifest.Codecs.Count != 0 || manifest.ContractCodecs.Count != 0));
+            ReferenceEquals(manifest.OwnerAssembly, ownerAssembly));
         if (!loadedGeneratedOwner)
             return Codecs;
 
@@ -166,7 +165,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         }
 
         throw new InvalidOperationException(
-            $"Generated Contract owner '{ownerAssembly.FullName}' has generated Codec bindings but its manifest was not adopted by this SharpLink runtime context. Rebuild the client/server runtime after loading the Contract assembly.");
+            $"Generated Contract owner '{ownerAssembly.FullName}' has a generated manifest but it was not adopted by this SharpLink runtime context. Rebuild the client/server runtime after loading the Contract assembly.");
     }
 
     internal RpcGeneratedCodecRegistration? FindGeneratedCodec(ISharpLinkGeneratedAssemblyManifest manifest, Type targetType)
