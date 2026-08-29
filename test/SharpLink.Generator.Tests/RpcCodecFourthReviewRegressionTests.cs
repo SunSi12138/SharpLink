@@ -74,14 +74,23 @@ public interface INullablePointContract : SharpLink.Sdk.IService
 """);
 
         var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
+        var method = root["contracts"]!.AsArray()
+            .Single()!.AsObject()["methods"]!.AsArray()
+            .Single()!.AsObject();
+        var requestType = method["request"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(static item => item["name"]!.GetValue<string>() == "value")["type"]!
+            .GetValue<string>();
+        var responseType = method["response"]!.AsObject()["type"]!.GetValue<string>();
+        Ensure(string.Equals(requestType, responseType, StringComparison.Ordinal),
+            "nullable request and response must use the same canonical manifest type identity");
+
         var nullableCodec = root["codecs"]!.AsArray()
             .Select(static item => item!.AsObject())
-            .Single(static item =>
-            {
-                var type = item["type"]!.GetValue<string>();
-                return type.Contains("Nullable", StringComparison.Ordinal) &&
-                       type.Contains("ReviewPoint", StringComparison.Ordinal);
-            });
+            .Single(item => string.Equals(
+                item["type"]!.GetValue<string>(),
+                requestType,
+                StringComparison.Ordinal));
 
         Ensure(nullableCodec["kind"]!.GetValue<string>() == "UnsafeBlit",
             "an unmanaged nullable without a generated Nullable factory must publish the runtime UnsafeBlit kind");
