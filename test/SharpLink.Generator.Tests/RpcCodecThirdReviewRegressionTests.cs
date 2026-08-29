@@ -82,7 +82,7 @@ public interface IOwnerLocalContract : IService
     }
 
     [Test]
-    public Task ExplicitBuiltinAdapterShouldBeLegalWithoutNativeRoute()
+    public Task ExplicitFrameworkPrimitiveAdapterShouldBeRejectedWithoutRoute()
     {
         var source = AddAssemblyAttributes(BuildSource("""
 [SharpLink.Sdk.RpcContract]
@@ -102,13 +102,11 @@ public sealed class ExplicitIntAdapter : SharpLink.Abstractions.IRpcCodecAdapter
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(ExplicitIntAdapter))]");
 
         var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK049"),
-            "Contract-owned explicit builtin Adapter bindings must not require a lower-precedence Native route to become legal");
+        Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK049"),
+            "framework primitive int must reject explicit Adapter rebinding without depending on route configuration");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("explicit-no-route-int-wire/v1", StringComparison.Ordinal),
-            "the no-route explicit builtin Adapter must be emitted into the final Contract graph");
-        Ensure(generated.Contains("codecs.GetCodec<int>()", StringComparison.Ordinal),
-            "the direct fixed request path must bind the explicit builtin Codec");
+        Ensure(!generated.Contains("explicit-no-route-int-wire/v1\";", StringComparison.Ordinal),
+            "a rejected framework primitive Adapter must not enter the final Contract graph");
         return Task.CompletedTask;
     }
 
@@ -169,7 +167,7 @@ public interface ILocalContract : IService
     }
 
     [Test]
-    public Task NestedFixedCustomCodecShouldUseTheSameFinalSelectionAsTopLevelPayload()
+    public Task FrameworkEnumCustomCodecShouldBeRejectedForDirectAndNestedUse()
     {
         var source = AddAssemblyAttribute(BuildSource("""
 public enum CustomMode : short
@@ -198,20 +196,16 @@ public interface ICustomModeContract : SharpLink.Sdk.IService
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(CustomMode), typeof(CustomModeCodec))]");
 
         var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK060"),
-            "a Contract-owned custom builtin/fixed Codec binding must be legal without a Native route");
+        Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK063"),
+            "framework enum wire semantics must reject custom Codec rebinding regardless of graph position");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("new global::CustomModeCodec()", StringComparison.Ordinal),
-            "the final graph must publish the explicit custom enum Codec");
-        Ensure(generated.Contains("private readonly IRpcCodec<global::CustomMode> __codec_", StringComparison.Ordinal),
-            "the native DTO shell must promote its fixed enum member to the same selected custom Codec path");
-        Ensure(generated.Contains("custom-mode-wire/v1", StringComparison.Ordinal),
-            "the custom enum wire identity must be retained by the owner graph");
+        Ensure(!generated.Contains("new global::CustomModeCodec()", StringComparison.Ordinal),
+            "a rejected enum custom Codec must not be published");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task NestedStringExplicitCustomCodecShouldUseOwnerSelectionWithoutRoute()
+    public Task FrameworkStringCustomCodecShouldBeRejectedForDirectAndNestedUse()
     {
         var source = AddAssemblyAttribute(BuildSource("""
 public sealed class StringEnvelope
@@ -234,15 +228,11 @@ public interface IStringOwnerContract : SharpLink.Sdk.IService
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(string), typeof(OwnerStringCodec))]");
 
         var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK060"),
-            "a Contract-owned explicit string Codec must not require a Native route");
+        Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK063"),
+            "framework string wire semantics must reject custom Codec rebinding regardless of graph position");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("new global::OwnerStringCodec()", StringComparison.Ordinal),
-            "the final graph must publish the owner-selected string Codec");
-        Ensure(generated.Contains("private readonly IRpcCodec<string> __codec_", StringComparison.Ordinal),
-            "a direct string DTO member must not retain inline native framing after the owner selects a custom string Codec");
-        Ensure(generated.Contains("custom-string-wire/v1", StringComparison.Ordinal),
-            "the owner-selected string wire identity must be emitted");
+        Ensure(!generated.Contains("new global::OwnerStringCodec()", StringComparison.Ordinal),
+            "a rejected string custom Codec must not be published");
         return Task.CompletedTask;
     }
 }
