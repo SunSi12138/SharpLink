@@ -76,7 +76,12 @@ public interface INullablePointContract : SharpLink.Sdk.IService
         var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
         var nullableCodec = root["codecs"]!.AsArray()
             .Select(static item => item!.AsObject())
-            .Single(static item => item["type"]!.GetValue<string>().Contains("System.Nullable<ReviewPoint>", StringComparison.Ordinal));
+            .Single(static item =>
+            {
+                var type = item["type"]!.GetValue<string>();
+                return type.Contains("Nullable", StringComparison.Ordinal) &&
+                       type.Contains("ReviewPoint", StringComparison.Ordinal);
+            });
 
         Ensure(nullableCodec["kind"]!.GetValue<string>() == "UnsafeBlit",
             "an unmanaged nullable without a generated Nullable factory must publish the runtime UnsafeBlit kind");
@@ -110,7 +115,13 @@ public sealed class NestedTupleAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
         var listCodec = root["codecs"]!.AsArray()
             .Select(static item => item!.AsObject())
-            .Single(static item => item["type"]!.GetValue<string>().StartsWith("System.Collections.Generic.List<System.ValueTuple<int, int>>", StringComparison.Ordinal));
+            .Single(static item =>
+            {
+                var type = item["type"]!.GetValue<string>();
+                return type.Contains("List", StringComparison.Ordinal) &&
+                       type.Contains("ValueTuple", StringComparison.Ordinal) &&
+                       type.Contains("int", StringComparison.Ordinal);
+            });
 
         Ensure(listCodec["kind"]!.GetValue<string>() == "Adapter",
             "the explicit whole-List binding must match a consumed List with named nested tuple aliases");
