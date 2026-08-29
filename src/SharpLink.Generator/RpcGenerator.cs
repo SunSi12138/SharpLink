@@ -280,6 +280,9 @@ public partial class RpcGenerator : IIncrementalGenerator
                     DtoDiagnosticKind.Constructor => DtoConstructionRule,
                     DtoDiagnosticKind.Depth => DtoDepthRule,
                     DtoDiagnosticKind.AdapterRegistrationInvalid => InvalidAdapterRegistrationRule,
+                    DtoDiagnosticKind.AdapterTypeInvalid when diagnostic.Detail.StartsWith(
+                        "selected RpcCodecAdapter implementation",
+                        StringComparison.Ordinal) => InvalidAdapterRegistrationRule,
                     DtoDiagnosticKind.AdapterTypeInvalid => InvalidAdapterTypeRule,
                     DtoDiagnosticKind.SelectorConflict => SelectorAdapterConflictRule,
                     DtoDiagnosticKind.AdapterSelectionConflict => AdapterSelectionConflictRule,
