@@ -48,7 +48,7 @@ public interface IPayloadContract : IService
     }
 
     [Test]
-    public Task NativeRouteShouldRecognizeNestedCustomCodecDependency()
+    public Task ManagedRouteShouldRecognizeNestedCustomCodecDependency()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public sealed class Envelope
@@ -79,16 +79,16 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.nested-custom/v1\", \"route-nested-custom-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var diagnostics = RunGenerator(source);
         Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id is "SHARPLINK009" or "SHARPLINK010"),
-            "a valid nested custom Codec must keep the parent graph eligible for Native routing");
+            "a valid nested custom Codec must keep the parent graph eligible for Managed routing");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::Envelope>()", StringComparison.Ordinal),
-            "the Native route must classify and select the parent whose child is resolved by a custom Codec");
+            "the Managed route must select the configurable parent whose child is resolved by a custom Codec");
         Ensure(generated.Contains("route-nested-custom-wire/v1", StringComparison.Ordinal),
-            "the selected Native route identity must be emitted for the parent graph");
+            "the selected Managed route identity must be emitted for the parent graph");
         return Task.CompletedTask;
     }
 
@@ -151,11 +151,11 @@ public interface IOwnerPolicyContract : IService
     }
 
     [Test]
-    public Task ExplicitBuiltinAdapterShouldOverrideNativeRoute()
+    public Task FrameworkPrimitiveAdapterBindingShouldBeRejectedEvenWithAllRoute()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 [SharpLink.Sdk.RpcContract]
-public interface IExplicitBuiltinContract : SharpLink.Sdk.IService
+public interface IFixedIntContract : SharpLink.Sdk.IService
 {
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
 }
@@ -168,34 +168,32 @@ public sealed class ExplicitAdapter : TestRouteAdapterBase
 
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
-    public override string AdapterId => "route.int/v1";
-    public override string WireFormatId => "route-int-wire/v1";
+    public override string AdapterId => "route.all/v1";
+    public override string WireFormatId => "route-all-wire/v1";
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), \"explicit.int/v1\", \"explicit-int-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.int/v1\", \"route-int-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.all/v1\", \"route-all-wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(ExplicitAdapter))]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(RouteAdapter))]");
 
         var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK049"),
-            "an explicit owner binding must be legal for a builtin when the same Native route could override it");
+        Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK049"),
+            "framework primitive int must reject explicit Adapter/direct rebinding regardless of lower-precedence routes");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("explicit-int-wire/v1", StringComparison.Ordinal),
-            "the explicit builtin Adapter must win over the Native route");
-        Ensure(!generated.Contains("route-int-wire/v1", StringComparison.Ordinal),
-            "the losing Native route must not enter the generated binding graph for the explicitly bound builtin");
-        Ensure(generated.Contains("codecs.GetCodec<int>()", StringComparison.Ordinal),
-            "the fixed request path must bind the explicit Codec instead of retaining inline builtin framing");
+        Ensure(!generated.Contains("explicit-int-wire/v1\";", StringComparison.Ordinal),
+            "a rejected framework primitive binding must not enter the final Codec graph");
+        Ensure(!generated.Contains("CreateCodec<int>()", StringComparison.Ordinal),
+            "All route must not capture framework primitive int");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task ExplicitBuiltinCustomCodecShouldOverrideNativeRoute()
+    public Task FrameworkPrimitiveCustomCodecBindingShouldBeRejectedEvenWithAllRoute()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 [SharpLink.Sdk.RpcContract]
-public interface IExplicitBuiltinCustomContract : SharpLink.Sdk.IService
+public interface IFixedIntCustomContract : SharpLink.Sdk.IService
 {
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
 }
@@ -207,24 +205,22 @@ public sealed class IntCodec : SharpLink.Abstractions.IRpcCodec<int>
 
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
-    public override string AdapterId => "route.custom-int/v1";
-    public override string WireFormatId => "route-custom-int-wire/v1";
+    public override string AdapterId => "route.all/v1";
+    public override string WireFormatId => "route-all-wire/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.custom-int/v1\", \"route-custom-int-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.all/v1\", \"route-all-wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(int), typeof(IntCodec))]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(RouteAdapter))]");
 
         var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK060"),
-            "an explicit custom Codec must be legal for a builtin when a Native route could override it");
+        Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK063"),
+            "framework primitive int must reject custom Codec rebinding regardless of lower-precedence routes");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("new global::IntCodec()", StringComparison.Ordinal),
-            "the explicit custom builtin Codec must win over the Native route");
-        Ensure(!generated.Contains("route-custom-int-wire/v1", StringComparison.Ordinal),
-            "the losing Native route must not enter the generated binding graph for the custom-bound builtin");
-        Ensure(generated.Contains("codecs.GetCodec<int>()", StringComparison.Ordinal),
-            "the fixed request path must bind the custom Codec instead of retaining inline builtin framing");
+        Ensure(!generated.Contains("new global::IntCodec()", StringComparison.Ordinal),
+            "a rejected framework primitive custom Codec must not enter the final Codec graph");
+        Ensure(!generated.Contains("CreateCodec<int>()", StringComparison.Ordinal),
+            "All route must not capture framework primitive int");
         return Task.CompletedTask;
     }
 }
