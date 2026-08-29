@@ -81,11 +81,11 @@ internal static class SharpLinkGeneratedManifestStructureValidator
                             $"Native Codec factory for '{targetType.FullName}' in the {scope} graph has invalid adapter or wire-format metadata.");
                     }
                     break;
-                case RpcGeneratedCodecFactoryKind.Direct:
+                case RpcGeneratedCodecFactoryKind.Custom:
                     if (factory.AdapterId is not null || factory.Adapter is not null)
                     {
                         throw new InvalidOperationException(
-                            $"Direct Codec factory for '{targetType.FullName}' in the {scope} graph cannot declare adapter metadata.");
+                            $"Custom Codec factory for '{targetType.FullName}' in the {scope} graph cannot declare adapter metadata.");
                     }
                     break;
                 case RpcGeneratedCodecFactoryKind.Adapter:
