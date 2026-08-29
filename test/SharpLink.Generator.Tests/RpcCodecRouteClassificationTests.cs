@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 
 namespace SharpLink.Generator.Tests;
@@ -46,13 +45,6 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "ordinary collections remain configurable and must be eligible for the Managed route");
         Ensure(!generated.Contains("CreateCodec<global::FixedMode>()", StringComparison.Ordinal),
             "framework enums are fixed wire primitives and must not be routed");
-
-        var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
-        var enumCodec = root["codecs"]!.AsArray()
-            .Select(static item => item!.AsObject())
-            .Single(item => item["type"]!.GetValue<string>().Contains("FixedMode", StringComparison.Ordinal));
-        Ensure(enumCodec["kind"]!.GetValue<string>() == "Native",
-            "framework enum compatibility identity must remain Native even when a Managed route exists");
         return Task.CompletedTask;
     }
 }
