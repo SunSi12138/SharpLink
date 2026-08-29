@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
@@ -33,6 +34,12 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         var streams = new ProbeClientStreams(probe);
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
+
+        // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
+        // The next output-buffer request is then owned by this RPC, so the manual-clock advance
+        // occurs at the target Request's actual emission boundary instead of racing prior output.
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
         transport.Connection.RunOnNextOutputBufferRequest(
             () => timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
         var invocation = channel.InvokeOneWayAsync(
@@ -52,6 +59,16 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
                 ProtocolV2FrameType.StreamData,
                 TimeSpan.FromMilliseconds(50)),
             "no orphan OneWay StreamData may be emitted after the owning Request is dropped");
+    }
+
+    private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
+    {
+        var connections = (ClientConnection[])(typeof(SharpLinkClient).GetField(
+                "_readyConnections",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client) ?? throw new Exception("cannot find ready connection selection snapshot"));
+        Ensure(connections.Length == 1, "expected exactly one ready connection");
+        return connections[0];
     }
 
     private static async Task<SharpLinkException> CaptureSharpLinkExceptionAsync(Task operation)
