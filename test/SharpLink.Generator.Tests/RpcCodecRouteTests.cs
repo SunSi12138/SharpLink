@@ -8,38 +8,38 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task NativeRouteShouldOverrideFixedAndGeneratedNativePayloads()
+    public Task ManagedRouteShouldOverrideGeneratedDtoButNotFrameworkPrimitive()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
-public sealed class NativePayload
+public sealed class ManagedPayload
 {
     public int Value { get; set; }
 }
 
 [SharpLink.Sdk.RpcContract]
-public interface INativeRouteContract : SharpLink.Sdk.IService
+public interface IManagedRouteContract : SharpLink.Sdk.IService
 {
-    ValueTask<NativePayload> Echo(int id, NativePayload value, CancellationToken cancellationToken);
+    ValueTask<ManagedPayload> Echo(int id, ManagedPayload value, CancellationToken cancellationToken);
 }
 
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
-    public override string AdapterId => "route.native/v1";
-    public override string WireFormatId => "route-native-wire/v1";
+    public override string AdapterId => "route.managed/v1";
+    public override string WireFormatId => "route-managed-wire/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.native/v1\", \"route-native-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.managed/v1\", \"route-managed-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("CreateCodec<int>()", StringComparison.Ordinal),
-            "Native route must override a built-in fixed payload Codec");
-        Ensure(generated.Contains("CreateCodec<global::NativePayload>()", StringComparison.Ordinal),
-            "Native route must override a generated DTO Codec");
-        Ensure(generated.Contains("__codec_id = codecs.GetCodec<int>();", StringComparison.Ordinal),
-            "a routed fixed request field must leave the inline request path");
-        Ensure(generated.Contains("route-native-wire/v1", StringComparison.Ordinal),
-            "the selected route wire identity must enter generated metadata");
+        Ensure(!generated.Contains("CreateCodec<int>()", StringComparison.Ordinal),
+            "framework primitive int must remain on the fixed SharpLink wire path");
+        Ensure(generated.Contains("CreateCodec<global::ManagedPayload>()", StringComparison.Ordinal),
+            "ordinary DTOs remain configurable and must be eligible for a Managed route");
+        Ensure(!generated.Contains("__codec_id = codecs.GetCodec<int>();", StringComparison.Ordinal),
+            "fixed framework primitive request fields must remain on the inline native path");
+        Ensure(generated.Contains("route-managed-wire/v1", StringComparison.Ordinal),
+            "the selected configurable DTO route identity must enter generated metadata");
         return Task.CompletedTask;
     }
 
@@ -74,7 +74,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(RouteAdapter))]");
         var generated = string.Join("\n", RunGeneratorAndGetSources(routed));
         Ensure(generated.Contains("CreateCodec<global::Point>()", StringComparison.Ordinal),
-            "Unmanaged route must override the UnsafeBlit fallback");
+            "Unmanaged route must override the UnsafeBlit fallback for a user-defined struct");
         return Task.CompletedTask;
     }
 
@@ -108,7 +108,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 
         var diagnostics = RunGenerator(source, thirdParty);
         Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id is "SHARPLINK009" or "SHARPLINK010"),
-            "Managed route must run before native unsupported/cycle rejection");
+            "Managed route must run before unsupported/cycle rejection");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source, thirdParty));
         Ensure(generated.Contains("CreateCodec<global::Graph>()", StringComparison.Ordinal),
             "Managed route must handle a cyclic owner payload");
@@ -309,52 +309,6 @@ public sealed class UnmanagedAdapter : TestRouteAdapterBase
     }
 
     [Test]
-    public Task ManagedRouteShouldNotCaptureNativeDtoWithExplicitThirdPartyMember()
-    {
-        var thirdParty = CreateMetadataReference(
-  "ThirdParty.ExplicitNested",
-  "namespace Vendor { public sealed class ExternalGraph { public string Name { get; set; } = string.Empty; } }");
-        var source = AddAssemblyAttributes(BuildRouteSource("""
-public sealed class Envelope
-{
-    public Vendor.ExternalGraph Graph { get; set; } = new();
-}
-
-[SharpLink.Sdk.RpcContract]
-public interface IExplicitNestedContract : SharpLink.Sdk.IService
-{
-    ValueTask<Envelope> Echo(Envelope value, CancellationToken cancellationToken);
-}
-
-public sealed class ExplicitAdapter : TestRouteAdapterBase
-{
-    public override string AdapterId => "explicit.nested/v1";
-    public override string WireFormatId => "explicit-nested-wire/v1";
-}
-
-public sealed class RouteAdapter : TestRouteAdapterBase
-{
-    public override string AdapterId => "route.managed.outer/v1";
-    public override string WireFormatId => "route-managed-outer-wire/v1";
-}
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), \"explicit.nested/v1\", \"explicit-nested-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(Vendor.ExternalGraph), typeof(ExplicitAdapter))]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.managed.outer/v1\", \"route-managed-outer-wire/v1\")]",
-  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
-
-        var diagnostics = RunGenerator(source, thirdParty);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id is "SHARPLINK009" or "SHARPLINK010"),
-      "an explicit nested adapter must make the native DTO graph resolvable");
-        var generated = string.Join("\n", RunGeneratorAndGetSources(source, thirdParty));
-        Ensure(generated.Contains("CreateCodec<global::Vendor.ExternalGraph>()", StringComparison.Ordinal),
-      "the nested explicit adapter must be selected");
-        Ensure(!generated.Contains("CreateCodec<global::Envelope>()", StringComparison.Ordinal),
-  "the Managed route must not capture the outer DTO once its explicit nested dependency is resolvable");
-        return Task.CompletedTask;
-    }
-
-    [Test]
     public Task ContractRouteShouldNotClaimStandaloneRpcSerializableCodec()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
@@ -377,23 +331,22 @@ public interface IStandaloneIsolationContract : SharpLink.Sdk.IService
 
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
-    public override string AdapterId => "route.native.contract-only/v1";
-    public override string WireFormatId => "route-native-contract-only-wire/v1";
+    public override string AdapterId => "route.managed.contract-only/v1";
+    public override string WireFormatId => "route-managed-contract-only-wire/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.native.contract-only/v1\", \"route-native-contract-only-wire/v1\")]",
-  "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.managed.contract-only/v1\", \"route-managed-contract-only-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::ContractPayload>()", StringComparison.Ordinal),
-  "the Native route must still apply to the Contract payload root");
+            "the Managed route must apply to the Contract payload root");
         Ensure(!generated.Contains("CreateCodec<global::StandalonePayload>()", StringComparison.Ordinal),
-  "a standalone RpcSerializable codec must remain on normal generated-codec resolution");
+            "a standalone RpcSerializable codec must remain on normal generated-codec resolution");
         Ensure(generated.Contains("typeof(global::StandalonePayload)", StringComparison.Ordinal),
-  "the standalone RpcSerializable codec must still be emitted");
+            "the standalone RpcSerializable codec must still be emitted");
         return Task.CompletedTask;
     }
-
 
     [Test]
     public Task ManagedRouteShouldNotCaptureDynamicPayload()
@@ -425,7 +378,6 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         return Task.CompletedTask;
     }
 
-
     [Test]
     public Task RpcSerializableContractPayloadShouldKeepIndependentBindings()
     {
@@ -449,12 +401,12 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.dual-role/v1\", \"route-dual-role-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var sources = RunGeneratorAndGetSources(source);
         var generated = string.Join("\n", sources);
         Ensure(generated.Split("TargetType => typeof(global::Payload)", StringSplitOptions.None).Length - 1 == 2,
-            "dual-role Payload must have independent standalone-native and Contract-routed factories");
+            "dual-role Payload must have independent standalone-generated and Contract-routed factories");
         var manifest = sources.Single(static item => item.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         Ensure(manifest.Contains("ContractCodecs => __readOnlyContractCodecs", StringComparison.Ordinal),
             "generated manifest must expose a separate Contract Codec binding table");
@@ -472,8 +424,7 @@ namespace SharpLink.Sdk
         None = 0,
         Managed = 1 << 0,
         Unmanaged = 1 << 1,
-        Native = 1 << 2,
-        All = Managed | Unmanaged | Native
+        All = Managed | Unmanaged
     }
 
     [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
