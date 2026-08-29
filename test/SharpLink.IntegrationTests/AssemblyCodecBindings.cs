@@ -1,14 +1,16 @@
 using SharpLink.IntegrationTests;
 
-[assembly: RpcCodecAdapter(
+[assembly: RpcCodec(
     typeof(MalformedHeader),
-    typeof(MalformedHeaderCodec),
-    WireFormatId = "sharplink-integration-malformed-header/v1")]
+    typeof(MalformedHeaderCodec))]
 
 namespace SharpLink.IntegrationTests;
 
 public readonly record struct MalformedHeader(int Value);
 
+[RpcCodecImplementation(
+    "sharplink-integration-malformed-header/v1",
+    "sharplink-integration-malformed-header-schema/v1")]
 public sealed class MalformedHeaderCodec : IRpcCodec<MalformedHeader>
 {
     public void Serialize(in MalformedHeader value, IBufferWriter<byte> buffer)

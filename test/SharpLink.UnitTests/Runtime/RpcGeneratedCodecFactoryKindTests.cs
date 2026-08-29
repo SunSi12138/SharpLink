@@ -6,13 +6,13 @@ namespace SharpLink.UnitTests.Runtime;
 public sealed class RpcGeneratedCodecFactoryKindTests
 {
     [Test]
-    public void AdapterFreeFactoryKindShouldDistinguishNativeAndDirectWireIdentities()
+    public void AdapterFreeFactoryKindShouldDistinguishNativeAndCustomWireIdentities()
     {
         IRpcGeneratedCodecFactory custom = new AdapterFreeFactory("review-custom/v1");
         IRpcGeneratedCodecFactory native = new AdapterFreeFactory("sharplink-native/v1");
 
-        Ensure(custom.Kind == RpcGeneratedCodecFactoryKind.Direct,
-            "adapter-free factories with a non-native wire identity must be treated as direct/custom construction");
+        Ensure(custom.Kind == RpcGeneratedCodecFactoryKind.Custom,
+            "adapter-free factories with a non-native wire identity must be treated as custom construction");
         Ensure(native.Kind == RpcGeneratedCodecFactoryKind.Native,
             "the SharpLink native wire identity must retain the Native factory kind");
     }

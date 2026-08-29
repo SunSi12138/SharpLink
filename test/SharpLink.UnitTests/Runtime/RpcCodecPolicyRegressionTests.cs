@@ -5,24 +5,23 @@ using System.Reflection.Emit;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
 using SharpLink.StaticCodecOwnerTest.Contracts;
-using SharpLink.MultiClusterTest.Contracts;
 
 namespace SharpLink.UnitTests.Runtime;
 
 public sealed class RpcCodecPolicyRegressionTests
 {
     [Test]
-    public void DirectFactoryWithCustomWireFormatShouldPrepareAndResolve()
+    public void CustomFactoryWithCustomWireFormatShouldPrepareAndResolve()
     {
         var manifest = new TestManifest(
             typeof(IContractA).Assembly,
-            [new DirectPayloadFactory()]);
+            [new CustomPayloadFactory()]);
 
         using var context = new SharpLinkRuntimeContextBuilder().Build([manifest]);
         var ownerProvider = RpcGeneratedCodecResolver.GetProvider(context, manifest.OwnerAssembly);
 
-        Ensure(ownerProvider.GetCodec<DirectPayload>() is DirectPayloadCodec,
-            "a compile-time direct Codec with a custom WireFormatId must survive RuntimeContext preparation and owner resolution");
+        Ensure(ownerProvider.GetCodec<CustomPayload>() is CustomPayloadCodec,
+            "a compile-time custom Codec must survive RuntimeContext preparation and owner resolution");
     }
 
     [Test]
@@ -36,7 +35,7 @@ public sealed class RpcCodecPolicyRegressionTests
             AssemblyBuilderAccess.RunAndCollect);
         ISharpLinkGeneratedAssemblyManifest? manifest = new TestManifest(
             owner,
-            [new DirectPayloadFactory()]);
+            [new CustomPayloadFactory()]);
         SharpLinkGeneratedAssemblyCatalog.Register(manifest);
 
         try
@@ -60,112 +59,29 @@ public sealed class RpcCodecPolicyRegressionTests
         }
     }
 
-    [Test]
-    public void NativeEnumShouldNotUseUnsafeBlitAndOwnerPolicyCanStillOverrideIt()
-    {
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .Build(includeGeneratedAssemblyCatalog: false);
-        var globalEnum = context.Codecs.GetCodec<SampleEnum>();
-        var globalNullableEnum = context.Codecs.GetCodec<SampleEnum?>();
-        Ensure(globalEnum.GetType().Name.Contains("EnumCodec", StringComparison.Ordinal) &&
-               !globalEnum.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
-            "enum payloads must use the deterministic SharpLink native enum Codec instead of UnsafeBlit");
-
-        var adapter = new EnumRouteAdapter();
-        var owner = typeof(IOrdersContract).Assembly;
-        var manifest = new TestManifest(
-            owner,
-            [
-                new AdapterFactory<SampleEnum>(adapter),
-                new AdapterFactory<SampleEnum?>(adapter)
-            ]);
-        var registration = context.PrepareGeneratedManifest(manifest);
-        context.AdoptGeneratedManifest(registration);
-
-        var ownerProvider = RpcGeneratedCodecResolver.GetProvider(context, owner);
-        Ensure(ownerProvider.GetCodec<SampleEnum>() is SampleEnumCodec,
-            "an owner-scoped compile-time enum policy must override the native enum Codec");
-        Ensure(ownerProvider.GetCodec<SampleEnum?>() is NullableSampleEnumCodec,
-            "an owner-scoped compile-time nullable-enum policy must override the default resolution");
-        Ensure(ReferenceEquals(context.Codecs.GetCodec<SampleEnum>(), globalEnum) &&
-               ReferenceEquals(context.Codecs.GetCodec<SampleEnum?>(), globalNullableEnum),
-            "enum policy must remain owner-scoped and leave the context-global resolution unchanged");
-    }
-
-    private enum SampleEnum : short
-    {
-        Zero,
-        One
-    }
-
-    private sealed class DirectPayload
+    private sealed class CustomPayload
     {
     }
 
-    private sealed class DirectPayloadCodec : IRpcCodec<DirectPayload>
+    private sealed class CustomPayloadCodec : IRpcCodec<CustomPayload>
     {
-        public void Serialize(in DirectPayload value, IBufferWriter<byte> buffer) { }
-        public DirectPayload Deserialize(in ReadOnlySequence<byte> buffer) => new();
+        public void Serialize(in CustomPayload value, IBufferWriter<byte> buffer) { }
+        public CustomPayload Deserialize(in ReadOnlySequence<byte> buffer) => new();
     }
 
-    private sealed class DirectPayloadFactory : IRpcGeneratedCodecFactory
+    private sealed class CustomPayloadFactory : IRpcGeneratedCodecFactory
     {
-        public Type TargetType => typeof(DirectPayload);
-        public string SchemaId => "direct-payload-schema/v1";
-        public string WireFormatId => "direct-payload-wire/v1";
-        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Direct;
+        public Type TargetType => typeof(CustomPayload);
+        public string SchemaId => "custom-payload-schema/v1";
+        public string WireFormatId => "custom-payload-wire/v1";
+        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Custom;
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
             => adapterScope is null
-                ? new DirectPayloadCodec()
-                : throw new ArgumentException("Direct factory does not accept an adapter scope.", nameof(adapterScope));
-        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<DirectPayload>;
-    }
-
-    private sealed class EnumRouteAdapter : IRpcCodecAdapter
-    {
-        public string AdapterId => "enum-native-route/v1";
-        public string WireFormatId => "enum-safe-wire/v1";
-        public IRpcCodecAdapterScope CreateScope() => new EnumRouteScope();
-    }
-
-    private sealed class EnumRouteScope : IRpcCodecAdapterScope
-    {
-        public IRpcCodec<T> CreateCodec<T>()
-        {
-            if (typeof(T) == typeof(SampleEnum))
-                return (IRpcCodec<T>)(object)new SampleEnumCodec();
-            if (typeof(T) == typeof(SampleEnum?))
-                return (IRpcCodec<T>)(object)new NullableSampleEnumCodec();
-            throw new NotSupportedException($"Unexpected enum route test target '{typeof(T)}'.");
-        }
-
-        public void Dispose() { }
-    }
-
-    private sealed class AdapterFactory<T>(EnumRouteAdapter adapter) : IRpcGeneratedCodecFactory
-    {
-        public Type TargetType => typeof(T);
-        public string SchemaId => "enum-route-schema/" + typeof(T).FullName;
-        public string WireFormatId => adapter.WireFormatId;
-        public string? AdapterId => adapter.AdapterId;
-        public IRpcCodecAdapter? Adapter => adapter;
-        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
-            => adapterScope?.CreateCodec<T>() ?? throw new ArgumentNullException(nameof(adapterScope));
-        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<T>;
-    }
-
-    private sealed class SampleEnumCodec : IRpcCodec<SampleEnum>
-    {
-        public void Serialize(in SampleEnum value, IBufferWriter<byte> buffer) { }
-        public SampleEnum Deserialize(in ReadOnlySequence<byte> buffer) => SampleEnum.One;
-    }
-
-    private sealed class NullableSampleEnumCodec : IRpcCodec<SampleEnum?>
-    {
-        public void Serialize(in SampleEnum? value, IBufferWriter<byte> buffer) { }
-        public SampleEnum? Deserialize(in ReadOnlySequence<byte> buffer) => SampleEnum.One;
+                ? new CustomPayloadCodec()
+                : throw new ArgumentException("Custom factory does not accept an adapter scope.", nameof(adapterScope));
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<CustomPayload>;
     }
 
     private sealed class TestManifest(

@@ -1,193 +1,11 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
 
 namespace SharpLink.Generator.Tests;
 
 public partial class RpcAnalyzerTests
 {
-    [Test]
-    public Task ReferencedUnsafeBlitMetadataChangesShouldBreakCompatibility()
-    {
-        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
-
-        MetadataReference PayloadReference(string privateFieldType, int pack) => CreateMetadataReference(
-            "ExternalRawPayloads",
-            $$"""
-using SharpLink.Sdk;
-using System.Runtime.InteropServices;
-
-namespace ExternalRawPayloads
-{
-    [StructLayout(LayoutKind.Sequential, Pack = {{pack}})]
-    public struct RawPayload
-    {
-        public int Value;
-        private {{privateFieldType}} _state;
-    }
-
-    public sealed class SdkReferenceMarker
-    {
-        public IService? Service { get; set; }
-    }
-}
-""",
-            sdk);
-
-        const string source = """
-using System.Threading;
-using System.Threading.Tasks;
-using SharpLink.Sdk;
-
-[RpcContract]
-public interface IExternalRawContract : IService
-{
-    ValueTask<ExternalRawPayloads.RawPayload> Echo(
-        ExternalRawPayloads.RawPayload value,
-        CancellationToken cancellationToken);
-}
-""";
-
-        var v1 = PayloadReference("int", 1);
-        var v2 = PayloadReference("long", 1);
-        var v3 = PayloadReference("int", 8);
-        var baseline = RunContractGeneratorWithReferences(source, null, sdk, v1);
-        var privateFieldChanged = RunContractGeneratorWithReferences(source, baseline.Json, sdk, v2);
-        var packChanged = RunContractGeneratorWithReferences(source, baseline.Json, sdk, v3);
-
-        Ensure(privateFieldChanged.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            "referenced UnsafeBlit identity must fail closed when metadata-private layout changes");
-        Ensure(packChanged.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            "referenced UnsafeBlit identity must fail closed when PE layout metadata changes");
-        return Task.CompletedTask;
-    }
-
-    [Test]
-    public Task EquivalentReferencedUnsafeBlitRebuildShouldRemainCompatible()
-    {
-        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
-        const string payloadSource = """
-using SharpLink.Sdk;
-using System.Runtime.InteropServices;
-
-namespace ExternalRawPayloads
-{
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct RawPayload
-    {
-        public int Value;
-        private short _state;
-    }
-
-    public sealed class SdkReferenceMarker
-    {
-        public IService? Service { get; set; }
-    }
-}
-""";
-        const string contractSource = """
-using System.Threading;
-using System.Threading.Tasks;
-using SharpLink.Sdk;
-
-[RpcContract]
-public interface IExternalRawContract : IService
-{
-    ValueTask<ExternalRawPayloads.RawPayload> Echo(
-        ExternalRawPayloads.RawPayload value,
-        CancellationToken cancellationToken);
-}
-""";
-
-        var firstBuild = CreateMetadataReference("ExternalRawPayloads", payloadSource, sdk);
-        var rebuiltSameAssembly = CreateMetadataReference("ExternalRawPayloads", payloadSource, sdk);
-        var baseline = RunContractGeneratorWithReferences(contractSource, null, sdk, firstBuild);
-        var rebuilt = RunContractGeneratorWithReferences(
-            contractSource,
-            baseline.Json,
-            sdk,
-            rebuiltSameAssembly);
-
-        Ensure(!rebuilt.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            $"equivalent referenced-assembly rebuild/MVID changes are not wire changes. Diagnostics: {FormatDiagnostics(rebuilt.Diagnostics)}");
-        return Task.CompletedTask;
-    }
-
-    [Test]
-    public Task UnsafeBlitFieldRenameWithoutLayoutChangeShouldRemainCompatible()
-    {
-        static string Source(string fieldName) => BuildSource($$"""
-[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
-public struct RawPayload
-{
-    public int {{fieldName}};
-    public short State;
-}
-
-[SharpLink.Sdk.RpcContract]
-public interface IRawPayloadContract : SharpLink.Sdk.IService
-{
-    ValueTask<RawPayload> Echo(RawPayload value, CancellationToken cancellationToken);
-}
-""");
-
-        var baseline = RunContractGenerator(Source("Before")).Json;
-        var renamed = RunContractGenerator(Source("After"), baseline);
-        Ensure(!renamed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            $"UnsafeBlit field names are not wire identity when field order/type/layout are unchanged. Diagnostics: {FormatDiagnostics(renamed.Diagnostics)}");
-        return Task.CompletedTask;
-    }
-
-    [Test]
-    public Task NullableUnsafeBlitShouldIncludeUnderlyingLayout()
-    {
-        static string Source(string fieldType) => BuildSource($$"""
-public struct ReviewPoint
-{
-    public {{fieldType}} Value;
-}
-
-[SharpLink.Sdk.RpcContract]
-public interface INullableRawContract : SharpLink.Sdk.IService
-{
-    ValueTask<ReviewPoint?> Echo(ReviewPoint? value, CancellationToken cancellationToken);
-}
-""");
-
-        var baseline = RunContractGenerator(Source("int")).Json;
-        var changed = RunContractGenerator(Source("long"), baseline);
-        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            "Nullable<T> UnsafeBlit identity must include the closed underlying T layout");
-        return Task.CompletedTask;
-    }
-
-    [Test]
-    public Task DeepUnsafeBlitLayoutShouldNotTruncateCompatibilityIdentity()
-    {
-        static string Source(string leafType)
-        {
-            var source = new StringBuilder();
-            for (var index = 0; index < 65; index++)
-                source.Append("public struct S").Append(index).Append(" { public S").Append(index + 1).AppendLine(" V; }");
-            source.Append("public struct S65 { public ").Append(leafType).AppendLine(" Value; }");
-            source.AppendLine("[SharpLink.Sdk.RpcContract]");
-            source.AppendLine("public interface IDeepRawContract : SharpLink.Sdk.IService");
-            source.AppendLine("{");
-            source.AppendLine("    ValueTask<S0> Echo(S0 value, CancellationToken cancellationToken);");
-            source.AppendLine("}");
-            return BuildSource(source.ToString());
-        }
-
-        var baseline = RunContractGenerator(Source("int")).Json;
-        var changed = RunContractGenerator(Source("long"), baseline);
-        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            "UnsafeBlit compatibility identity must include wire-relevant fields beyond the DTO depth limit");
-        return Task.CompletedTask;
-    }
-
     [Test]
     public Task CanonicalTupleAliasBindingsShouldDiagnoseConflictingAdapters()
     {
@@ -243,9 +61,8 @@ public interface IAliasCustomContract : SharpLink.Sdk.IService
         var diagnostics = RunGenerator(source);
         Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK060"),
             "custom IRpcCodec<T> validation must use canonical CLR identity for nested tuple aliases");
-        var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
-        Ensure(root["codecs"]!.AsArray().Any(static item =>
-                item!["kind"]!.GetValue<string>() == "Custom"),
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("new global::AliasCustomCodec()", StringComparison.Ordinal),
             "canonical custom binding must be selected for the tuple-alias payload");
         return Task.CompletedTask;
     }

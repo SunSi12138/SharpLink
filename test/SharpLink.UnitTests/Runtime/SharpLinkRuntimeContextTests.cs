@@ -1378,7 +1378,6 @@ public class SharpLinkRuntimeContextTests
         public Type TargetType => typeof(T);
         public string SchemaId => $"custom:{typeof(T).FullName}";
         public string WireFormatId => wireFormatId;
-        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Direct;
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
