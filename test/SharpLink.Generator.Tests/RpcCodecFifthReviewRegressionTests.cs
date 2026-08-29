@@ -177,7 +177,7 @@ public interface IAliasCustomContract : SharpLink.Sdk.IService
     [Test]
     public Task CanonicalTupleAliasDirectCodecShouldValidateAgainstClrIdentity()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
+        var source = AddAssemblyAttributes(BuildDirectCodecSource("""
 public sealed class AliasDirectCodec : SharpLink.Abstractions.IRpcCodec<List<(int X, int Y)>>
 {
 }
