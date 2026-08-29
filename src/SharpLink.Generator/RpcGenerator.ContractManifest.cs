@@ -908,7 +908,6 @@ public partial class RpcGenerator
 
     private static bool IsSelectedImplementationKind(string? kind)
         => string.Equals(kind, GeneratedCodecKind.Adapter.ToString(), StringComparison.Ordinal) ||
-           string.Equals(kind, GeneratedCodecKind.Direct.ToString(), StringComparison.Ordinal) ||
            string.Equals(kind, GeneratedCodecKind.Custom.ToString(), StringComparison.Ordinal);
 
     private static bool ShouldCompareCodecSchema(
