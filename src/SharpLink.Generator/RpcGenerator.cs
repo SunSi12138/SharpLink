@@ -343,14 +343,14 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        var contractManifestModels = boundInterfaces.Collect()
+        var contractManifestModels = interfaces.Collect()
             .Combine(services.Collect())
             .Combine(generatedCodecs)
             .Combine(unions.Collect())
             .Select(static (value, _) => new ContractManifestModels(
                 value.Left.Left.Left,
                 value.Left.Left.Right,
-                value.Left.Right.ContractManifestCodecs,
+                value.Left.Right.Codecs,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider

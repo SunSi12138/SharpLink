@@ -28,10 +28,7 @@ public partial class RpcGenerator
             selectorOnlyContractDefault: false);
         var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
 
-        var contractManifestCodecs = contractPolicyState.BuildContractManifestCodecs(contractPolicy.Codecs);
-        var currentContractTypes = new HashSet<string>(
-            contractManifestCodecs.Select(static codec => codec.TypeName),
-            StringComparer.Ordinal);
+        var currentContractTypes = contractPolicyState.GetCurrentContractReachableTypeNames();
         var currentContractDefaultCodecs = contractDefault.Codecs
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
@@ -72,6 +69,11 @@ public partial class RpcGenerator
             currentContractDefaultCodecs,
             currentContractPolicyCodecs,
             contractOwnedPolicyRoots);
+        var finalCodecBoundTypes = currentContractPolicyCodecs
+            .Select(static codec => codec.TypeName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static type => type, StringComparer.Ordinal)
+            .ToImmutableArray();
 
         var diagnostics = standalone.Diagnostics
             .Concat(contractPolicy.Diagnostics)
@@ -79,7 +81,7 @@ public partial class RpcGenerator
             .Select(static group => group.First())
             .ToImmutableArray();
         var codecOwnedEnumTypes = new HashSet<string>(
-            contractManifestCodecs
+            currentContractPolicyCodecs
                 .Where(static codec => codec.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
                 .Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
@@ -95,7 +97,7 @@ public partial class RpcGenerator
         return new DtoGenerationResult(
             globalCodecs,
             contractCodecs,
-            contractManifestCodecs,
+            finalCodecBoundTypes,
             diagnostics,
             enums);
     }
@@ -153,7 +155,7 @@ public partial class RpcGenerator
         foreach (var codec in contractPolicy)
         {
             if (!defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) ||
-                !HasSameCodecDefinition(defaultCodec, codec))
+                !HasSameFinalCodecBinding(defaultCodec, codec))
             {
                 scopedTypes.Add(codec.TypeName);
             }
@@ -178,7 +180,7 @@ public partial class RpcGenerator
             .Select(codec =>
             {
                 if (defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) &&
-                    HasSameCodecDefinition(defaultCodec, codec))
+                    HasSameFinalCodecBinding(defaultCodec, codec))
                 {
                     return codec with { CodecName = defaultCodec.CodecName };
                 }
@@ -191,6 +193,32 @@ public partial class RpcGenerator
             })
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
+    }
+
+    private static bool HasSameFinalCodecBinding(GeneratedCodecModel left, GeneratedCodecModel right)
+    {
+        if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+            left.Kind != right.Kind ||
+            left.IsReferenceType != right.IsReferenceType ||
+            !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
+            !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
+            !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
+            !string.Equals(left.CustomCodecType, right.CustomCodecType, StringComparison.Ordinal) ||
+            !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
+            !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
+            !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
+            !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
+            left.Members.Length != right.Members.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Members.Length; index++)
+        {
+            if (left.Members[index] with { Location = null } != right.Members[index] with { Location = null })
+                return false;
+        }
+        return true;
     }
 
     private sealed partial class DtoAnalysisState
@@ -443,228 +471,19 @@ public partial class RpcGenerator
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
         }
 
-        internal ImmutableArray<GeneratedCodecModel> BuildContractManifestCodecs(
-            ImmutableArray<GeneratedCodecModel> selectedCodecs)
+        internal HashSet<string> GetCurrentContractReachableTypeNames()
         {
-            var selectedByType = selectedCodecs.ToDictionary(
-                static codec => codec.TypeName, StringComparer.Ordinal);
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             CollectCurrentAssemblyRoots(
                 _compilation.Assembly.GlobalNamespace,
                 roots,
                 includeSerializable: false,
                 includeContracts: true);
-
-            var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
-                CollectFinalBindingTypes(root, symbolsByType, seen, 0);
-
-            var result = new Dictionary<string, GeneratedCodecModel>(StringComparer.Ordinal);
-            var pending = new Queue<string>();
-            foreach (var root in roots.Values)
-            {
-                var rootName = GetTypeName(root);
-                symbolsByType[rootName] = root;
-                pending.Enqueue(rootName);
-            }
-
-            while (pending.Count != 0)
-            {
-                var typeName = pending.Dequeue();
-                if (result.ContainsKey(typeName))
-                    continue;
-
-                if (selectedByType.TryGetValue(typeName, out var selected))
-                {
-                    result.Add(typeName, selected);
-                    foreach (var dependency in GetCodecDependencies(selected))
-                        pending.Enqueue(dependency);
-                    continue;
-                }
-
-                if (!symbolsByType.TryGetValue(typeName, out var type) ||
-                    !TryCreateImplicitContractManifestCodec(type, out var implicitCodec))
-                {
-                    continue;
-                }
-
-                result.Add(typeName, implicitCodec);
-                if (implicitCodec.Kind == GeneratedCodecKind.Native &&
-                    TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
-                {
-                    if (elementType is not null)
-                        pending.Enqueue(GetTypeName(elementType));
-                    if (keyType is not null)
-                        pending.Enqueue(GetTypeName(keyType));
-                    if (valueType is not null)
-                        pending.Enqueue(GetTypeName(valueType));
-                }
-            }
-
-            return result.Values
-                .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
-                .ToImmutableArray();
-        }
-
-        private bool TryCreateImplicitContractManifestCodec(
-            ITypeSymbol type,
-            out GeneratedCodecModel codec)
-        {
-            if (!IsBuiltin(type))
-            {
-                codec = null!;
-                return false;
-            }
-
-            var typeName = GetTypeName(type);
-            var kind = IsImplicitUnsafeBlitNullable(type)
-                ? GeneratedCodecKind.UnsafeBlit
-                : IsNativeCodecType(type)
-                    ? GeneratedCodecKind.Native
-                    : GeneratedCodecKind.UnsafeBlit;
-            var schemaIdentity = kind == GeneratedCodecKind.Native
-                ? "implicit-native"
-                : GetUnsafeBlitSchemaIdentity(type);
-            if (kind == GeneratedCodecKind.Native &&
-                type.TypeKind == TypeKind.Enum &&
-                type is INamedTypeSymbol { EnumUnderlyingType: { } underlying })
-            {
-                schemaIdentity += "|enum:" + GetTypeName(underlying);
-            }
-
-            codec = new GeneratedCodecModel(
-                typeName,
-                CodecName: string.Empty,
-                GetSchemaId(typeName, schemaIdentity),
-                kind,
-                type.IsReferenceType,
-                ImmutableArray<GeneratedMemberModel>.Empty,
-                ImmutableArray<string>.Empty,
-                ElementType: null,
-                KeyType: null,
-                ValueType: null,
-                CustomCodecType: null,
-                AdapterType: null,
-                AdapterId: null,
-                "sharplink-native/v1",
-                GetAssemblyDependencies([type]),
-                type.Locations.FirstOrDefault());
-            return true;
-        }
-
-        private static bool IsImplicitUnsafeBlitNullable(ITypeSymbol type)
-            => type.IsUnmanagedType &&
-               type is INamedTypeSymbol nullable &&
-               nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
-               !IsFrameworkWirePrimitive(type);
-
-        private string GetUnsafeBlitSchemaIdentity(ITypeSymbol type)
-        {
-            var builder = new StringBuilder("implicit-unsafe-blit");
-            AppendUnsafeBlitLayout(type, builder, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
-            return builder.ToString();
-        }
-
-        private void AppendUnsafeBlitLayout(
-            ITypeSymbol type,
-            StringBuilder builder,
-            HashSet<ITypeSymbol> stack)
-        {
-            builder.Append('|').Append(GetTypeName(type));
-            if (type.TypeKind == TypeKind.Enum &&
-                type is INamedTypeSymbol { EnumUnderlyingType: { } enumUnderlying })
-            {
-                builder.Append("|enum:").Append(GetTypeName(enumUnderlying));
-                return;
-            }
-
-            if (type.SpecialType != SpecialType.None ||
-                type is IPointerTypeSymbol or IFunctionPointerTypeSymbol ||
-                type is not INamedTypeSymbol named)
-            {
-                return;
-            }
-
-            AppendWireLayoutAttribute(builder, named, "System.Runtime.InteropServices.StructLayoutAttribute");
-            AppendWireLayoutAttribute(builder, named, "System.Runtime.CompilerServices.InlineArrayAttribute");
-
-            if (!stack.Add(type))
-            {
-                builder.Append("|recursive");
-                return;
-            }
-
-            if (named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
-                named.TypeArguments.Length == 1)
-            {
-                builder.Append("|nullable-underlying");
-                AppendUnsafeBlitLayout(named.TypeArguments[0], builder, stack);
-                stack.Remove(type);
-                return;
-            }
-
-            var fields = named.GetMembers()
-                .OfType<IFieldSymbol>()
-                .Where(static field => !field.IsStatic && !field.IsConst)
-                .ToArray();
-            builder.Append("|fields:").Append(fields.Length.ToString(InvariantCulture));
-            for (var index = 0; index < fields.Length; index++)
-            {
-                var field = fields[index];
-                builder.Append("|field:").Append(index.ToString(InvariantCulture));
-                if (field.IsFixedSizeBuffer)
-                {
-                    builder.Append("|fixed-buffer:")
-                        .Append(field.FixedSize.ToString(InvariantCulture));
-                }
-                AppendWireLayoutAttribute(builder, field, "System.Runtime.InteropServices.FieldOffsetAttribute");
-                AppendWireLayoutAttribute(builder, field, "System.Runtime.CompilerServices.FixedBufferAttribute");
-                AppendUnsafeBlitLayout(field.Type, builder, stack);
-            }
-
-            stack.Remove(type);
-        }
-
-        private static void AppendWireLayoutAttribute(
-            StringBuilder builder,
-            ISymbol symbol,
-            string attributeName)
-        {
-            var attribute = symbol.GetAttributes().FirstOrDefault(item =>
-                string.Equals(item.AttributeClass?.ToDisplayString(), attributeName, StringComparison.Ordinal));
-            if (attribute is null)
-                return;
-
-            builder.Append("|attr:").Append(attributeName);
-            foreach (var argument in attribute.ConstructorArguments)
-                AppendWireLayoutConstant(builder, argument);
-            foreach (var argument in attribute.NamedArguments.OrderBy(static item => item.Key, StringComparer.Ordinal))
-            {
-                builder.Append('|').Append(argument.Key).Append('=');
-                AppendWireLayoutConstant(builder, argument.Value);
-            }
-        }
-
-        private static void AppendWireLayoutConstant(StringBuilder builder, TypedConstant constant)
-        {
-            builder.Append(':').Append(constant.Type is null ? "?" : GetTypeName(constant.Type)).Append('=');
-            if (constant.Kind == TypedConstantKind.Array)
-            {
-                builder.Append('[');
-                foreach (var item in constant.Values)
-                    AppendWireLayoutConstant(builder, item);
-                builder.Append(']');
-                return;
-            }
-
-            if (constant.Value is ITypeSymbol type)
-            {
-                builder.Append(GetTypeName(type));
-                return;
-            }
-
-            builder.Append(Convert.ToString(constant.Value, InvariantCulture) ?? "null");
+                CollectFinalBindingTypes(root, reachable, seen, 0);
+            return new HashSet<string>(reachable.Keys, StringComparer.Ordinal);
         }
 
         private void PromoteSelectedFixedMembersToCodecBindings()

@@ -155,7 +155,7 @@ public partial class RpcGenerator
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more payload, DTO member, or Codec entries are missing required wire/Codec identity metadata",
+                            "one or more payload, DTO member, or Codec identity entries are missing a required non-empty identity value",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -248,11 +248,9 @@ public partial class RpcGenerator
                     {
                         Name = parameter.Name,
                         Type = typeName,
-                        WireType = !parameter.IsStream && !parameter.IsBlittable
-                            ? "LengthDelimited"
-                            : GetContractWireType(typeName, parameter.IsStream
-                                ? parameter.StreamItemEnumUnderlyingType
-                                : parameter.EnumUnderlyingType),
+                        WireType = GetContractWireType(typeName, parameter.IsStream
+                            ? parameter.StreamItemEnumUnderlyingType
+                            : parameter.EnumUnderlyingType),
                         WireFormatId = GetWireFormatId(typeName, wireFormats),
                         Nullable = parameter.PayloadNullable,
                         Stream = parameter.IsStream,
@@ -316,9 +314,9 @@ public partial class RpcGenerator
             document.Codecs.Add(new ContractManifestCodec
             {
                 Type = RemoveGlobalPrefix(codec.TypeName),
-                WireFormatId = codec.WireFormatId,
                 Kind = codec.Kind.ToString(),
                 SchemaId = codec.SchemaId,
+                WireFormatId = codec.WireFormatId,
                 SourceLocation = codec.Location
             });
         }
@@ -664,13 +662,6 @@ public partial class RpcGenerator
             }
         }
 
-
-        var baselineDtoNames = new HashSet<string>(
-            baseline.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
-        var currentDtoNames = new HashSet<string>(
-            current.Dtos.Select(static dto => dto.Name), StringComparer.Ordinal);
-        var baselineCodecs = baseline.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
-        var currentCodecs = current.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
         var directlyDescribedCodecTypes = new HashSet<string>(
             baseline.Contracts
                 .SelectMany(static contract => contract.Methods)
@@ -678,106 +669,37 @@ public partial class RpcGenerator
                 .Select(static value => value.Type)
                 .Concat(baseline.Dtos.SelectMany(static dto => dto.Members).Select(static member => member.Type)),
             StringComparer.Ordinal);
-
-        foreach (var type in directlyDescribedCodecTypes)
-        {
-            if (!baselineCodecs.TryGetValue(type, out var oldCodec) ||
-                !currentCodecs.TryGetValue(type, out var newCodec) ||
-                string.IsNullOrWhiteSpace(oldCodec.Kind) ||
-                string.IsNullOrWhiteSpace(newCodec.Kind))
-            {
-                continue;
-            }
-
-            var kindChanged = !string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal);
-            var schemaChanged = ShouldCompareCodecSchema(
-                                    oldCodec,
-                                    newCodec,
-                                    baselineDtoNames,
-                                    currentDtoNames) &&
-                                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
-            if (!kindChanged && !schemaChanged)
-                continue;
-
-            diagnostics.Add(Change(
-                ContractCompatibilityKind.WireType,
-                newCodec.SourceLocation,
-                type,
-                $"direct Codec selection changed from {oldCodec.Kind}/{oldCodec.SchemaId ?? "unknown"} to {newCodec.Kind}/{newCodec.SchemaId ?? "unknown"}",
-                "restore the previous generated Codec selection or publish a new RPC payload type"));
-        }
-
-        // Legacy format-1 baselines emitted before Kind/SchemaId still use DTO membership
-        // as the fallback codec-kind signal so their stored fingerprints remain valid.
-        foreach (var oldDto in baseline.Dtos)
-        {
-            if (currentDtoNames.Contains(oldDto.Name) ||
-                !currentCodecs.TryGetValue(oldDto.Name, out var currentCodec))
-            {
-                continue;
-            }
-            if (baselineCodecs.TryGetValue(oldDto.Name, out var baselineCodec) &&
-                !string.IsNullOrWhiteSpace(baselineCodec.Kind) &&
-                !string.IsNullOrWhiteSpace(currentCodec.Kind))
-            {
-                continue;
-            }
-            diagnostics.Add(Change(
-                ContractCompatibilityKind.WireType,
-                currentCodec.SourceLocation,
-                oldDto.Name,
-                "Codec selection changed from a SharpLink native DTO to a non-DTO Codec",
-                "restore the native DTO Codec or publish a new RPC payload type"));
-        }
-        foreach (var newDto in current.Dtos)
-        {
-            if (baselineDtoNames.Contains(newDto.Name) ||
-                !baselineCodecs.TryGetValue(newDto.Name, out var baselineCodec))
-            {
-                continue;
-            }
-            if (currentCodecs.TryGetValue(newDto.Name, out var currentCodec) &&
-                !string.IsNullOrWhiteSpace(baselineCodec.Kind) &&
-                !string.IsNullOrWhiteSpace(currentCodec.Kind))
-            {
-                continue;
-            }
-            diagnostics.Add(Change(
-                ContractCompatibilityKind.WireType,
-                newDto.SourceLocation,
-                newDto.Name,
-                "Codec selection changed from a non-DTO Codec to a SharpLink native DTO",
-                "restore the previous Codec selection or publish a new RPC payload type"));
-        }
-
+        var currentCodecs = current.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
         foreach (var oldCodec in baseline.Codecs)
         {
-            if (directlyDescribedCodecTypes.Contains(oldCodec.Type) ||
-                !currentCodecs.TryGetValue(oldCodec.Type, out var newCodec))
+            if (!currentCodecs.TryGetValue(oldCodec.Type, out var newCodec))
             {
                 continue;
             }
 
-            var kindChanged = !string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal);
-            var schemaChanged = ShouldCompareCodecSchema(
-                                    oldCodec,
-                                    newCodec,
-                                    baselineDtoNames,
-                                    currentDtoNames) &&
-                                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
-            var wireFormatChanged = !string.Equals(
-                oldCodec.WireFormatId,
-                newCodec.WireFormatId,
-                StringComparison.Ordinal);
-            if (!kindChanged && !schemaChanged && !wireFormatChanged)
+            var wireChanged = !string.Equals(oldCodec.WireFormatId, newCodec.WireFormatId, StringComparison.Ordinal);
+            var schemaChanged =
+                (string.Equals(oldCodec.Kind, "Custom", StringComparison.Ordinal) ||
+                 string.Equals(newCodec.Kind, "Custom", StringComparison.Ordinal)) &&
+                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
+            if (!wireChanged && !schemaChanged)
                 continue;
+
+            if (!schemaChanged && directlyDescribedCodecTypes.Contains(oldCodec.Type))
+                continue;
+
+            var changedParts = new List<string>(2);
+            if (wireChanged)
+                changedParts.Add($"wire '{oldCodec.WireFormatId}' -> '{newCodec.WireFormatId}'");
+            if (schemaChanged)
+                changedParts.Add($"schema '{oldCodec.SchemaId}' -> '{newCodec.SchemaId}'");
 
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
                 newCodec.SourceLocation,
                 oldCodec.Type,
-                $"nested Codec selection changed from {oldCodec.Kind}/{oldCodec.SchemaId ?? "unknown"}/{oldCodec.WireFormatId} to {newCodec.Kind}/{newCodec.SchemaId ?? "unknown"}/{newCodec.WireFormatId}",
-                "restore the previous nested Codec selection or publish a new RPC payload type"));
+                $"nested Codec identity changed: {string.Join(", ", changedParts)}",
+                "restore the previous nested wire/schema identity or add a new RPC payload type"));
         }
 
         var currentEnums = current.Enums.ToDictionary(static item => item.Name, StringComparer.Ordinal);
@@ -898,39 +820,13 @@ public partial class RpcGenerator
            manifest.Codecs.All(static codec =>
                codec is not null &&
                !string.IsNullOrWhiteSpace(codec.Type) &&
-               !string.IsNullOrWhiteSpace(codec.WireFormatId) &&
                !string.IsNullOrWhiteSpace(codec.Kind) &&
-               !string.IsNullOrWhiteSpace(codec.SchemaId)) &&
+               !string.IsNullOrWhiteSpace(codec.SchemaId) &&
+               !string.IsNullOrWhiteSpace(codec.WireFormatId)) &&
            manifest.Enums.All(static item => item is not null) &&
            manifest.Unions.All(static union =>
                union is not null && union.Cases is not null && union.Cases.All(static item => item is not null)) &&
            manifest.Services.All(static service => service is not null);
-
-    private static bool IsSelectedImplementationKind(string? kind)
-        => string.Equals(kind, GeneratedCodecKind.Adapter.ToString(), StringComparison.Ordinal) ||
-           string.Equals(kind, GeneratedCodecKind.Custom.ToString(), StringComparison.Ordinal);
-
-    private static bool ShouldCompareCodecSchema(
-        ContractManifestCodec baseline,
-        ContractManifestCodec current,
-        HashSet<string> baselineDtoNames,
-        HashSet<string> currentDtoNames)
-    {
-        if (IsSelectedImplementationKind(baseline.Kind) || IsSelectedImplementationKind(current.Kind))
-            return true;
-
-        if (string.Equals(baseline.Kind, GeneratedCodecKind.UnsafeBlit.ToString(), StringComparison.Ordinal) ||
-            string.Equals(current.Kind, GeneratedCodecKind.UnsafeBlit.ToString(), StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var baselineIsDto = string.Equals(baseline.Kind, GeneratedCodecKind.Dto.ToString(), StringComparison.Ordinal);
-        var currentIsDto = string.Equals(current.Kind, GeneratedCodecKind.Dto.ToString(), StringComparison.Ordinal);
-        return (baselineIsDto || currentIsDto) &&
-               (!baselineDtoNames.Contains(baseline.Type) || !currentDtoNames.Contains(current.Type));
-    }
-
 
     private static string GetWireFormatId(
         string typeName,
@@ -1150,9 +1046,9 @@ internal static class __SharpLinkContractManifest
     private sealed class ContractManifestCodec
     {
         public string Type { get; set; } = string.Empty;
+        public string Kind { get; set; } = string.Empty;
+        public string SchemaId { get; set; } = string.Empty;
         public string WireFormatId { get; set; } = string.Empty;
-        public string? Kind { get; set; }
-        public string? SchemaId { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
 

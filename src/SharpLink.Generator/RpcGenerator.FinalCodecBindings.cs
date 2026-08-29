@@ -9,13 +9,9 @@ public partial class RpcGenerator
         if (model is null)
             return null;
 
-        // CLR shape only says whether the Native implementation *could* inline a value. The
-        // finalized Contract Codec graph decides whether that optimization is legal on RPC wire.
-        var selectedTypes = new HashSet<string>(
-            codecs.ContractManifestCodecs
-                .Where(static codec => codec.Kind is not (GeneratedCodecKind.Native or GeneratedCodecKind.UnsafeBlit))
-                .Select(static codec => codec.TypeName),
-            StringComparer.Ordinal);
+        // CLR shape only says whether the native implementation *could* inline a value. The
+        // finalized Contract Codec selection decides whether that optimization is legal on RPC wire.
+        var selectedTypes = new HashSet<string>(codecs.FinalCodecBoundTypes, StringComparer.Ordinal);
         var methods = model.Methods
             .Select(method =>
             {
