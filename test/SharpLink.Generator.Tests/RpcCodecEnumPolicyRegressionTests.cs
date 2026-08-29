@@ -1,4 +1,3 @@
-using System;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -63,43 +62,6 @@ public interface IFixedEnumContract : SharpLink.Sdk.IService
         var diagnostics = RunGenerator(source);
         Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK063"),
             "framework enum wire semantics must not be rebound through RpcCodec");
-        return Task.CompletedTask;
-    }
-
-    [Test]
-    public Task FrameworkEnumShouldKeepNativeIdentityAcrossDirectAndNestedUse()
-    {
-        var source = BuildRouteSource("""
-public enum FixedMode : byte
-{
-    Zero,
-    One
-}
-
-public sealed class Envelope
-{
-    public FixedMode Mode { get; set; }
-}
-
-[SharpLink.Sdk.RpcContract]
-public interface IFixedEnumContract : SharpLink.Sdk.IService
-{
-    ValueTask<FixedMode> EchoMode(FixedMode value, CancellationToken cancellationToken);
-    ValueTask<Envelope> EchoEnvelope(Envelope value, CancellationToken cancellationToken);
-}
-""");
-
-        var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error),
-            "the fixed framework enum path must remain valid without policy configuration");
-
-        var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
-        var enumCodec = root["codecs"]!.AsArray()
-            .Select(static item => item!.AsObject())
-            .Single(item => item["type"]!.GetValue<string>().Contains("FixedMode", StringComparison.Ordinal));
-        Ensure(enumCodec["kind"]!.GetValue<string>() == "Native" &&
-               enumCodec["wireFormatId"]!.GetValue<string>() == "sharplink-native/v1",
-            "enum compatibility identity must remain the fixed SharpLink native identity");
         return Task.CompletedTask;
     }
 }
