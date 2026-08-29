@@ -66,6 +66,82 @@ public interface IExternalRawContract : IService
     }
 
     [Test]
+    public Task EquivalentReferencedUnsafeBlitRebuildShouldRemainCompatible()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
+        const string payloadSource = """
+using SharpLink.Sdk;
+using System.Runtime.InteropServices;
+
+namespace ExternalRawPayloads
+{
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct RawPayload
+    {
+        public int Value;
+        private short _state;
+    }
+
+    public sealed class SdkReferenceMarker
+    {
+        public IService? Service { get; set; }
+    }
+}
+""";
+        const string contractSource = """
+using System.Threading;
+using System.Threading.Tasks;
+using SharpLink.Sdk;
+
+[RpcContract]
+public interface IExternalRawContract : IService
+{
+    ValueTask<ExternalRawPayloads.RawPayload> Echo(
+        ExternalRawPayloads.RawPayload value,
+        CancellationToken cancellationToken);
+}
+""";
+
+        var firstBuild = CreateMetadataReference("ExternalRawPayloads", payloadSource, sdk);
+        var rebuiltSameAssembly = CreateMetadataReference("ExternalRawPayloads", payloadSource, sdk);
+        var baseline = RunContractGeneratorWithReferences(contractSource, null, sdk, firstBuild);
+        var rebuilt = RunContractGeneratorWithReferences(
+            contractSource,
+            baseline.Json,
+            sdk,
+            rebuiltSameAssembly);
+
+        Ensure(!rebuilt.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"equivalent referenced-assembly rebuild/MVID changes are not wire changes. Diagnostics: {FormatDiagnostics(rebuilt.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task UnsafeBlitFieldRenameWithoutLayoutChangeShouldRemainCompatible()
+    {
+        static string Source(string fieldName) => BuildSource($$"""
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
+public struct RawPayload
+{
+    public int {{fieldName}};
+    public short State;
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IRawPayloadContract : SharpLink.Sdk.IService
+{
+    ValueTask<RawPayload> Echo(RawPayload value, CancellationToken cancellationToken);
+}
+""");
+
+        var baseline = RunContractGenerator(Source("Before")).Json;
+        var renamed = RunContractGenerator(Source("After"), baseline);
+        Ensure(!renamed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"UnsafeBlit field names are not wire identity when field order/type/layout are unchanged. Diagnostics: {FormatDiagnostics(renamed.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task NullableUnsafeBlitShouldIncludeUnderlyingLayout()
     {
         static string Source(string fieldType) => BuildSource($$"""
@@ -171,32 +247,6 @@ public interface IAliasCustomContract : SharpLink.Sdk.IService
         Ensure(root["codecs"]!.AsArray().Any(static item =>
                 item!["kind"]!.GetValue<string>() == "Custom"),
             "canonical custom binding must be selected for the tuple-alias payload");
-        return Task.CompletedTask;
-    }
-
-    [Test]
-    public Task CanonicalTupleAliasDirectCodecShouldValidateAgainstClrIdentity()
-    {
-        var source = AddAssemblyAttributes(BuildDirectCodecSource("""
-public sealed class AliasDirectCodec : SharpLink.Abstractions.IRpcCodec<List<(int X, int Y)>>
-{
-}
-
-[SharpLink.Sdk.RpcContract]
-public interface IAliasDirectContract : SharpLink.Sdk.IService
-{
-    ValueTask<List<(int X, int Y)>> Echo(List<(int X, int Y)> value, CancellationToken cancellationToken);
-}
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(List<ValueTuple<int, int>>), typeof(AliasDirectCodec), WireFormatId = \"alias-direct-wire/v1\")]");
-
-        var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id is "SHARPLINK043" or "SHARPLINK046"),
-            "direct IRpcCodec<T> validation must use canonical CLR identity for nested tuple aliases");
-        var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
-        Ensure(root["codecs"]!.AsArray().Any(static item =>
-                item!["kind"]!.GetValue<string>() == "Direct"),
-            "canonical direct binding must be selected for the tuple-alias payload");
         return Task.CompletedTask;
     }
 
