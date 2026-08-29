@@ -28,10 +28,6 @@ public partial class RpcGenerator
             selectorOnlyContractDefault: false);
         var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
 
-        // Compatibility/runtime publication is rooted only in Contracts owned by the current
-        // compilation. Referenced manifest-less [RpcContract] assemblies may still participate in
-        // static conflict analysis, but their payload graph is not part of this assembly's Codec
-        // ownership boundary and must not leak into either generated Codec table.
         var contractManifestCodecs = contractPolicyState.BuildContractManifestCodecs(contractPolicy.Codecs);
         var currentContractTypes = new HashSet<string>(
             contractManifestCodecs.Select(static codec => codec.TypeName),
@@ -43,13 +39,6 @@ public partial class RpcGenerator
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
 
-        // The global/default registry contains the normal generated graph. Contract-default models
-        // preserve registered selector-attribute Adapter choices while omitting explicit
-        // RpcCodecAdapter bindings and assembly routes. Contract-only custom [RpcCodec] selections
-        // are also excluded here because their explicit provenance belongs to the Contract assembly
-        // policy graph. Standalone [RpcSerializable] analysis still owns its historical explicit
-        // Adapter/direct/custom semantics, including definitions shared transitively with an RPC
-        // payload, so standalone models win matching TypeNames below.
         var standaloneTypes = new HashSet<string>(
             standalone.Codecs.Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
@@ -71,12 +60,6 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // Contract ownership is defined by explicit/route/custom selection provenance as well as the
-        // resulting definition delta. Provenance matters when an explicit binding intentionally
-        // selects the same definition that the default analysis would choose: it is still published
-        // Contract policy and must not become runtime-overridable merely because the definitions
-        // happen to compare equal. Native parents/dependencies are then pulled into the owner graph
-        // so the changed policy remains closed over its full generated dependency graph.
         var contractOwnedPolicyRoots = new HashSet<string>(
             contractPolicyState.ContractOwnedPolicyRoots.Where(currentContractTypes.Contains),
             StringComparer.Ordinal);
@@ -90,9 +73,6 @@ public partial class RpcGenerator
             currentContractPolicyCodecs,
             contractOwnedPolicyRoots);
 
-        // Explicit builtin bindings are authoritative only for payload types owned by the
-        // current Contract graph. Preserve standalone diagnostics for unrelated [RpcSerializable]
-        // graphs instead of suppressing them merely because the assembly owns some RPC Contract.
         var standaloneDiagnostics = standalone.Diagnostics.Where(diagnostic =>
             !IsBuiltinBindingOverride(diagnostic) ||
             !currentContractTypes.Contains(diagnostic.TypeName));
@@ -208,11 +188,6 @@ public partial class RpcGenerator
             .Where(codec => scopedTypes.Contains(codec.TypeName))
             .Select(codec =>
             {
-                // Explicit provenance can owner-scope a definition that is byte-for-byte identical
-                // to the intrinsic selector/default definition. In that case both manifest tables
-                // can reference the same generated factory: ownership comes from ContractCodecs,
-                // not from manufacturing a duplicate implementation type. A real definition delta
-                // still needs a distinct generated type because both versions coexist in one source.
                 if (defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) &&
                     HasSameCodecDefinition(defaultCodec, codec))
                 {
@@ -257,9 +232,6 @@ public partial class RpcGenerator
         if (implementsAdapter || implementsCodec)
             return diagnostic;
 
-        // Before direct Codec support, a plain class selected by RpcCodecAdapter meant "adapter that
-        // forgot registration". Preserve that diagnostic unless WireFormatId makes direct-Codec
-        // intent explicit.
         if (diagnostic.Location?.SourceTree is { } tree)
         {
             var source = tree.GetText(cancellationToken).ToString(diagnostic.Location.SourceSpan);
@@ -278,6 +250,8 @@ public partial class RpcGenerator
     {
         private readonly bool _selectorOnlyContractDefaults = false;
         private readonly HashSet<string> _contractOwnedPolicyRoots = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, ExplicitBindingCandidate> _canonicalAssemblyBindings = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, CustomCodecRegistration> _canonicalCustomCodecBindings = new(StringComparer.Ordinal);
 
         internal IReadOnlyCollection<string> ContractOwnedPolicyRoots => _contractOwnedPolicyRoots;
 
@@ -298,19 +272,233 @@ public partial class RpcGenerator
             CollectAdapterRegistrations();
             if (!selectorOnlyContractDefault)
             {
-                CollectAssemblyCustomCodecBindings();
-                if (_contractMode)
-                    CollectContractBuiltinCustomCodecBindings();
-                CollectAssemblyBindingsWithEnumSupport();
+                CollectCanonicalAssemblyCustomCodecBindings();
+                CollectCanonicalAssemblyBindingsWithEnumSupport();
                 AddCanonicalPolicyBindingAliases();
             }
             if (_contractMode && !selectorOnlyContractDefault)
                 CollectAssemblyRoutes();
         }
 
+        private static string GetCanonicalPolicyTargetIdentity(ITypeSymbol type)
+            => GetTypeName(type);
+
+        private static bool HasSameCanonicalPolicyTarget(ITypeSymbol left, ITypeSymbol right)
+            => string.Equals(
+                GetCanonicalPolicyTargetIdentity(left),
+                GetCanonicalPolicyTargetIdentity(right),
+                StringComparison.Ordinal);
+
+        private void CollectCanonicalAssemblyCustomCodecBindings()
+        {
+            foreach (var attribute in _compilation.Assembly.GetAttributes()
+                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute"))
+                         .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
+            {
+                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
+                if (attribute.ConstructorArguments.Length != 2 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                    attribute.ConstructorArguments[1].Value is not ITypeSymbol codec)
+                {
+                    Report(DtoDiagnosticKind.CustomCodecBindingInvalid, _compilation.Assembly,
+                        "assembly-level RpcCodec requires targetType and codecType", location);
+                    continue;
+                }
+                if (HasTypeParameter(target))
+                {
+                    Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target,
+                        "custom Codec target must be a closed type", location);
+                    continue;
+                }
+
+                target = NormalizeAdapterTarget(target);
+                if (IsNonOverridableBuiltin(target) &&
+                    !(_contractMode && HasNativeCodecRoute(_compilation.Assembly)))
+                {
+                    Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
+                        "built-in primitive Codecs cannot be rebound to a custom Codec", location);
+                    if (!_contractMode)
+                        continue;
+                }
+
+                AddCanonicalCustomCodecBinding(target, codec, location);
+            }
+        }
+
+        private void AddCanonicalCustomCodecBinding(ITypeSymbol target, ITypeSymbol codec, Location location)
+        {
+            var identity = GetCanonicalPolicyTargetIdentity(target);
+            if (_canonicalCustomCodecBindings.TryGetValue(identity, out var existing) &&
+                !SymbolEqualityComparer.Default.Equals(existing.CodecType, codec))
+            {
+                Report(DtoDiagnosticKind.CustomCodecSelectionConflict, target,
+                    "the target is explicitly bound to multiple custom Codec implementations", location);
+                return;
+            }
+
+            var registration = ValidateCustomCodecWithCanonicalTarget(codec, target, location);
+            if (registration is null)
+                return;
+
+            _customCodecBindings[target] = registration;
+            _canonicalCustomCodecBindings[identity] = registration;
+        }
+
+        private CustomCodecRegistration? ValidateCustomCodecWithCanonicalTarget(
+            ITypeSymbol codecType,
+            ITypeSymbol targetType,
+            Location location)
+        {
+            if (codecType is not INamedTypeSymbol named)
+            {
+                Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType,
+                    "custom Codec must be a closed, public sealed type", location);
+                return null;
+            }
+
+            if (HasTypeParameter(named) ||
+                !IsEffectivelyPublic(named) ||
+                !named.IsSealed ||
+                !named.InstanceConstructors.Any(static constructor =>
+                    constructor.DeclaredAccessibility == Accessibility.Public &&
+                    constructor.Parameters.Length == 0))
+            {
+                Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType,
+                    "custom Codec must be a public sealed type with a public parameterless constructor", location);
+                return null;
+            }
+
+            var implementsTargetCodec = named.AllInterfaces.Any(item =>
+                item.Name == "IRpcCodec" &&
+                item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
+                item is INamedTypeSymbol { IsGenericType: true } generic &&
+                generic.TypeArguments.Length == 1 &&
+                HasSameCanonicalPolicyTarget(generic.TypeArguments[0], targetType));
+            if (!implementsTargetCodec)
+            {
+                Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType,
+                    $"custom Codec must implement IRpcCodec<{GetTypeName(targetType)}>", location);
+                return null;
+            }
+
+            var codecIdentity = named.GetAttributes().FirstOrDefault(static attribute =>
+                IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecImplementationAttribute"));
+            if (codecIdentity is null ||
+                codecIdentity.ConstructorArguments.Length != 2 ||
+                codecIdentity.ConstructorArguments[0].Value is not string wireFormatId ||
+                codecIdentity.ConstructorArguments[1].Value is not string schemaId ||
+                !IsStableIdentity(wireFormatId) ||
+                !IsStableIdentity(schemaId))
+            {
+                Report(DtoDiagnosticKind.CustomCodecIdentityInvalid, codecType,
+                    "custom Codec must declare stable ASCII WireFormatId and SchemaId via [RpcCodecImplementation]", location);
+                return null;
+            }
+
+            return new CustomCodecRegistration(named, wireFormatId, schemaId, location);
+        }
+
+        private void CollectCanonicalAssemblyBindingsWithEnumSupport()
+        {
+            foreach (var attribute in _compilation.Assembly.GetAttributes()
+                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute")))
+            {
+                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
+                if (attribute.ConstructorArguments.Length != 2 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                    attribute.ConstructorArguments[1].Value is not INamedTypeSymbol implementation)
+                {
+                    Report(DtoDiagnosticKind.AdapterBindingInvalid, _compilation.Assembly,
+                        "assembly-level RpcCodecAdapter requires targetType and an adapter or direct Codec implementation type", location);
+                    continue;
+                }
+                if (HasTypeParameter(target))
+                {
+                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target,
+                        "Codec target must be a closed type", location);
+                    continue;
+                }
+
+                target = NormalizeAdapterTarget(target);
+                if (IsNonOverridableBuiltin(target) &&
+                    !IsEnumOrNullableEnum(target) &&
+                    !_contractMode)
+                {
+                    Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
+                        "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
+                    continue;
+                }
+
+                AddCanonicalAssemblyBinding(
+                    target,
+                    new ExplicitBindingCandidate(implementation, GetAttributeWireFormatId(attribute), location));
+            }
+        }
+
+        private void AddCanonicalAssemblyBinding(ITypeSymbol target, ExplicitBindingCandidate candidate)
+        {
+            var identity = GetCanonicalPolicyTargetIdentity(target);
+            if (_canonicalAssemblyBindings.TryGetValue(identity, out var existing))
+            {
+                if (!SymbolEqualityComparer.Default.Equals(existing.ImplementationType, candidate.ImplementationType) ||
+                    !string.Equals(existing.WireFormatId, candidate.WireFormatId, StringComparison.Ordinal))
+                {
+                    Report(DtoDiagnosticKind.AdapterSelectionConflict, target,
+                        "the target is explicitly bound to multiple different Codec implementations",
+                        candidate.Location);
+                    return;
+                }
+
+                _assemblyBindings[target] = existing;
+                return;
+            }
+
+            var storedCandidate = PrepareCanonicalDirectBinding(target, candidate);
+            _assemblyBindings[target] = storedCandidate;
+            _canonicalAssemblyBindings[identity] = storedCandidate;
+        }
+
+        private ExplicitBindingCandidate PrepareCanonicalDirectBinding(
+            ITypeSymbol target,
+            ExplicitBindingCandidate candidate)
+        {
+            if (ImplementsRpcCodecAdapter(candidate.ImplementationType) ||
+                candidate.WireFormatId is not { } wireFormatId ||
+                !IsStableIdentity(wireFormatId) ||
+                !IsCanonicalDirectCodecType(candidate.ImplementationType, target))
+            {
+                return candidate;
+            }
+
+            var registration = new AdapterRegistration(
+                candidate.ImplementationType,
+                AdapterId: null,
+                WireFormatId: wireFormatId,
+                SelectorType: null,
+                Location: candidate.Location,
+                IsDirectCodec: true);
+            _adaptersByType[candidate.ImplementationType] = registration;
+            return new ExplicitBindingCandidate(candidate.ImplementationType, WireFormatId: null, candidate.Location);
+        }
+
+        private static bool IsCanonicalDirectCodecType(INamedTypeSymbol type, ITypeSymbol target)
+            => IsEffectivelyPublic(type) &&
+               type.TypeKind == TypeKind.Class &&
+               type.IsSealed &&
+               !type.IsAbstract &&
+               !HasTypeParameter(type) &&
+               type.InstanceConstructors.Any(static constructor =>
+                   constructor.DeclaredAccessibility == Accessibility.Public &&
+                   constructor.Parameters.Length == 0) &&
+               type.AllInterfaces.Any(item =>
+                   item.Name == "IRpcCodec" &&
+                   item.Arity == 1 &&
+                   item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
+                   HasSameCanonicalPolicyTarget(item.TypeArguments[0], target));
+
         private void AddCanonicalPolicyBindingAliases()
         {
-            if (_assemblyBindings.Count == 0 && _customCodecBindings.Count == 0)
+            if (_canonicalAssemblyBindings.Count == 0 && _canonicalCustomCodecBindings.Count == 0)
                 return;
 
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
@@ -324,26 +512,17 @@ public partial class RpcGenerator
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
 
-            var adapterByIdentity = _assemblyBindings
-                .ToArray()
-                .GroupBy(static pair => GetTypeName(pair.Key), StringComparer.Ordinal)
-                .ToDictionary(static group => group.Key, static group => group.First().Value, StringComparer.Ordinal);
-            var customByIdentity = _customCodecBindings
-                .ToArray()
-                .GroupBy(static pair => GetTypeName(pair.Key), StringComparer.Ordinal)
-                .ToDictionary(static group => group.Key, static group => group.First().Value, StringComparer.Ordinal);
-
             foreach (var reachableType in reachable.Values)
             {
                 var lookupType = NormalizeAdapterTarget(reachableType);
-                var identity = GetTypeName(lookupType);
+                var identity = GetCanonicalPolicyTargetIdentity(lookupType);
                 if (!_assemblyBindings.ContainsKey(lookupType) &&
-                    adapterByIdentity.TryGetValue(identity, out var adapterBinding))
+                    _canonicalAssemblyBindings.TryGetValue(identity, out var adapterBinding))
                 {
                     _assemblyBindings[lookupType] = adapterBinding;
                 }
                 if (!_customCodecBindings.ContainsKey(lookupType) &&
-                    customByIdentity.TryGetValue(identity, out var customBinding))
+                    _canonicalCustomCodecBindings.TryGetValue(identity, out var customBinding))
                 {
                     _customCodecBindings[lookupType] = customBinding;
                 }
@@ -373,9 +552,6 @@ public partial class RpcGenerator
                 includeSerializable: false,
                 includeContracts: true);
 
-            // This structural index is only a symbol lookup table. Publication itself follows the
-            // final Codec graph below, so Custom/Adapter/Direct owners remain opaque and their CLR
-            // implementation members cannot become phantom compatibility or ownership nodes.
             var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
@@ -411,11 +587,6 @@ public partial class RpcGenerator
                 }
 
                 result.Add(typeName, implicitCodec);
-
-                // Native composite fast paths inline their element/key/value representations, so
-                // those child identities remain part of compatibility even though no provider
-                // lookup occurs. UnsafeBlit is opaque: its own schema describes the complete raw
-                // layout and must not recurse through CLR fields as independent Codec nodes.
                 if (implicitCodec.Kind == GeneratedCodecKind.Native &&
                     TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
                 {
@@ -437,10 +608,6 @@ public partial class RpcGenerator
             ITypeSymbol type,
             out GeneratedCodecModel codec)
         {
-            // Compatibility-only identities: the manifest records the implicit final selection
-            // (deterministic Native builtin path or unmanaged UnsafeBlit fallback) so a later
-            // explicit Adapter/Direct/Custom selection for the same closed type is detected as a
-            // wire break. These identities are never passed to the runtime Codec emitter.
             if (!IsBuiltin(type))
             {
                 codec = null!;
@@ -489,26 +656,20 @@ public partial class RpcGenerator
                nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
                !IsNonOverridableBuiltin(type);
 
-        private static string GetUnsafeBlitSchemaIdentity(ITypeSymbol type)
+        private string GetUnsafeBlitSchemaIdentity(ITypeSymbol type)
         {
             var builder = new StringBuilder("implicit-unsafe-blit");
             AppendUnsafeBlitLayout(type, builder, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default), 0);
             return builder.ToString();
         }
 
-        private static void AppendUnsafeBlitLayout(
+        private void AppendUnsafeBlitLayout(
             ITypeSymbol type,
             StringBuilder builder,
             HashSet<ITypeSymbol> stack,
             int depth)
         {
             builder.Append('|').Append(GetTypeName(type));
-            if (depth > MaximumDepth)
-            {
-                builder.Append("|depth-limit");
-                return;
-            }
-
             if (type.TypeKind == TypeKind.Enum &&
                 type is INamedTypeSymbol { EnumUnderlyingType: { } enumUnderlying })
             {
@@ -523,12 +684,22 @@ public partial class RpcGenerator
                 return;
             }
 
+            AppendReferencedMetadataIdentity(named, builder);
             AppendWireLayoutAttribute(builder, named, "System.Runtime.InteropServices.StructLayoutAttribute");
             AppendWireLayoutAttribute(builder, named, "System.Runtime.CompilerServices.InlineArrayAttribute");
 
             if (!stack.Add(type))
             {
                 builder.Append("|recursive");
+                return;
+            }
+
+            if (named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+                named.TypeArguments.Length == 1)
+            {
+                builder.Append("|nullable-underlying");
+                AppendUnsafeBlitLayout(named.TypeArguments[0], builder, stack, depth + 1);
+                stack.Remove(type);
                 return;
             }
 
@@ -555,6 +726,45 @@ public partial class RpcGenerator
             }
 
             stack.Remove(type);
+        }
+
+        private void AppendReferencedMetadataIdentity(INamedTypeSymbol type, StringBuilder builder)
+        {
+            var owner = type.ContainingAssembly;
+            if (owner is null || SymbolEqualityComparer.Default.Equals(owner, _compilation.Assembly))
+                return;
+
+            foreach (var reference in _compilation.References)
+            {
+                var symbol = _compilation.GetAssemblyOrModuleSymbol(reference);
+                var referencedAssembly = symbol switch
+                {
+                    IAssemblySymbol assembly => assembly,
+                    IModuleSymbol module => module.ContainingAssembly,
+                    _ => null
+                };
+                if (referencedAssembly is null ||
+                    !SymbolEqualityComparer.Default.Equals(referencedAssembly, owner) ||
+                    reference is not PortableExecutableReference portable)
+                {
+                    continue;
+                }
+
+                builder.Append("|metadata-owner:").Append(owner.Identity).Append('|');
+                var metadata = portable.GetMetadata();
+                if (metadata is AssemblyMetadata assemblyMetadata)
+                {
+                    foreach (var module in assemblyMetadata.GetModules())
+                        builder.Append(module.GetModuleVersionId().ToString("D")).Append(';');
+                }
+                else if (metadata is ModuleMetadata moduleMetadata)
+                {
+                    builder.Append(moduleMetadata.GetModuleVersionId().ToString("D"));
+                }
+                return;
+            }
+
+            builder.Append("|metadata-owner-unresolved:").Append(owner.Identity);
         }
 
         private static void AppendWireLayoutAttribute(
