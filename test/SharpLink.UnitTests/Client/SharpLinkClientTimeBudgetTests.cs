@@ -202,6 +202,14 @@ public class SharpLinkClientTimeBudgetTests
         var streams = new ProbeClientStreams(probe);
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
+
+        // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
+        // Advancing the manual clock from the target Request's output-buffer acquisition makes
+        // the send pump arbitrate expiry at the real emission boundary without racing registration.
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
+        transport.Connection.RunOnNextOutputBufferRequest(
+            () => timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
         var invocation = channel.InvokeClientStreamingAsync(
             method,
             in request,
@@ -210,12 +218,6 @@ public class SharpLinkClientTimeBudgetTests
             in streams,
             metadata: null,
             cancellationToken: default).AsTask();
-
-        // Advance past the monotonic boundary without running the pending-call timer. The explicit
-        // flush then makes the send pump arbitrate expiry at the real emission boundary.
-        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
 
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
