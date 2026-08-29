@@ -302,9 +302,52 @@ public partial class RpcGenerator
                 if (_contractMode)
                     CollectContractBuiltinCustomCodecBindings();
                 CollectAssemblyBindingsWithEnumSupport();
+                AddCanonicalPolicyBindingAliases();
             }
             if (_contractMode && !selectorOnlyContractDefault)
                 CollectAssemblyRoutes();
+        }
+
+        private void AddCanonicalPolicyBindingAliases()
+        {
+            if (_assemblyBindings.Count == 0 && _customCodecBindings.Count == 0)
+                return;
+
+            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            CollectCurrentAssemblyRoots(
+                _compilation.Assembly.GlobalNamespace,
+                roots,
+                includeSerializable: !_contractMode,
+                includeContracts: _contractMode);
+            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+            foreach (var root in roots.Values)
+                CollectFinalBindingTypes(root, reachable, seen, 0);
+
+            var adapterByIdentity = _assemblyBindings
+                .ToArray()
+                .GroupBy(static pair => GetTypeName(pair.Key), StringComparer.Ordinal)
+                .ToDictionary(static group => group.Key, static group => group.First().Value, StringComparer.Ordinal);
+            var customByIdentity = _customCodecBindings
+                .ToArray()
+                .GroupBy(static pair => GetTypeName(pair.Key), StringComparer.Ordinal)
+                .ToDictionary(static group => group.Key, static group => group.First().Value, StringComparer.Ordinal);
+
+            foreach (var reachableType in reachable.Values)
+            {
+                var lookupType = NormalizeAdapterTarget(reachableType);
+                var identity = GetTypeName(lookupType);
+                if (!_assemblyBindings.ContainsKey(lookupType) &&
+                    adapterByIdentity.TryGetValue(identity, out var adapterBinding))
+                {
+                    _assemblyBindings[lookupType] = adapterBinding;
+                }
+                if (!_customCodecBindings.ContainsKey(lookupType) &&
+                    customByIdentity.TryGetValue(identity, out var customBinding))
+                {
+                    _customCodecBindings[lookupType] = customBinding;
+                }
+            }
         }
 
         internal DtoAnalysisPassResult AnalyzeWithFinalCodecBindings()
@@ -405,9 +448,11 @@ public partial class RpcGenerator
             }
 
             var typeName = GetTypeName(type);
-            var kind = IsNativeCodecType(type)
-                ? GeneratedCodecKind.Native
-                : GeneratedCodecKind.UnsafeBlit;
+            var kind = IsImplicitUnsafeBlitNullable(type)
+                ? GeneratedCodecKind.UnsafeBlit
+                : IsNativeCodecType(type)
+                    ? GeneratedCodecKind.Native
+                    : GeneratedCodecKind.UnsafeBlit;
             var schemaIdentity = kind == GeneratedCodecKind.Native
                 ? "implicit-native"
                 : GetUnsafeBlitSchemaIdentity(type);
@@ -437,6 +482,12 @@ public partial class RpcGenerator
                 type.Locations.FirstOrDefault());
             return true;
         }
+
+        private static bool IsImplicitUnsafeBlitNullable(ITypeSymbol type)
+            => type.IsUnmanagedType &&
+               type is INamedTypeSymbol nullable &&
+               nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+               !IsNonOverridableBuiltin(type);
 
         private static string GetUnsafeBlitSchemaIdentity(ITypeSymbol type)
         {
@@ -489,7 +540,15 @@ public partial class RpcGenerator
             for (var index = 0; index < fields.Length; index++)
             {
                 var field = fields[index];
-                builder.Append("|field:").Append(index.ToString(InvariantCulture));
+                builder.Append("|field:")
+                    .Append(index.ToString(InvariantCulture))
+                    .Append(':')
+                    .Append(field.Name);
+                if (field.IsFixedSizeBuffer)
+                {
+                    builder.Append("|fixed-buffer:")
+                        .Append(field.FixedSize.ToString(InvariantCulture));
+                }
                 AppendWireLayoutAttribute(builder, field, "System.Runtime.InteropServices.FieldOffsetAttribute");
                 AppendWireLayoutAttribute(builder, field, "System.Runtime.CompilerServices.FixedBufferAttribute");
                 AppendUnsafeBlitLayout(field.Type, builder, stack, depth + 1);
