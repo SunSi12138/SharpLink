@@ -150,7 +150,7 @@ public interface IMetadataPayloadContract : IService
     }
 
     [Test]
-    public Task ExplicitBuiltinElementBindingShouldOwnBuiltinCompositePaths()
+    public Task FrameworkPrimitiveElementBindingShouldBeRejectedWithoutChangingCompositeDefaults()
     {
         var source = AddAssemblyAttributes(BuildSource("""
 [SharpLink.Sdk.RpcContract]
@@ -173,22 +173,11 @@ public sealed class CompositeIntAdapter : SharpLink.Abstractions.IRpcCodecAdapte
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(CompositeIntAdapter))]");
 
         var diagnostics = RunGenerator(source);
-        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK049"),
-            "Contract-owned explicit builtin element binding must remain legal without a Native route");
+        Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK049"),
+            "framework primitive int must reject explicit rebinding even when used inside configurable composites");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(CountOccurrences(generated, "__elementCodec = provider.GetCodec<int>();") >= 3,
-            "array, List, and Nullable composites must delegate to the owner-selected int Codec");
-
-        var json = RunContractGenerator(source).Json;
-        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
-        var kinds = root["codecs"]!.AsArray()
-            .Select(static item => item!["kind"]!.GetValue<string>())
-            .ToArray();
-        Ensure(kinds.Contains("Adapter", StringComparer.Ordinal) &&
-               kinds.Contains("Array", StringComparer.Ordinal) &&
-               kinds.Contains("List", StringComparer.Ordinal) &&
-               kinds.Contains("Nullable", StringComparer.Ordinal),
-            "the final Contract graph must materialize provider-driven composite Codecs around an explicitly bound builtin element");
+        Ensure(!generated.Contains("composite-int-wire/v1\";", StringComparison.Ordinal),
+            "the rejected primitive binding must not enter array/List/Nullable Codec graphs");
         return Task.CompletedTask;
     }
 
