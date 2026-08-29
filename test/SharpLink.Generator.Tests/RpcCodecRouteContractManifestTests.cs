@@ -7,7 +7,7 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task NativeRouteOnFixedRequestShouldAdvertiseLengthDelimitedOuterFraming()
+    public Task RouteShouldNotChangeFrameworkPrimitiveRequestFraming()
     {
         const string contract = """
 [SharpLink.Sdk.RpcContract]
@@ -19,37 +19,36 @@ public interface IFixedRouteContract : SharpLink.Sdk.IService
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "route.fixed-framing/v1";
-    public override string WireFormatId => "sharplink-native/v1";
+    public override string WireFormatId => "route-fixed/v1";
 }
 """;
         const string registration =
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.fixed-framing/v1\", \"sharplink-native/v1\")]";
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.fixed-framing/v1\", \"route-fixed/v1\")]";
         var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
         var routedSource = AddAssemblyAttributes(
             BuildRouteSource(contract),
             registration,
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(RouteAdapter))]");
 
         var baseline = RunContractGenerator(baselineSource);
         var routed = RunContractGenerator(routedSource);
         var baselineRequest = GetFirstRequestValue(baseline.Json);
         var routedRequest = GetFirstRequestValue(routed.Json);
 
-        Ensure(baselineRequest["wireType"]!.GetValue<string>() == "Fixed4",
-            "an unrouted int request must retain the inline Fixed4 field path");
-        Ensure(routedRequest["wireType"]!.GetValue<string>() == "LengthDelimited",
-            "a routed int request must advertise the generated length-delimited field path");
+        Ensure(baselineRequest["wireType"]!.GetValue<string>() == "Fixed4" &&
+               routedRequest["wireType"]!.GetValue<string>() == "Fixed4",
+            "framework primitive int must retain the fixed SharpLink framing even under an All route");
         Ensure(routedRequest["wireFormatId"]!.GetValue<string>() == "sharplink-native/v1",
-            "the regression must keep the inner wire-format identity stable so framing is the detected break");
+            "framework primitive int must retain the fixed SharpLink wire identity");
 
         var compared = RunContractGenerator(routedSource, baseline.Json);
-        Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            $"adding a Native route to a fixed request must be a baseline wire break. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+        Ensure(!compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"adding a route must not mutate a framework primitive wire contract. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task EnumRequestFramingShouldFollowItsFinalCodecSelection()
+    public Task RouteShouldNotChangeFrameworkEnumRequestFraming()
     {
         const string contract = """
 public enum RouteState : int
@@ -66,36 +65,30 @@ public interface IEnumRouteContract : SharpLink.Sdk.IService
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "route.enum-framing/v1";
-    public override string WireFormatId => "sharplink-native/v1";
+    public override string WireFormatId => "route-enum/v1";
 }
 """;
         const string registration =
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.enum-framing/v1\", \"sharplink-native/v1\")]";
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.enum-framing/v1\", \"route-enum/v1\")]";
         var baselineSource = AddAssemblyAttributes(BuildRouteSource(contract), registration);
-        var nativeSource = AddAssemblyAttributes(
+        var routedSource = AddAssemblyAttributes(
             BuildRouteSource(contract),
             registration,
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
-        var unmanagedOnlySource = AddAssemblyAttributes(
-            BuildRouteSource(contract),
-            registration,
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Unmanaged, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(RouteAdapter))]");
 
         var baselineRequest = GetFirstRequestValue(RunContractGenerator(baselineSource).Json);
-        var nativeRequest = GetFirstRequestValue(RunContractGenerator(nativeSource).Json);
-        var unmanagedOnlyRequest = GetFirstRequestValue(RunContractGenerator(unmanagedOnlySource).Json);
+        var routedRequest = GetFirstRequestValue(RunContractGenerator(routedSource).Json);
 
-        Ensure(baselineRequest["wireType"]!.GetValue<string>() == "Fixed4",
-            "an unrouted enum request must retain its underlying Fixed4 field path");
-        Ensure(nativeRequest["wireType"]!.GetValue<string>() == "LengthDelimited",
-            "an enum selected by the Native route must use its final Codec and length-delimited framing");
-        Ensure(unmanagedOnlyRequest["wireType"]!.GetValue<string>() == "Fixed4",
-            "an unrelated Unmanaged route must not disable inline framing for a generated Native enum");
+        Ensure(baselineRequest["wireType"]!.GetValue<string>() == "Fixed4" &&
+               routedRequest["wireType"]!.GetValue<string>() == "Fixed4",
+            "framework enum must retain its fixed SharpLink framing under an All route");
+        Ensure(routedRequest["wireFormatId"]!.GetValue<string>() == "sharplink-native/v1",
+            "framework enum must retain the fixed SharpLink wire identity");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task NativeRouteOnDtoShouldBeWireBreakWhenWireFormatIdIsUnchanged()
+    public Task ManagedRouteOnDtoShouldBeWireBreakWhenWireFormatIdIsUnchanged()
     {
         const string contract = """
 public sealed class Payload
@@ -121,20 +114,20 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         var routedSource = AddAssemblyAttributes(
             BuildRouteSource(contract),
             registration,
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var baseline = RunContractGenerator(baselineSource);
         var compared = RunContractGenerator(routedSource, baseline.Json);
         Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            $"changing a direct payload from native DTO to routed adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+            $"changing a configurable DTO from generated Codec to routed Adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task NativeRouteOnCollectionShouldBeWireBreakWhenWireFormatIdIsUnchanged()
+    public Task ManagedRouteOnCollectionShouldBeWireBreakWhenWireFormatIdIsUnchanged()
     {
         const string contract = """
-public sealed class NativeItem
+public sealed class ManagedItem
 {
     public int Value { get; set; }
 }
@@ -142,8 +135,8 @@ public sealed class NativeItem
 [SharpLink.Sdk.RpcContract]
 public interface ICollectionRouteContract : SharpLink.Sdk.IService
 {
-    ValueTask<System.Collections.Generic.List<NativeItem>> Echo(
-        System.Collections.Generic.List<NativeItem> value,
+    ValueTask<System.Collections.Generic.List<ManagedItem>> Echo(
+        System.Collections.Generic.List<ManagedItem> value,
         CancellationToken cancellationToken);
 }
 
@@ -159,12 +152,12 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         var routedSource = AddAssemblyAttributes(
             BuildRouteSource(contract),
             registration,
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var baseline = RunContractGenerator(baselineSource);
         var compared = RunContractGenerator(routedSource, baseline.Json);
         Ensure(compared.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            $"changing a direct collection from native generated List Codec to a routed Adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+            $"changing a configurable List Codec to a routed Adapter must be a wire break even with the same WireFormatId. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
@@ -276,7 +269,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
     public Task LegacyCollectionBaselineWithoutCodecKindShouldRequireRegeneration()
     {
         const string contract = """
-public sealed class NativeItem
+public sealed class ManagedItem
 {
     public int Value { get; set; }
 }
@@ -284,8 +277,8 @@ public sealed class NativeItem
 [SharpLink.Sdk.RpcContract]
 public interface ILegacyCollectionContract : SharpLink.Sdk.IService
 {
-    ValueTask<System.Collections.Generic.List<NativeItem>> Echo(
-        System.Collections.Generic.List<NativeItem> value,
+    ValueTask<System.Collections.Generic.List<ManagedItem>> Echo(
+        System.Collections.Generic.List<ManagedItem> value,
         CancellationToken cancellationToken);
 }
 
@@ -301,7 +294,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         var routedSource = AddAssemblyAttributes(
             BuildRouteSource(contract),
             registration,
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var baselineNode = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(baselineSource).Json)!.AsObject();
         baselineNode["version"] = 1;
