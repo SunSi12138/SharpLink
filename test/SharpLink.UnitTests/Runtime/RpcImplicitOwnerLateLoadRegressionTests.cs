@@ -44,7 +44,7 @@ public sealed class RpcImplicitOwnerLateLoadRegressionTests
 
     private struct ImplicitRaw
     {
-        public int Value;
+        public int Value { get; set; }
     }
 
     private sealed class ContextOverrideCodec : IRpcCodec<ImplicitRaw>
