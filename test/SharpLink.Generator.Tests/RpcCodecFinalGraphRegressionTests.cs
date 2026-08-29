@@ -75,7 +75,7 @@ public sealed class StandaloneIntAdapter : SharpLink.Abstractions.IRpcCodecAdapt
 
         var diagnostics = RunGenerator(source);
         Ensure(diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK049") == 1,
-            "owning an unrelated RPC Contract must not suppress a standalone builtin override diagnostic");
+            "owning an unrelated RPC Contract must not suppress a framework primitive override diagnostic");
         return Task.CompletedTask;
     }
 
@@ -124,35 +124,29 @@ public interface ILocalValidContract : IService
     }
 
     [Test]
-    public Task CustomEnumUnderlyingChangeShouldNotChangeSelectedCodecWireIdentity()
+    public Task FrameworkEnumUnderlyingChangeShouldRemainACompatibilityBreak()
     {
-        static string ContractSource(string underlyingType) => AddAssemblyAttribute(BuildSource($$"""
-public enum StableCustomEnum : {{underlyingType}}
+        static string ContractSource(string underlyingType) => BuildSource($$"""
+public enum StableEnum : {{underlyingType}}
 {
     Zero,
     One
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("stable-enum-wire/v1", "stable-enum-schema/v1")]
-public sealed class StableCustomEnumCodec : SharpLink.Abstractions.IRpcCodec<StableCustomEnum>
-{
-}
-
 [SharpLink.Sdk.RpcContract]
 public interface IStableEnumContract : SharpLink.Sdk.IService
 {
-    ValueTask<StableCustomEnum> Echo(StableCustomEnum value, CancellationToken cancellationToken);
+    ValueTask<StableEnum> Echo(StableEnum value, CancellationToken cancellationToken);
 }
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodec(typeof(StableCustomEnum), typeof(StableCustomEnumCodec))]");
+""");
 
         var baseline = RunContractGenerator(ContractSource("int")).Json;
         var changed = RunContractGenerator(ContractSource("long"), baseline);
 
-        Ensure(changed.Diagnostics.All(static diagnostic => diagnostic.Id != "SHARPLINK032"),
-            "once a custom Codec is the final binding, changing the CLR enum underlying type must not manufacture a Native wire-type compatibility change");
-        Ensure(!baseline.Contains("\"underlyingType\"", StringComparison.Ordinal),
-            "a custom-codec-owned enum must not publish Native enum-underlying metadata into the Contract manifest");
+        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK032"),
+            "framework enum underlying type is part of SharpLink's fixed wire semantic and must remain a compatibility break");
+        Ensure(baseline.Contains("\"underlyingType\"", StringComparison.Ordinal),
+            "framework enum compatibility metadata must retain the native underlying type");
         return Task.CompletedTask;
     }
 }
