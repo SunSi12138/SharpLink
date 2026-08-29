@@ -35,17 +35,15 @@ public partial class RpcGenerator
         var currentContractPolicyCodecs = contractPolicy.Codecs
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
+        var contractOwnedPolicyRoots = new HashSet<string>(
+            contractPolicyState.ContractOwnedPolicyRoots.Where(currentContractTypes.Contains),
+            StringComparer.Ordinal);
 
         var standaloneTypes = new HashSet<string>(
             standalone.Codecs.Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
-        var contractCustomTypes = new HashSet<string>(
-            currentContractPolicyCodecs
-                .Where(static codec => codec.Kind == GeneratedCodecKind.Custom)
-                .Select(static codec => codec.TypeName),
-            StringComparer.Ordinal);
         var globalExcludedTypes = new HashSet<string>(
-            contractCustomTypes.Where(type => !standaloneTypes.Contains(type)),
+            contractOwnedPolicyRoots.Where(type => !standaloneTypes.Contains(type)),
             StringComparer.Ordinal);
         ExpandReverseCodecDependencyClosure(currentContractDefaultCodecs, globalExcludedTypes);
         var globalByType = currentContractDefaultCodecs
@@ -57,14 +55,6 @@ public partial class RpcGenerator
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        var contractOwnedPolicyRoots = new HashSet<string>(
-            contractPolicyState.ContractOwnedPolicyRoots.Where(currentContractTypes.Contains),
-            StringComparer.Ordinal);
-        foreach (var codec in currentContractPolicyCodecs)
-        {
-            if (codec.Kind == GeneratedCodecKind.Custom)
-                contractOwnedPolicyRoots.Add(codec.TypeName);
-        }
         var contractCodecs = SelectOwnedContractCodecs(
             currentContractDefaultCodecs,
             currentContractPolicyCodecs,
@@ -316,6 +306,8 @@ public partial class RpcGenerator
 
             _customCodecBindings[target] = registration;
             _canonicalCustomCodecBindings[identity] = registration;
+            if (_contractMode)
+                _contractOwnedPolicyRoots.Add(identity);
         }
 
         private CustomCodecRegistration? ValidateCustomCodecWithCanonicalTarget(
