@@ -16,7 +16,7 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 内置 Codec 覆盖常用 primitive、enum、string、时间/标识类型、数组、List、Memory、nullable、tuple、受支持不可变集合和由 `[RpcSerializable]`/`[RpcMember]` 描述的 DTO。编码有明确 null 标记、长度上限和完整消费检查；尾随字节、非法 UTF-8、非规范整数或 required/nullability 违反会作为 `DataLoss`。
 
-其中一小组类型属于 **Framework wire primitive**：SharpLink 直接定义并拥有其固定 wire semantic，因此它们不是可配置 Codec policy surface。当前包括 primitive numerics、`bool`、`char`、`string`、`Guid`、SharpLink 明确定义固定 wire semantic 的时间/标识 scalar、enum，以及作为 protocol bytes primitive 的 `byte[]`。这些类型不能通过 `RpcCodec`、`RpcCodecAdapter`、direct Codec 或 `RpcCodecRoute` 重绑定。
+其中一小组类型属于 **Framework wire primitive**：SharpLink 直接定义并拥有其固定 wire semantic，因此它们不是可配置 Codec policy surface。当前包括 primitive numerics、`bool`、`char`、`string`、`Guid`、SharpLink 明确定义固定 wire semantic 的时间/标识 scalar、enum，以及作为 protocol bytes primitive 的 `byte[]`。这些类型不能通过 `RpcCodec`、`RpcCodecAdapter` 或 `RpcCodecRoute` 重绑定。
 
 普通 `T[]`（`byte[]` 除外）、`List<T>`、`Dictionary<K,V>`、Tuple/ValueTuple、DTO/record 和普通 user struct/class 不属于 Framework wire primitive。它们即使默认实现使用 generated/native/blit fast path，也仍然是 configurable payload type。换言之：**fast path != primitive != policy immutability**。
 
@@ -31,14 +31,19 @@ DTO 演进规则：
 
 ## 自定义 Codec
 
-Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，可以在 Contract assembly 上声明精确类型绑定：
+Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定；Codec 自身用 `RpcCodecImplementation` 声明稳定 wire/schema identity：
 
 ```csharp
-[assembly: RpcCodecAdapter(
-    typeof(MyType),
-    typeof(MyTypeCodec),
-    WireFormatId = "my-type/v1")]
+[assembly: RpcCodec(typeof(MyType), typeof(MyTypeCodec))]
+
+[RpcCodecImplementation("my-type/v1", "my-type-schema/v1")]
+public sealed class MyTypeCodec : IRpcCodec<MyType>
+{
+    // ...
+}
 ```
+
+`RpcCodecAdapter` 只用于精确选择一个已注册的 `IRpcCodecAdapter`；`RpcCodecRoute` 只用于按 `Managed` / `Unmanaged` scope 批量选择 Adapter。不存在另一条通过 `RpcCodecAdapter(... WireFormatId = ...)` 绑定手写 `IRpcCodec<T>` 的 Direct API。
 
 `IRpcCodec<T>` 必须完整写出一个值，并从完整 payload 解码。对端输入不合法时抛出带具体 code 的 `SharpLinkException`，通常是 `DataLoss`；不要把协议输入错误包装成 `Internal`。Codec 不能保留框架提供的输入序列或输出 writer。
 
