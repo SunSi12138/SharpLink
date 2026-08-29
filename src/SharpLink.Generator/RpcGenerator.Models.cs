@@ -149,7 +149,6 @@ internal enum StaticRouteConflictKind
 internal enum GeneratedCodecKind
 {
     Adapter,
-    Direct,
     Dto,
     Array,
     List,
