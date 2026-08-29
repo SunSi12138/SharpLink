@@ -44,8 +44,6 @@ public partial class RpcGenerator
                 AppendAdapterCodecFactory(sb, codec);
             else if (codec.Kind == GeneratedCodecKind.Custom)
                 AppendCustomCodecFactory(sb, codec);
-            else if (codec.Kind == GeneratedCodecKind.Direct)
-                AppendDirectCodecFactory(sb, codec);
             else if (codec.Kind == GeneratedCodecKind.Dto)
                 AppendDtoCodec(sb, codec);
             else
@@ -64,11 +62,14 @@ public partial class RpcGenerator
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
         sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
         sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
+        sb.AppendLine("        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Custom;");
         sb.AppendLine("        public string? AdapterId => null;");
         sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
         sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
         sb.AppendLine("        {");
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
+        sb.AppendLine("            if (adapterScope is not null)");
+        sb.AppendLine("                throw new ArgumentException(\"Custom Codec factories do not accept an adapter scope.\", nameof(adapterScope));");
         sb.AppendLine($"            return new {model.CustomCodecType}();");
         sb.AppendLine("        }");
         sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
@@ -116,31 +117,6 @@ public partial class RpcGenerator
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(adapterScope);");
         sb.AppendLine($"            return adapterScope.CreateCodec<{model.TypeName}>();");
-        sb.AppendLine("        }");
-        sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
-        sb.AppendLine();
-    }
-
-    private static void AppendDirectCodecFactory(StringBuilder sb, GeneratedCodecModel model)
-    {
-        sb.AppendLine($"internal static class {model.CodecName}");
-        sb.AppendLine("{");
-        sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
-        sb.AppendLine("    {");
-        sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
-        sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
-        sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
-        sb.AppendLine("        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Direct;");
-        sb.AppendLine("        public string? AdapterId => null;");
-        sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
-        sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
-        sb.AppendLine("            if (adapterScope is not null)");
-        sb.AppendLine("                throw new ArgumentException(\"Direct Codec factories do not accept an adapter scope.\", nameof(adapterScope));");
-        sb.AppendLine($"            return new {model.AdapterType}();");
         sb.AppendLine("        }");
         sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
         sb.AppendLine("    }");
@@ -394,7 +370,7 @@ public partial class RpcGenerator
             var complexIndex = complexIndexes[member.Name];
             sb.AppendLine($"            var __nestedSize_{complexIndex} = 0;");
             sb.AppendLine(
-                $"            if (__codec_{complexIndex} is IRpcSizedCodec<{member.TypeName}> __sized_{complexIndex} && __sized_{complexIndex}.CanExactSize)");
+                $"            if (__codec_{complexIndex} is IRpcSizedCodec<{member.TypeName}> __sized_{complexIndex} && __sizedCodec_{complexIndex}.CanExactSize");
             sb.AppendLine("            {");
             sb.AppendLine(
                 $"                if (!__sized_{complexIndex}.TryGetEncodedSize(__complex_{memberIndex}, out __nestedSize_{complexIndex}))");
