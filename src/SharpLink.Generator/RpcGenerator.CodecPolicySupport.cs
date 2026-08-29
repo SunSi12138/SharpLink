@@ -15,6 +15,13 @@ public partial class RpcGenerator
         if (type.TypeKind == TypeKind.Enum || type.SpecialType == SpecialType.System_String)
             return true;
 
+        if (type is INamedTypeSymbol nullable &&
+            nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+            nullable.TypeArguments.Length == 1)
+        {
+            return IsFrameworkWirePrimitive(nullable.TypeArguments[0]);
+        }
+
         if (type is IArrayTypeSymbol
             {
                 Rank: 1,
