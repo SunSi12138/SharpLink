@@ -4,8 +4,7 @@ public partial class RpcGenerator
 {
     private const int RpcCodecScopeManaged = 1 << 0;
     private const int RpcCodecScopeUnmanaged = 1 << 1;
-    private const int RpcCodecScopeNative = 1 << 2;
-    private const int RpcCodecScopeAll = RpcCodecScopeManaged | RpcCodecScopeUnmanaged | RpcCodecScopeNative;
+    private const int RpcCodecScopeAll = RpcCodecScopeManaged | RpcCodecScopeUnmanaged;
 
     private static bool HasGeneratedAssemblyManifest(IAssemblySymbol assembly)
         => assembly.GetAttributes().Any(static attribute =>
@@ -14,22 +13,7 @@ public partial class RpcGenerator
                 GeneratedAssemblyManifestAttributeMetadataName,
                 StringComparison.Ordinal));
 
-    private static bool HasNativeCodecRoute(IAssemblySymbol assembly)
-    {
-        foreach (var attribute in assembly.GetAttributes())
-        {
-            if (!TryGetCodecRoute(attribute, out var scope, out _) ||
-                scope <= 0 || (scope & ~RpcCodecScopeAll) != 0)
-            {
-                continue;
-            }
-
-            if ((scope & RpcCodecScopeNative) != 0)
-                return true;
-        }
-
-        return false;
-    }
+    private static bool HasNativeCodecRoute(IAssemblySymbol assembly) => false;
 
     private static bool TryGetCodecRoute(
         AttributeData attribute,
@@ -79,7 +63,7 @@ public partial class RpcGenerator
                     Report(
                         DtoDiagnosticKind.AdapterBindingInvalid,
                         _compilation.Assembly,
-                        $"RpcCodecRoute scope value '{scope}' must be a non-empty combination of Managed, Unmanaged, and Native",
+                        $"RpcCodecRoute scope value '{scope}' must be a non-empty combination of Managed and Unmanaged",
                         location);
                     continue;
                 }
@@ -92,7 +76,6 @@ public partial class RpcGenerator
         {
             AddRouteBit(RpcCodecScopeManaged, "Managed");
             AddRouteBit(RpcCodecScopeUnmanaged, "Unmanaged");
-            AddRouteBit(RpcCodecScopeNative, "Native");
 
             void AddRouteBit(int bit, string name)
             {
@@ -118,11 +101,15 @@ public partial class RpcGenerator
 
         private bool TrySelectContractCodecOverride(ITypeSymbol type, out AdapterRegistration? selected)
         {
+            selected = null;
+            if (IsFrameworkWirePrimitive(type))
+                return false;
+
             if (_selectorOnlyContractDefaults)
                 return TrySelectSelectorAdapter(type, out selected);
 
-            // Contract assembly compilation has one deterministic precedence entrypoint:
-            // explicit per-type Codec/Adapter selection > assembly route > SharpLink default generation.
+            // Contract assembly compilation has one deterministic precedence entrypoint for the
+            // configurable policy surface. Framework wire primitives are fixed before this point.
             if (TrySelectAdapter(type, out selected))
             {
                 if (selected is not null && HasExplicitContractBinding(type))
@@ -232,16 +219,17 @@ public partial class RpcGenerator
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
                 adapter.WireFormatId,
-                // Adapter/direct implementation binaries are normal runtime references, not
-                // generated-manifest module dependencies. Only payload ownership contributes here.
                 GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
         }
 
         private bool IsRouteEligible(ITypeSymbol type)
         {
-            if (_assemblyRoutes.Count == 0 && _conflictingRouteScopes.Count == 0)
+            if (IsFrameworkWirePrimitive(type) ||
+                (_assemblyRoutes.Count == 0 && _conflictingRouteScopes.Count == 0))
+            {
                 return false;
+            }
 
             if (_routeEligibleTypes is null)
             {
@@ -308,12 +296,8 @@ public partial class RpcGenerator
                 CollectRouteEligibleTypes(GetMemberType(member), eligible, depth + 1);
         }
 
-        private int ClassifyCodecScope(ITypeSymbol type)
-        {
-            if (IsNativeCodecType(type))
-                return RpcCodecScopeNative;
-            return type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
-        }
+        private static int ClassifyCodecScope(ITypeSymbol type)
+            => type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
 
         private bool IsNativeCodecType(ITypeSymbol type)
             => IsNativeCodecType(type, [], 0, type);
@@ -443,6 +427,8 @@ public partial class RpcGenerator
                 return false;
             }
 
+            if (IsFrameworkWirePrimitive(type))
+                return true;
             if (HasResolvableCustomCodec(type) || HasResolvableExplicitAdapter(type))
                 return true;
             if (IsNativeCodecType(type, stack, depth, blockedRouteType) || type.IsUnmanagedType)
