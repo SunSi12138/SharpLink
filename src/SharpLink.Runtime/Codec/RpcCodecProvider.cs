@@ -450,11 +450,11 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                 }
                 return;
 
-            case RpcGeneratedCodecFactoryKind.Direct:
+            case RpcGeneratedCodecFactoryKind.Custom:
                 if (factory.AdapterId is not null || factory.Adapter is not null)
                 {
                     throw new InvalidOperationException(
-                        $"Direct Codec factory for '{factory.TargetType.FullName}' cannot declare adapter metadata.");
+                        $"Custom Codec factory for '{factory.TargetType.FullName}' cannot declare adapter metadata.");
                 }
                 return;
 
