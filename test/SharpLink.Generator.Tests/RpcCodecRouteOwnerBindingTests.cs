@@ -10,12 +10,17 @@ public partial class RpcAnalyzerTests
     public Task RoutedCodecsShouldBeOwnerBoundAcrossProxyStubAndStreams()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
+public sealed class OwnerValue
+{
+    public int Value { get; set; }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IOwnerRouteContract : SharpLink.Sdk.IService
 {
-    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
-    System.Collections.Generic.IAsyncEnumerable<int> Stream(CancellationToken cancellationToken);
-    ValueTask<int> Sum(System.Collections.Generic.IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+    ValueTask<OwnerValue> Echo(OwnerValue value, CancellationToken cancellationToken);
+    System.Collections.Generic.IAsyncEnumerable<OwnerValue> Stream(CancellationToken cancellationToken);
+    ValueTask<OwnerValue> Sum(System.Collections.Generic.IAsyncEnumerable<OwnerValue> values, CancellationToken cancellationToken);
 }
 
 public sealed class RouteAdapter : TestRouteAdapterBase
@@ -25,7 +30,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.owner/v1\", \"route-owner-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("ContractCodecs => __readOnlyContractCodecs", StringComparison.Ordinal),
@@ -51,10 +56,15 @@ public sealed class RouteAdapter : TestRouteAdapterBase
     public Task GeneratedRoutedProxyShouldRequireContractAwareCustomRuntimeResolution()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
+public sealed class CustomRuntimeValue
+{
+    public int Value { get; set; }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface ICustomRuntimeRouteContract : SharpLink.Sdk.IService
 {
-    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+    ValueTask<CustomRuntimeValue> Echo(CustomRuntimeValue value, CancellationToken cancellationToken);
 }
 
 public sealed class RouteAdapter : TestRouteAdapterBase
@@ -64,7 +74,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 }
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.custom-runtime/v1\", \"route-custom-runtime-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(RouteAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("internal __Proxy_", StringComparison.Ordinal) &&
