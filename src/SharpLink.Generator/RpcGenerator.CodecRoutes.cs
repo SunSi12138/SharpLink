@@ -103,12 +103,14 @@ public partial class RpcGenerator
             if (IsFrameworkWirePrimitive(type))
                 return false;
 
+            // The default pass preserves the pre-#386 type-level/selector policy surface.
+            // Assembly-level exact bindings and routes are collected only by the policy pass.
             if (_selectorOnlyContractDefaults)
-                return TrySelectSelectorAdapter(type, out selected);
+                return TrySelectAdapter(type, out selected);
 
             if (TrySelectAdapter(type, out selected))
             {
-                if (selected is not null && HasExplicitContractBinding(type))
+                if (selected is not null && HasAssemblyContractBinding(type))
                     _contractOwnedPolicyRoots.Add(GetTypeName(type));
                 return true;
             }
@@ -120,44 +122,8 @@ public partial class RpcGenerator
             return true;
         }
 
-        private bool HasExplicitContractBinding(ITypeSymbol type)
-        {
-            foreach (var attribute in type.GetAttributes())
-            {
-                if (IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute"))
-                    return true;
-            }
-
-            return _assemblyBindings.ContainsKey(NormalizeAdapterTarget(type));
-        }
-
-        private bool TrySelectSelectorAdapter(ITypeSymbol type, out AdapterRegistration? selected)
-        {
-            selected = null;
-            foreach (var attribute in type.GetAttributes())
-            {
-                if (attribute.AttributeClass is not { } attributeClass ||
-                    !_adaptersBySelector.TryGetValue(attributeClass, out var candidate))
-                {
-                    continue;
-                }
-
-                if (selected is null)
-                {
-                    selected = candidate;
-                    continue;
-                }
-
-                if (AdapterRegistrationsEqual(selected, candidate))
-                    continue;
-
-                selected = null;
-                _failed.Add(GetTypeName(type));
-                return true;
-            }
-
-            return selected is not null;
-        }
+        private bool HasAssemblyContractBinding(ITypeSymbol type)
+            => _assemblyBindings.ContainsKey(NormalizeAdapterTarget(type));
 
         private bool TrySelectRouteAdapter(ITypeSymbol type, out AdapterRegistration? selected)
         {
