@@ -78,7 +78,7 @@ public sealed class SelectorAdapter : TestRouteAdapterBase
     }
 
     [Test]
-    public Task EnumAndNullableEnumShouldBeEligibleForNativeRoute()
+    public Task AllRouteShouldNotCaptureFrameworkEnum()
     {
         var source = AddAssemblyAttributes(BuildRouteSource("""
 public enum RouteEnum : short
@@ -91,23 +91,27 @@ public enum RouteEnum : short
 public interface IEnumRouteContract : SharpLink.Sdk.IService
 {
     ValueTask<RouteEnum> Echo(RouteEnum value, CancellationToken cancellationToken);
-    ValueTask<RouteEnum?> EchoNullable(RouteEnum? value, CancellationToken cancellationToken);
 }
 
 public sealed class EnumAdapter : TestRouteAdapterBase
 {
-    public override string AdapterId => "route.enum-native/v1";
+    public override string AdapterId => "route.enum/v1";
     public override string WireFormatId => "route-enum-safe/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.enum-native/v1\", \"route-enum-safe/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Native, typeof(EnumAdapter))]");
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.enum/v1\", \"route-enum-safe/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(EnumAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("CreateCodec<global::RouteEnum>()", StringComparison.Ordinal),
-            "top-level enums must be classified as Native so a Native route can replace the generated enum Codec");
-        Ensure(generated.Contains("CreateCodec<global::RouteEnum?>()", StringComparison.Ordinal),
-            "nullable enums must be classified as Native so a Native route can replace the generated nullable wrapper");
+        Ensure(!generated.Contains("CreateCodec<global::RouteEnum>()", StringComparison.Ordinal),
+            "framework enum must not become a configurable route target");
+        var root = System.Text.Json.Nodes.JsonNode.Parse(RunContractGenerator(source).Json)!.AsObject();
+        var enumCodec = root["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(item => item["type"]!.GetValue<string>().Contains("RouteEnum", StringComparison.Ordinal));
+        Ensure(enumCodec["kind"]!.GetValue<string>() == "Native" &&
+               enumCodec["wireFormatId"]!.GetValue<string>() == "sharplink-native/v1",
+            "framework enum must retain the fixed SharpLink native identity");
         return Task.CompletedTask;
     }
 
