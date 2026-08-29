@@ -13,8 +13,6 @@ public partial class RpcGenerator
                 GeneratedAssemblyManifestAttributeMetadataName,
                 StringComparison.Ordinal));
 
-    private static bool HasNativeCodecRoute(IAssemblySymbol assembly) => false;
-
     private static bool TryGetCodecRoute(
         AttributeData attribute,
         out int scope,
@@ -108,8 +106,6 @@ public partial class RpcGenerator
             if (_selectorOnlyContractDefaults)
                 return TrySelectSelectorAdapter(type, out selected);
 
-            // Contract assembly compilation has one deterministic precedence entrypoint for the
-            // configurable policy surface. Framework wire primitives are fixed before this point.
             if (TrySelectAdapter(type, out selected))
             {
                 if (selected is not null && HasExplicitContractBinding(type))
@@ -201,14 +197,12 @@ public partial class RpcGenerator
 
         private void AddAdapterModel(ITypeSymbol type, string typeName, AdapterRegistration adapter)
         {
-            var schema = adapter.IsDirectCodec
-                ? $"direct|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}"
-                : $"adapter|{adapter.AdapterId}|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}";
+            var schema = $"adapter|{adapter.AdapterId}|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}";
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
                 GetCodecName(typeName, _contractMode),
                 GetSchemaId(typeName, schema),
-                adapter.IsDirectCodec ? GeneratedCodecKind.Direct : GeneratedCodecKind.Adapter,
+                GeneratedCodecKind.Adapter,
                 type.IsReferenceType,
                 ImmutableArray<GeneratedMemberModel>.Empty,
                 ImmutableArray<string>.Empty,
@@ -308,9 +302,7 @@ public partial class RpcGenerator
             int depth,
             ITypeSymbol blockedRouteType)
         {
-            if (IsEnumOrNullableEnum(type))
-                return true;
-            if (IsNonOverridableBuiltin(type))
+            if (IsFrameworkWirePrimitive(type))
                 return true;
             if (TryGetCollection(type, out _, out _, out _, out _))
                 return CanGenerateNativeCollection(type, stack, depth, blockedRouteType);
@@ -318,16 +310,6 @@ public partial class RpcGenerator
                 return false;
 
             return CanGenerateNativeDto(type, stack, depth, blockedRouteType);
-        }
-
-        private static bool IsEnumOrNullableEnum(ITypeSymbol type)
-        {
-            if (type.TypeKind == TypeKind.Enum)
-                return true;
-            return type is INamedTypeSymbol named &&
-                   named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
-                   named.TypeArguments.Length == 1 &&
-                   named.TypeArguments[0].TypeKind == TypeKind.Enum;
         }
 
         private bool CanGenerateNativeCollection(
