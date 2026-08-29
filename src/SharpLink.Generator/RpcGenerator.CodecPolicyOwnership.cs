@@ -73,14 +73,8 @@ public partial class RpcGenerator
             currentContractPolicyCodecs,
             contractOwnedPolicyRoots);
 
-        var standaloneDiagnostics = standalone.Diagnostics.Where(diagnostic =>
-            !IsBuiltinBindingOverride(diagnostic) ||
-            !currentContractTypes.Contains(diagnostic.TypeName));
-        var contractDiagnostics = contractPolicy.Diagnostics.Where(diagnostic =>
-            !IsBuiltinBindingOverride(diagnostic) ||
-            !currentContractTypes.Contains(diagnostic.TypeName));
-        var diagnostics = standaloneDiagnostics
-            .Concat(contractDiagnostics)
+        var diagnostics = standalone.Diagnostics
+            .Concat(contractPolicy.Diagnostics)
             .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
             .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
             .Select(static group => group.First())
@@ -140,10 +134,6 @@ public partial class RpcGenerator
         }
         while (changed);
     }
-
-    private static bool IsBuiltinBindingOverride(DtoDiagnosticModel diagnostic)
-        => diagnostic.Kind is DtoDiagnosticKind.BuiltinAdapterOverride or
-            DtoDiagnosticKind.BuiltinCustomCodecOverride;
 
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
         ImmutableArray<GeneratedCodecModel> contractDefault,
@@ -273,7 +263,7 @@ public partial class RpcGenerator
             if (!selectorOnlyContractDefault)
             {
                 CollectCanonicalAssemblyCustomCodecBindings();
-                CollectCanonicalAssemblyBindingsWithEnumSupport();
+                CollectCanonicalAssemblyBindings();
                 AddCanonicalPolicyBindingAliases();
             }
             if (_contractMode && !selectorOnlyContractDefault)
@@ -312,13 +302,12 @@ public partial class RpcGenerator
                 }
 
                 target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target) &&
-                    !(_contractMode && HasNativeCodecRoute(_compilation.Assembly)))
+                if (IsFrameworkWirePrimitive(target))
                 {
                     Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
-                        "built-in primitive Codecs cannot be rebound to a custom Codec", location);
-                    if (!_contractMode)
-                        continue;
+                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required",
+                        location);
+                    continue;
                 }
 
                 AddCanonicalCustomCodecBinding(target, codec, location);
@@ -398,7 +387,7 @@ public partial class RpcGenerator
             return new CustomCodecRegistration(named, wireFormatId, schemaId, location);
         }
 
-        private void CollectCanonicalAssemblyBindingsWithEnumSupport()
+        private void CollectCanonicalAssemblyBindings()
         {
             foreach (var attribute in _compilation.Assembly.GetAttributes()
                          .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute")))
@@ -420,12 +409,11 @@ public partial class RpcGenerator
                 }
 
                 target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target) &&
-                    !IsEnumOrNullableEnum(target) &&
-                    !_contractMode)
+                if (IsFrameworkWirePrimitive(target))
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
-                        "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
+                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required",
+                        location);
                     continue;
                 }
 
@@ -808,63 +796,6 @@ public partial class RpcGenerator
             builder.Append(Convert.ToString(constant.Value, InvariantCulture) ?? "null");
         }
 
-        private void CollectContractBuiltinCustomCodecBindings()
-        {
-            foreach (var attribute in _compilation.Assembly.GetAttributes()
-                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute"))
-                         .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
-            {
-                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
-                if (attribute.ConstructorArguments.Length != 2 ||
-                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
-                    attribute.ConstructorArguments[1].Value is not ITypeSymbol codec ||
-                    HasTypeParameter(target))
-                {
-                    continue;
-                }
-
-                target = NormalizeAdapterTarget(target);
-                if (!IsNonOverridableBuiltin(target))
-                    continue;
-                AddCustomCodecBinding(target, codec, location);
-            }
-        }
-
-        private void CollectAssemblyBindingsWithEnumSupport()
-        {
-            foreach (var attribute in _compilation.Assembly.GetAttributes()
-                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute")))
-            {
-                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
-                if (attribute.ConstructorArguments.Length != 2 ||
-                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
-                    attribute.ConstructorArguments[1].Value is not INamedTypeSymbol implementation)
-                {
-                    Report(DtoDiagnosticKind.AdapterBindingInvalid, _compilation.Assembly,
-                        "assembly-level RpcCodecAdapter requires targetType and an adapter or direct Codec implementation type", location);
-                    continue;
-                }
-                if (HasTypeParameter(target))
-                {
-                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target,
-                        "Codec target must be a closed type", location);
-                    continue;
-                }
-                target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target) &&
-                    !IsEnumOrNullableEnum(target) &&
-                    !_contractMode)
-                {
-                    Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
-                        "built-in primitive Codecs cannot be rebound by RpcCodecAdapter", location);
-                    continue;
-                }
-                AddAssemblyBinding(
-                    target,
-                    new ExplicitBindingCandidate(implementation, GetAttributeWireFormatId(attribute), location));
-            }
-        }
-
         private void PromoteSelectedFixedMembersToCodecBindings()
         {
             if (!_applyCodecPolicy || _models.Count == 0)
@@ -950,6 +881,8 @@ public partial class RpcGenerator
 
         private bool HasSelectedMemberCodec(ITypeSymbol memberType)
         {
+            if (IsFrameworkWirePrimitive(memberType))
+                return false;
             if (TrySelectCustomCodec(memberType, out var customCodec))
                 return customCodec is not null;
 
