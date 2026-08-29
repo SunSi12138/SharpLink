@@ -27,11 +27,11 @@ DTO 演进规则：
 - 字段 id 是 wire identity；发布后不要重用或改变含义。
 - 新增可选字段通常兼容；删除字段前确认所有对端已停止发送。
 - required、nullable、wire type 或嵌套 schema 变化可能不兼容。
-- Generator Manifest 的兼容性 identity 为 **(Contract assembly, 闭合类型 T) → Kind / SchemaId / WireFormatId**，用于同进程注册与替换校验，不能绕过跨版本集成测试。Framework wire primitive 仍然作为固定叶子参与 final Codec graph / compatibility identity，但不是 configurable policy surface。
+- 当前 Generator Manifest 仍沿用 `SchemaId` / `WireFormatId` 作为既有 generated registration 与 baseline infrastructure；#386 只负责确定 assembly-owned final Codec graph，不把这些字符串扩展成新的 per-type compatibility model。后续 #396 会以 fixed-width `CodecHash` / `RpcAssemblyHash` 替换长期 identity 模型并执行 assembly-level exact equality。
 
 ## 自定义 Codec
 
-Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定；Codec 自身用 `RpcCodecImplementation` 声明稳定 wire/schema identity：
+Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定。当前 dev 仍要求 Codec 用 `RpcCodecImplementation` 提供 legacy wire/schema registration identity；这不是 #386 新定义的长期 compatibility API，后续由 #396 的 hash identity 模型替换：
 
 ```csharp
 [assembly: RpcCodec(typeof(MyType), typeof(MyTypeCodec))]
@@ -55,7 +55,7 @@ public sealed class MyTypeCodec : IRpcCodec<MyType>
 
 ## Codec Adapter 与 SharpPack
 
-`IRpcCodecAdapter` 用于由 Generator 生成闭合工厂，再由 Runtime Context 创建隔离 scope。Adapter identity、wire-format identity 和 schema identity 都参与注册兼容性判断。
+`IRpcCodecAdapter` 用于由 Generator 生成闭合工厂，再由 Runtime Context 创建隔离 scope。当前 `AdapterId` / `WireFormatId` / `SchemaId` 仍参与既有 registration validation；#396 会把稳定 identity 收敛为 fixed-width hash，而 #386 只负责 Adapter 的最终选择与 lifecycle ownership。
 
 官方复杂对象图扩展是 `SharpLink.Serializer.SharpPack`。用 `[RpcCodecAdapter(typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]` 或项目约定把类型交给 SharpPack；每个 Runtime Context × Manifest × AdapterId 拥有独立 scope，不使用进程级默认 formatter slot。动态模块排空后，Codec、Adapter scope 和 collectible ALC 才能一起释放。
 
