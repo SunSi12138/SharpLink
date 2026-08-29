@@ -690,9 +690,11 @@ public partial class RpcGenerator
             }
 
             var kindChanged = !string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal);
-            var selectedImplementationKind = IsSelectedImplementationKind(oldCodec.Kind) ||
-                                             IsSelectedImplementationKind(newCodec.Kind);
-            var schemaChanged = selectedImplementationKind &&
+            var schemaChanged = ShouldCompareCodecSchema(
+                                    oldCodec,
+                                    newCodec,
+                                    baselineDtoNames,
+                                    currentDtoNames) &&
                                 !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
             if (!kindChanged && !schemaChanged)
                 continue;
@@ -757,9 +759,11 @@ public partial class RpcGenerator
             }
 
             var kindChanged = !string.Equals(oldCodec.Kind, newCodec.Kind, StringComparison.Ordinal);
-            var selectedImplementationKind = IsSelectedImplementationKind(oldCodec.Kind) ||
-                                             IsSelectedImplementationKind(newCodec.Kind);
-            var schemaChanged = selectedImplementationKind &&
+            var schemaChanged = ShouldCompareCodecSchema(
+                                    oldCodec,
+                                    newCodec,
+                                    baselineDtoNames,
+                                    currentDtoNames) &&
                                 !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
             var wireFormatChanged = !string.Equals(
                 oldCodec.WireFormatId,
@@ -906,6 +910,28 @@ public partial class RpcGenerator
         => string.Equals(kind, GeneratedCodecKind.Adapter.ToString(), StringComparison.Ordinal) ||
            string.Equals(kind, GeneratedCodecKind.Direct.ToString(), StringComparison.Ordinal) ||
            string.Equals(kind, GeneratedCodecKind.Custom.ToString(), StringComparison.Ordinal);
+
+    private static bool ShouldCompareCodecSchema(
+        ContractManifestCodec baseline,
+        ContractManifestCodec current,
+        HashSet<string> baselineDtoNames,
+        HashSet<string> currentDtoNames)
+    {
+        if (IsSelectedImplementationKind(baseline.Kind) || IsSelectedImplementationKind(current.Kind))
+            return true;
+
+        if (string.Equals(baseline.Kind, GeneratedCodecKind.UnsafeBlit.ToString(), StringComparison.Ordinal) ||
+            string.Equals(current.Kind, GeneratedCodecKind.UnsafeBlit.ToString(), StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var baselineIsDto = string.Equals(baseline.Kind, GeneratedCodecKind.Dto.ToString(), StringComparison.Ordinal);
+        var currentIsDto = string.Equals(current.Kind, GeneratedCodecKind.Dto.ToString(), StringComparison.Ordinal);
+        return (baselineIsDto || currentIsDto) &&
+               (!baselineDtoNames.Contains(baseline.Type) || !currentDtoNames.Contains(current.Type));
+    }
+
 
     private static string GetWireFormatId(
         string typeName,

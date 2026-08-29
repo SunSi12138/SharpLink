@@ -2,8 +2,13 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
+    private static readonly SymbolDisplayFormat ClrTypeIdentityFormat =
+        SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
+            SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions |
+            SymbolDisplayMiscellaneousOptions.ExpandValueTuple);
+
     private static string GetTypeName(ITypeSymbol type)
-        => type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        => type.ToDisplayString(ClrTypeIdentityFormat);
 
     private sealed partial class DtoAnalysisState
     {

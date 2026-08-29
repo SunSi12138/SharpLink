@@ -491,7 +491,7 @@ public partial class RpcGenerator
                 return;
             }
 
-            if (IsBuiltin(type))
+            if (IsBuiltin(type) && !HasSelectedCompositeCodecDependency(type))
                 return;
             if (depth > MaximumDepth)
             {
@@ -1583,13 +1583,6 @@ public partial class RpcGenerator
         private static bool HasAttribute(ISymbol symbol, string ns, string name)
             => symbol.GetAttributes().Any(attribute => IsAttribute(attribute, ns, name));
 
-        private static readonly SymbolDisplayFormat CodecTypeIdentityFormat =
-            SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
-                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions |
-                SymbolDisplayMiscellaneousOptions.ExpandValueTuple);
-
-        private static string GetTypeName(ITypeSymbol type)
-            => type.ToDisplayString(CodecTypeIdentityFormat);
 
         private static string EscapeIdentifier(string identifier)
             => Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetKeywordKind(identifier) !=

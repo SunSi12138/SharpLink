@@ -1035,12 +1035,12 @@ public partial class RpcGenerator
         var methods = GetContractMethods(symbol)
             .Select(m =>
             {
-                var returnType = m.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                var returnType = GetTypeName(m.ReturnType);
                 var displayReturnType = m.ReturnType.ToDisplayString(FullyQualifiedNullableFormat);
                 var isGenericTask = m.ReturnType is INamedTypeSymbol { IsGenericType: true } &&
                                     m.ReturnType.ToDisplayString().StartsWith("System.Threading.Tasks");
                 var genericArg = isGenericTask
-                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                    ? GetTypeName(((INamedTypeSymbol)m.ReturnType).TypeArguments[0])
                     : null;
                 var displayGenericArg = isGenericTask
                     ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0].ToDisplayString(FullyQualifiedNullableFormat)
@@ -1057,8 +1057,8 @@ public partial class RpcGenerator
                 if (IsAsyncEnumerable(m.ReturnType, out var itemTypeSymbol))
                 {
                     isStreamReturn = true;
-                    streamItemType = itemTypeSymbol!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                    displayStreamItemType = itemTypeSymbol.ToDisplayString(FullyQualifiedNullableFormat);
+                    streamItemType = GetTypeName(itemTypeSymbol!);
+                    displayStreamItemType = itemTypeSymbol!.ToDisplayString(FullyQualifiedNullableFormat);
                     isGenericTask = false;
                     genericArg = null;
                     displayGenericArg = null;
@@ -1066,7 +1066,7 @@ public partial class RpcGenerator
 
                 var paramArray = m.Parameters.Select(p =>
                 {
-                    var pType = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    var pType = GetTypeName(p.Type);
                     var displayPType = p.Type.ToDisplayString(FullyQualifiedNullableFormat);
                     var isStream = IsAsyncEnumerable(p.Type, out var pItemType);
                     var isValueType = p.Type.IsValueType;
@@ -1078,7 +1078,7 @@ public partial class RpcGenerator
                         pType,
                         displayPType,
                         isStream,
-                        isStream ? pItemType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) : null,
+                        isStream ? GetTypeName(pItemType!) : null,
                         isStream ? pItemType!.ToDisplayString(FullyQualifiedNullableFormat) : null,
                         IsInlineFixedRpcType(p.Type),
                         isValueType,
@@ -1093,7 +1093,7 @@ public partial class RpcGenerator
                 var paramTypes = m.Parameters
                     .Where(static parameter =>
                         !IsCancellationTokenParameter(parameter))
-                    .Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                    .Select(static p => GetTypeName(p.Type))
                     .ToArray();
                 var methodHash = Hashing.GetMethodHash(m.Name, paramTypes);
 

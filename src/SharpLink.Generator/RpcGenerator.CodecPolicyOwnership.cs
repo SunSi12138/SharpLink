@@ -330,24 +330,64 @@ public partial class RpcGenerator
                 includeSerializable: false,
                 includeContracts: true);
 
-            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            // This structural index is only a symbol lookup table. Publication itself follows the
+            // final Codec graph below, so Custom/Adapter/Direct owners remain opaque and their CLR
+            // implementation members cannot become phantom compatibility or ownership nodes.
+            var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
-                CollectFinalBindingTypes(root, reachable, seen, 0);
+                CollectFinalBindingTypes(root, symbolsByType, seen, 0);
 
-            var result = ImmutableArray.CreateBuilder<GeneratedCodecModel>();
-            foreach (var pair in reachable.OrderBy(static item => item.Key, StringComparer.Ordinal))
+            var result = new Dictionary<string, GeneratedCodecModel>(StringComparer.Ordinal);
+            var pending = new Queue<string>();
+            foreach (var root in roots.Values)
             {
-                if (selectedByType.TryGetValue(pair.Key, out var selected))
+                var rootName = GetTypeName(root);
+                symbolsByType[rootName] = root;
+                pending.Enqueue(rootName);
+            }
+
+            while (pending.Count != 0)
+            {
+                var typeName = pending.Dequeue();
+                if (result.ContainsKey(typeName))
+                    continue;
+
+                if (selectedByType.TryGetValue(typeName, out var selected))
                 {
-                    result.Add(selected);
+                    result.Add(typeName, selected);
+                    foreach (var dependency in GetCodecDependencies(selected))
+                        pending.Enqueue(dependency);
                     continue;
                 }
 
-                if (TryCreateImplicitContractManifestCodec(pair.Value, out var implicitCodec))
-                    result.Add(implicitCodec);
+                if (!symbolsByType.TryGetValue(typeName, out var type) ||
+                    !TryCreateImplicitContractManifestCodec(type, out var implicitCodec))
+                {
+                    continue;
+                }
+
+                result.Add(typeName, implicitCodec);
+
+                // Native composite fast paths inline their element/key/value representations, so
+                // those child identities remain part of compatibility even though no provider
+                // lookup occurs. UnsafeBlit is opaque: its own schema describes the complete raw
+                // layout and must not recurse through CLR fields as independent Codec nodes.
+                if (implicitCodec.Kind == GeneratedCodecKind.Native &&
+                    TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
+                {
+                    if (elementType is not null)
+                        pending.Enqueue(GetTypeName(elementType));
+                    if (keyType is not null)
+                        pending.Enqueue(GetTypeName(keyType));
+                    if (valueType is not null)
+                        pending.Enqueue(GetTypeName(valueType));
+                }
             }
-            return result.ToImmutable();
+
+            return result.Values
+                .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
+                .ToImmutableArray();
         }
 
         private bool TryCreateImplicitContractManifestCodec(
@@ -370,8 +410,9 @@ public partial class RpcGenerator
                 : GeneratedCodecKind.UnsafeBlit;
             var schemaIdentity = kind == GeneratedCodecKind.Native
                 ? "implicit-native"
-                : "implicit-unsafe-blit";
-            if (type.TypeKind == TypeKind.Enum &&
+                : GetUnsafeBlitSchemaIdentity(type);
+            if (kind == GeneratedCodecKind.Native &&
+                type.TypeKind == TypeKind.Enum &&
                 type is INamedTypeSymbol { EnumUnderlyingType: { } underlying })
             {
                 schemaIdentity += "|enum:" + GetTypeName(underlying);
@@ -395,6 +436,107 @@ public partial class RpcGenerator
                 GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
             return true;
+        }
+
+        private static string GetUnsafeBlitSchemaIdentity(ITypeSymbol type)
+        {
+            var builder = new StringBuilder("implicit-unsafe-blit");
+            AppendUnsafeBlitLayout(type, builder, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default), 0);
+            return builder.ToString();
+        }
+
+        private static void AppendUnsafeBlitLayout(
+            ITypeSymbol type,
+            StringBuilder builder,
+            HashSet<ITypeSymbol> stack,
+            int depth)
+        {
+            builder.Append('|').Append(GetTypeName(type));
+            if (depth > MaximumDepth)
+            {
+                builder.Append("|depth-limit");
+                return;
+            }
+
+            if (type.TypeKind == TypeKind.Enum &&
+                type is INamedTypeSymbol { EnumUnderlyingType: { } enumUnderlying })
+            {
+                builder.Append("|enum:").Append(GetTypeName(enumUnderlying));
+                return;
+            }
+
+            if (type.SpecialType != SpecialType.None ||
+                type is IPointerTypeSymbol or IFunctionPointerTypeSymbol ||
+                type is not INamedTypeSymbol named)
+            {
+                return;
+            }
+
+            AppendWireLayoutAttribute(builder, named, "System.Runtime.InteropServices.StructLayoutAttribute");
+            AppendWireLayoutAttribute(builder, named, "System.Runtime.CompilerServices.InlineArrayAttribute");
+
+            if (!stack.Add(type))
+            {
+                builder.Append("|recursive");
+                return;
+            }
+
+            var fields = named.GetMembers()
+                .OfType<IFieldSymbol>()
+                .Where(static field => !field.IsStatic && !field.IsConst)
+                .ToArray();
+            builder.Append("|fields:").Append(fields.Length.ToString(InvariantCulture));
+            for (var index = 0; index < fields.Length; index++)
+            {
+                var field = fields[index];
+                builder.Append("|field:").Append(index.ToString(InvariantCulture));
+                AppendWireLayoutAttribute(builder, field, "System.Runtime.InteropServices.FieldOffsetAttribute");
+                AppendWireLayoutAttribute(builder, field, "System.Runtime.CompilerServices.FixedBufferAttribute");
+                AppendUnsafeBlitLayout(field.Type, builder, stack, depth + 1);
+            }
+
+            stack.Remove(type);
+        }
+
+        private static void AppendWireLayoutAttribute(
+            StringBuilder builder,
+            ISymbol symbol,
+            string attributeName)
+        {
+            var attribute = symbol.GetAttributes().FirstOrDefault(item =>
+                string.Equals(item.AttributeClass?.ToDisplayString(), attributeName, StringComparison.Ordinal));
+            if (attribute is null)
+                return;
+
+            builder.Append("|attr:").Append(attributeName);
+            foreach (var argument in attribute.ConstructorArguments)
+                AppendWireLayoutConstant(builder, argument);
+            foreach (var argument in attribute.NamedArguments.OrderBy(static item => item.Key, StringComparer.Ordinal))
+            {
+                builder.Append('|').Append(argument.Key).Append('=');
+                AppendWireLayoutConstant(builder, argument.Value);
+            }
+        }
+
+        private static void AppendWireLayoutConstant(StringBuilder builder, TypedConstant constant)
+        {
+            builder.Append(':').Append(constant.Type is null ? "?" : GetTypeName(constant.Type)).Append('=');
+            if (constant.Kind == TypedConstantKind.Array)
+            {
+                builder.Append('[');
+                foreach (var item in constant.Values)
+                    AppendWireLayoutConstant(builder, item);
+                builder.Append(']');
+                return;
+            }
+
+            if (constant.Value is ITypeSymbol type)
+            {
+                builder.Append(GetTypeName(type));
+                return;
+            }
+
+            builder.Append(Convert.ToString(constant.Value, InvariantCulture) ?? "null");
         }
 
         private void CollectContractBuiltinCustomCodecBindings()
@@ -525,6 +667,16 @@ public partial class RpcGenerator
                     SchemaId = GetSchemaId(model.TypeName, schema.ToString())
                 };
             }
+        }
+
+        private bool HasSelectedCompositeCodecDependency(ITypeSymbol type)
+        {
+            if (!TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
+                return false;
+
+            return (elementType is not null && HasSelectedMemberCodec(elementType)) ||
+                   (keyType is not null && HasSelectedMemberCodec(keyType)) ||
+                   (valueType is not null && HasSelectedMemberCodec(valueType));
         }
 
         private bool HasSelectedMemberCodec(ITypeSymbol memberType)
