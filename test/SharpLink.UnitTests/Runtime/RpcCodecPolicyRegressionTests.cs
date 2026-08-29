@@ -26,6 +26,7 @@ public sealed class RpcCodecPolicyRegressionTests
     }
 
     [Test]
+    [NotInParallel]
     public void LateLoadedPolicyOwnerShouldFailClosedInsteadOfUsingGlobalCodecs()
     {
         using var context = new SharpLinkRuntimeContextBuilder()
