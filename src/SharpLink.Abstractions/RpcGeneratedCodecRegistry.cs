@@ -9,8 +9,8 @@ public enum RpcGeneratedCodecFactoryKind
     /// <summary>The Codec is created through an <see cref="IRpcCodecAdapter"/> scope.</summary>
     Adapter = 1,
 
-    /// <summary>The Codec is a compile-time selected closed <see cref="IRpcCodec{T}"/> implementation.</summary>
-    Direct = 2
+    /// <summary>The Codec is a compile-time selected handwritten <see cref="IRpcCodec{T}"/> implementation.</summary>
+    Custom = 2
 }
 
 /// <summary>Creates one source-generated Codec for an immutable runtime-context snapshot.</summary>
@@ -30,7 +30,7 @@ public interface IRpcGeneratedCodecFactory
         ? RpcGeneratedCodecFactoryKind.Adapter
         : string.Equals(WireFormatId, "sharplink-native/v1", StringComparison.Ordinal)
             ? RpcGeneratedCodecFactoryKind.Native
-            : RpcGeneratedCodecFactoryKind.Direct;
+            : RpcGeneratedCodecFactoryKind.Custom;
 
     /// <summary>Gets the adapter lifecycle identity, or null for adapter-free Codecs.</summary>
     string? AdapterId { get; }
