@@ -75,13 +75,12 @@ public partial class RpcGenerator
 
         var diagnostics = standalone.Diagnostics
             .Concat(contractPolicy.Diagnostics)
-            .Select(diagnostic => NormalizeExplicitBindingDiagnostic(compilation, diagnostic, cancellationToken))
             .GroupBy(static item => (item.Kind, item.TypeName, item.Detail))
             .Select(static group => group.First())
             .ToImmutableArray();
         var codecOwnedEnumTypes = new HashSet<string>(
             contractManifestCodecs
-                .Where(static codec => codec.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter or GeneratedCodecKind.Direct)
+                .Where(static codec => codec.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
                 .Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
         var enums = standalone.Enums
@@ -192,48 +191,6 @@ public partial class RpcGenerator
             })
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
-    }
-
-    private static DtoDiagnosticModel NormalizeExplicitBindingDiagnostic(
-        Compilation compilation,
-        DtoDiagnosticModel diagnostic,
-        CancellationToken cancellationToken)
-    {
-        if (diagnostic.Kind != DtoDiagnosticKind.AdapterTypeInvalid ||
-            !diagnostic.Detail.StartsWith("direct Codec must", StringComparison.Ordinal))
-        {
-            return diagnostic;
-        }
-
-        var metadataName = diagnostic.TypeName.StartsWith("global::", StringComparison.Ordinal)
-            ? diagnostic.TypeName.Substring("global::".Length)
-            : diagnostic.TypeName;
-        var implementation = compilation.GetTypeByMetadataName(metadataName);
-        if (implementation is null)
-            return diagnostic;
-
-        var implementsAdapter = implementation.AllInterfaces.Any(static item =>
-            item.Name == "IRpcCodecAdapter" &&
-            item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
-        var implementsCodec = implementation.AllInterfaces.Any(static item =>
-            item.Name == "IRpcCodec" &&
-            item.Arity == 1 &&
-            item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
-        if (implementsAdapter || implementsCodec)
-            return diagnostic;
-
-        if (diagnostic.Location?.SourceTree is { } tree)
-        {
-            var source = tree.GetText(cancellationToken).ToString(diagnostic.Location.SourceSpan);
-            if (source.Contains("WireFormatId", StringComparison.Ordinal))
-                return diagnostic;
-        }
-
-        return diagnostic with
-        {
-            Kind = DtoDiagnosticKind.AdapterRegistrationInvalid,
-            Detail = $"selected Adapter '{diagnostic.TypeName}' has no valid RpcCodecAdapterRegistration"
-        };
     }
 
     private sealed partial class DtoAnalysisState
@@ -395,16 +352,16 @@ public partial class RpcGenerator
                 var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
                 if (attribute.ConstructorArguments.Length != 2 ||
                     attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
-                    attribute.ConstructorArguments[1].Value is not INamedTypeSymbol implementation)
+                    attribute.ConstructorArguments[1].Value is not INamedTypeSymbol adapter)
                 {
                     Report(DtoDiagnosticKind.AdapterBindingInvalid, _compilation.Assembly,
-                        "assembly-level RpcCodecAdapter requires targetType and an adapter or direct Codec implementation type", location);
+                        "assembly-level RpcCodecAdapter requires targetType and adapterType", location);
                     continue;
                 }
                 if (HasTypeParameter(target))
                 {
                     Report(DtoDiagnosticKind.AdapterTargetInvalid, target,
-                        "Codec target must be a closed type", location);
+                        "Adapter target must be a closed type", location);
                     continue;
                 }
 
@@ -417,9 +374,7 @@ public partial class RpcGenerator
                     continue;
                 }
 
-                AddCanonicalAssemblyBinding(
-                    target,
-                    new ExplicitBindingCandidate(implementation, GetAttributeWireFormatId(attribute), location));
+                AddCanonicalAssemblyBinding(target, new ExplicitBindingCandidate(adapter, location));
             }
         }
 
@@ -428,11 +383,10 @@ public partial class RpcGenerator
             var identity = GetCanonicalPolicyTargetIdentity(target);
             if (_canonicalAssemblyBindings.TryGetValue(identity, out var existing))
             {
-                if (!SymbolEqualityComparer.Default.Equals(existing.ImplementationType, candidate.ImplementationType) ||
-                    !string.Equals(existing.WireFormatId, candidate.WireFormatId, StringComparison.Ordinal))
+                if (!SymbolEqualityComparer.Default.Equals(existing.ImplementationType, candidate.ImplementationType))
                 {
                     Report(DtoDiagnosticKind.AdapterSelectionConflict, target,
-                        "the target is explicitly bound to multiple different Codec implementations",
+                        "the target is explicitly bound to multiple different Codec Adapters",
                         candidate.Location);
                     return;
                 }
@@ -441,48 +395,9 @@ public partial class RpcGenerator
                 return;
             }
 
-            var storedCandidate = PrepareCanonicalDirectBinding(target, candidate);
-            _assemblyBindings[target] = storedCandidate;
-            _canonicalAssemblyBindings[identity] = storedCandidate;
+            _assemblyBindings[target] = candidate;
+            _canonicalAssemblyBindings[identity] = candidate;
         }
-
-        private ExplicitBindingCandidate PrepareCanonicalDirectBinding(
-            ITypeSymbol target,
-            ExplicitBindingCandidate candidate)
-        {
-            if (ImplementsRpcCodecAdapter(candidate.ImplementationType) ||
-                candidate.WireFormatId is not { } wireFormatId ||
-                !IsStableIdentity(wireFormatId) ||
-                !IsCanonicalDirectCodecType(candidate.ImplementationType, target))
-            {
-                return candidate;
-            }
-
-            var registration = new AdapterRegistration(
-                candidate.ImplementationType,
-                AdapterId: null,
-                WireFormatId: wireFormatId,
-                SelectorType: null,
-                Location: candidate.Location,
-                IsDirectCodec: true);
-            _adaptersByType[candidate.ImplementationType] = registration;
-            return new ExplicitBindingCandidate(candidate.ImplementationType, WireFormatId: null, candidate.Location);
-        }
-
-        private static bool IsCanonicalDirectCodecType(INamedTypeSymbol type, ITypeSymbol target)
-            => IsEffectivelyPublic(type) &&
-               type.TypeKind == TypeKind.Class &&
-               type.IsSealed &&
-               !type.IsAbstract &&
-               !HasTypeParameter(type) &&
-               type.InstanceConstructors.Any(static constructor =>
-                   constructor.DeclaredAccessibility == Accessibility.Public &&
-                   constructor.Parameters.Length == 0) &&
-               type.AllInterfaces.Any(item =>
-                   item.Name == "IRpcCodec" &&
-                   item.Arity == 1 &&
-                   item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
-                   HasSameCanonicalPolicyTarget(item.TypeArguments[0], target));
 
         private void AddCanonicalPolicyBindingAliases()
         {
@@ -642,20 +557,19 @@ public partial class RpcGenerator
             => type.IsUnmanagedType &&
                type is INamedTypeSymbol nullable &&
                nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
-               !IsNonOverridableBuiltin(type);
+               !IsFrameworkWirePrimitive(type);
 
         private string GetUnsafeBlitSchemaIdentity(ITypeSymbol type)
         {
             var builder = new StringBuilder("implicit-unsafe-blit");
-            AppendUnsafeBlitLayout(type, builder, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default), 0);
+            AppendUnsafeBlitLayout(type, builder, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
             return builder.ToString();
         }
 
         private void AppendUnsafeBlitLayout(
             ITypeSymbol type,
             StringBuilder builder,
-            HashSet<ITypeSymbol> stack,
-            int depth)
+            HashSet<ITypeSymbol> stack)
         {
             builder.Append('|').Append(GetTypeName(type));
             if (type.TypeKind == TypeKind.Enum &&
@@ -672,7 +586,6 @@ public partial class RpcGenerator
                 return;
             }
 
-            AppendReferencedMetadataIdentity(named, builder);
             AppendWireLayoutAttribute(builder, named, "System.Runtime.InteropServices.StructLayoutAttribute");
             AppendWireLayoutAttribute(builder, named, "System.Runtime.CompilerServices.InlineArrayAttribute");
 
@@ -686,7 +599,7 @@ public partial class RpcGenerator
                 named.TypeArguments.Length == 1)
             {
                 builder.Append("|nullable-underlying");
-                AppendUnsafeBlitLayout(named.TypeArguments[0], builder, stack, depth + 1);
+                AppendUnsafeBlitLayout(named.TypeArguments[0], builder, stack);
                 stack.Remove(type);
                 return;
             }
@@ -699,10 +612,7 @@ public partial class RpcGenerator
             for (var index = 0; index < fields.Length; index++)
             {
                 var field = fields[index];
-                builder.Append("|field:")
-                    .Append(index.ToString(InvariantCulture))
-                    .Append(':')
-                    .Append(field.Name);
+                builder.Append("|field:").Append(index.ToString(InvariantCulture));
                 if (field.IsFixedSizeBuffer)
                 {
                     builder.Append("|fixed-buffer:")
@@ -710,49 +620,10 @@ public partial class RpcGenerator
                 }
                 AppendWireLayoutAttribute(builder, field, "System.Runtime.InteropServices.FieldOffsetAttribute");
                 AppendWireLayoutAttribute(builder, field, "System.Runtime.CompilerServices.FixedBufferAttribute");
-                AppendUnsafeBlitLayout(field.Type, builder, stack, depth + 1);
+                AppendUnsafeBlitLayout(field.Type, builder, stack);
             }
 
             stack.Remove(type);
-        }
-
-        private void AppendReferencedMetadataIdentity(INamedTypeSymbol type, StringBuilder builder)
-        {
-            var owner = type.ContainingAssembly;
-            if (owner is null || SymbolEqualityComparer.Default.Equals(owner, _compilation.Assembly))
-                return;
-
-            foreach (var reference in _compilation.References)
-            {
-                var symbol = _compilation.GetAssemblyOrModuleSymbol(reference);
-                var referencedAssembly = symbol switch
-                {
-                    IAssemblySymbol assembly => assembly,
-                    IModuleSymbol module => module.ContainingAssembly,
-                    _ => null
-                };
-                if (referencedAssembly is null ||
-                    !SymbolEqualityComparer.Default.Equals(referencedAssembly, owner) ||
-                    reference is not PortableExecutableReference portable)
-                {
-                    continue;
-                }
-
-                builder.Append("|metadata-owner:").Append(owner.Identity).Append('|');
-                var metadata = portable.GetMetadata();
-                if (metadata is AssemblyMetadata assemblyMetadata)
-                {
-                    foreach (var module in assemblyMetadata.GetModules())
-                        builder.Append(module.GetModuleVersionId().ToString("D")).Append(';');
-                }
-                else if (metadata is ModuleMetadata moduleMetadata)
-                {
-                    builder.Append(moduleMetadata.GetModuleVersionId().ToString("D"));
-                }
-                return;
-            }
-
-            builder.Append("|metadata-owner-unresolved:").Append(owner.Identity);
         }
 
         private static void AppendWireLayoutAttribute(
@@ -912,7 +783,7 @@ public partial class RpcGenerator
             var localFactoryTypes = new HashSet<string>(_models.Keys, StringComparer.Ordinal);
             foreach (var model in _models.Values.ToArray())
             {
-                if (model.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter or GeneratedCodecKind.Direct)
+                if (model.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
                 {
                     _models[model.TypeName] = model with
                     {
