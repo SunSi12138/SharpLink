@@ -16,18 +16,22 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 内置 Codec 覆盖常用 primitive、enum、string、时间/标识类型、数组、List、Memory、nullable、tuple、受支持不可变集合和由 `[RpcSerializable]`/`[RpcMember]` 描述的 DTO。编码有明确 null 标记、长度上限和完整消费检查；尾随字节、非法 UTF-8、非规范整数或 required/nullability 违反会作为 `DataLoss`。
 
-当一个值类型没有命中共享内置 Codec、显式/生成 Codec 或 resolver，且其运行时表示不包含 managed reference 时，Runtime 可以回退到 `UnsafeBlitCodec<T>`，直接把 `Unsafe.SizeOf<T>()` 范围内的 managed representation 写入 payload。这个原始表示包含结构体 padding；它既不是 canonical field-wise 编码，也不能把普通 `new`/`default` 后的 padding 为零当作跨运行时安全保证。涉及 unsafe/native/uninitialized 来源或机密边界时，可靠的支持路径是显式绑定使用 field-wise/non-raw representation 的自定义 Codec/Adapter，而不是依赖调用方先清 padding 后再经过可能发生的 struct copy。完整边界见 [UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)；跨运行时 ABI/兼容性范围见 [UnsafeBlit 兼容性](codec-compatibility.md)。这里描述的是 RPC payload Codec，不改变 SharpLink 自身协议 framing 字段的编码。
+其中一小组类型属于 **Framework wire primitive**：SharpLink 直接定义并拥有其固定 wire semantic，因此它们不是可配置 Codec policy surface。当前包括 primitive numerics、`bool`、`char`、`string`、`Guid`、SharpLink 明确定义固定 wire semantic 的时间/标识 scalar、enum，以及作为 protocol bytes primitive 的 `byte[]`。这些类型不能通过 `RpcCodec`、`RpcCodecAdapter`、direct Codec 或 `RpcCodecRoute` 重绑定。
+
+普通 `T[]`（`byte[]` 除外）、`List<T>`、`Dictionary<K,V>`、Tuple/ValueTuple、DTO/record 和普通 user struct/class 不属于 Framework wire primitive。它们即使默认实现使用 generated/native/blit fast path，也仍然是 configurable payload type。换言之：**fast path != primitive != policy immutability**。
+
+当一个值类型没有命中共享内置 Codec、显式/生成 Codec 或 resolver，且其运行时表示不包含 managed reference 时，Runtime 可以回退到 `UnsafeBlitCodec<T>`，直接把 `Unsafe.SizeOf<T>()` 范围内的 managed representation 写入 payload。这个原始表示包含结构体 padding；它既不是 canonical field-wise 编码，也不能把普通 `new`/`default` 后的 padding 为零当作跨运行时安全保证。涉及 unsafe/native/uninitialized 来源或机密边界时，可靠的支持路径是为该 **user-defined payload type** 显式绑定 field-wise/non-raw representation 的自定义 Codec/Adapter，而不是依赖调用方先清 padding 后再经过可能发生的 struct copy。完整边界见 [UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)；跨运行时 ABI/兼容性范围见 [UnsafeBlit 兼容性](codec-compatibility.md)。这里描述的是 RPC payload Codec，不改变 SharpLink 自身协议 framing 字段的编码。
 
 DTO 演进规则：
 
 - 字段 id 是 wire identity；发布后不要重用或改变含义。
 - 新增可选字段通常兼容；删除字段前确认所有对端已停止发送。
 - required、nullable、wire type 或嵌套 schema 变化可能不兼容。
-- Generator Manifest 的兼容性 identity 为 **(Contract assembly, 闭合类型 T) → Kind / SchemaId / WireFormatId**，用于同进程注册与替换校验，不能绕过跨版本集成测试。隐式最终选择（内置 Native 路径与非托管 UnsafeBlit fallback）同样物化进 manifest，使之后的显式 Adapter/Direct 选择能被检测为 wire break。
+- Generator Manifest 的兼容性 identity 为 **(Contract assembly, 闭合类型 T) → Kind / SchemaId / WireFormatId**，用于同进程注册与替换校验，不能绕过跨版本集成测试。Framework wire primitive 仍然作为固定叶子参与 final Codec graph / compatibility identity，但不是 configurable policy surface。
 
 ## 自定义 Codec
 
-Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。要为某个闭合 CLR 类型指定单独 Codec，在 Contract assembly 上声明精确类型绑定：
+Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，可以在 Contract assembly 上声明精确类型绑定：
 
 ```csharp
 [assembly: RpcCodecAdapter(
@@ -38,7 +42,9 @@ Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。要�
 
 `IRpcCodec<T>` 必须完整写出一个值，并从完整 payload 解码。对端输入不合法时抛出带具体 code 的 `SharpLinkException`，通常是 `DataLoss`；不要把协议输入错误包装成 `Internal`。Codec 不能保留框架提供的输入序列或输出 writer。
 
-同一 Contract assembly 内的所有 `[RpcContract]` 对相同闭合类型 `T` 共享同一份最终 Codec binding；不同 Contract assembly 可以为同一个 `T` 选择不同 Codec。批量路由使用 assembly 级 `RpcCodecRoute`。Client/Server builder 不提供按实例覆盖 generated RPC wire Codec 的 `UseCodec<T>`。
+同一 Contract assembly 内的所有 `[RpcContract]` 对相同闭合类型 `T` 共享同一份最终 Codec binding；不同 Contract assembly 可以为同一个 configurable `T` 选择不同 Codec。批量路由使用 assembly 级 `RpcCodecRoute`，scope 只有 `Managed`、`Unmanaged` 与它们的组合 `All`；不存在 `Native` route。Framework wire primitives 永远不参与 routing。
+
+如果确实需要为 `int`、`string`、enum 等 Framework wire primitive 定义不同 wire representation，应创建 user-defined wrapper struct/class，并为 wrapper 配置 Codec。这样 final graph 仍保持每个 closed `T` 唯一，同时不会把所有 framework primitive 暴露成 configurable policy surface。
 
 `UseSerializer(Func<Type, IRpcCodec?>)` 是实例级 Runtime Context fallback resolver，仅用于未被 generated Contract assembly frozen graph 接管的运行时解析；它不会覆盖 generated RPC 的最终 wire Codec binding。
 
