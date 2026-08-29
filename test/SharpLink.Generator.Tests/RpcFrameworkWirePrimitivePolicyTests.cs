@@ -20,9 +20,11 @@ public enum FixedMode : byte
 public interface IFrameworkPrimitiveBoundaryContract : SharpLink.Sdk.IService
 {
     ValueTask<int> EchoInt(int value, CancellationToken cancellationToken);
+    ValueTask<int?> EchoNullableInt(int? value, CancellationToken cancellationToken);
     ValueTask<string> EchoString(string value, CancellationToken cancellationToken);
     ValueTask<Guid> EchoGuid(Guid value, CancellationToken cancellationToken);
     ValueTask<FixedMode> EchoEnum(FixedMode value, CancellationToken cancellationToken);
+    ValueTask<FixedMode?> EchoNullableEnum(FixedMode? value, CancellationToken cancellationToken);
     ValueTask<byte[]> EchoBytes(byte[] value, CancellationToken cancellationToken);
     ValueTask<System.Collections.Generic.List<int>> EchoList(
         System.Collections.Generic.List<int> value,
@@ -41,12 +43,16 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(!generated.Contains("CreateCodec<int>()", StringComparison.Ordinal),
             "int is a fixed framework wire primitive");
+        Ensure(!generated.Contains("CreateCodec<int?>()", StringComparison.Ordinal),
+            "nullable int retains the fixed framework scalar policy");
         Ensure(!generated.Contains("CreateCodec<string>()", StringComparison.Ordinal),
             "string is a fixed framework wire primitive");
         Ensure(!generated.Contains("CreateCodec<global::System.Guid>()", StringComparison.Ordinal),
             "Guid is a fixed framework wire primitive");
         Ensure(!generated.Contains("CreateCodec<global::FixedMode>()", StringComparison.Ordinal),
             "enum is a fixed framework wire primitive");
+        Ensure(!generated.Contains("CreateCodec<global::FixedMode?>()", StringComparison.Ordinal),
+            "nullable enum retains the fixed framework enum policy");
         Ensure(!generated.Contains("CreateCodec<byte[]>()", StringComparison.Ordinal),
             "byte[] is the explicit bytes primitive exception");
         Ensure(generated.Contains(
@@ -70,9 +76,11 @@ public enum FixedMode : byte
 public interface IFrameworkPrimitiveBindingContract : SharpLink.Sdk.IService
 {
     ValueTask<int> EchoInt(int value, CancellationToken cancellationToken);
+    ValueTask<int?> EchoNullableInt(int? value, CancellationToken cancellationToken);
     ValueTask<string> EchoString(string value, CancellationToken cancellationToken);
     ValueTask<Guid> EchoGuid(Guid value, CancellationToken cancellationToken);
     ValueTask<FixedMode> EchoEnum(FixedMode value, CancellationToken cancellationToken);
+    ValueTask<FixedMode?> EchoNullableEnum(FixedMode? value, CancellationToken cancellationToken);
     ValueTask<byte[]> EchoBytes(byte[] value, CancellationToken cancellationToken);
 }
 
@@ -84,14 +92,16 @@ public sealed class PrimitiveAdapter : TestRouteAdapterBase
 """),
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(PrimitiveAdapter), \"primitive-rebind/v1\", \"primitive-rebind-wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(PrimitiveAdapter))]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int?), typeof(PrimitiveAdapter))]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(string), typeof(PrimitiveAdapter))]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(Guid), typeof(PrimitiveAdapter))]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(FixedMode), typeof(PrimitiveAdapter))]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(FixedMode?), typeof(PrimitiveAdapter))]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(byte[]), typeof(PrimitiveAdapter))]");
 
         var diagnostics = RunGenerator(source);
-        Ensure(diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK049") == 5,
-            "every framework wire primitive target must be rejected by the same fixed-wire policy boundary");
+        Ensure(diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK049") == 7,
+            "every framework wire primitive target and nullable value wrapper must be rejected by the same fixed-wire policy boundary");
         return Task.CompletedTask;
     }
 
