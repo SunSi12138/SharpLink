@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply:
-    if: github.event.head_commit.message == 'chore: stage PR 415 review fixes'
+    if: "${{ github.event.head_commit.message == 'chore: run PR 415 review fixer' }}"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -24,104 +24,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Apply review fixes
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace_once(path, old, new):
-              p = Path(path)
-              text = p.read_text(encoding='utf-8')
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{path}: expected exactly one replacement target, found {count}')
-              p.write_text(text.replace(old, new), encoding='utf-8')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.Models.cs',
-              '''internal sealed record DtoGenerationResult(\n    ImmutableArray<GeneratedCodecModel> Codecs,\n    ImmutableArray<GeneratedCodecModel> ContractCodecs,\n    ImmutableArray<string> FinalCodecBoundTypes,\n    ImmutableArray<DtoDiagnosticModel> Diagnostics,\n    ImmutableArray<GeneratedEnumModel> Enums)\n{\n    public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =\n        ImmutableArray<GeneratedCodecHashModel>.Empty;\n}\n''',
-              '''internal sealed record DtoGenerationResult(\n    ImmutableArray<GeneratedCodecModel> Codecs,\n    ImmutableArray<GeneratedCodecModel> ContractCodecs,\n    ImmutableArray<string> FinalCodecBoundTypes,\n    ImmutableArray<DtoDiagnosticModel> Diagnostics,\n    ImmutableArray<GeneratedEnumModel> Enums)\n{\n    public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =\n        ImmutableArray<GeneratedCodecHashModel>.Empty;\n    public string AssemblyLogicalIdentity { get; init; } = string.Empty;\n}\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.Models.cs',
-              '''            x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||\n            x.CodecHashes.Length != y.CodecHashes.Length ||\n            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)\n''',
-              '''            x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||\n            x.CodecHashes.Length != y.CodecHashes.Length ||\n            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length ||\n            !string.Equals(x.AssemblyLogicalIdentity, y.AssemblyLogicalIdentity, StringComparison.Ordinal))\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.Models.cs',
-              '''    public int GetHashCode(DtoGenerationResult obj)\n    {\n        var hash = 17;\n''',
-              '''    public int GetHashCode(DtoGenerationResult obj)\n    {\n        var hash = 17;\n        hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(obj.AssemblyLogicalIdentity));\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.CodecPolicyOwnership.cs',
-              '''        {\n            CodecHashes = codecHashes\n        };\n''',
-              '''        {\n            CodecHashes = codecHashes,\n            AssemblyLogicalIdentity = compilation.Assembly.Identity.Name\n        };\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.cs',
-              '''            var code = GenerateAssemblyManifest(interfaces, services, codecs, contractCodecs, codecHashes);\n''',
-              '''            var code = GenerateAssemblyManifest(\n                interfaces,\n                services,\n                codecs,\n                contractCodecs,\n                codecHashes,\n                value.Right.AssemblyLogicalIdentity);\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs',
-              '''        ImmutableArray<GeneratedCodecModel> codecs,\n        ImmutableArray<GeneratedCodecModel> contractCodecs,\n        ImmutableArray<GeneratedCodecHashModel> codecHashes)\n''',
-              '''        ImmutableArray<GeneratedCodecModel> codecs,\n        ImmutableArray<GeneratedCodecModel> contractCodecs,\n        ImmutableArray<GeneratedCodecHashModel> codecHashes,\n        string assemblyLogicalIdentity)\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs',
-              '''        var rpcIdentity = BuildRpcAssemblyIdentity(contracts, codecHashes);\n''',
-              '''        var rpcIdentity = BuildRpcAssemblyIdentity(assemblyLogicalIdentity, contracts, codecHashes);\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.RpcIdentity.cs',
-              '''    private static RpcAssemblyIdentityModel BuildRpcAssemblyIdentity(\n        RpcInterfaceModel[] contracts,\n        ImmutableArray<GeneratedCodecHashModel> codecHashes)\n''',
-              '''    private static RpcAssemblyIdentityModel BuildRpcAssemblyIdentity(\n        string assemblyLogicalIdentity,\n        RpcInterfaceModel[] contracts,\n        ImmutableArray<GeneratedCodecHashModel> codecHashes)\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.RpcIdentity.cs',
-              '''        var assemblyParts = new List<string>\n        {\n            "rpc-assembly/v1",\n            contractIdentities.Length.ToString(InvariantCulture)\n        };\n''',
-              '''        var assemblyParts = new List<string>\n        {\n            "rpc-assembly/v1",\n            assemblyLogicalIdentity,\n            contractIdentities.Length.ToString(InvariantCulture)\n        };\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.CodecIdentity.cs',
-              '''            if (type is IPointerTypeSymbol pointer)\n            {\n                builder.Append("|pointer|");\n                AppendUnsafeBlitPhysicalLayout(pointer.PointedAtType, builder, stack);\n                return;\n            }\n            if (type is IFunctionPointerTypeSymbol)\n            {\n                builder.Append("|function-pointer");\n                return;\n            }\n''',
-              '''            if (type is IPointerTypeSymbol pointer)\n            {\n                builder.Append("|native-pointer-width/64|pointer|");\n                AppendUnsafeBlitPhysicalLayout(pointer.PointedAtType, builder, stack);\n                return;\n            }\n            if (type is IFunctionPointerTypeSymbol)\n            {\n                builder.Append("|native-pointer-width/64|function-pointer");\n                return;\n            }\n''')
-
-          replace_once(
-              'src/SharpLink.Generator/RpcGenerator.CodecIdentity.cs',
-              '''                SpecialType.System_Int64 => "i64",\n                SpecialType.System_UInt64 => "u64",\n                SpecialType.System_Double => "f64",\n''',
-              '''                SpecialType.System_Int64 => "i64",\n                SpecialType.System_UInt64 => "u64",\n                SpecialType.System_IntPtr => "native-pointer-width/64:intptr",\n                SpecialType.System_UIntPtr => "native-pointer-width/64:uintptr",\n                SpecialType.System_Double => "f64",\n''')
-
-          replace_once(
-              'src/SharpLink.Runtime/Codec/RpcCodecProvider.cs',
-              '''            if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())\n                return UnsafeBlitCodec<T>.Instance;\n''',
-              '''            if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())\n            {\n                RpcUnsafeBlitPlatform.EnsureSupported(targetType);\n                return UnsafeBlitCodec<T>.Instance;\n            }\n''')
-
-          helper = Path('src/SharpLink.Runtime/Codec/RpcUnsafeBlitPlatform.cs')
-          if helper.exists():
-              raise SystemExit(f'{helper}: file already exists')
-          helper.write_text('''using System.Reflection;\n\nnamespace SharpLink.Runtime;\n\ninternal static class RpcUnsafeBlitPlatform\n{\n    private const int SupportedNativePointerSize = 8;\n\n    internal static void EnsureSupported(Type targetType)\n    {\n        if (IsSupported(targetType, IntPtr.Size))\n            return;\n\n        throw new PlatformNotSupportedException(\n            $"UnsafeBlit Codec for '{targetType.FullName}' contains native-sized members and requires a 64-bit process.");\n    }\n\n    internal static bool IsSupported(Type targetType, int nativePointerSize)\n    {\n        ArgumentNullException.ThrowIfNull(targetType);\n        return nativePointerSize == SupportedNativePointerSize ||\n               !ContainsNativeSizedMember(targetType, new HashSet<Type>());\n    }\n\n    private static bool ContainsNativeSizedMember(Type type, HashSet<Type> seen)\n    {\n        if (type == typeof(IntPtr) || type == typeof(UIntPtr) || type.IsPointer || type.IsFunctionPointer)\n            return true;\n        if (!type.IsValueType || type.IsPrimitive || type.IsEnum)\n            return false;\n        if (!seen.Add(type))\n            return false;\n\n        foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))\n        {\n            if (ContainsNativeSizedMember(field.FieldType, seen))\n                return true;\n        }\n\n        return false;\n    }\n}\n''', encoding='utf-8')
-
-          unit_test = Path('test/SharpLink.UnitTests/Runtime/RpcUnsafeBlitPlatformTests.cs')
-          if unit_test.exists():
-              raise SystemExit(f'{unit_test}: file already exists')
-          unit_test.write_text('''using SharpLink.Runtime;\n\nnamespace SharpLink.UnitTests.Runtime;\n\npublic sealed class RpcUnsafeBlitPlatformTests\n{\n    [Test]\n    public void NativeSizedUnsafeBlitShouldBe64BitOnly()\n    {\n        Ensure(\n            RpcUnsafeBlitPlatform.IsSupported(typeof(NativeSizedPayload), 8),\n            "native-sized UnsafeBlit payloads must be accepted by the supported 64-bit runtime");\n        Ensure(\n            !RpcUnsafeBlitPlatform.IsSupported(typeof(NativeSizedPayload), 4),\n            "native-sized UnsafeBlit payloads must be rejected by a 32-bit runtime");\n        Ensure(\n            RpcUnsafeBlitPlatform.IsSupported(typeof(PortablePayload), 4),\n            "fixed-width UnsafeBlit payloads must remain valid on a 32-bit runtime");\n    }\n\n    private struct NativeSizedPayload\n    {\n        public int Prefix;\n        public nint Handle;\n    }\n\n    private struct PortablePayload\n    {\n        public int Prefix;\n        public long Value;\n    }\n\n    private static void Ensure(bool condition, string message)\n    {\n        if (!condition)\n            throw new InvalidOperationException(message);\n    }\n}\n''', encoding='utf-8')
-
-          identity_tests = Path('test/SharpLink.Generator.Tests/RpcDeterministicIdentityTests.cs')
-          text = identity_tests.read_text(encoding='utf-8')
-          marker = '''    [Test]\n    public Task DtoWireShapeChangeShouldChangeFinalRpcIdentity()\n'''
-          if text.count(marker) != 1:
-              raise SystemExit('identity tests: assembly regression insertion marker mismatch')
-          assembly_test = '''    [Test]\n    public Task SameApparentAbiInDifferentAssembliesShouldHaveDifferentAssemblyIdentity()\n    {\n        var source = BuildDtoIdentitySource(includeExtraMember: false, idempotent: false);\n        var first = GenerateIdentityManifest(\n            "DeterministicIdentityAssemblyA",\n            source,\n            Platform.AnyCpu);\n        var second = GenerateIdentityManifest(\n            "DeterministicIdentityAssemblyB",\n            source,\n            Platform.AnyCpu);\n\n        Ensure(\n            ExtractGeneratedCodecIdentity(first, "DeterministicPayload") ==\n            ExtractGeneratedCodecIdentity(second, "DeterministicPayload"),\n            "the same payload definition must retain the same CodecHash across Contract assemblies");\n        Ensure(\n            ExtractGeneratedRpcAssemblyHash(first) != ExtractGeneratedRpcAssemblyHash(second),\n            "different Contract assembly logical identities must not collapse to one RpcAssemblyHash");\n        return Task.CompletedTask;\n    }\n\n'''
-          text = text.replace(marker, assembly_test + marker)
-
-          marker = '''    [Test]\n    public Task SharedPayloadShouldHaveSameCodecHashAcrossContractAssemblies()\n'''
-          if text.count(marker) != 1:
-              raise SystemExit('identity tests: native-size regression insertion marker mismatch')
-          native_test = '''    [Test]\n    public Task NativeSizedUnsafeBlitShouldUseStable64BitOnlyIdentity()\n    {\n        var nativeSource = BuildSource("""\npublic struct NativeSizedUnsafeLayoutPayload\n{\n    public int Prefix;\n    public nint Handle;\n}\n\n[SharpLink.Sdk.RpcContract]\npublic interface INativeSizedUnsafeLayoutContract : SharpLink.Sdk.IService\n{\n    ValueTask<NativeSizedUnsafeLayoutPayload> Echo(\n        NativeSizedUnsafeLayoutPayload value,\n        CancellationToken cancellationToken);\n}\n""");\n        var fixed64Source = nativeSource.Replace("public nint Handle;", "public long Handle;", StringComparison.Ordinal);\n\n        var x64 = GenerateIdentityManifest(\n            "NativeSizedUnsafeLayoutIdentity",\n            nativeSource,\n            Platform.X64);\n        var x86 = GenerateIdentityManifest(\n            "NativeSizedUnsafeLayoutIdentity",\n            nativeSource,\n            Platform.X86);\n        var fixed64 = GenerateIdentityManifest(\n            "NativeSizedUnsafeLayoutIdentity",\n            fixed64Source,\n            Platform.X64);\n\n        Ensure(\n            ExtractGeneratedRpcAssemblyHash(x64) == ExtractGeneratedRpcAssemblyHash(x86),\n            "native-sized UnsafeBlit identity must describe the supported 64-bit wire layout independently of compiler platform");\n        Ensure(\n            ExtractGeneratedRpcAssemblyHash(x64) != ExtractGeneratedRpcAssemblyHash(fixed64),\n            "native-sized UnsafeBlit identity must remain distinct from a fixed-width Int64 field");\n        return Task.CompletedTask;\n    }\n\n'''
-          text = text.replace(marker, native_test + marker)
-          identity_tests.write_text(text, encoding='utf-8')
-          PY
+        run: python3 eng/apply-pr415-review-fixes.py
 
       - name: Restore and format
         run: |
@@ -135,7 +38,6 @@ jobs:
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
       - name: Commit fixes
-        shell: bash
         run: |
           git diff --check
           git config user.name github-actions[bot]
