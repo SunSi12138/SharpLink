@@ -74,34 +74,9 @@ internal sealed partial class SharpLinkClient
             _lastAcceptedVersion = version;
         }
 
-        public DynamicEndpointState? FindEndpoint(ClientConnection connection)
-        {
-            for (var index = 0; index < _allStates.Count; index++)
-                if (_allStates[index].Connections.Contains(connection))
-                    return _allStates[index];
-            return null;
-        }
-
         public bool IsCurrent(DynamicEndpointState endpoint)
             => _currentById.TryGetValue(endpoint.Configuration.Endpoint.Id, out var current) &&
                ReferenceEquals(current, endpoint);
-
-        public int TotalActiveConnections()
-        {
-            var count = 0;
-            for (var index = 0; index < _allStates.Count; index++)
-                count += _allStates[index].NonRetiringConnectionCount + _allStates[index].ConnectingCount;
-            return count;
-        }
-
-        public int CountConnections(Func<ClientConnection, int> count)
-        {
-            var result = 0;
-            for (var index = 0; index < _allStates.Count; index++)
-                foreach (var connection in _allStates[index].Connections)
-                    result += count(connection);
-            return result;
-        }
 
         public int CountActiveCurrentInitialDials()
         {
@@ -137,7 +112,6 @@ internal sealed partial class SharpLinkClient
             for (var index = 0; index < _current.Length; index++)
             {
                 var endpoint = _current[index];
-                endpoint.PublishReadyConnections();
                 var endpointReadyConnections = endpoint.ReadyConnections.Length;
                 if (endpointReadyConnections != 0)
                 {
@@ -259,7 +233,7 @@ internal sealed partial class SharpLinkClient
         int ReadyConnections,
         bool MembershipChanged);
 
-    private sealed class DynamicEndpointState
+    internal sealed class DynamicEndpointState
     {
         private readonly Func<int> _readyConnectionCountProvider;
         private readonly Func<int> _activeCallCountProvider;
@@ -275,7 +249,6 @@ internal sealed partial class SharpLinkClient
 
         public StaticEndpointConfiguration Configuration { get; }
         public long Generation { get; }
-        public HashSet<ClientConnection> Connections { get; } = [];
         public ClientConnection[] ReadyConnections => Volatile.Read(ref _readyConnections);
         public Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
         public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
@@ -286,18 +259,6 @@ internal sealed partial class SharpLinkClient
         public bool FactoryReleased { get; set; }
         public Task? ReconnectTask { get; set; }
         public Task? ExpansionTask { get; set; }
-
-        public int NonRetiringConnectionCount
-        {
-            get
-            {
-                var count = 0;
-                foreach (var connection in Connections)
-                    if (connection.State == ClientConnectionState.Ready)
-                        count++;
-                return count;
-            }
-        }
 
         public int ActiveCallCount => GetActiveCallCount();
 
@@ -312,13 +273,10 @@ internal sealed partial class SharpLinkClient
             return count;
         }
 
-        public void PublishReadyConnections()
+        public void PublishReadyConnections(ClientConnection[] connections)
         {
-            var ready = new List<ClientConnection>(Connections.Count);
-            foreach (var connection in Connections)
-                if (connection.CanAcceptCalls)
-                    ready.Add(connection);
-            Volatile.Write(ref _readyConnections, ready.ToArray());
+            ArgumentNullException.ThrowIfNull(connections);
+            Volatile.Write(ref _readyConnections, connections);
         }
     }
 
