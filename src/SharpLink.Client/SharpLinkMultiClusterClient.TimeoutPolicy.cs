@@ -2,7 +2,7 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkMultiClusterClient
 {
-    private readonly Action<SharpClientBuilder>? _configureChildTimeoutPolicy;
+    private readonly ClientRequestTimeoutPolicy _requestTimeoutPolicy;
 
     internal SharpLinkMultiClusterClient(
         SharpLinkMultiClusterOptions options,
@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkMultiClusterClient
         IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> routeManifestSnapshot,
         int configuredConnectionBudget,
         ILoggerFactory? loggerFactory,
-        Action<SharpClientBuilder>? configureChildTimeoutPolicy)
+        ClientRequestTimeoutPolicy requestTimeoutPolicy)
         : this(
             options,
             clusters,
@@ -19,11 +19,11 @@ internal sealed partial class SharpLinkMultiClusterClient
             routeManifestSnapshot,
             configuredConnectionBudget,
             loggerFactory)
-        => _configureChildTimeoutPolicy = configureChildTimeoutPolicy;
+        => _requestTimeoutPolicy = requestTimeoutPolicy;
 
     void ISharpLinkMultiClusterLifecycleControl.ConfigureChildBuilder(SharpClientBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        _configureChildTimeoutPolicy?.Invoke(builder);
+        builder.ApplyRequestTimeoutPolicyIfUnspecified(_requestTimeoutPolicy);
     }
 }
