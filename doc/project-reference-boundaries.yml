@@ -1,0 +1,80 @@
+schema_version: 1
+
+# Canonical machine-readable policy for production ProjectReference boundaries.
+# Any production ProjectReference not listed under allowed_references or
+# temporary_exceptions is forbidden.
+scope:
+  production_root: src
+  reference_kind: ProjectReference
+  default: deny
+  package_references: out_of_scope
+
+projects:
+  abstractions: src/SharpLink.Abstractions/SharpLink.Abstractions.csproj
+  runtime: src/SharpLink.Runtime/SharpLink.Runtime.csproj
+  client: src/SharpLink.Client/SharpLink.Client.csproj
+  server: src/SharpLink.Server/SharpLink.Server.csproj
+  hosting: src/SharpLink.Hosting/SharpLink.Hosting.csproj
+  sdk: src/SharpLink.Sdk/SharpLink.Sdk.csproj
+  generator: src/SharpLink.Generator/SharpLink.Generator.csproj
+  serializer_sharppack: src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj
+
+allowed_references:
+  - from: runtime
+    to: abstractions
+    mode: assembly
+
+  - from: client
+    to: runtime
+    mode: assembly
+  - from: client
+    to: abstractions
+    mode: assembly
+
+  - from: server
+    to: runtime
+    mode: assembly
+  - from: server
+    to: abstractions
+    mode: assembly
+
+  - from: hosting
+    to: runtime
+    mode: assembly
+  - from: hosting
+    to: abstractions
+    mode: assembly
+
+  - from: sdk
+    to: abstractions
+    mode: assembly
+  - from: sdk
+    to: generator
+    mode: analyzer
+    required_metadata:
+      OutputItemType: Analyzer
+      ReferenceOutputAssembly: "false"
+      PrivateAssets: all
+
+  - from: serializer_sharppack
+    to: abstractions
+    mode: assembly
+
+temporary_exceptions:
+  - from: hosting
+    to: client
+    mode: assembly
+    provenance_issue: 337
+    reason: Existing Hosting coupling retained on dev; no new Hosting-to-Client dependency is permitted by this exception.
+
+  - from: hosting
+    to: server
+    mode: assembly
+    provenance_issue: 337
+    reason: Existing Hosting coupling retained on dev; no new Hosting-to-Server dependency is permitted by this exception.
+
+mechanical_rules:
+  canonical_projects_are_exact: true
+  unlisted_production_project_references: deny
+  production_references_to_test_or_sample_projects: deny
+  temporary_exceptions_are_not_precedent: true
