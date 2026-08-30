@@ -87,7 +87,7 @@ public partial class RpcGenerator
             }
             else if (type.IsUnmanagedType && !IsRuntimeSizedUnsafeBlitType(type))
             {
-                var layout = new StringBuilder("unsafe-blit/v1");
+                var layout = new StringBuilder("unsafe-blit/v2|abi:little-endian|native-pointer-width/64");
                 AppendUnsafeBlitPhysicalLayout(
                     type,
                     layout,
@@ -152,8 +152,10 @@ public partial class RpcGenerator
                 case GeneratedCodecKind.Adapter:
                     return Hashing.GetSemanticHash(
                         "codec/v1",
-                        "adapter-opaque",
-                        GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter").ToHex());
+                        "adapter-closed/v1",
+                        model.AdapterId ?? string.Empty,
+                        GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter").ToHex(),
+                        GetAdapterClosedCodecSemanticIdentity(model).ToHex());
                 case GeneratedCodecKind.Dto:
                     {
                         var parts = new List<string>
@@ -375,7 +377,7 @@ public partial class RpcGenerator
 
             string? token = type.SpecialType switch
             {
-                SpecialType.System_String => "string/utf8/v1",
+                SpecialType.System_String => "string/utf16le/i32-byte-length-null-minus1/v1",
                 SpecialType.System_Boolean => "bool/fixed1/v1",
                 SpecialType.System_Byte => "u8/fixed1/v1",
                 SpecialType.System_SByte => "i8/fixed1/v1",
