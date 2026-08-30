@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkClient
     /// dynamic-cluster selection hot path. Mutations are serialized by DynamicClusterRuntime's
     /// existing gate; readers only observe arrays published with volatile reads/writes.
     /// </summary>
-    private sealed class DynamicClusterTopologyState
+    private sealed class DynamicClusterTopologyState : System.Collections.IEnumerable
     {
         private readonly SharpLinkLoadBalancingStrategy _strategy;
         private readonly ISharpLinkEndpointSelector? _selector;
@@ -36,6 +36,9 @@ internal sealed partial class SharpLinkClient
         public DynamicEndpointSelectionSnapshot SelectionSnapshot => Volatile.Read(ref _selectionSnapshot);
         public bool HasAcceptedEmptyTopology => _lastAcceptedVersion >= 0 && _current.Length == 0;
         public bool HasCustomSelector => _selector is not null;
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+            => _current.GetEnumerator();
 
         public int ReadyConnectionCount
         {
