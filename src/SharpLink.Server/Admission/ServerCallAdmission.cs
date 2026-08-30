@@ -4,33 +4,29 @@ namespace SharpLink.Server;
 
 /// <summary>
 /// Owns server-wide call-admission accounting and the local-to-global capacity transfer.
-/// Server lifecycle state remains owned by <see cref="SharpLinkServer"/> and is observed through
-/// a stable callback so shutdown/drain coordination is not moved into this component.
+/// Server lifecycle and drain publication remain owned by <see cref="SharpLinkServer"/> and are
+/// observed through direct calls on that sealed owner so extraction adds no delegate dispatch to
+/// the request hot path.
 /// </summary>
 internal sealed class ServerCallAdmission
 {
+    private readonly SharpLinkServer _server;
     private readonly int _maxConcurrentCallsPerConnection;
     private readonly int _maxConcurrentCallsPerServer;
-    private readonly Func<bool> _isServerRunning;
-    private readonly Action<ServerConnectionState?> _trySignalCallsDrained;
-    private readonly Func<ServerResourceGovernor> _resourceGovernor;
     private int _globalActiveCalls;
     private int _pendingCallAdmissions;
 
     internal ServerCallAdmission(
+        SharpLinkServer server,
         int maxConcurrentCallsPerConnection,
-        int maxConcurrentCallsPerServer,
-        Func<bool> isServerRunning,
-        Action<ServerConnectionState?> trySignalCallsDrained,
-        Func<ServerResourceGovernor> resourceGovernor)
+        int maxConcurrentCallsPerServer)
     {
+        ArgumentNullException.ThrowIfNull(server);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerConnection, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerServer, 1);
+        _server = server;
         _maxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection;
         _maxConcurrentCallsPerServer = maxConcurrentCallsPerServer;
-        _isServerRunning = isServerRunning ?? throw new ArgumentNullException(nameof(isServerRunning));
-        _trySignalCallsDrained = trySignalCallsDrained ?? throw new ArgumentNullException(nameof(trySignalCallsDrained));
-        _resourceGovernor = resourceGovernor ?? throw new ArgumentNullException(nameof(resourceGovernor));
     }
 
     internal int ActiveCallCount => Volatile.Read(ref _globalActiveCalls);
@@ -41,12 +37,12 @@ internal sealed class ServerCallAdmission
 
     internal int MaxConcurrentCallsPerServer => _maxConcurrentCallsPerServer;
 
-    internal ServerResourceGovernor ResourceGovernor => _resourceGovernor();
+    internal ServerResourceGovernor ResourceGovernor => _server.ResourceGovernorForCallAdmission;
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        if (!_isServerRunning())
+        if (!_server.IsRunningForCallAdmission)
             return ServerCallAdmissionResult.Unavailable;
 
         Interlocked.Increment(ref _pendingCallAdmissions);
@@ -54,7 +50,7 @@ internal sealed class ServerCallAdmission
         {
             // Stop can begin between the first Running check and the pending increment. Once this
             // check succeeds, the pending count covers every local -> global transfer and rollback.
-            if (!_isServerRunning())
+            if (!_server.IsRunningForCallAdmission)
                 return ServerCallAdmissionResult.Unavailable;
 
             if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
@@ -76,7 +72,7 @@ internal sealed class ServerCallAdmission
                 return ServerCallAdmissionResult.ServerCapacityExhausted;
             }
 
-            if (_isServerRunning())
+            if (_server.IsRunningForCallAdmission)
                 return ServerCallAdmissionResult.Acquired;
 
             ReleaseCall(connection);
@@ -125,7 +121,7 @@ internal sealed class ServerCallAdmission
         ArgumentNullException.ThrowIfNull(connection);
         connection.ReleaseCall();
         ReleaseGlobalCall();
-        _trySignalCallsDrained(connection);
+        _server.TrySignalCallsDrained(connection);
     }
 
     private bool TryAcquireGlobalCall()
@@ -151,7 +147,7 @@ internal sealed class ServerCallAdmission
         if (remaining < 0)
             throw new InvalidOperationException("Server pending call admission count underflowed.");
         if (remaining == 0)
-            _trySignalCallsDrained(connection);
+            _server.TrySignalCallsDrained(connection);
     }
 }
 
