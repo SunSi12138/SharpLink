@@ -953,7 +953,7 @@ internal sealed class InternalService : IInternalService
         var ordinary = CreateMetadataReference(
             "OrdinaryDependency",
             "namespace OrdinaryDependency { public sealed class OrdinaryType { } }");
-        const string consumer = "namespace Consumer { internal sealed class Marker { } }";
+        const string consumer = "namespace Consumer { internal sealed class Marker; }";
 
         var first = GetReferencedManifestBootstrap(
             RunGeneratorAndGetSources(consumer, infrastructure, zeta, ordinary, legacy, malformed, alpha));
@@ -2026,7 +2026,7 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\")]") ,
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\")]"),
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(ValueTuple<int, string>), typeof(FakeAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
