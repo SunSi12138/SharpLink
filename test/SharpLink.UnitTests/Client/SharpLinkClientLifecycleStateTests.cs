@@ -1099,7 +1099,8 @@ public class SharpLinkClientLifecycleStateTests
 
     private static SharpClientBuilder CreateClientBuilder()
         => SharpClientBuilder.Create()
-            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout();
 
     private static SharpLinkRuntimeContext CreateRuntimeContext()
         => new SharpLinkRuntimeContextBuilder()
