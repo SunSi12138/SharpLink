@@ -414,7 +414,7 @@ public interface IResponseFingerprintContract : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DtoMemberNullabilityMustParticipateInRuntimeCodecSchemaIdentity()
+    public Task DtoMemberNullabilityMustParticipateInRuntimeCodecHash()
     {
         var required = BuildSource("""
 #nullable enable
@@ -435,10 +435,10 @@ public interface IDtoSchemaContract : SharpLink.Sdk.IService
 public sealed class Payload { public string? Name { get; set; } }
 """);
 
-        var requiredSchema = GetFirstGeneratedCodecSchema(required);
-        var optionalSchema = GetFirstGeneratedCodecSchema(optional);
-        Ensure(!string.Equals(requiredSchema, optionalSchema, StringComparison.Ordinal),
-            "required and nullable DTO members must not publish the same runtime Codec schema");
+        var requiredHash = GetFirstGeneratedCodecHash(required);
+        var optionalHash = GetFirstGeneratedCodecHash(optional);
+        Ensure(!string.Equals(requiredHash, optionalHash, StringComparison.Ordinal),
+            "required and nullable DTO members must not publish the same runtime CodecHash");
         return Task.CompletedTask;
     }
 
@@ -1962,7 +1962,11 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         Ensure(generated.Contains("public Type TargetType => typeof(global::Graph);", StringComparison.Ordinal),
             "Adapter factory target type");
         Ensure(generated.Contains("fake.adapter/v1", StringComparison.Ordinal), "Adapter ID");
-        Ensure(generated.Contains("fake-wire/v1", StringComparison.Ordinal), "Wire Format ID");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "Adapter factory CodecHash");
+        Ensure(!generated.Contains("SchemaId =>", StringComparison.Ordinal) &&
+               !generated.Contains("WireFormatId =>", StringComparison.Ordinal),
+            "Adapter factory must not emit legacy schema/wire identities");
         Ensure(!generated.Contains("FakeAdapter, Version=", StringComparison.Ordinal),
             "Adapter implementation assemblies are normal runtime references, not dynamic Manifest dependencies");
         Ensure(!generated.Contains("MakeGenericType", StringComparison.Ordinal), "no MakeGenericType");
@@ -2022,7 +2026,7 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\")]"),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\")]") ,
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(ValueTuple<int, string>), typeof(FakeAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
@@ -2214,7 +2218,7 @@ public abstract class TestAdapterBase : SharpLink.Abstractions.IRpcCodecAdapter
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"first/v1\", \"first-wire/v1\", SelectorAttributeType = typeof(FirstSelectorAttribute))]"),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"first/v1\", \"first-wire/v1\", SelectorAttributeType = typeof(FirstSelectorAttribute))]") ,
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SecondAdapter), \"second/v1\", \"second-wire/v1\")]");
         EnsureHasRule(source, "SHARPLINK045");
         return Task.CompletedTask;
@@ -2279,18 +2283,6 @@ public abstract class AdapterBase : SharpLink.Abstractions.IRpcCodecAdapter
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"shared/v1\", \"wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SecondAdapter), \"shared/v1\", \"wire/v1\")]");
         EnsureHasRuleContaining(sameIdDifferentType, "SHARPLINK048", "Adapter ID 'shared/v1'");
-
-        var sameIdDifferentWire = AddAssemblyAttributes(BuildSource("""
-public sealed class FirstAdapter : SharpLink.Abstractions.IRpcCodecAdapter
-{
-    public string AdapterId => "shared/v1";
-    public string WireFormatId => "wire/v1";
-    public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
-}
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"shared/v1\", \"wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"shared/v1\", \"other-wire/v1\")]");
-        EnsureHasRuleContaining(sameIdDifferentWire, "SHARPLINK048", "same Adapter type");
         return Task.CompletedTask;
     }
 
@@ -2392,8 +2384,8 @@ public sealed class InstalledAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("IRpcCodec<global::NativePayload>", StringComparison.Ordinal),
             "supported DTO retains its native generated Codec");
-        Ensure(generated.Contains("WireFormatId => \"sharplink-native/v1\"", StringComparison.Ordinal),
-            "supported DTO retains the native wire identity");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "supported DTO publishes deterministic native CodecHash");
         Ensure(!generated.Contains("CreateCodec<global::NativePayload>()", StringComparison.Ordinal),
             "installed Adapter is not an automatic fallback");
         Ensure(!generated.Contains("installed-wire/v1", StringComparison.Ordinal),
@@ -2472,7 +2464,10 @@ public interface IGraphService : SharpLink.Sdk.IService
         Ensure(generated.Contains("CreateCodec<global::Graph>()", StringComparison.Ordinal),
             "registration from the transitive compilation reference closure selects the Adapter");
         Ensure(generated.Contains("metadata.adapter/v1", StringComparison.Ordinal), "metadata Adapter ID");
-        Ensure(generated.Contains("metadata-wire/v1", StringComparison.Ordinal), "metadata Wire Format ID");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "metadata Adapter CodecHash");
+        Ensure(!generated.Contains("metadata-wire/v1", StringComparison.Ordinal),
+            "legacy metadata wire identity must not be emitted");
         return Task.CompletedTask;
     }
 
@@ -2966,9 +2961,11 @@ public interface IMoneyService : SharpLink.Sdk.IService
             "custom Codec binding must emit an IRpcGeneratedCodecFactory");
         Ensure(generated.Contains("new global::MoneyCodec()", StringComparison.Ordinal),
             "custom Codec factory must construct the bound implementation directly");
-        Ensure(generated.Contains("\"money-wire/v1\"", StringComparison.Ordinal) &&
-               generated.Contains("SchemaId => \"global::Money:", StringComparison.Ordinal),
-            "custom Codec wire/schema identity must be emitted into the manifest");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "custom Codec factory must emit deterministic CodecHash");
+        Ensure(!generated.Contains("SchemaId =>", StringComparison.Ordinal) &&
+               !generated.Contains("WireFormatId =>", StringComparison.Ordinal),
+            "custom Codec factory must not emit legacy schema/wire identities");
         return Task.CompletedTask;
     }
 
@@ -3348,11 +3345,11 @@ namespace SharpLink.Abstractions
         return quotedLines[^1].TrimEnd(',').Trim('"');
     }
 
-    private static string GetFirstGeneratedCodecSchema(string source)
+    private static string GetFirstGeneratedCodecHash(string source)
         => string.Join("\n", RunGeneratorAndGetSources(source))
             .Split('\n')
             .Select(static line => line.Trim())
-            .First(static line => line.StartsWith("public string SchemaId =>", StringComparison.Ordinal));
+            .First(static line => line.StartsWith("public RpcHash128 CodecHash =>", StringComparison.Ordinal));
 
     private static MetadataReference CreateMetadataReference(
         string assemblyName,
