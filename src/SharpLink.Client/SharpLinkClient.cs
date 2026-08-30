@@ -46,6 +46,7 @@ internal sealed partial class SharpLinkClient :
     private readonly TimeSpan _heartbeatTimeout;
     private readonly bool _hasRequestTimeout;
     private readonly TimeSpan _requestTimeoutValue;
+    private readonly ClientRequestTimeoutSource _requestTimeoutSource;
     private readonly ISharpLinkClientAuthenticator? _authenticator;
     private readonly SharpLinkProtocolOptions _protocolOptions;
     private readonly ILogger _logger;
@@ -82,6 +83,7 @@ internal sealed partial class SharpLinkClient :
         _heartbeatTimeout = composition.HeartbeatTimeout;
         _hasRequestTimeout = composition.HasRequestTimeout;
         _requestTimeoutValue = composition.RequestTimeout;
+        _requestTimeoutSource = composition.RequestTimeoutSource;
         _authenticator = composition.Authenticator;
         _protocolOptions = composition.ProtocolOptions;
         _rpcSessionFlushOptions = composition.RpcSessionFlushOptions;
