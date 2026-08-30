@@ -166,24 +166,45 @@ public class SendPumpIdleShutdownTests
         var output = new Pipe();
         var session = CreateSession(input, output, maxSendQueueBytes: 64 * 1024);
         using var producersStopped = new CancellationTokenSource();
+        using var producersReady = new CountdownEvent(4);
+        using var startProducers = new ManualResetEventSlim(initialState: false);
+        using var producersEnteredSend = new CountdownEvent(4);
         var producers = new Task[4];
         try
         {
             for (var index = 0; index < producers.Length; index++)
             {
                 var producerIndex = index;
-                producers[index] = Task.Run(async () =>
+                producers[index] = LongRunningTestWorker.Run(() =>
                 {
                     ulong requestId = (ulong)(producerIndex + 1) * 10_000;
+                    var firstSend = true;
+                    producersReady.Signal();
+                    startProducers.Wait();
                     while (!producersStopped.IsCancellationRequested)
                     {
                         try
                         {
                             var frame = CreateFrame(session, 32, requestId++);
                             if (producerIndex == producers.Length - 1)
-                                await session.SendPacketAndFlushAsync(frame);
+                            {
+                                var flush = session.SendPacketAndFlushAsync(frame).AsTask();
+                                if (firstSend)
+                                {
+                                    producersEnteredSend.Signal();
+                                    firstSend = false;
+                                }
+                                flush.GetAwaiter().GetResult();
+                            }
                             else
+                            {
                                 session.SendPacket(frame);
+                                if (firstSend)
+                                {
+                                    producersEnteredSend.Signal();
+                                    firstSend = false;
+                                }
+                            }
                         }
                         catch (SharpLinkException)
                         {
@@ -197,7 +218,12 @@ public class SendPumpIdleShutdownTests
                 });
             }
 
-            await Task.Delay(30);
+            Ensure(producersReady.Wait(TimeSpan.FromSeconds(5)),
+                "all dedicated producers must reach the start gate before shutdown begins");
+            startProducers.Set();
+            Ensure(producersEnteredSend.Wait(TimeSpan.FromSeconds(5)),
+                "all dedicated producers must enter their send path before shutdown begins");
+
             await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
             producersStopped.Cancel();
             await Task.WhenAll(producers).WaitAsync(TimeSpan.FromSeconds(10));
@@ -207,6 +233,14 @@ public class SendPumpIdleShutdownTests
         }
         finally
         {
+            producersStopped.Cancel();
+            startProducers.Set();
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            foreach (var producer in producers)
+            {
+                if (producer is not null)
+                    await LongRunningTestWorker.JoinAsync(producer, TimeSpan.FromSeconds(10));
+            }
             await CompletePipelinesAsync(input, output);
         }
     }
