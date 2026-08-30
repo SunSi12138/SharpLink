@@ -51,7 +51,7 @@ public class ServerDecodeResponseBackpressureTests
             .SetValue(server, 2); // Running
 
         var admission = server.TryReserveCall(connection, out var requestPermit);
-        Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && requestPermit is not null,
+        Ensure(admission == ServerCallAdmissionResult.Acquired && requestPermit is not null,
             "request permit acquired");
         var permit = requestPermit ?? throw new Exception("request permit was not returned");
         Ensure(permit.TryAcquireDecodePermit(128, out var decodePermit) && decodePermit is not null,
@@ -144,7 +144,7 @@ public class ServerDecodeResponseBackpressureTests
             .SetValue(server, 2); // Running
 
         var admission = server.TryReserveCall(connection, out var requestPermit);
-        Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && requestPermit is not null,
+        Ensure(admission == ServerCallAdmissionResult.Acquired && requestPermit is not null,
             "request permit acquired");
         var permit = requestPermit ?? throw new Exception("request permit was not returned");
         Ensure(permit.TryAcquireDecodePermit(0, out var decodePermit) && decodePermit is not null,
