@@ -38,18 +38,12 @@ internal sealed partial class SharpLinkClient
             return true;
         }
 
-        public DynamicEndpointState? FindEndpoint(
-            IReadOnlyList<DynamicEndpointState> states,
-            ClientConnection connection)
+        public DynamicEndpointState? FindEndpoint(ClientConnection connection)
         {
-            ArgumentNullException.ThrowIfNull(states);
             ArgumentNullException.ThrowIfNull(connection);
-            for (var index = 0; index < states.Count; index++)
-            {
-                var endpoint = states[index];
-                if (_connectionsByEndpoint.TryGetValue(endpoint, out var connections) && connections.Contains(connection))
-                    return endpoint;
-            }
+            foreach (var pair in _connectionsByEndpoint)
+                if (pair.Value.Contains(connection))
+                    return pair.Key;
             return null;
         }
 
@@ -88,12 +82,11 @@ internal sealed partial class SharpLinkClient
             => _retiringConnections.Count > maximumRetiringConnections;
 
         public bool TryMarkDraining(
-            IReadOnlyList<DynamicEndpointState> states,
             ClientConnection connection,
             out DynamicEndpointState? endpoint,
             out bool disposeNow)
         {
-            endpoint = FindEndpoint(states, connection);
+            endpoint = FindEndpoint(connection);
             if (endpoint is null)
             {
                 disposeNow = false;
@@ -115,14 +108,13 @@ internal sealed partial class SharpLinkClient
         }
 
         public bool TryRetireDrainingIfIdle(
-            IReadOnlyList<DynamicEndpointState> states,
             ClientConnection connection,
             out DynamicEndpointState? endpoint)
         {
             endpoint = null;
             if (connection.State != ClientConnectionState.Draining || connection.ActiveCallCount != 0)
                 return false;
-            endpoint = FindEndpoint(states, connection);
+            endpoint = FindEndpoint(connection);
             return endpoint is not null && Remove(endpoint, connection);
         }
 
@@ -191,9 +183,8 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        public ClientConnection[] DetachAll(IReadOnlyList<DynamicEndpointState> states)
+        public ClientConnection[] DetachAll()
         {
-            ArgumentNullException.ThrowIfNull(states);
             var connections = new List<ClientConnection>();
             foreach (var owned in _connectionsByEndpoint.Values)
                 connections.AddRange(owned);
