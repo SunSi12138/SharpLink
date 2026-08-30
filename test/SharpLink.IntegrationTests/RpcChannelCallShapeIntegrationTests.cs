@@ -225,7 +225,7 @@ public class RpcChannelCallShapeIntegrationTests
                 serverBuilder.UseSharedMemory(sharedMemoryName);
             else
             {
-                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString(), port);
+                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
                 port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             }
             var server = serverBuilder.Build();
