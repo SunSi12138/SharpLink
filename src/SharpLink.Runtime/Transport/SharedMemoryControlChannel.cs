@@ -19,6 +19,8 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private readonly SharedMemoryAsyncPulse _outboundWake = new();
     private readonly SharedMemoryAsyncPulse _dataAvailable = new();
     private readonly SharedMemoryAsyncPulse _spaceAvailable = new();
+    private readonly TaskCompletionSource _closeWriteStarted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _readerTask;
     private readonly Task _writerTask;
     private Action? _peerDataWaiterArmedHandler;
@@ -28,6 +30,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private int _pendingPeerDataWaiterArmed;
     private int _pendingPeerSpaceWaiterArmed;
     private int _waiterHandlersRegistered;
+    private int _writerActive;
     private int _closed;
     private Task? _disposeTask;
 
@@ -177,12 +180,22 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         {
             while (await _outboundWake.WaitAsync().ConfigureAwait(false))
             {
-                var pending = Interlocked.Exchange(ref _pendingOutboundSignals, 0);
-                if (pending == 0)
-                    continue;
-                await WriteSignalsAsync((byte)pending).ConfigureAwait(false);
-                if ((pending & CloseBit) != 0)
-                    return;
+                Volatile.Write(ref _writerActive, 1);
+                try
+                {
+                    var pending = Interlocked.Exchange(ref _pendingOutboundSignals, 0);
+                    if (pending == 0)
+                        continue;
+                    if ((pending & CloseBit) != 0)
+                        _closeWriteStarted.TrySetResult();
+                    await WriteSignalsAsync((byte)pending).ConfigureAwait(false);
+                    if ((pending & CloseBit) != 0)
+                        return;
+                }
+                finally
+                {
+                    Volatile.Write(ref _writerActive, 0);
+                }
             }
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
@@ -220,9 +233,17 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private async Task DisposeCoreAsync()
     {
+        var waitForFinalCloseStart =
+            !IsClosed &&
+            Volatile.Read(ref _writerActive) == 0 &&
+            Volatile.Read(ref _pendingOutboundSignals) == 0;
         if (!IsClosed)
             QueueSignal(CloseBit, kind: null);
         _outboundWake.Complete();
+        if (waitForFinalCloseStart)
+        {
+            await Task.WhenAny(_closeWriteStarted.Task, _writerTask).ConfigureAwait(false);
+        }
         try
         {
             await _writerTask.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
