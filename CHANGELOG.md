@@ -47,7 +47,6 @@
 
 ### Breaking
 
-- Client builders no longer receive an implicit 30-second request-timeout fallback. Every `SharpClientBuilder` and `SharpLinkMultiClusterClientBuilder` must explicitly select `UseRequestTimeout()`, `UseRequestTimeout(timeout)`, or `DisableRequestTimeout()` before `Build()`; applications that omit the choice now fail during Build/host startup. MultiCluster children inherit the coordinator's frozen policy unless they explicitly override it. See [`doc/migration.md`](doc/migration.md#client-request-timeout-policy).
 - `SharpLinkCallOptions` is removed from generated/service business signatures and from the generated `IRpcChannel` ABI. Per-call timeout now comes from method `[Timeout]` or the Client timeout policy, caller cancellation remains the method `CancellationToken`, and caller-selected metadata uses the narrow `GetWithMetadata<TContract>(SharpLinkMetadata)` proxy capability. No generic compatibility options bag is retained; regenerate all contracts/proxies/stubs and see [`doc/migration.md`](doc/migration.md).
 - Protocol v2 minor 4 is the SharpLink 2.0 wire baseline for RPC lifetime propagation. Request frames carry remaining `TimeBudget` instead of an absolute Unix-millisecond deadline, and 2.0 rejects peers below minor 4 during handshake so legacy bytes cannot be misinterpreted. Pre-2.0 process interoperability is not a 2.0 compatibility requirement.
 - `IRpcSession`, `IStreamManager`, raw stream dispatcher interfaces, public
@@ -186,10 +185,198 @@
 
 - Pooled response-stream dispatchers now use a monotonic lease generation instead of resetting a reusable leased/returned bit. A delayed return contender from an older stream can no longer commit after the same dispatcher has been rented again, reinsert the active lease into the process-wide pool, clear its codec and callbacks, or expose the active call to another consumer as `Only single consumer is supported`.
 
-### Compatibility and validation
+### Compatibility
 
 - Public API, generated contracts, Protocol v2 bytes, package graph, and valid stream behavior are unchanged. The fix adds no per-call allocation or lock; it replaces the existing pool-state compare/exchange with a generation-aware 64-bit compare/exchange.
-- Non-incremental Release build, Generator 121/121, Unit 511/511, Integration 252/252, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Exact-0.8.40/candidate TCP process medians changed by +0.36% without interceptors and +0.98% with interceptors, with unchanged allocations; required-reference stream dispatch was exactly 13.860 ns/op on both process medians.
+
+### Validation
+
+- A deterministic two-contender regression fails on exact RC4 with `retained=1, referencesIntact=False`, proving that the delayed old return both repooled and cleared the reused lease. The RC5 candidate passes the same schedule and all 15 dispatcher lifecycle tests.
+- Unit 511/511 and Integration 252/252 pass in Release with zero test failures.
+- Five alternating exact-RC4/candidate Balanced TCP Duplex pairs (c8, 32 items, 10-second measurements) completed with zero failures. Paired-median candidate deltas were QPS +3.82%, P50 -3.24%, P99 -12.60%, allocation/operation -2.04%, and CPU/operation -2.81%; these local results exclude a measurable regression and are not claimed as a performance improvement.
+
+## [1.0.0-rc4] - 2026-07-28
+
+### Fixed
+
+- Client and Server interceptor continuation-state caches now retain one exclusively owned state per physical thread instead of using mutable process-wide lock-free freelists. Concurrent pass-through interceptors can no longer hit an ABA reuse window that clears or replaces another invocation's owner and surfaces `The interceptor continuation has expired`.
+- PR, nightly, and release Integration gates now use fixed single-test execution. Adaptive suite parallelism produced unrelated TCP disconnect/deadline failures under host contention without shortening the 252-test wall time; release acceptance no longer depends on runner resource timing.
+
+### Validation
+
+- Exact RC3 produced 103 continuation-expired failures in one 8-second c32 witness and 38 failures across 3/5 paired baseline processes. The candidate completed all five paired c32 processes and 19,843,630 successful intercepted calls with zero failures; deterministic Client and Server ownership tests each fail independently on exact RC3 and pass on the candidate.
+- Five c1 exact-baseline/candidate pairs measured paired-median QPS +0.74%, P50 +2.44% (one-microsecond histogram quantization), P99 -1.25%, allocation/operation -0.006%, and CPU/operation +2.35%. Five c32 pairs measured QPS +2.20%, P50 -1.69%, P99 -2.00%, allocation/operation +0.009%, and CPU/operation -3.33%, excluding a material regression.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 510/510, focused Interceptor Integration 18/18, and full Integration 252/252 passed.
+- Two adaptive-parallel full-suite runs failed in different tests, while each failure passed three focused repetitions and the fixed-serial full suite passed 252/252 in 28.0 seconds, matching the parallel suite's successful/failing wall-time range.
+
+## [1.0.0-rc3] - 2026-07-28
+
+### Fixed
+
+- `SharpLink.PackageSmoke` now composes its restore-time package version directly from `VersionPrefix` and `VersionSuffix`. The previous `$(Version)` default was expanded before the SDK synthesized that property, leaving all four SharpLink `PackageReference` versions empty and making the NuGet release gate fail with `NU1015` for every prerelease candidate.
+- Client heartbeat Ping and peer Pong/HealthResponse control frames now wait for bounded send-queue capacity. Sustained OneWay saturation no longer turns a local heartbeat `ResourceExhausted` into a disconnected single-connection pool and a cascade of `Unavailable`; application OneWay sends retain their explicit fail-fast backpressure signal.
+- Response/control-frame capacity waiting first uses the original synchronous queue-admission path and creates an asynchronous waiter only when the queue is actually full, preserving normal-path throughput and allocation behavior.
+- Dispatch observers treat a `ConnectionClosed` raised while a capacity waiter is released by normal session shutdown as expected termination, while continuing to log internal and unexpected exceptions as errors. Rolling restarts no longer fail Chaos solely because an already-closing session cannot accept its final response.
+
+### Validation
+
+- MSBuild property evaluation reports `SharpLinkPackageVersion=1.0.0-rc3`. A fresh package cache restores exclusively from the locally packed SharpLink feed plus NuGet.org, compiles generated contracts without project references, and runs the package consumer over TCP and SharedMemory.
+- Deterministic heartbeat tests prove that a full queue keeps the connection healthy until capacity returns and that Ping, Pong, and HealthResponse retain synchronous completion and exact frames when capacity is available. The Unit suite passes 507/507.
+- A focused dispatch-observer test proves that only expected connection closure is suppressed and that internal or ordinary exceptions still produce the original error log. The Unit suite passes 508/508 after this shutdown-path coverage.
+- Twelve-second single-connection TCP and SharedMemory OneWay saturation witnesses cross the heartbeat interval with only expected `ResourceExhausted` results and zero `Unavailable`. Five exact RC1/RC3 response-load pairs completed without failures; median QPS changed -0.36%, P50 +0.77%, P99 -0.92%, CPU/operation -0.52%, and allocation/operation +0.02%, excluding a material normal-path regression.
+- RC2 was never tagged or published. It is retained locally as the exact response-backpressure fix checkpoint and is superseded because its clean-cache package-consumer gate could not restore the prerelease package graph.
+
+## [1.0.0-rc2] - 2026-07-28
+
+### Fixed
+
+- Server RPC success, service-error, admission-rejection, decode-error, cancellation, and module-drain responses now wait for bounded send-queue capacity instead of allowing a local `ResourceExhausted` enqueue failure to escape synchronous dispatch and terminate the connection. The synchronous fast path remains allocation-free when capacity is available.
+- Response backpressure retains the global and per-connection call-admission slots until the response enters the send queue, bounding queued response work instead of accepting unbounded replacement calls while a slow peer is saturated.
+- The formal performance matrix fixes both endpoints to the same 64 MiB send queue for normal throughput comparisons and uses payload-aware default concurrency. The dedicated OneWay backpressure workload retains profile defaults and reports saturation separately.
+
+### Validation
+
+- Deterministic full-queue regression tests cover mapped error and successful payload responses, connection health before and after recovery, retained admission while blocked, final resource release, exact response contents, and the non-full synchronous fast path. The full Unit suite passes 505/505 with zero build warnings or errors.
+- The original SharedMemory witness at 64 KiB payload and concurrency 128 completed 728,343 calls with 12 client-local default-queue `ResourceExhausted` signals and no `ConnectionClosed`/`Unavailable` cascade. Repeating with the matrix's fixed 64 MiB queue completed 734,065 calls with zero failures.
+- RC1 was never tagged or published. It is retained as a local reproducible checkpoint and superseded by RC2 because its default-queue load witness could amplify one server response enqueue failure into connection-wide failures.
+
+## [1.0.0-rc1] - 2026-07-28
+
+### Release candidate
+
+- Froze the documented public API, Protocol v2 minor-3 wire layout, generated contract surface, package graph, feature demos, operational limits, and release process for final scenario, soak, and performance validation.
+- Confirmed bidirectional independent-process TCP interoperability between the final 0.8 series and the RC code using generated DTO and scalar calls. Protocol v1 and handshake layouts other than minor 3 remain unsupported.
+- Publishes seven consistently versioned libraries with complete XML IntelliSense documentation and matching portable-PDB symbol packages; `SharpLink.Sdk` continues to carry the source generator rather than publishing it as an eighth package.
+
+### Publication status
+
+- This checkpoint is retained locally while the exact-RC performance matrix and long-running soak are completed. No tag, GitHub Release, or NuGet package has been created.
+- Public publication additionally requires the repository `release` Environment, NuGet.org Trusted Publishing policy, private vulnerability reporting, Dependabot alerts, and an initial clean CodeQL result described in `doc/releasing.md`.
+
+## [0.9.2] - 2026-07-28
+
+### Fixed
+
+- Separated semantic package versions from numeric CLR/file versions. `1.0.0-rc1` now builds as package/informational version `1.0.0-rc1` with assembly/file version `1.0.0.0`; previously the prerelease suffix caused compiler error `CS7034` and blocked every RC build.
+- Replaced the obsolete 0.7.4-only performance workflow and three version-bound evidence scripts with the current transport/profile/payload matrix smoke. The benchmark evidence runner no longer writes to a historical version directory.
+
+### Release engineering and security
+
+- Release builds now emit portable PDBs and all seven package projects produce matching `.snupkg` symbol packages while retaining package XML documentation. Package validation, Source Link source embedding, deterministic CI builds, transitive NuGet auditing, and zero-warning product builds are enforced centrally.
+- Added a clean-worktree package verifier for version consistency, exact repository commit, XML documentation, symbol PDBs, and the SDK-embedded Generator. Release Gate uploads verified `.nupkg`/`.snupkg` pairs.
+- Added gated NuGet.org OIDC Trusted Publishing. Main-targeting release PRs now automatically satisfy the repository's required `release-summary`; a `v*` tag publishes only after the complete three-platform build/test, NativeAOT, package-smoke, and Chaos gate succeeds and the protected `release` environment approves it. Manual workflow runs never publish and no long-lived API key is stored.
+- Added a pinned SDK feature band, security policy and private reporting path, Dependabot configuration, scheduled/PR CodeQL analysis, structured Issue/PR templates, least-privilege and commit-pinned workflow actions, PR concurrency control, and an explicit release/rollback checklist.
+- Corrected package copyright metadata and added package-specific descriptions and NativeAOT discovery tags.
+
+### Validation
+
+- A clean-cache 41-project Release rebuild completed with zero warnings/errors; Generator 121/121, Unit 503/503, and Integration 252/252 passed.
+- The pre-fix `1.0.0-rc1` build failed with `CS7034`; the fixed probe builds with zero warnings/errors and emits `1.0.0.0` assembly/file versions plus `1.0.0-rc1+<commit>` informational versions.
+- Seven `0.9.2` `.nupkg` and seven matching `.snupkg` files passed structural verification, and a fresh-cache package consumer restored, generated code, built, and ran successfully. NuGet reported no known vulnerable or deprecated direct/transitive package in the 41-project solution.
+
+## [0.9.1] - 2026-07-28
+
+### Documentation and demos
+
+- Replaced 301 version-specific architecture, audit, migration, performance, and chaos reports with 18 current topic documents covering setup, contracts/codecs, calls/streaming, transports, security, resilience, admission, hosting, observability, multi-cluster/dynamic modules, limits, troubleshooting, migration, architecture, Protocol v2, load testing, and the pending RC performance baseline.
+- Reworked the README documentation index and removed every link to superseded 0.x reports. Local links across README and the complete current documentation set validate without missing targets.
+- Added runnable Security, Compression, AdmissionControl, InterceptorsTelemetry, Resilience, TransportMatrix, and MultiCluster demos. The transport matrix executes TCP, NamedPipe, UDS where supported, SharedMemory, and AnonymousPipe; the multi-cluster demo uses two generated contract assemblies and two physical servers to prove compile-time route isolation.
+
+### Compatibility and validation
+
+- Product runtime behavior and public API are unchanged. The performance matrix default output path no longer embeds an obsolete development version.
+- The complete 41-project Release solution rebuild passes with zero warnings and errors. All seven new demos execute successfully and assert their advertised behavior, including negotiated bidirectional compression, overload rejection, ActivitySource emission, two-endpoint routing, five transports, and two generated cluster routes.
+
+## [0.9.0] - 2026-07-28
+
+### Documentation
+
+- Every public API in the published framework source now has compiler-validated XML documentation; CS1591 is an error for `src/` projects while tests, demos, and generated test contracts remain outside the product API gate.
+- All seven runtime NuGet packages now include their matching XML documentation file for IDE IntelliSense. Generator and SDK APIs are covered by the same source-build gate.
+- Corrected invalid existing XML parameter references and documented protocol values, error identities, authentication/authorization contracts, builders, transports, streaming lifecycle, sessions, and hosting accessors with behavior-specific guidance.
+
+### Compatibility and validation
+
+- Runtime behavior, public signatures, Protocol v2 bytes, generated identifiers, and hot paths are unchanged; this checkpoint changes comments and build/package policy only.
+- The compiler-backed pre-fix witness contained 266 unique missing public members across published source projects; the final count is zero with a non-incremental Release build at zero warnings and zero errors.
+- Generator 121/121, Unit 503/503, and Integration 252/252 passed. All seven `0.9.0` packages were inspected and contain their corresponding `lib/net10.0/*.xml` documentation file.
+
+## [0.8.44] - 2026-07-28
+
+### Fixed
+
+- Server session/framework joins, Client background-worker joins, and static endpoint-cluster worker joins inspect every fault in each tracked task and preserve unexpected sibling failures instead of trusting the single exception selected by `await Task.WhenAll`.
+- Server synchronous dispatch releases call admission, request state, service leases, and response writers even when a terminal cancellation/error response is rejected by the bounded send queue.
+- Rejected `StreamComplete` and `StreamError` frames still close their local send-flow state, preventing failed terminal enqueues from retaining `MaxConcurrentStreamsPerConnection` slots.
+
+### Compatibility and validation
+
+- Public API, valid Protocol v2 framing, method/field IDs, payload layouts, and successful call behavior are unchanged. Stop may now surface previously hidden unexpected background failures; bounded-queue terminal failures retain their original exception while cleanup completes.
+- The independent-root-cause policy counts the three shutdown-join manifestations once. This release contains three actual engineering root causes and does not pad the batch with duplicate call sites, theoretical races, defensive-only edits, or syntax modernization.
+- Exact-0.8.43/candidate Balanced TCP streaming completed without failures. A five-pair, 10-second c2s follow-up measured paired-median QPS -0.05%, P50 -0.19%, P99 +0.27%, and CPU/operation -0.38%, excluding a measurable hot-path regression.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 503/503, Integration 252/252, 120-second shared-memory Chaos, independent-process SharedMemory NativeAOT, seven-package pack, and fresh-cache PackageSmoke passed.
+
+## [0.8.43] - 2026-07-27
+
+### Fixed
+
+- Shared-memory mapping creation serializes local cleanup/initialization and preserves fresh peer files, preventing concurrent creators from unlinking a live mapping while retaining cleanup of abandoned files.
+- Streaming receive-credit draining bypasses the flow-control gate when no cross-stream update exists and returns an emptied queue to the null fast path, removing a redundant lock per received item.
+- Pending calls completed as `ConnectionClosed` without an explicit exception retain that structured error code instead of falling back to `Internal`.
+- Disposing a Client response stream before its terminal result marks the call activity as Error and records `consumer_abandoned` instead of reporting successful completion.
+- A stale dynamic endpoint selection that resumes after generation release re-retires any lazily recreated admission-policy state, preventing per-generation circuit-breaker state from accumulating during topology churn.
+
+### Compatibility and validation
+
+- Public API, valid Protocol v2 bytes, method/field IDs, payload layouts, and normal endpoint selection are unchanged. Shared-memory cleanup now requires a file to be at least one minute old; explicitly stale files remain reclaimable.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 496/496, Integration 252/252, 120-second shared-memory Chaos, and NativeAOT TCP passed. The seven-package pack and fresh-cache TCP/shared-memory package smoke are part of the final local gate.
+- Three alternating exact-0.8.42/candidate Balanced stream pairs completed with zero failures. Paired-median throughput changed by +1.5% c2s, -1.8% s2c, and +4.0% duplex; the unary control changed by -0.6%, with no material latency regression. The isolated 0.7.11/current investigation localized the historical duplex loss to the redundant flow-control lock and measured +6.7% causal median recovery.
+
+## [0.8.42] - 2026-07-27
+
+### Fixed
+
+- Throughput timed batching retains a single outstanding Channel read across flush deadlines instead of repeatedly cancelling it, preventing a producer/cancellation race from terminating the process.
+- Non-nullable `Memory<T>` and `ReadOnlyMemory<T>` Codecs reject the collection null marker as `DataLoss`; nullable array/list and default `ImmutableArray<T>` shapes retain their existing representations.
+- Fixed-width nullable primitive Codecs reject non-zero ignored value bytes after a null marker, while canonical null and present-value decoding remain allocation-free.
+- Protocol v2 cancel/health and handshake writers classify invalid local enum/limit arguments as argument errors before advancing the writer; readers continue to classify peer input as `ProtocolViolation`.
+- Generated DTO runtime Codec schema identity includes nullable member annotations while preserving established non-nullable schema identities.
+
+### Compatibility and validation
+
+- Valid Protocol v2 framing, method IDs, field IDs, payload bytes, and non-nullable DTO schema identities are unchanged. Previously accepted non-canonical nullable null bodies and null markers for non-nullable memory shapes now fail as `DataLoss`.
+- Exact 0.8.41 Throughput streaming exited 134 in both independent `operation=all` repetitions and in 3/5 s2c plus 5/5 c2s processes; the candidate completed 16/16 processes and 64/64 unary/streaming stages without failure.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 493/493, Integration 250/250, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Ten-process exact-baseline/candidate TCP unary medians changed by -0.76% with stable P50/P99 and slightly lower allocation; nullable present decode improved 5.155 to 5.090 ns/op with zero allocation.
+
+## [0.8.41] - 2026-07-27
+
+### Fixed
+
+- Required unary and client-streaming responses now reject a null value decoded by a custom or mismatched codec as structured `DataLoss`; explicitly nullable responses remain valid.
+- Required ServerStreaming/DuplexStreaming response items and ClientStreaming/DuplexStreaming request items now enforce their generated nullability contract at the shared stream dispatcher boundary.
+- Runtime method fingerprints now include nullable response identity, preventing separately generated required and nullable contracts from appearing compatible while preserving method IDs and required-response fingerprints.
+- Protocol v2 Error writers and readers reject the reserved `SharpLinkErrorCode.Unknown` value; concrete defined wire codes retain their existing values and round trips.
+
+### Compatibility and validation
+
+- Valid Protocol v2 bytes, method IDs, payload layouts, and required-response fingerprints are unchanged. Existing two-argument `PooledAsyncStreamDispatcher<T>.Rent` binaries remain compatible; generated callers use new nullability-aware overloads.
+- Pre-fix Generator preserved all 119 existing passes and failed only the new separate-compilation fingerprint proof; Unit preserved all 486 existing passes and failed exactly four new scalar-null, two-direction stream-null, and reserved-code proofs.
+- Non-incremental Release built with zero warnings/errors; Generator 120/120, Unit 490/490, Integration 250/250, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Exact-0.8.40/candidate TCP process medians changed by +0.36% without interceptors and +0.98% with interceptors, with unchanged allocations; required-reference stream dispatch was exactly 13.860 ns/op on both process medians.
+
+## [0.8.40] - 2026-07-27
+
+### Fixed
+
+- Generated Stubs now classify absent invocation categories as structured `Unimplemented`; the obsolete public `RpcException` type has been removed.
+- `SharpLinkException` rejects `Unknown` and undefined error codes at construction, so invalid custom mapper output falls through the Server's safe `Internal` boundary instead of breaking Protocol v2 error serialization.
+- Client and Server interceptor pipelines join an invoked incomplete continuation even when interceptor code discards its `ValueTask`, preventing orphaned terminal calls and response-buffer lifetime races.
+- Generated Proxy/Stub signatures preserve nullable reference annotations, and non-nullable scalar/stream responses reject null at generated service and Client short-circuit boundaries while nullable responses remain valid.
+
+### Compatibility and validation
+
+- Valid Protocol v2 framing, route hashes, request schemas, manifest wire types, and payload layouts are unchanged. Generated method metadata adds response nullability; its Boolean flags are packed into a 40-byte descriptor while retaining both the legacy nine-value and new ten-value deconstruction shapes.
+- Pre-fix Generator preserved 118 existing passes and failed only the new empty-category proof; targeted Abstractions preserved 21 existing passes and failed exactly two new code/public-surface proofs; the Interceptor Integration class preserved 14 existing passes and failed exactly four new join/nullability/mapper proofs.
+- Non-incremental Release built with zero warnings/errors; Generator 119/119, Unit 486/486, Integration 250/250, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Exact-0.8.39/candidate intercepted-RPC process medians were 39.845 -> 40.234 microseconds (+0.98%, overlapping ranges), while allocation fell from approximately 1,584 to 1,560 B/op.
 
 ## [0.8.39] - 2026-07-27
 
@@ -315,6 +502,291 @@
 
 ### Fixed
 
+- Unix-domain listener cleanup now preserves an existing path entry when bind succeeded but socket identity capture did not, avoiding deletion of a caller replacement in that narrow failure window.
+- Compression negotiation freezes every validated wire-profile/provider binding at Runtime Context Build, so later mutation of a custom provider's `WireProfile` cannot change advertisement, selection, lookup, or diagnostics.
+- Authentication result factories reject undefined error codes, while the Server trust boundary normalizes a provider-created undefined rejection to `AuthenticationRejected` instead of faulting handshake encoding.
+- Any positive default request timeout is usable: deadlines beyond the `DateTimeOffset` range saturate at `DateTimeOffset.MaxValue` for ordinary calls and health checks.
+- Immediate server admission uses exact limiter slots and a single-lease fast path instead of allocating three oversized/transient arrays for the common concurrency-only rule.
+
+### Compatibility and validation
+
+- Protocol v2 framing and valid payloads are unchanged. Compression still uses the original provider instance, but the profile validated at Build is its immutable wire identity for that Runtime Context.
+- Non-incremental Release build, Generator 102/102, Unit 474/474, Integration 238/238, seven-package pack, and fresh-cache package smoke passed.
+- Immediate admission improved from 58.477 ns / 568 B to 49.262 ns / 288 B. A pooled-array candidate measured 93.996 ns / 232 B and was rejected rather than trading allocation for latency.
+
+## [0.8.31] - 2026-07-27
+
+### Fixed
+
+- Socket client factories now snapshot supported custom mutable `EndPoint` implementations through `Create(Serialize())` and reject implementations that cannot produce an independent snapshot.
+- Unix-domain listener disposal identifies its own filesystem socket by file type, device, and inode, preserving a caller-owned entry that replaced the bound path.
+- Anonymous-pipe offers redact inheritable handles from diagnostics and expose idempotent parent-side transfer completion so servers can observe a child process closing its handles.
+
+### Changed
+
+- The duplicate raw `ProtocolV2FrameWriter`/token surface, packet writer helpers, and striped runtime map are now implementation details. The unsupported `ISerializer`, `IServiceRegister`, `StripedLongSet`, `GeneratedProxyRegistry`, and `GeneratedStubRegistry` surfaces were removed.
+
+### Compatibility and validation
+
+- Protocol v2 wire framing and generated RPC paths are unchanged. Consumers of removed/internalized implementation APIs must migrate to generated proxies/stubs, `IRpcCodec`/`IRpcCodecAdapter`, builders, and framework-owned runtime state.
+- Non-incremental Release build, Generator 102/102, Unit 470/470, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- The restored raw frame body measured 3.473 ns at the contemporaneous 0.8.30 baseline and 3.524 ns for 0.8.31 (about +1.5%, inside the 5% nanosecond-scale gate), with 0 B/op for both; the production method body is unchanged.
+
+## [0.8.30] - 2026-07-27
+
+### Fixed
+
+- Generic Host server shutdown no longer treats an expected faulted Run completion as an unexpected application-fatal failure after Stop has begun.
+- A completed hosted server Stop is now terminal: later Start attempts are rejected instead of publishing a server that the cached Stop task cannot own; duplicate Start is also rejected.
+- Source generation now models the outer Task/ValueTask shape exactly, so valid `Task<T>` methods whose response type name contains `ValueTask` emit Task-compatible Proxy and Stub code.
+- Public named-pipe and shared-memory endpoint address values reject NUL and path separators at construction, matching their concrete transport factories.
+- Local server health checks reuse three immutable completed results instead of allocating a 96-byte Task on every poll.
+
+### Compatibility and validation
+
+- Protocol v2, valid generated contract shapes, payloads, and default hosting behavior are unchanged. Post-stop hosted restart was never owned by the lifecycle contract; invalid logical pipe names now fail at their earliest public value constructor.
+- Non-incremental Release build, Generator 102/102, Unit 468/468, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A 40-contract/400-method Generator gate measured 15.438 → 15.411 ms with effectively unchanged compiler-thread allocation. Local health polling changed from 96 B/call to 0 B/call; its 15-sample latency distribution was bimodal but overlapping, with a bounded roughly 5 ns worst median difference in a once-per-health-poll path.
+
+## [0.8.29] - 2026-07-27
+
+### Fixed
+
+- Pending requests that race table disposal are now completed instead of being inserted after the disposal scan; stream registration APIs reject calls begun after disposal consistently with unary registration.
+- Client and server heartbeat expiry now uses monotonic elapsed time, so wall-clock adjustments and caller-written `LastActive` values cannot suppress or spuriously trigger disconnects.
+- Named-pipe and shared-memory constructors now reject logical names containing NUL or path separators during configuration on every platform.
+- Unix-domain endpoint snapshots now preserve serialized abstract-namespace addresses, and abstract sockets are excluded from filesystem ownership and cleanup.
+- Multi-cluster Ready/Degraded state reads no longer allocate a LINQ iterator on every observation.
+
+### Compatibility and validation
+
+- Protocol v2 framing, payloads, and generated code are unchanged. `IRpcSession.LastActive` remains a wall-clock diagnostic property, but framework heartbeat decisions no longer use caller-written values.
+- Non-incremental Release build, Generator 101/101, Unit 464/464, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- Alternating 15-sample A/B kept pending response completion at 37.176 → 37.127 ns with unchanged 24 B/op. Multi-cluster state improved from 8.972 ns / 56 B to 3.189 ns / 0 B; monotonic activity update/check adds about 4.04 ns with 0 B/op and does not affect the request-table, serialization, or send paths.
+
+## [0.8.28] - 2026-07-27
+
+### Fixed
+
+- TCP keep-alive time and interval now reject values beyond the native signed integer-seconds range during configuration instead of overflowing when a socket is created.
+- Token-bucket, fixed-window, and sliding-window admission periods now reject values beyond the portable timer range before constructing a runtime limiter.
+- Named-pipe client and server constructors now reject undefined option bits and transmission modes, and clients reject the server-only `FirstPipeInstance` bit, instead of deferring unusable configuration until connect or accept.
+- Sliding-window admission now rejects configurations whose segment duration would round down to zero `TimeSpan` ticks.
+- Binary protocol error writers now reject undefined `SharpLinkErrorCode` values before writing a payload that the matching reader cannot accept.
+
+### Compatibility and validation
+
+- Protocol v2 framing and every valid payload layout are unchanged. Only undefined error-code writes and previously unusable transport/admission configurations are rejected earlier.
+- Non-incremental Release build, Generator 101/101, Unit 459/459, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- Fifteen-sample boundary A/B kept binary error writing at 11.888 → 11.968 ns with 0 B/op. Configuration validation added 1.14 ns to socket option freezing and 1.49 ns across three admission policies; alternating runtime A/B remained within a 5% no-regression gate with unchanged allocations.
+
+## [0.8.27] - 2026-07-27
+
+### Fixed
+
+- Payload-bearing responses now always pass empty input to their registered Codec instead of silently returning `default(T)`; payload-less acknowledgements reject unexpected bytes as `DataLoss`.
+- A response stream now preserves both its call/lease cancellation token and a distinct consumer enumeration token instead of allowing the latter to mask the former.
+- Concurrent writer Return and pool Dispose can no longer enqueue an ArrayPool-backed writer into a detached queue after disposal.
+- An unexpectedly successful hosted Server run-loop exit now logs a critical event and stops the owning Host; an explicit hosted stop remains quiet.
+- Anonymous-pipe client offers remain one-shot after a failed connection attempt and can no longer retry handles that may already have been consumed or closed.
+
+### Compatibility and validation
+
+- Protocol v2 framing and valid payload layouts are unchanged. Peers that incorrectly omit a required response payload or attach bytes to a payload-less acknowledgement now receive `DataLoss` instead of a silent default/acceptance.
+- Non-incremental Release build, Generator 101/101, Unit 454/454, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- Fifteen-sample A/B medians measured writer rent/return at 8.884 → 8.830 ns, Int32 response completion at 44.174 → 43.836 ns, and stream dispatch/consume at 16.795 → 16.803 ns; allocations were unchanged.
+
+## [0.8.26] - 2026-07-27
+
+### Fixed
+
+- `[Oneway]` RPCs must now return non-generic `Task` or `ValueTask`; response-bearing and streaming shapes report `SHARPLINK056` instead of generating calls that cannot honor fire-and-forget semantics.
+- Proxy request and stream locals now avoid every user-parameter collision, including chained underscore variants.
+- DTO members that differ only by case no longer crash constructor analysis; exact constructor-parameter matches take priority, while ambiguous case-insensitive fallback reports the existing `SHARPLINK012` diagnostic.
+- Generated dictionary readers now translate null keys to an RPC `DataLoss` error before reaching `Dictionary.TryAdd`; duplicate keys keep the existing `DataLoss` behavior.
+- Non-public default interface helpers are no longer emitted as RPC routes, while non-public abstract methods report `SHARPLINK054`.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, payload layouts, Manifest schema, and valid public RPC surfaces are unchanged. Previously generated invalid Oneway and non-public abstract surfaces had no usable RPC contract.
+- Non-incremental Release build, Generator 101/101, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A 40-contract/400-method, 101-sample Generator A/B measured 14.755 → 13.530 ms. Compiler-thread allocation increased by 76,640 B (0.27%); an isolated 16-key dictionary guard comparison measured 171.891 → 170.941 ns.
+
+## [0.8.25] - 2026-07-27
+
+### Fixed
+
+- Collision-resistant Roslyn hint names prevent distinct fully-qualified contracts from crashing generation with CS8785; public nested contracts now receive deterministic unique Proxy/Stub/helper type names.
+- C# keyword RPC method and parameter names now remain escaped in every generated declaration and reference without changing contract hashes or Manifest identities.
+- `ref`, `out`, `in`, and by-ref return signatures now report `SHARPLINK052` instead of producing unusable generated implementations.
+- Static RPC methods now report `SHARPLINK053` instead of being modeled as instance routes.
+- Abstract contract properties, indexers, and events now report `SHARPLINK054` instead of leaving generated proxies incomplete.
+
+### Changed
+
+- Contracts and every containing type must be public (`SHARPLINK055`); nested contracts inside generic containing types reuse `SHARPLINK005`. Default interface properties/events with implementations remain allowed and are not RPC routes.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, payload layouts, top-level Proxy/Stub type names, and Manifest schema are unchanged. Generated type names for nested contracts now include containing-type identity; Roslyn hint names are build-internal and now include the existing contract ID.
+- Non-incremental Release build, Generator 96/96, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A 40-contract/400-method, 101-sample Generator A/B measured 15.953 → 13.577 ms with overlapping quartiles. Compiler-thread allocation increased 40,976 B (0.14%); runtime hot paths are unchanged.
+
+## [0.8.24] - 2026-07-27
+
+### Fixed
+
+- Invalid `[Timeout]` constants now report `SHARPLINK050` instead of emitting uncompilable or type-initializer-failing RPC descriptors.
+- Union tags must now be positive, and union cases must be closed, concrete, assignable, and mapped to exactly one tag; invalid declarations report `SHARPLINK051`.
+- An explicit empty `[assembly: SharpLinkRpcContracts()]` filter now disables referenced-contract discovery instead of falling back to automatic scanning.
+- Generated assembly and JSON contract Manifests now report the executing generator package version instead of the stale hard-coded `0.8.3` value.
+
+### Changed
+
+- Removed a redundant constant-false branch from RPC method validation while folding timeout checks into the existing traversal.
+
+### Compatibility and validation
+
+- Protocol v2 and payload layouts are unchanged. Contract `schemaFingerprint` values change because corrected generator provenance is part of the integrity-protected JSON; baseline compatibility comparison remains structural.
+- Non-incremental Release build, Generator 88/88, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A duplicate method-analysis pipeline that regressed a 400-method synthetic generator workload by about 20% was rejected. The final 101-sample A/B measured 41.029 ms at the 0.8.23 baseline and 40.675 ms for 0.8.24; compiler-thread allocation moved by a bounded 0.57%, while runtime hot paths are unchanged.
+
+## [0.8.23] - 2026-07-27
+
+### Fixed
+
+- Boolean blit collections now reject non-canonical element bytes across array, List, Memory, ReadOnlyMemory, and ImmutableArray Codecs.
+- Rune and decimal blit collections now apply the same semantic validation as their scalar Codecs.
+- DateOnly, DateTime, and TimeOnly blit collections now reject invalid temporal values.
+- DateTimeOffset blit collections now reject invalid UTC ticks or offsets and clear native padding without mutating caller-owned values.
+- Truncated shared-memory server responses now surface `Unavailable` from Client Connect while preserving the original EOF as the inner cause.
+
+### Compatibility and validation
+
+- Collection counts, element layouts, and Protocol v2 framing are unchanged. Valid older payloads remain readable; new DateTimeOffset collection writers canonicalize padding to zero.
+- Non-incremental Release build, Generator 84/84, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- All-bit-pattern-valid `int[]` serialize/deserialize retained about 10.1/17.0 ns and 0/88 B/op. Sixteen-element Boolean and DateTimeOffset validation add about 5 ns and 23 ns respectively with unchanged allocations; two shared-helper designs that regressed ordinary writes were rejected.
+
+## [0.8.22] - 2026-07-27
+
+### Fixed
+
+- Generated DTO Boolean fields now reject non-canonical payload bytes instead of materializing invalid Boolean bit patterns.
+- Generated DTO Rune fields now reject values outside the Unicode scalar range.
+- Generated DTO decimal fields now reject invalid flags layouts.
+- Generated DTO DateOnly, DateTime, and TimeOnly fields now reject values outside their supported ranges.
+- Generated DTO DateTimeOffset fields now validate UTC ticks and offsets and clear native-layout padding before transmission.
+
+### Compatibility and validation
+
+- Protocol v2 framing, generated field IDs, fixed wire types, payload sizes, and Manifest versions are unchanged. New readers accept valid prior payloads, while new DateTimeOffset writers canonicalize six padding bytes to zero.
+- Non-incremental Release build, Generator 84/84, Unit 445/445, Integration 236/236, seven-package pack, and fresh-cache package smoke passed.
+- Boolean and semantic DTO paths retained their allocation profiles. The final fixed-wire validation adds only about 1–2 ns to a six-field semantic decode; a length-delimited Codec design measured 66/109 ns for serialize/deserialize and was rejected.
+
+## [0.8.21] - 2026-07-27
+
+### Fixed
+
+- Shared-memory handshakes now reject malformed UTF-8 mapping paths before filesystem security validation.
+- Generated null collection payloads now reject trailing bytes consistently with non-null collections.
+- Generated DTO string serialization now rejects isolated UTF-16 surrogates instead of replacement-encoding them.
+- Request metadata sizing and encoding now reject isolated surrogates instead of changing keys or values on the wire.
+- Dynamic per-call service scope-creation failure now releases its module lease, preventing plugin drains from being stranded.
+
+### Changed
+
+- Removed two unused internal writer/nullable-short serialization helpers.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Previously normalized malformed local or peer text is now rejected; valid Unicode including surrogate pairs is unchanged.
+- Non-incremental Release build, Generator 83/83, Unit 445/445, Integration 231/231, seven-package pack, and fresh-cache package smoke passed.
+- Metadata construction retained 136 B/op and baseline latency. Strict sizing adds about 2 ns; strict generated string writes add about 4 ns with zero allocation, an intentionally bounded integrity cost after a slower extra-scan design was rejected.
+
+## [0.8.20] - 2026-07-27
+
+### Fixed
+
+- RPC, TLS, and shared-memory handshake timeouts now reject values beyond the portable native timer range during configuration, before connection or transport ownership is acquired.
+- Far-future Client readiness deadlines now remain cancellable instead of failing immediately in `Task.WaitAsync`.
+- Far-future pending-request admission deadlines now remain cancellable instead of failing immediately in `SemaphoreSlim.WaitAsync`.
+- Server graceful Stop now slices timer-range-exceeding waits, preventing a saturated monotonic deadline from forcing an immediate stop.
+- Generated DTO string codecs now reject malformed UTF-8 as `DataLoss` instead of silently replacing invalid bytes with U+FFFD.
+
+### Compatibility and validation
+
+- Protocol v2 framing and generated Manifest versions are unchanged. RPC, TLS, and shared-memory handshake timeouts are now limited to 2,147,483,647 ms; other far-future deadlines remain supported through cancellable timer slices. Malformed generated string fields that were previously normalized are now rejected.
+- Non-incremental Release build, Generator 83/83, Unit 441/441, Integration 230/230, seven-package pack, and fresh-cache package smoke passed.
+- Valid contiguous generated-string decoding retained 64 B/op with overlapping baseline/candidate latency. Segmented decoding retained 112 B/op and adds about 3.5 ns (roughly 3%) for replacement-marker detection; an always-strict decoder and a separate full byte-validation pass were rejected after measuring roughly 8% and 10% regressions.
+
+## [0.8.19] - 2026-07-27
+
+### Fixed
+
+- Server authentication now rejects contradictory provider results that claim success while carrying a concrete rejection or failure code.
+- Client and Server interceptors now receive single-use continuations, preventing duplicate or concurrent `next` calls from executing a non-idempotent RPC or service method more than once.
+- Faulted Client background tasks are now observed and logged after leaving the tracking set instead of silently disappearing before Stop can inspect them.
+- Generic Host Server Stop now preserves caller cancellation or Stop failure together with later readiness, token-owner, and Server disposal failures.
+- Endpoint polling and Client/Server heartbeat delays now slice timer-range-exceeding intervals; Server admission rejects queue delays beyond the portable timer range during configuration.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Interceptor `next` delegates are now single-use and throw `InvalidOperationException` on a second call. Contradictory authenticated provider results are rejected, `MaxQueueDelay` above 2,147,483,647 ms is invalid, and Hosted Server Stop may return `AggregateException` when primary and cleanup failures differ.
+- Non-incremental Release build, Generator 83/83, Unit 436/436, Integration 230/230, seven-package pack, and fresh-cache package smoke passed.
+- The no-interceptor RPC path retained 320 B/op with overlapping latency ranges. One Client plus one Server interceptor intentionally adds 32 B per end-to-end call for two single-use continuation guards, while median latency remained in the same roughly 40–41 µs band.
+
+## [0.8.18] - 2026-07-27
+
+### Fixed
+
+- Hosted single- and multi-cluster Clients now remain owned through cancellation or failure of token-bound Stop and are always disposed, with Stop and disposal failures preserved together.
+- Dynamic Client and Server assembly drains now slice timer-range-exceeding graceful timeouts instead of faulting after the module has entered Draining.
+- Timed send batching now saturates monotonic deadline conversion and slices native timer waits, so huge positive flush latencies cannot become immediate flushes or pump faults.
+- Server active-call concurrency now has a 1,048,576-per-connection hard maximum enforced by both public flow-control validation and the deadline scheduler.
+- Terminal stream cleanup now detaches every dispatcher outside the request lock before surfacing completion failures; RpcSession terminal cleanup cannot be interrupted by a user dispatcher.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Hosted Client Stop now also calls `DisposeAsync` on its transferred owner. Direct `StreamManager.CompleteAll` still surfaces completion failures after all entries are drained, while RpcSession suppresses them to finish transport cleanup. `MaxConcurrentCallsPerConnection` values above 1,048,576 are rejected.
+- Non-incremental Release build, Generator 83/83, Unit 432/432, Integration 228/228, seven-package pack, and fresh-cache package smoke passed.
+- Buffer-pool, pending, and flow-control hot-path allocations remained 0/48/0 B per operation with no stable latency regression. Robust two-stream terminal draining intentionally adds one 32 B shutdown snapshot; empty Session, Runtime Context, and Server lifecycle allocations are unchanged.
+
+## [0.8.17] - 2026-07-27
+
+### Fixed
+
+- Concurrent multi-cluster assembly unregister callers now share one coordinator operation and preserve the original child rejection instead of racing route restoration.
+- Client and Server TLS snapshots now deep-clone certificate chain policies; Server snapshots also preserve supported RSA signature-padding settings.
+- Protocol v2 handshakes now reject required capabilities that were not advertised as supported and reject unknown negotiated response bits.
+- Partitioned admission control now owns a deep validated snapshot of its limits instead of retaining caller-mutable configuration.
+- Runtime state stores and retained writer pools now enforce hard aggregate sizing bounds before allocating or retaining memory.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Unknown request capabilities remain forward-compatible and are handled by negotiation; malformed required/supported sets and unknown negotiated responses are rejected. Configurations above 1,024 stripes, 1,048,576 aggregate initial map entries, or 64 MiB of configured retained writer memory are rejected.
+- Non-incremental Release build, Generator 83/83, Unit 427/427, Integration 228/228, seven-package pack, and fresh-cache package smoke passed.
+- Hot-path allocations were unchanged with no stable latency regression. TLS policy and admission configuration snapshots intentionally add 88 B and 72 B respectively at cold configuration/lifecycle boundaries.
+
+## [0.8.16] - 2026-07-27
+
+### Fixed
+
+- Client deadlines beyond the portable native timer interval are now re-armed in bounded slices instead of throwing after the pending call has already occupied a slot.
+- Runtime Context disposal now drains retained writer buffers, rejects later rents, and releases active writer arrays when they are returned after disposal.
+- Server Stop and Run now preserve immediate listener, framework, and service cleanup failures instead of reporting a successful stop with only an unhealthy status.
+- The Generic Host server no longer retains the transient `StartAsync` cancellation token as the lifetime token of its Run loop.
+- Pending-request tables now enforce a 1,048,576-slot hard maximum in both public protocol validation and their internal constructor.
+
+### Compatibility and validation
+
+- Public protocol wire formats and generated Manifest versions are unchanged. `SharpLinkBufferWriterPool` now implements `IDisposable`; a pool owned by a disposed Runtime Context rejects new rents. Server Stop/Dispose may now throw one cleanup exception or an `AggregateException`, and pending capacities above 1,048,576 are rejected during configuration.
+- Non-incremental Release build, Generator 83/83, Unit 422/422, Integration 228/228, package smoke, and reversed same-machine A/B passed.
+- Buffer rent/return and a 32-byte packet remained allocation-free with no stable latency regression; pending completion retained 48 B/op, while Runtime Context and Server lifecycle allocations were unchanged.
+
+## [0.8.15] - 2026-07-27
+
+### Fixed
+
 - Unix-domain socket listeners no longer delete a pre-existing filesystem entry; stale paths must be removed explicitly by their owner.
 - Socket Client factories now snapshot mutable IP endpoints, including IPv6 scope, at construction.
 - Built-in socket, TLS, and shared-memory endpoint delegates now freeze configuration when the delegate is created, so later caller mutations cannot split topology generations.
@@ -389,7 +861,7 @@
 
 - Public APIs, Protocol v2, and generated Manifest versions are unchanged; failed dynamic transactions may now surface `AggregateException` only when rollback also fails, with the transaction rejection first.
 - Release build, Generator 83/83, Unit 394/394, Integration 228/228, package smoke, and same-machine alternating A/B passed.
-- Normal Client registration/unregistration measured 6.535 -> 6.518 µs with 30.50 -> 30.44 KB; Server measured 6.407 -> 6.407 µs across two reversed-order runs, with the repeated run at 29.52 KB on both revisions.
+- Normal Client registration/unregistration measured 6.535 → 6.518 µs with 30.50 → 30.44 KB; Server measured 6.407 → 6.407 µs across two reversed-order runs, with the repeated run at 29.52 KB on both revisions.
 
 ## [0.8.10] - 2026-07-27
 
@@ -405,7 +877,7 @@
 
 - Public APIs, Protocol v2, and generated Manifest versions are unchanged; failed extension-point construction may now surface `AggregateException` with the primary cause first.
 - Release build, Generator 83/83, Unit 389/389, Integration 228/228, package smoke, and same-machine A/B passed.
-- Normal Runtime Context build/disposal measured 346.1 -> 343.7 ns with unchanged 3.9 KB allocation after moving rollback aggregation to a no-inline cold path.
+- Normal Runtime Context build/disposal measured 346.1 → 343.7 ns with unchanged 3.9 KB allocation after moving rollback aggregation to a no-inline cold path.
 
 ## [0.8.9] - 2026-07-27
 
@@ -421,7 +893,7 @@
 
 - Public APIs, Protocol v2, and generated Manifest versions are unchanged; repeated lifecycle calls now observe the same completion or cleanup failure.
 - Release build, Generator 83/83, Unit 384/384, Integration 228/228, package smoke, and same-machine A/B passed.
-- Normal anonymous-pipe offer allocation/disposal remained at 2.576 -> 2.597 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation; an earlier 2.19 KB design was rejected.
+- Normal anonymous-pipe offer allocation/disposal remained at 2.576 → 2.597 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation; an earlier 2.19 KB design was rejected.
 
 ## [0.8.8] - 2026-07-27
 
@@ -437,7 +909,7 @@
 
 - Public APIs, Protocol v2, and generated Manifest versions are unchanged; cleanup operations can now surface `AggregateException` when multiple owners fail.
 - Release build, Generator 83/83, Unit 379/379, Integration 228/228, package smoke, and same-machine A/B passed.
-- Normal anonymous-pipe offer allocation/disposal remained statistically flat at 2.590 -> 2.592 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation.
+- Normal anonymous-pipe offer allocation/disposal remained statistically flat at 2.590 → 2.592 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation.
 
 ## [0.8.7] - 2026-07-27
 
@@ -453,7 +925,7 @@
 
 - Public APIs, Protocol v2, and generated Manifest versions are unchanged; multi-scope cleanup can now surface `AggregateException`.
 - Release build, Generator 83/83, Unit 374/374, Integration 228/228, package smoke, and same-machine A/B passed.
-- Normal ClientConnection disposal remained at 1.145 -> 1.146 µs and 18.51 KB; two earlier allocating designs were rejected.
+- Normal ClientConnection disposal remained at 1.145 → 1.146 µs and 18.51 KB; two earlier allocating designs were rejected.
 
 ## [0.8.6] - 2026-07-27
 
@@ -468,7 +940,7 @@
 
 - Public APIs, Protocol v2, and generated Manifest versions are unchanged. Cleanup callers may now receive `AggregateException` when multiple resources fail.
 - Release build, Generator 83/83, Unit 369/369, Integration 228/228, package smoke, and same-machine disposal A/B passed.
-- Normal session disposal measured 950.9 -> 955.8 ns with overlapping 99.9% confidence intervals and unchanged 17.5 KB allocation.
+- Normal session disposal measured 950.9 → 955.8 ns with overlapping 99.9% confidence intervals and unchanged 17.5 KB allocation.
 
 ## [0.8.5] - 2026-07-27
 
@@ -484,7 +956,7 @@
 
 - Public APIs, generated Manifest versions, and Protocol v2 wire layouts are unchanged. Custom exception mappers may now receive an `AggregateException` when user execution and cleanup fail together; inspect its inner causes rather than assuming a single exception.
 - Release build completed with 0 warnings/errors. Generator 83/83, Unit 364/364, Integration 228/228, five deterministic pre-fix failure probes, connection/call branch-completeness regressions, and the package restore/run smoke passed.
-- Published-client accessor lookup remained allocation-free and statistically flat at 1.457 -> 1.483 ns on the same Apple M4/.NET 10 benchmark gate; the 99.9% confidence intervals overlap.
+- Published-client accessor lookup remained allocation-free and statistically flat at 1.457 → 1.483 ns on the same Apple M4/.NET 10 benchmark gate; the 99.9% confidence intervals overlap.
 
 ## [0.8.4] - 2026-07-27
 
@@ -500,7 +972,7 @@
 
 - Public APIs and Protocol v2 wire layouts are unchanged. Rare Codec publication races may retry a fallback resolver or native generated factory, which must already tolerate concurrent resolution.
 - Release build, Generator 83/83, Unit 357/357, Integration 228/228, six deterministic pre-fix failure probes across five findings plus branch-completeness regressions, and same-machine BenchmarkDotNet A/B validation passed.
-- Cached explicit/fallback Codec lookup remained statistically flat at 6.529 -> 6.533 ns and 6.515 -> 6.504 ns. Cached generated lookup improved from 8.670 to 6.499 ns; attached pre-admission dispatch improved from 17.656 to 17.098 ns. All remained 0 B/op; an earlier 19.755 ns dispatch candidate was rejected and redesigned.
+- Cached explicit/fallback Codec lookup remained statistically flat at 6.529 → 6.533 ns and 6.515 → 6.504 ns. Cached generated lookup improved from 8.670 to 6.499 ns; attached pre-admission dispatch improved from 17.656 to 17.098 ns. All remained 0 B/op; an earlier 19.755 ns dispatch candidate was rejected and redesigned.
 
 ## [0.8.3] - 2026-07-26
 
@@ -635,11 +1107,12 @@
 
 - `UseRetry()`、`UseRetry(Action<SharpLinkRetryOptions>)` 和 `UseRetry(ISharpLinkRetryPolicy)` 为显式标记 `[Idempotent]` 的 Unary 提供可选重试；默认最多三次、50/100/200 ms 指数退避和 ±20% jitter。
 - `ISharpLinkRetryPolicy`、`SharpLinkRetryContext` 与 `SharpLinkRetryDecision` 提供同步、无 I/O 的自定义决策 SPI；非法 delay 或 policy 异常只失败当前 logical call，不影响 Client 健康。
-- 默认策略仅对 `[Idempotent]` Unary 的 endpoint 不可用、连接关闭/切换、发送失败与远端 `Unavailable` 重试；业务错误和 `ResourceExhausted`、OneWay 及所有 Streaming 不自动重试。
+- Retry attempt 复用既有 PendingCall 的单一完成仲裁，记录 endpoint/generation、connection、完成原因、响应是否已观测和耗时；无第二套 pending-request 表。
 
 ### 变更
 
 - Client interceptor 仍只对一次 logical call 执行；Retry 位于其 terminal 内，每次 attempt 重新选择 endpoint，并共享入口冻结的绝对 deadline。
+- 默认策略仅对 `[Idempotent]` Unary 的 endpoint 不可用、连接关闭/切换、发送失败与远端 `Unavailable` 重试；业务错误和 `ResourceExhausted`、OneWay 及所有 Streaming 不自动重试。
 - 多 endpoint retry 使用调用内 `ulong` exclusion mask，优先尝试不同 Ready endpoint；尝试完当前 snapshot 后才复用候选，动态 generation 更新自动形成新候选集。
 - telemetry 保持 logical call 指标一调用一次，并在 listener 存在时额外产生 `sharplink.rpc.attempt` Activity。
 
@@ -783,7 +1256,7 @@
 
 - Protocol minor 2 增加可协商的 `CancellationReason` capability；协商后 Cancel 帧携带 `UserCancellation`、`DeadlineExceeded` 或 `ConsumerAbandoned`，与 0.6.9 对端仍使用空载荷 Cancel 互操作。
 - Source Generator 增加 `SHARPLINK014`：Streaming 契约缺少 `CancellationToken` 时编译失败；`[NonCancellable]` 可显式豁免。增加 `SHARPLINK015`，拒绝特性与 Token 同时声明。
-- `sharplink.calls.abandoned` 指标增加低基数终止原因标签；新增 `sharplink.responses.late_dropped` 指标。
+- `sharplink.calls.abandoned` 增加低基数终止原因标签；新增 `sharplink.responses.late_dropped` 指标。
 
 ### 变更
 
