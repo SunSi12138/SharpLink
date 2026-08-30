@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace SharpLink.Generator.Tests;
 
@@ -19,6 +21,29 @@ public partial class RpcAnalyzerTests
         Ensure(
             ExtractGeneratedRpcAssemblyHash(first) == ExtractGeneratedRpcAssemblyHash(second),
             "unchanged RPC semantics must produce the same RpcAssemblyHash across repeated generation");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task SameRpcSemanticsShouldProduceSameIdentityForX64AndX86()
+    {
+        var source = BuildDtoIdentitySource(includeExtraMember: false, idempotent: false);
+        var x64 = GenerateIdentityManifest(
+            "DeterministicIdentityPlatform",
+            source,
+            Platform.X64);
+        var x86 = GenerateIdentityManifest(
+            "DeterministicIdentityPlatform",
+            source,
+            Platform.X86);
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(x64, "DeterministicPayload") ==
+            ExtractGeneratedCodecIdentity(x86, "DeterministicPayload"),
+            "CodecHash must not depend on x64 versus x86 compilation platform");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(x64) == ExtractGeneratedRpcAssemblyHash(x86),
+            "RpcAssemblyHash must not depend on x64 versus x86 compilation platform");
         return Task.CompletedTask;
     }
 
@@ -101,13 +126,117 @@ public partial class RpcAnalyzerTests
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task UnsafeBlitFieldRenameShouldPreserveIdentity()
+    {
+        var first = GenerateUnsafeBlitIdentityManifest("First", "Second", "long");
+        var renamed = GenerateUnsafeBlitIdentityManifest("RenamedFirst", "RenamedSecond", "long");
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(first, "UnsafeLayoutPayload") ==
+            ExtractGeneratedCodecIdentity(renamed, "UnsafeLayoutPayload"),
+            "UnsafeBlit CodecHash must depend on physical layout rather than field names");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(first) == ExtractGeneratedRpcAssemblyHash(renamed),
+            "field renames that preserve UnsafeBlit bytes must not change RpcAssemblyHash");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task UnsafeBlitPhysicalLayoutChangeShouldChangeIdentity()
+    {
+        var first = GenerateUnsafeBlitIdentityManifest("First", "Second", "long");
+        var changed = GenerateUnsafeBlitIdentityManifest("First", "Second", "int");
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(first, "UnsafeLayoutPayload") !=
+            ExtractGeneratedCodecIdentity(changed, "UnsafeLayoutPayload"),
+            "changing UnsafeBlit physical field types must change CodecHash");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(first) != ExtractGeneratedRpcAssemblyHash(changed),
+            "changing UnsafeBlit physical layout must change RpcAssemblyHash");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task SharedPayloadShouldHaveSameCodecHashAcrossContractAssemblies()
+    {
+        var sdk = CreateMetadataReference("DeterministicIdentitySdk", BuildSource(string.Empty));
+        var shared = CreateMetadataReference(
+            "SharedPayloadModels",
+            """
+using SharpLink.Sdk;
+
+namespace SharedPayloadModels
+{
+    [RpcSerializable]
+    public sealed class SharedPayload
+    {
+        public int Value { get; set; }
+    }
+}
+""",
+            sdk);
+        var firstSource = """
+using System.Threading;
+using System.Threading.Tasks;
+using SharedPayloadModels;
+using SharpLink.Sdk;
+
+[RpcContract]
+public interface IFirstSharedPayloadContract : IService
+{
+    ValueTask<SharedPayload> Echo(SharedPayload value, CancellationToken cancellationToken);
+}
+""";
+        var secondSource = """
+using System.Threading;
+using System.Threading.Tasks;
+using SharedPayloadModels;
+using SharpLink.Sdk;
+
+[RpcContract]
+public interface ISecondSharedPayloadContract : IService
+{
+    ValueTask<SharedPayload> Echo(SharedPayload value, CancellationToken cancellationToken);
+}
+""";
+
+        var first = GenerateIdentityManifest(
+            "FirstSharedPayloadContracts",
+            firstSource,
+            Platform.AnyCpu,
+            sdk,
+            shared);
+        var second = GenerateIdentityManifest(
+            "SecondSharedPayloadContracts",
+            secondSource,
+            Platform.AnyCpu,
+            sdk,
+            shared);
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(first, "SharedPayloadModels.SharedPayload") ==
+            ExtractGeneratedCodecIdentity(second, "SharedPayloadModels.SharedPayload"),
+            "the same shared payload definition must publish one CodecHash across owning contract assemblies");
+        return Task.CompletedTask;
+    }
+
     private static string GenerateDtoIdentityManifest(bool includeExtraMember, bool idempotent)
+    {
+        var source = BuildDtoIdentitySource(includeExtraMember, idempotent);
+        return RunGeneratorAndGetSources(source)
+            .Single(static generated =>
+                generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+    }
+
+    private static string BuildDtoIdentitySource(bool includeExtraMember, bool idempotent)
     {
         var extraMember = includeExtraMember
             ? "public long Extra { get; set; }"
             : string.Empty;
         var methodAttribute = idempotent ? "[SharpLink.Sdk.Idempotent]" : string.Empty;
-        var source = BuildSource($$"""
+        return BuildSource($$"""
 namespace SharpLink.Sdk
 {
     [AttributeUsage(AttributeTargets.Method)]
@@ -128,10 +257,6 @@ public interface IDeterministicIdentityContract : SharpLink.Sdk.IService
     ValueTask<DeterministicPayload> Echo(DeterministicPayload value, CancellationToken cancellationToken);
 }
 """);
-
-        return RunGeneratorAndGetSources(source)
-            .Single(static generated =>
-                generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
     }
 
     private static string GenerateOpaqueIdentityManifest(
@@ -164,6 +289,52 @@ public interface IOpaqueIdentityContract : SharpLink.Sdk.IService
 """);
 
         return RunGeneratorAndGetSources(source)
+            .Single(static generated =>
+                generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+    }
+
+    private static string GenerateUnsafeBlitIdentityManifest(
+        string firstFieldName,
+        string secondFieldName,
+        string secondFieldType)
+    {
+        var source = BuildSource($$"""
+public struct UnsafeLayoutPayload
+{
+    public int {{firstFieldName}};
+    public {{secondFieldType}} {{secondFieldName}};
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IUnsafeLayoutIdentityContract : SharpLink.Sdk.IService
+{
+    ValueTask<UnsafeLayoutPayload> Echo(UnsafeLayoutPayload value, CancellationToken cancellationToken);
+}
+""");
+
+        return RunGeneratorAndGetSources(source)
+            .Single(static generated =>
+                generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+    }
+
+    private static string GenerateIdentityManifest(
+        string assemblyName,
+        string source,
+        Platform platform,
+        params MetadataReference[] additionalReferences)
+    {
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
+        var compilation = CSharpCompilation.Create(
+            assemblyName,
+            [syntaxTree],
+            GetPlatformReferences().Concat(additionalReferences),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary).WithPlatform(platform));
+
+        IIncrementalGenerator generator = new RpcGenerator();
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
+        driver = driver.RunGenerators(compilation);
+        return driver.GetRunResult().GeneratedTrees
+            .Select(static tree => tree.GetText().ToString())
             .Single(static generated =>
                 generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
     }
