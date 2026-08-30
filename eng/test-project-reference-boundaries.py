@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 SCRIPT = Path(__file__).with_name("check-project-reference-boundaries.py")
 spec = importlib.util.spec_from_file_location("project_reference_guard", SCRIPT)
 guard = importlib.util.module_from_spec(spec)
@@ -16,8 +15,7 @@ sys.modules[spec.name] = guard
 assert spec.loader is not None
 spec.loader.exec_module(guard)
 
-
-POLICY = """schema_version: 1
+POLICY = '''schema_version: 1
 scope:
   production_root: src
   production_project_glob: "**/*.csproj"
@@ -46,315 +44,267 @@ allowed_references:
     mode: analyzer
 
 temporary_exceptions: []
-"""
-
-
+'''
 EMPTY_PROJECT = '<Project Sdk="Microsoft.NET.Sdk" />\n'
+FORBIDDEN_REF = '<ProjectReference Include="../Server/Server.csproj" Condition="\'$(Never)\' == \'true\'" />'
 
 
-class ProjectReferenceBoundaryGuardTests(unittest.TestCase):
+class GuardTests(unittest.TestCase):
     def make_repo(self, relative_root=None):
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)
         if relative_root is not None:
             root = root / relative_root
-        (root / "doc").mkdir(parents=True)
-        (root / "doc" / "project-reference-boundaries.yml").write_text(POLICY, encoding="utf-8")
-        for name in ("Abstractions", "Client", "Server", "Sdk", "Generator"):
-            project_dir = root / "src" / name
-            project_dir.mkdir(parents=True)
-            (project_dir / f"{name}.csproj").write_text(EMPTY_PROJECT, encoding="utf-8")
+        (root / 'doc').mkdir(parents=True)
+        (root / 'doc/project-reference-boundaries.yml').write_text(POLICY, encoding='utf-8')
+        for name in ('Abstractions', 'Client', 'Server', 'Sdk', 'Generator'):
+            d = root / 'src' / name
+            d.mkdir(parents=True)
+            (d / f'{name}.csproj').write_text(EMPTY_PROJECT, encoding='utf-8')
         return temp, root
 
-    def run_guard(self, root):
-        return guard.run_guard(
-            root,
-            root / "doc" / "project-reference-boundaries.yml",
-            evaluate_active=False,
-        )
-
     def set_project(self, root, name, body):
-        (root / "src" / name / f"{name}.csproj").write_text(body, encoding="utf-8")
+        (root / 'src' / name / f'{name}.csproj').write_text(body, encoding='utf-8')
 
-    def assert_violation(self, result, message):
-        self.assertTrue(result.violations)
-        self.assertIn(message, "\n".join(result.violations))
+    def run_guard(self, root, active=False):
+        return guard.run_guard(root, root / 'doc/project-reference-boundaries.yml', evaluate_active=active)
 
-    def test_current_like_graph_passes_including_conditioned_analyzer_edge(self):
+    def assert_violation(self, result, text):
+        joined = '\n'.join(result.violations)
+        self.assertIn(text, joined, joined)
+
+    def write_forbidden(self, path, include='../Server/Server.csproj'):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'''<Project><ItemGroup>
+<ProjectReference Include="{include}" Condition="'$(Never)' == 'true'" />
+</ItemGroup></Project>''', encoding='utf-8')
+
+    def test_current_like_graph_passes(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="..\\Abstractions\\Abstractions.csproj" />
-</ItemGroup></Project>""")
-            self.set_project(root, "Server", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" /></ItemGroup></Project>')
+            self.set_project(root, 'Server', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" /></ItemGroup></Project>')
+            self.set_project(root, 'Sdk', '''<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
 <ProjectReference Include="../Abstractions/Abstractions.csproj" />
-</ItemGroup></Project>""")
-            self.set_project(root, "Sdk", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" />
-<ProjectReference Include="../Generator/Generator.csproj" Condition="'$(PublishAot)' != 'true'"
-                  OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assertEqual((), result.violations)
+<ProjectReference Include="../Generator/Generator.csproj" Condition="'$(PublishAot)' != 'true'" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+</ItemGroup></Project>''')
+            self.assertEqual((), self.run_guard(root).violations)
 
-    def test_unregistered_production_project_fails(self):
+    def test_unregistered_project(self):
         temp, root = self.make_repo()
         with temp:
-            extra = root / "src" / "Extra"
-            extra.mkdir()
-            (extra / "Extra.csproj").write_text(EMPTY_PROJECT, encoding="utf-8")
-            result = self.run_guard(root)
-            self.assert_violation(result, "unregistered production project: src/Extra/Extra.csproj")
+            p = root / 'src/Extra/Extra.csproj'; p.parent.mkdir(); p.write_text(EMPTY_PROJECT)
+            self.assert_violation(self.run_guard(root), 'unregistered production project: src/Extra/Extra.csproj')
 
-    def test_condition_hidden_forbidden_edge_fails(self):
+    def test_condition_hidden_forbidden(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Server/Server.csproj" Condition="'$(SomeProperty)' == 'true'" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "condition-hidden forbidden production edge client -> server")
+            self.set_project(root, 'Client', f'<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>{FORBIDDEN_REF}</ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'condition-hidden forbidden production edge client -> server')
 
-    def test_differently_cased_condition_hidden_forbidden_edge_fails(self):
+    def test_lowercase_projectreference(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<projectreference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "condition-hidden forbidden production edge client -> server")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><projectreference Include="../Server/Server.csproj" Condition="\'$(Never)\' == \'true\'" /></ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'condition-hidden forbidden production edge client -> server')
 
-    def test_conditioned_imported_forbidden_edge_fails(self):
+    def test_conditioned_import_provenance_marks_hidden(self):
         temp, root = self.make_repo()
         with temp:
-            imported = root / "eng" / "architecture.props"
-            imported.parent.mkdir()
-            imported.write_text("""<Project><ItemGroup>
-<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>""", encoding="utf-8")
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk">
-<Import Project="../../eng/architecture.props" Condition="'$(ImportArchitecture)' == 'true'" />
-</Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+            imported = root / 'eng/architecture.props'; self.write_forbidden(imported)
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><Import Project="../../eng/architecture.props" Condition="\'$(X)\' == \'true\'" /></Project>')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
-    def test_directory_packages_props_conditioned_forbidden_edge_fails(self):
+    def test_unknown_import_property_fails_closed(self):
         temp, root = self.make_repo()
         with temp:
-            (root / "Directory.Packages.props").write_text("""<Project><ItemGroup>
-<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>""", encoding="utf-8")
-            result = self.run_guard(root)
-            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><Import Project="$(VSToolsPath)architecture.props" Condition="\'$(X)\' == \'true\'" /></Project>')
+            self.assert_violation(self.run_guard(root), 'repository import is not statically traversable')
 
-    def test_directory_packages_props_override_conditioned_forbidden_edge_fails(self):
+    def test_directory_packages_default_scanned(self):
         temp, root = self.make_repo()
         with temp:
-            custom = root / "eng" / "custom-packages.props"
-            custom.parent.mkdir()
-            custom.write_text("""<Project><ItemGroup>
-<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>""", encoding="utf-8")
-            (root / "Directory.Build.props").write_text("""<Project><PropertyGroup>
-<DirectoryPackagesPropsPath>eng/custom-packages.props</DirectoryPackagesPropsPath>
-</PropertyGroup></Project>""", encoding="utf-8")
-            result = self.run_guard(root)
-            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+            self.write_forbidden(root / 'Directory.Packages.props')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
-    def test_directory_build_targets_override_conditioned_forbidden_edge_fails(self):
+    def test_directory_packages_override_from_directory_build_props(self):
         temp, root = self.make_repo()
         with temp:
-            custom = root / "eng" / "architecture.targets"
-            custom.parent.mkdir()
-            custom.write_text("""<Project><ItemGroup>
-<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>""", encoding="utf-8")
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
+            (root / 'Directory.Build.props').write_text('<Project><PropertyGroup><DirectoryPackagesPropsPath>eng/custom-packages.props</DirectoryPackagesPropsPath></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/custom-packages.props')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_late_project_body_package_override_does_not_suppress_default(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'Directory.Packages.props')
+            (root / 'eng/safe.props').parent.mkdir(parents=True, exist_ok=True)
+            (root / 'eng/safe.props').write_text('<Project />')
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><DirectoryPackagesPropsPath>../../eng/safe.props</DirectoryPackagesPropsPath></PropertyGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_custom_after_directory_build_props_scanned(self):
+        temp, root = self.make_repo()
+        with temp:
+            (root / 'Directory.Build.props').write_text('<Project><PropertyGroup><CustomAfterDirectoryBuildProps>eng/after.props</CustomAfterDirectoryBuildProps></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/after.props')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_custom_after_props_can_override_packages(self):
+        temp, root = self.make_repo()
+        with temp:
+            (root / 'Directory.Build.props').write_text('<Project><PropertyGroup><CustomAfterDirectoryBuildProps>eng/after.props</CustomAfterDirectoryBuildProps></PropertyGroup></Project>')
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/after.props').write_text('<Project><PropertyGroup><DirectoryPackagesPropsPath>custom-packages.props</DirectoryPackagesPropsPath></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/custom-packages.props')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_directory_build_targets_override(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><DirectoryBuildTargetsPath>../../eng/architecture.targets</DirectoryBuildTargetsPath></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/architecture.targets')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_conditioned_imported_targets_override_keeps_default(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'Directory.Build.targets')
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/override.props').write_text('<Project><PropertyGroup><DirectoryBuildTargetsPath>architecture.targets</DirectoryBuildTargetsPath></PropertyGroup></Project>')
+            (root / 'eng/architecture.targets').write_text('<Project />')
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><Import Project="../../eng/override.props" Condition="\'$(UseCustom)\' == \'true\'" /></Project>')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_choose_targets_override_keeps_default(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'Directory.Build.targets')
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/architecture.targets').write_text('<Project />')
+            self.set_project(root, 'Client', '''<Project Sdk="Microsoft.NET.Sdk"><Choose><When Condition="'$(UseCustom)' == 'true'"><PropertyGroup>
 <DirectoryBuildTargetsPath>../../eng/architecture.targets</DirectoryBuildTargetsPath>
-</PropertyGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+</PropertyGroup></When></Choose></Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
-    def test_custom_after_directory_build_targets_conditioned_forbidden_edge_fails(self):
+    def test_custom_before_directory_build_targets(self):
         temp, root = self.make_repo()
         with temp:
-            custom = root / "eng" / "after.targets"
-            custom.parent.mkdir()
-            custom.write_text("""<Project><ItemGroup>
-<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>""", encoding="utf-8")
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
-<CustomAfterDirectoryBuildTargets>../../eng/after.targets</CustomAfterDirectoryBuildTargets>
-</PropertyGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><CustomBeforeDirectoryBuildTargets>../../eng/before.targets</CustomBeforeDirectoryBuildTargets></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/before.targets')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
-    def test_repository_assignment_to_external_named_import_property_fails_closed(self):
+    def test_custom_after_directory_build_targets_from_project(self):
         temp, root = self.make_repo()
         with temp:
-            imported = root / "eng" / "architecture.props"
-            imported.parent.mkdir()
-            imported.write_text("""<Project><ItemGroup>
-<ProjectReference Include="../src/Server/Server.csproj" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>""", encoding="utf-8")
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk">
-<PropertyGroup><VSToolsPath>../../eng/</VSToolsPath></PropertyGroup>
-<Import Project="$(VSToolsPath)architecture.props" Condition="'$(ImportArchitecture)' == 'true'" />
-</Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "repository import is not statically traversable")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><CustomAfterDirectoryBuildTargets>../../eng/after.targets</CustomAfterDirectoryBuildTargets></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/after.targets')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
-    def test_target_project_reference_mode_mutation_fails(self):
+    def test_custom_after_directory_build_targets_from_targets_file(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" />
-</ItemGroup><Target Name="MutateReference"><ItemGroup>
-<ProjectReference ReferenceOutputAssembly="false" />
-</ItemGroup></Target></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "ProjectReference target mutation must not supply/override mode metadata")
+            (root / 'Directory.Build.targets').write_text('<Project><PropertyGroup><CustomAfterDirectoryBuildTargets>eng/after.targets</CustomAfterDirectoryBuildTargets></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/after.targets')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
-    def test_checkout_path_named_obj_does_not_hide_projects(self):
-        temp, root = self.make_repo(Path("obj") / "SharpLink")
-        with temp:
-            result = self.run_guard(root)
-            self.assertEqual((), result.violations)
-
-    def test_project_under_source_obj_directory_is_still_in_scope(self):
+    def test_dynamic_auto_override_fails_closed(self):
         temp, root = self.make_repo()
         with temp:
-            generated = root / "src" / "Client" / "obj"
-            generated.mkdir()
-            (generated / "Shadow.csproj").write_text(EMPTY_PROJECT, encoding="utf-8")
-            result = self.run_guard(root)
-            self.assert_violation(result, "unregistered production project: src/Client/obj/Shadow.csproj")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><DirectoryBuildTargetsPath>$(SomePath)</DirectoryBuildTargetsPath></PropertyGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'repository import is not statically traversable')
 
-    def test_assembly_reference_output_assembly_false_fails(self):
+    def test_target_mode_mutation(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" ReferenceOutputAssembly="false" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "assembly edge requires ReferenceOutputAssembly=true")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" /></ItemGroup><Target Name="X"><ItemGroup><ProjectReference ReferenceOutputAssembly="false" /></ItemGroup></Target></Project>')
+            self.assert_violation(self.run_guard(root), 'ProjectReference target mutation must not supply/override mode metadata')
 
-    def test_assembly_output_item_type_analyzer_fails(self):
+    def test_item_definition_mode(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" OutputItemType="Analyzer" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "assembly edge must not use OutputItemType=Analyzer")
+            (root / 'Directory.Build.props').write_text('<Project><ItemDefinitionGroup><ProjectReference><ReferenceOutputAssembly>false</ReferenceOutputAssembly></ProjectReference></ItemDefinitionGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'ItemDefinitionGroup must not supply production ProjectReference mode metadata')
 
-    def test_property_driven_mode_metadata_fails(self):
+    def test_update_mode(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" ReferenceOutputAssembly="$(ReferenceAssembly)" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "ReferenceOutputAssembly must be a literal value")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" /><ProjectReference Update="../Abstractions/Abstractions.csproj" OutputItemType="Analyzer" /></ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'ProjectReference Update must not supply/override mode metadata')
 
-    def test_conditioned_child_mode_metadata_fails(self):
+    def test_dynamic_project_reference(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj">
-  <ReferenceOutputAssembly Condition="'$(X)' == 'true'">true</ReferenceOutputAssembly>
-</ProjectReference>
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "ReferenceOutputAssembly must not have a Condition")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="$(ServerProject)" /></ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'dynamic/unresolvable production ProjectReference Include is denied')
 
-    def test_dynamic_project_reference_include_fails_closed(self):
+    def test_assembly_reference_output_false(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="$(ServerProject)" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "dynamic/unresolvable production ProjectReference Include is denied")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" ReferenceOutputAssembly="false" /></ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'assembly edge requires ReferenceOutputAssembly=true')
 
-    def test_item_definition_mode_metadata_fails(self):
+    def test_assembly_output_analyzer(self):
         temp, root = self.make_repo()
         with temp:
-            (root / "Directory.Build.props").write_text("""<Project><ItemDefinitionGroup>
-<ProjectReference><ReferenceOutputAssembly>false</ReferenceOutputAssembly></ProjectReference>
-</ItemDefinitionGroup></Project>""", encoding="utf-8")
-            result = self.run_guard(root)
-            self.assert_violation(result, "ItemDefinitionGroup must not supply production ProjectReference mode metadata")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" OutputItemType="Analyzer" /></ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'assembly edge must not use OutputItemType=Analyzer')
 
-    def test_project_reference_update_mode_metadata_fails(self):
+    def test_property_driven_mode(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" />
-<ProjectReference Update="../Abstractions/Abstractions.csproj" OutputItemType="Analyzer" />
-</ItemGroup></Project>""")
-            result = self.run_guard(root)
-            self.assert_violation(result, "ProjectReference Update must not supply/override mode metadata")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" ReferenceOutputAssembly="$(X)" /></ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'ReferenceOutputAssembly must be a literal value')
 
-    def test_active_msbuild_forbidden_edge_is_checked(self):
+    def test_conditioned_child_mode(self):
         temp, root = self.make_repo()
         with temp:
-            def fake_run(command, **kwargs):
-                project = Path(command[2]).name
-                items = []
-                if project == "Client.csproj":
-                    items = [{"Identity": "../Server/Server.csproj"}]
-                payload = json.dumps({"Items": {"ProjectReference": items}})
-                return subprocess.CompletedProcess(command, 0, payload, "")
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj"><ReferenceOutputAssembly Condition="\'$(X)\' == \'true\'">true</ReferenceOutputAssembly></ProjectReference></ItemGroup></Project>')
+            self.assert_violation(self.run_guard(root), 'ReferenceOutputAssembly must not have a Condition')
 
-            with mock.patch.object(guard.subprocess, "run", side_effect=fake_run):
-                result = guard.run_guard(root, root / "doc" / "project-reference-boundaries.yml")
-            self.assert_violation(result, "active MSBuild forbidden edge client -> server")
+    def test_checkout_path_obj(self):
+        temp, root = self.make_repo(Path('obj') / 'SharpLink')
+        with temp:
+            self.assertEqual((), self.run_guard(root).violations)
 
-    def test_active_msbuild_mode_mismatch_is_checked(self):
+    def test_source_obj_project_still_in_scope(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" />
-</ItemGroup></Project>""")
+            p = root / 'src/Client/obj/Shadow.csproj'; p.parent.mkdir(); p.write_text(EMPTY_PROJECT)
+            self.assert_violation(self.run_guard(root), 'unregistered production project: src/Client/obj/Shadow.csproj')
 
-            def fake_run(command, **kwargs):
-                project = Path(command[2]).name
-                items = []
-                if project == "Client.csproj":
-                    items = [{
-                        "Identity": "../Abstractions/Abstractions.csproj",
-                        "ReferenceOutputAssembly": "false",
-                    }]
-                payload = json.dumps({"Items": {"ProjectReference": items}})
-                return subprocess.CompletedProcess(command, 0, payload, "")
-
-            with mock.patch.object(guard.subprocess, "run", side_effect=fake_run):
-                result = guard.run_guard(root, root / "doc" / "project-reference-boundaries.yml")
-            self.assert_violation(result, "active MSBuild reference-mode violation")
-
-    def test_active_msbuild_empty_reference_output_assembly_fails(self):
+    def test_active_forbidden(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../Abstractions/Abstractions.csproj" />
-</ItemGroup></Project>""")
+            def fake(command, **kwargs):
+                items = [{'Identity':'../Server/Server.csproj'}] if Path(command[2]).name == 'Client.csproj' else []
+                return subprocess.CompletedProcess(command, 0, json.dumps({'Items':{'ProjectReference':items}}), '')
+            with mock.patch.object(guard.subprocess, 'run', side_effect=fake):
+                result = self.run_guard(root, active=True)
+            self.assert_violation(result, 'active MSBuild forbidden edge client -> server')
 
-            def fake_run(command, **kwargs):
-                project = Path(command[2]).name
-                items = []
-                if project == "Client.csproj":
-                    items = [{
-                        "Identity": "../Abstractions/Abstractions.csproj",
-                        "ReferenceOutputAssembly": "",
-                    }]
-                payload = json.dumps({"Items": {"ProjectReference": items}})
-                return subprocess.CompletedProcess(command, 0, payload, "")
+    def test_active_mode_mismatch(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" /></ItemGroup></Project>')
+            def fake(command, **kwargs):
+                items = [{'Identity':'../Abstractions/Abstractions.csproj','ReferenceOutputAssembly':'false'}] if Path(command[2]).name == 'Client.csproj' else []
+                return subprocess.CompletedProcess(command, 0, json.dumps({'Items':{'ProjectReference':items}}), '')
+            with mock.patch.object(guard.subprocess, 'run', side_effect=fake):
+                result = self.run_guard(root, active=True)
+            self.assert_violation(result, 'active MSBuild reference-mode violation')
 
-            with mock.patch.object(guard.subprocess, "run", side_effect=fake_run):
-                result = guard.run_guard(root, root / "doc" / "project-reference-boundaries.yml")
-            self.assert_violation(result, "active ReferenceOutputAssembly is not boolean")
+    def test_active_empty_roa_invalid(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Abstractions/Abstractions.csproj" /></ItemGroup></Project>')
+            def fake(command, **kwargs):
+                items = [{'Identity':'../Abstractions/Abstractions.csproj','ReferenceOutputAssembly':''}] if Path(command[2]).name == 'Client.csproj' else []
+                return subprocess.CompletedProcess(command, 0, json.dumps({'Items':{'ProjectReference':items}}), '')
+            with mock.patch.object(guard.subprocess, 'run', side_effect=fake):
+                result = self.run_guard(root, active=True)
+            self.assert_violation(result, 'active ReferenceOutputAssembly is not boolean')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
