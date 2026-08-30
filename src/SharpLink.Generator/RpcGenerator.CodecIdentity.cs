@@ -116,62 +116,62 @@ public partial class RpcGenerator
                         model.AdapterId ?? string.Empty,
                         model.WireFormatId);
                 case GeneratedCodecKind.Dto:
-                {
-                    var parts = new List<string>
                     {
-                        "codec/v1",
-                        "dto",
-                        model.IsReferenceType ? "ref" : "value"
-                    };
-                    foreach (var member in model.Members.OrderBy(static member => member.FieldId))
-                    {
-                        parts.Add(member.FieldId.ToString(InvariantCulture));
-                        parts.Add(member.Kind.ToString());
-                        parts.Add(member.Required ? "required" : "optional");
-                        parts.Add(member.Nullable ? "nullable" : "non-nullable");
-                        parts.Add(member.NonNullableReference ? "non-null-ref" : "other-null-semantics");
-                        switch (member.Kind)
+                        var parts = new List<string>
                         {
-                            case GeneratedMemberKind.String:
-                                parts.Add("string/utf8/v1");
-                                break;
-                            case GeneratedMemberKind.Fixed:
-                            case GeneratedMemberKind.NullableFixed:
-                                parts.Add(GetFixedMemberSemanticIdentity(member));
-                                break;
-                            case GeneratedMemberKind.Complex:
-                                if (!TryResolveReachableType(member.TypeName, out var memberType))
-                                    parts.Add(Hashing.GetSemanticHash("codec/v1", "external-generated", member.TypeName).ToHex());
-                                else
-                                    parts.Add(GetFinalCodecHash(memberType, cache, stack).ToHex());
-                                break;
+                            "codec/v1",
+                            "dto",
+                            model.IsReferenceType ? "ref" : "value"
+                        };
+                        foreach (var member in model.Members.OrderBy(static member => member.FieldId))
+                        {
+                            parts.Add(member.FieldId.ToString(InvariantCulture));
+                            parts.Add(member.Kind.ToString());
+                            parts.Add(member.Required ? "required" : "optional");
+                            parts.Add(member.Nullable ? "nullable" : "non-nullable");
+                            parts.Add(member.NonNullableReference ? "non-null-ref" : "other-null-semantics");
+                            switch (member.Kind)
+                            {
+                                case GeneratedMemberKind.String:
+                                    parts.Add("string/utf8/v1");
+                                    break;
+                                case GeneratedMemberKind.Fixed:
+                                case GeneratedMemberKind.NullableFixed:
+                                    parts.Add(GetFixedMemberSemanticIdentity(member));
+                                    break;
+                                case GeneratedMemberKind.Complex:
+                                    if (!TryResolveReachableType(member.TypeName, out var memberType))
+                                        parts.Add(Hashing.GetSemanticHash("codec/v1", "external-generated", member.TypeName).ToHex());
+                                    else
+                                        parts.Add(GetFinalCodecHash(memberType, cache, stack).ToHex());
+                                    break;
+                            }
+                        }
+                        return Hashing.GetSemanticHash(parts.ToArray());
+                    }
+                default:
+                    {
+                        var parts = new List<string>
+                        {
+                            "codec/v1",
+                            "collection",
+                            model.Kind.ToString()
+                        };
+                        AppendChild(model.ElementType);
+                        AppendChild(model.KeyType);
+                        AppendChild(model.ValueType);
+                        return Hashing.GetSemanticHash(parts.ToArray());
+
+                        void AppendChild(string? childTypeName)
+                        {
+                            if (childTypeName is null)
+                                return;
+                            if (TryResolveReachableType(childTypeName, out var childType))
+                                parts.Add(GetFinalCodecHash(childType, cache, stack).ToHex());
+                            else
+                                parts.Add(Hashing.GetSemanticHash("codec/v1", "external-generated", childTypeName).ToHex());
                         }
                     }
-                    return Hashing.GetSemanticHash(parts.ToArray());
-                }
-                default:
-                {
-                    var parts = new List<string>
-                    {
-                        "codec/v1",
-                        "collection",
-                        model.Kind.ToString()
-                    };
-                    AppendChild(model.ElementType);
-                    AppendChild(model.KeyType);
-                    AppendChild(model.ValueType);
-                    return Hashing.GetSemanticHash(parts.ToArray());
-
-                    void AppendChild(string? childTypeName)
-                    {
-                        if (childTypeName is null)
-                            return;
-                        if (TryResolveReachableType(childTypeName, out var childType))
-                            parts.Add(GetFinalCodecHash(childType, cache, stack).ToHex());
-                        else
-                            parts.Add(Hashing.GetSemanticHash("codec/v1", "external-generated", childTypeName).ToHex());
-                    }
-                }
             }
         }
 
