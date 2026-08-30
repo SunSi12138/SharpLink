@@ -147,6 +147,48 @@ class ProjectReferenceBoundaryGuardTests(unittest.TestCase):
             result = self.run_guard(root)
             self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
 
+    def test_directory_packages_props_override_conditioned_forbidden_edge_fails(self):
+        temp, root = self.make_repo()
+        with temp:
+            custom = root / "eng" / "custom-packages.props"
+            custom.parent.mkdir()
+            custom.write_text("""<Project><ItemGroup>
+<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
+</ItemGroup></Project>""", encoding="utf-8")
+            (root / "Directory.Build.props").write_text("""<Project><PropertyGroup>
+<DirectoryPackagesPropsPath>eng/custom-packages.props</DirectoryPackagesPropsPath>
+</PropertyGroup></Project>""", encoding="utf-8")
+            result = self.run_guard(root)
+            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+
+    def test_directory_build_targets_override_conditioned_forbidden_edge_fails(self):
+        temp, root = self.make_repo()
+        with temp:
+            custom = root / "eng" / "architecture.targets"
+            custom.parent.mkdir()
+            custom.write_text("""<Project><ItemGroup>
+<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
+</ItemGroup></Project>""", encoding="utf-8")
+            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
+<DirectoryBuildTargetsPath>../../eng/architecture.targets</DirectoryBuildTargetsPath>
+</PropertyGroup></Project>""")
+            result = self.run_guard(root)
+            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+
+    def test_custom_after_directory_build_targets_conditioned_forbidden_edge_fails(self):
+        temp, root = self.make_repo()
+        with temp:
+            custom = root / "eng" / "after.targets"
+            custom.parent.mkdir()
+            custom.write_text("""<Project><ItemGroup>
+<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
+</ItemGroup></Project>""", encoding="utf-8")
+            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
+<CustomAfterDirectoryBuildTargets>../../eng/after.targets</CustomAfterDirectoryBuildTargets>
+</PropertyGroup></Project>""")
+            result = self.run_guard(root)
+            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+
     def test_repository_assignment_to_external_named_import_property_fails_closed(self):
         temp, root = self.make_repo()
         with temp:
@@ -290,6 +332,28 @@ class ProjectReferenceBoundaryGuardTests(unittest.TestCase):
             with mock.patch.object(guard.subprocess, "run", side_effect=fake_run):
                 result = guard.run_guard(root, root / "doc" / "project-reference-boundaries.yml")
             self.assert_violation(result, "active MSBuild reference-mode violation")
+
+    def test_active_msbuild_empty_reference_output_assembly_fails(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
+<ProjectReference Include="../Abstractions/Abstractions.csproj" />
+</ItemGroup></Project>""")
+
+            def fake_run(command, **kwargs):
+                project = Path(command[2]).name
+                items = []
+                if project == "Client.csproj":
+                    items = [{
+                        "Identity": "../Abstractions/Abstractions.csproj",
+                        "ReferenceOutputAssembly": "",
+                    }]
+                payload = json.dumps({"Items": {"ProjectReference": items}})
+                return subprocess.CompletedProcess(command, 0, payload, "")
+
+            with mock.patch.object(guard.subprocess, "run", side_effect=fake_run):
+                result = guard.run_guard(root, root / "doc" / "project-reference-boundaries.yml")
+            self.assert_violation(result, "active ReferenceOutputAssembly is not boolean")
 
 
 if __name__ == "__main__":
