@@ -497,8 +497,10 @@ public partial class RpcGenerator
             _ = Analyze();
             PromoteSelectedFixedMembersToCodecBindings();
             NormalizeGeneratedModuleDependencies();
+            var finalizedCodecs = FilterFailedCodecClosure(
+                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray());
             return new DtoAnalysisPassResult(
-                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
+                finalizedCodecs,
                 _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
         }
