@@ -323,10 +323,12 @@ public sealed class DynamicAdmissionRuntimeControlTests
             var serverTask = RunServerAsync(server, serverCancellation.Token);
 
             var clientA = SharpClientBuilder.Create()
+                .DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();
             var clientB = SharpClientBuilder.Create()
+                .DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();

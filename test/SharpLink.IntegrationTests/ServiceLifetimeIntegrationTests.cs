@@ -231,6 +231,7 @@ public sealed class ServiceLifetimeIntegrationTests
 
     private static ISharpLinkClient CreateClient(int port)
         => SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
             .Build();

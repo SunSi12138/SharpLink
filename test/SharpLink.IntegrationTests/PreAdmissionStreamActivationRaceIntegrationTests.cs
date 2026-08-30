@@ -301,6 +301,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
 
         private static ISharpLinkClient CreateClient(int port)
             => SharpClientBuilder.Create()
+                .DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();

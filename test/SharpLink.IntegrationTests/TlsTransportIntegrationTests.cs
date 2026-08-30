@@ -21,6 +21,7 @@ public class TlsTransportIntegrationTests
             CreateServerOptions(certificate),
             expectedAuthenticationToken: "runtime-token");
         await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .DisableRequestTimeout()
             .AddCluster(
                 "bootstrap",
                 child => child
@@ -198,6 +199,7 @@ public class TlsTransportIntegrationTests
         using var acceptCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var acceptTask = listener.AcceptSocketAsync(acceptCts.Token).AsTask();
         await using var client = SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTcp(
                 IPAddress.Loopback.ToString(),
                 port,
@@ -228,6 +230,7 @@ public class TlsTransportIntegrationTests
         await using var second = await StartServerAsync(0, CreateServerOptions(certificate));
         var tlsOptions = CreateClientOptions(string.Empty);
         await using var client = SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
             .UseEndpoints(
                 [
@@ -257,6 +260,7 @@ public class TlsTransportIntegrationTests
 
     private static ISharpLinkClient CreateClient(int port, SslClientAuthenticationOptions options)
         => SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port, options, TimeSpan.FromSeconds(2))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
             .Build();

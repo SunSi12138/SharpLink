@@ -61,6 +61,7 @@ public static class Program
         if (useSharedMemory)
         {
             client = SharpClientBuilder.Create()
+                .DisableRequestTimeout()
                 .UseRuntime(ConfigureRuntime)
                 .UseSharedMemory(sharedMemoryName)
                 .Build();
@@ -68,6 +69,7 @@ public static class Program
         else
         {
             client = SharpClientBuilder.Create()
+                .DisableRequestTimeout()
                 .UseRuntime(ConfigureRuntime)
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();

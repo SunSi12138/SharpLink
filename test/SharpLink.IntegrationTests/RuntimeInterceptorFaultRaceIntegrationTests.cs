@@ -7,6 +7,7 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
     {
         var transport = new GatedFailClientTransportFactory();
         await using var client = SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTransport(transport)
             .Build();
 
