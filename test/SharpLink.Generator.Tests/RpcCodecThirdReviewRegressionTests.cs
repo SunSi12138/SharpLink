@@ -9,7 +9,7 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task OwnerLocalCustomCodecShouldNotDependOnPayloadOwnersUnrelatedManifest()
     {
-        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
+        var sdk = CreateMetadataReference("SharpLink.Sdk", UseCurrentIdentitySdk(BuildSource(string.Empty)));
         var payloads = CreateMetadataReference(
             "SharedPayloads",
             """
@@ -51,7 +51,7 @@ using SharpLink.Sdk;
 
 [assembly: RpcCodec(typeof(SharedPayload), typeof(LocalSharedPayloadCodec))]
 
-[RpcCodecImplementation("owner-local-wire/v1", "owner-local-schema/v1")]
+[RpcCodecSemanticIdentity(0x9001UL, 0xa001UL)]
 public sealed class LocalSharedPayloadCodec : IRpcCodec<SharedPayload>
 {
 }
@@ -84,21 +84,22 @@ public interface IOwnerLocalContract : IService
     [Test]
     public Task ExplicitFrameworkPrimitiveAdapterShouldBeRejectedWithoutRoute()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildSource("""
 [SharpLink.Sdk.RpcContract]
 public interface INoRouteBuiltinAdapterContract : SharpLink.Sdk.IService
 {
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x9002UL, 0xa002UL)]
 public sealed class ExplicitIntAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "explicit.no-route-int/v1";
     public string WireFormatId => "explicit-no-route-int-wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitIntAdapter), \"explicit.no-route-int/v1\", \"explicit-no-route-int-wire/v1\")]",
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitIntAdapter), \"explicit.no-route-int/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(ExplicitIntAdapter))]");
 
         var diagnostics = RunGenerator(source);
@@ -113,7 +114,7 @@ public sealed class ExplicitIntAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     [Test]
     public Task ReferencedManifestlessContractPolicyShouldNotBecomeConsumerOwned()
     {
-        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
+        var sdk = CreateMetadataReference("SharpLink.Sdk", UseCurrentIdentitySdk(BuildSource(string.Empty)));
         var foreign = CreateMetadataReference(
             "ForeignContracts",
             """
@@ -145,7 +146,7 @@ using SharpLink.Sdk;
 
 [assembly: RpcCodec(typeof(ForeignPayload), typeof(ForeignPayloadCodec))]
 
-[RpcCodecImplementation("foreign-consumer-wire/v1", "foreign-consumer-schema/v1")]
+[RpcCodecSemanticIdentity(0x9003UL, 0xa003UL)]
 public sealed class ForeignPayloadCodec : IRpcCodec<ForeignPayload>
 {
 }
@@ -169,7 +170,7 @@ public interface ILocalContract : IService
     [Test]
     public Task FrameworkEnumCustomCodecShouldBeRejectedForDirectAndNestedUse()
     {
-        var source = AddAssemblyAttribute(BuildSource("""
+        var source = AddAssemblyAttribute(UseCurrentIdentitySdk(BuildSource("""
 public enum CustomMode : short
 {
     Zero,
@@ -181,7 +182,7 @@ public sealed class CustomEnvelope
     public CustomMode Mode { get; set; }
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("custom-mode-wire/v1", "custom-mode-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x9004UL, 0xa004UL)]
 public sealed class CustomModeCodec : SharpLink.Abstractions.IRpcCodec<CustomMode>
 {
 }
@@ -192,7 +193,7 @@ public interface ICustomModeContract : SharpLink.Sdk.IService
     ValueTask<CustomMode> EchoMode(CustomMode value, CancellationToken cancellationToken);
     ValueTask<CustomEnvelope> EchoEnvelope(CustomEnvelope value, CancellationToken cancellationToken);
 }
-"""),
+""")),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(CustomMode), typeof(CustomModeCodec))]");
 
         var diagnostics = RunGenerator(source);
@@ -207,13 +208,13 @@ public interface ICustomModeContract : SharpLink.Sdk.IService
     [Test]
     public Task FrameworkStringCustomCodecShouldBeRejectedForDirectAndNestedUse()
     {
-        var source = AddAssemblyAttribute(BuildSource("""
+        var source = AddAssemblyAttribute(UseCurrentIdentitySdk(BuildSource("""
 public sealed class StringEnvelope
 {
     public string Value { get; set; } = string.Empty;
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("custom-string-wire/v1", "custom-string-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x9005UL, 0xa005UL)]
 public sealed class OwnerStringCodec : SharpLink.Abstractions.IRpcCodec<string>
 {
 }
@@ -224,7 +225,7 @@ public interface IStringOwnerContract : SharpLink.Sdk.IService
     ValueTask<string> EchoString(string value, CancellationToken cancellationToken);
     ValueTask<StringEnvelope> EchoEnvelope(StringEnvelope value, CancellationToken cancellationToken);
 }
-"""),
+""")),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(string), typeof(OwnerStringCodec))]");
 
         var diagnostics = RunGenerator(source);
