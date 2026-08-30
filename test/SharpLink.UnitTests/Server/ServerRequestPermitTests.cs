@@ -30,7 +30,7 @@ public class ServerRequestPermitTests
         try
         {
             var admission = server.TryReserveCall(connection, out var permit);
-            Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && permit is not null,
+            Ensure(admission == ServerCallAdmissionResult.Acquired && permit is not null,
                 "first permit must reserve call capacity");
             var reservedPermit = permit!;
             Ensure(reservedPermit.IsReserved && !reservedPermit.IsActive,
@@ -41,7 +41,7 @@ public class ServerRequestPermitTests
                 "Reserved permit must remain visible to the existing drain-safe capacity accounting");
 
             var rejected = server.TryReserveCall(connection, out var rejectedPermit);
-            Ensure(rejected == SharpLinkServer.ServerCallAdmissionResult.PerConnectionCapacityExhausted &&
+            Ensure(rejected == ServerCallAdmissionResult.PerConnectionCapacityExhausted &&
                    rejectedPermit is null,
                 "a Reserved permit must consume the configured connection capacity before activation");
 
@@ -60,7 +60,7 @@ public class ServerRequestPermitTests
                 "aliases must release the backing local/global capacity exactly once");
 
             var recovered = server.TryReserveCall(connection, out var recoveredPermit);
-            Ensure(recovered == SharpLinkServer.ServerCallAdmissionResult.Acquired &&
+            Ensure(recovered == ServerCallAdmissionResult.Acquired &&
                    recoveredPermit is not null,
                 "capacity must be reusable after permit disposal");
             recoveredPermit!.Dispose();
@@ -112,7 +112,7 @@ public class ServerRequestPermitTests
                 DisposeObservedReleasing = () => secondObservedReleasing.Set()
             };
             var admission = server.TryReserveCall(connection, hooks, out permit);
-            Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && permit is not null,
+            Ensure(admission == ServerCallAdmissionResult.Acquired && permit is not null,
                 "permit reservation");
             var reservedPermit = permit!;
             var alias = reservedPermit;
@@ -154,7 +154,7 @@ public class ServerRequestPermitTests
                 "the release winner must free both capacity scopes exactly once");
 
             var recovered = server.TryReserveCall(connection, out var recoveredPermit);
-            Ensure(recovered == SharpLinkServer.ServerCallAdmissionResult.Acquired &&
+            Ensure(recovered == ServerCallAdmissionResult.Acquired &&
                    recoveredPermit is not null,
                 "capacity must be reusable after both disposal aliases complete");
             recoveredPermit!.Dispose();
@@ -192,7 +192,7 @@ public class ServerRequestPermitTests
         SetServerState(server, 2); // Running
 
         var admission = server.TryReserveCall(connection, out var permit);
-        Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Acquired && permit is not null,
+        Ensure(admission == ServerCallAdmissionResult.Acquired && permit is not null,
             "permit reservation");
         var reservedPermit = permit!;
         Ensure(reservedPermit.IsReserved, "permit must remain Reserved for the drain-boundary probe");
