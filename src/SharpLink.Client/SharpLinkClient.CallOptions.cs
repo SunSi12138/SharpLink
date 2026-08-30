@@ -8,6 +8,22 @@ internal sealed partial class SharpLinkClient
         bool hasMethodTimeout,
         TimeSpan? methodTimeout)
     {
+        var lifetimeSource = ClientCallLifetimeSource.None;
+        return ResolveCallControl(
+            metadata,
+            includeClientDefault,
+            hasMethodTimeout,
+            methodTimeout,
+            ref lifetimeSource);
+    }
+
+    private ResolvedCallControl ResolveCallControl(
+        SharpLinkMetadata? metadata,
+        bool includeClientDefault,
+        bool hasMethodTimeout,
+        TimeSpan? methodTimeout,
+        ref ClientCallLifetimeSource lifetimeSource)
+    {
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
 
@@ -15,7 +31,6 @@ internal sealed partial class SharpLinkClient
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
         // the client-wide value even on call shapes that do not otherwise use the client default.
         TimeSpan? selectedTimeout;
-        ClientCallLifetimeSource lifetimeSource;
         if (hasMethodTimeout && methodTimeout is { } explicitMethodTimeout)
         {
             selectedTimeout = explicitMethodTimeout;
@@ -54,7 +69,10 @@ internal sealed partial class SharpLinkClient
                 comparisonTimestamp = timeProvider.GetTimestamp();
                 inheritedDeadline = ambientCall.LocalRpcDeadline;
                 if (inheritedDeadline.IsExpired(comparisonTimestamp))
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
                     throw CreateDeadlineExceededException();
+                }
             }
             else
             {
@@ -66,14 +84,20 @@ internal sealed partial class SharpLinkClient
                 var inheritedRemaining = ambientCall.LocalRpcDeadline.GetRemaining(inheritedTimeProvider);
                 comparisonTimestamp = timeProvider.GetTimestamp();
                 if (inheritedRemaining <= TimeSpan.Zero)
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
                     throw CreateDeadlineExceededException();
+                }
 
                 var projectionElapsed = SharpLinkTime.GetElapsed(
                     projectionStarted,
                     comparisonTimestamp,
                     timeProvider.TimestampFrequency);
                 if (projectionElapsed >= inheritedRemaining)
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
                     throw CreateDeadlineExceededException();
+                }
                 inheritedRemaining -= projectionElapsed;
                 inheritedDeadline = RpcDeadline.Create(
                     inheritedRemaining,
