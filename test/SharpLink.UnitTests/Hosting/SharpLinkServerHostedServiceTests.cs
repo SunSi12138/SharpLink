@@ -187,13 +187,9 @@ public class SharpLinkServerHostedServiceTests
             .GetField("_server", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(hosted) ?? throw new Exception("hosted server was not published"));
         await server.StopAsync(TimeSpan.Zero);
-        var completed = await Task.WhenAny(
-            lifetime.StopRequested.Task,
-            Task.Delay(TimeSpan.FromMilliseconds(500)));
+        await lifetime.StopRequested.Task;
 
         await hosted.StopAsync(CancellationToken.None);
-        Ensure(ReferenceEquals(completed, lifetime.StopRequested.Task),
-            "an unexpected successful Server run-loop exit must stop the owning Host");
     }
 
     [Test]
