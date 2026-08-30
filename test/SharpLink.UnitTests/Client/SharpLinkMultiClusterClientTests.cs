@@ -1108,7 +1108,7 @@ public sealed class SharpLinkMultiClusterClientTests
             []);
         try
         {
-            var registration = Task.Run(() =>
+            var registration = LongRunningTestWorker.Run(() =>
                 client.RegisterAssembly(cluster, typeof(RollbackMarker).Assembly));
             await manifestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -1797,7 +1797,6 @@ public sealed class SharpLinkMultiClusterClientTests
                 typeof(string).Assembly.FullName!)
         ];
     }
-
     private sealed class ConflictingRuntimeRouteManifest : ISharpLinkGeneratedClusterRouteManifest
     {
         public Assembly OwnerAssembly => typeof(SharpLinkMultiClusterClientTests).Assembly;
