@@ -115,6 +115,15 @@ class ProjectReferenceBoundaryGuardTests(unittest.TestCase):
             result = self.run_guard(root)
             self.assert_violation(result, "condition-hidden forbidden production edge client -> server")
 
+    def test_differently_cased_condition_hidden_forbidden_edge_fails(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
+<projectreference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
+</ItemGroup></Project>""")
+            result = self.run_guard(root)
+            self.assert_violation(result, "condition-hidden forbidden production edge client -> server")
+
     def test_conditioned_imported_forbidden_edge_fails(self):
         temp, root = self.make_repo()
         with temp:
@@ -126,6 +135,15 @@ class ProjectReferenceBoundaryGuardTests(unittest.TestCase):
             self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk">
 <Import Project="../../eng/architecture.props" Condition="'$(ImportArchitecture)' == 'true'" />
 </Project>""")
+            result = self.run_guard(root)
+            self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+
+    def test_directory_packages_props_conditioned_forbidden_edge_fails(self):
+        temp, root = self.make_repo()
+        with temp:
+            (root / "Directory.Packages.props").write_text("""<Project><ItemGroup>
+<ProjectReference Include="../Server/Server.csproj" Condition="'$(Never)' == 'true'" />
+</ItemGroup></Project>""", encoding="utf-8")
             result = self.run_guard(root)
             self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
 
