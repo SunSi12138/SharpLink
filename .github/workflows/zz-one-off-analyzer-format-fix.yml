@@ -1,0 +1,54 @@
+name: One-off analyzer fixture format fix
+
+on:
+  push:
+    branches:
+      - feature/issue-396-deterministic-rpc-identity
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message == 'chore: run one-off analyzer fixture format fix'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feature/issue-396-deterministic-rpc-identity
+          fetch-depth: 0
+      - name: Apply exact formatting repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs')
+          text = path.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \\"fake.adapter/v1\\", \\"fake-wire/v1\\")]\") ,\n',
+                  '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \\"fake.adapter/v1\\", \\"fake-wire/v1\\")]\"),\n',
+              ),
+              (
+                  '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \\"first/v1\\", \\"first-wire/v1\\", SelectorAttributeType = typeof(FirstSelectorAttribute))]\") ,\n',
+                  '            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \\"first/v1\\", \\"first-wire/v1\\", SelectorAttributeType = typeof(FirstSelectorAttribute))]\"),\n',
+              ),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one formatting target, found {count}: {old!r}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+          git diff -- test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs
+      - name: Commit exact repair
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs
+          git commit -m "style: format generator analyzer fixtures"
+          git push origin HEAD:feature/issue-396-deterministic-rpc-identity
