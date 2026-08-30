@@ -1678,6 +1678,7 @@ public sealed class SharpLinkMultiClusterClientTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => TestManifestAssembly;
+        public RpcHash128 RpcAssemblyHash => new(0x6d756c7469636c75UL, 0x737465722d763031UL);
         public string CompileTimeDescriptor => "multi-cluster-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } =
         [
@@ -1709,11 +1710,10 @@ public sealed class SharpLinkMultiClusterClientTests
         ];
     }
 
-    private sealed class TestCodecFactory<T>(string schemaId) : IRpcGeneratedCodecFactory
+    private sealed class TestCodecFactory<T>(string _) : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId { get; } = schemaId;
-        public string WireFormatId => "sharplink-native/v1";
+        public RpcHash128 CodecHash => new(0x6d756c7469636c75UL, 0x737465722d636f64UL);
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
