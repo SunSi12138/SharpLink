@@ -1,6 +1,12 @@
-using ServerCallAdmissionResult = SharpLink.Server.SharpLinkServer.ServerCallAdmissionResult;
-
 namespace SharpLink.Server;
+
+internal enum ServerCallAdmissionResult : byte
+{
+    Acquired,
+    Unavailable,
+    PerConnectionCapacityExhausted,
+    ServerCapacityExhausted
+}
 
 /// <summary>
 /// Owns server-wide call-admission accounting and the local-to-global capacity transfer.
