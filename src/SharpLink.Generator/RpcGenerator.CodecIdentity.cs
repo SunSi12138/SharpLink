@@ -58,6 +58,13 @@ public partial class RpcGenerator
                 return result;
             }
 
+            if (TryGetReferencedGeneratedCodecHash(type, out result))
+            {
+                stack.Remove(typeName);
+                cache[typeName] = result;
+                return result;
+            }
+
             if (TryGetCollection(type, out var collectionKind, out var elementType, out var keyType, out var valueType))
             {
                 var parts = new List<string>
@@ -85,15 +92,47 @@ public partial class RpcGenerator
             }
             else
             {
-                // A non-local generated dependency has no behavior that can be inferred from its CLR
-                // name. This fallback keeps the identity deterministic until the referenced manifest
-                // hash table is consumed by the downstream-assembly path.
-                result = Hashing.GetSemanticHash("codec/v1", "external-generated", typeName);
+                // Compatibility only for referenced assemblies produced before deterministic CodecHash
+                // metadata existed. Current SharpLink-generated dependencies take the exact published
+                // hash path above; this fallback is removed with the remaining legacy identity surface.
+                result = Hashing.GetSemanticHash("codec/v1", "legacy-external-generated", typeName);
             }
 
             stack.Remove(typeName);
             cache[typeName] = result;
             return result;
+        }
+
+        private bool TryGetReferencedGeneratedCodecHash(ITypeSymbol type, out RpcHashValue hash)
+        {
+            var assembly = type.ContainingAssembly;
+            if (assembly is null || SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly))
+            {
+                hash = default;
+                return false;
+            }
+
+            foreach (var attribute in assembly.GetAttributes())
+            {
+                if (!IsAttribute(
+                        attribute,
+                        "SharpLink.Abstractions",
+                        "SharpLinkGeneratedCodecIdentityAttribute") ||
+                    attribute.ConstructorArguments.Length != 3 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol targetType ||
+                    !SymbolEqualityComparer.Default.Equals(targetType, type) ||
+                    attribute.ConstructorArguments[1].Value is not ulong high ||
+                    attribute.ConstructorArguments[2].Value is not ulong low)
+                {
+                    continue;
+                }
+
+                hash = new RpcHashValue(high, low);
+                return true;
+            }
+
+            hash = default;
+            return false;
         }
 
         private RpcHashValue GetGeneratedCodecHash(
@@ -141,7 +180,7 @@ public partial class RpcGenerator
                                     break;
                                 case GeneratedMemberKind.Complex:
                                     if (!TryResolveReachableType(member.TypeName, out var memberType))
-                                        parts.Add(Hashing.GetSemanticHash("codec/v1", "external-generated", member.TypeName).ToHex());
+                                        parts.Add(Hashing.GetSemanticHash("codec/v1", "legacy-external-generated", member.TypeName).ToHex());
                                     else
                                         parts.Add(GetFinalCodecHash(memberType, cache, stack).ToHex());
                                     break;
@@ -169,7 +208,7 @@ public partial class RpcGenerator
                             if (TryResolveReachableType(childTypeName, out var childType))
                                 parts.Add(GetFinalCodecHash(childType, cache, stack).ToHex());
                             else
-                                parts.Add(Hashing.GetSemanticHash("codec/v1", "external-generated", childTypeName).ToHex());
+                                parts.Add(Hashing.GetSemanticHash("codec/v1", "legacy-external-generated", childTypeName).ToHex());
                         }
                     }
             }
