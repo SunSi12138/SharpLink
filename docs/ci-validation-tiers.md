@@ -8,23 +8,25 @@ This is an analysis/documentation change only. It does not migrate, remove, rena
 
 ## Measurement method
 
-The baseline uses successful `PR Quick` runs from representative pull requests targeting the current development line. Active elapsed time is measured from the workflow run start to completion; queue time before the active attempt is excluded. Step durations are rounded to whole seconds from GitHub Actions job timestamps.
+The workflow wall-clock baseline uses successful **fresh attempt-1 `PR Quick` invocations** from representative pull requests targeting the current development line. Active elapsed time is measured from each workflow run's `run_started_at` to completion; queue time before the run starts is excluded. Step durations are rounded to whole seconds from GitHub Actions job timestamps.
 
-Representative successful runs:
+Representative fresh successful runs:
 
 | PR | Change shape | PR Quick run | Attempt | Active elapsed |
 | --- | --- | --- | ---: | ---: |
 | #388 | Small dependency update | [#2303](https://github.com/SunSi12138/SharpLink/actions/runs/33045944173) | 1 | 6m 47s |
 | #392 | Focused deterministic test fix | [#2412](https://github.com/SunSi12138/SharpLink/actions/runs/33243138101) | 1 | 7m 03s |
-| #386 | Large feature branch | [#2484](https://github.com/SunSi12138/SharpLink/actions/runs/33289641055) | 3 | 7m 10s |
+| #412 | Focused runtime fix | [#2486](https://github.com/SunSi12138/SharpLink/actions/runs/33292133633) | 1 | 7m 06s |
 
-The representative range is **6m 47s to 7m 10s**, with a **7m 03s median** active wall-clock duration.
+The representative fresh-run range is **6m 47s to 7m 06s**, with a **7m 03s median** active wall-clock duration.
 
-`PR Quick` on `dev` currently consists of the serial `quick` job plus the reusable codec-compatibility workflow. The sampled #2484 run expanded to **23 jobs** in total: one `quick` job and 22 codec-compatibility jobs.
+`PR Quick` on `dev` currently consists of the serial `quick` job plus the reusable codec-compatibility workflow. A fresh invocation expands to **23 jobs** in total: one `quick` job and 22 codec-compatibility jobs.
+
+Run [#2484](https://github.com/SunSi12138/SharpLink/actions/runs/33289641055) attempt 3 is deliberately **not** included in the workflow wall-clock baseline. It was a rerun after attempts 1 and 2 failed in `Unit Tests`; the attempt-3 `quick` job restarted around 03:17 while successful codec-compatibility jobs retained timestamps/results from the earlier invocation around 03:10. Its roughly 7m10 displayed run span therefore does not represent a fresh end-to-end workflow invocation. Attempt 3 remains useful below only as a detailed successful `quick`-job step-timing sample.
 
 ## Current `quick` job cost
 
-Run [#2484](https://github.com/SunSi12138/SharpLink/actions/runs/33289641055) is used as the detailed step sample. Its `quick` job ran for about **7m 05s**.
+Run [#2484](https://github.com/SunSi12138/SharpLink/actions/runs/33289641055) attempt 3 is used only as the detailed successful serial-step sample. Its rerun `quick` job ran for about **7m 05s** from 03:17:08 to 03:24:13; this number is a `quick`-job critical-path measurement, not a fresh full-workflow wall clock.
 
 | Current step | Approx. duration |
 | --- | ---: |
@@ -56,6 +58,8 @@ The seven largest contributors are Chaos Smoke (121s), NativeAOT smoke (53s), De
 
 The most important observation is that the current blocking-shaped path mixes bounded compile/test feedback with environment-sensitive, packaging, AOT, load, and intentionally time-based chaos validation.
 
+There is also observed flake exposure inside the otherwise bounded test set: on the exact #2484 head SHA `49d4b0a376d466671c8e18bbf2517c35c150c23c`, attempt 1 failed in `Unit Tests`, attempt 2 failed there again, and attempt 3 succeeded. Tier placement therefore must distinguish **bounded/high-signal** from **historically flake-free**; assigning Unit Tests to Fast does not imply low observed flake exposure.
+
 ## Codec compatibility cost shape
 
 The current reusable codec workflow adds broad cross-platform confidence but is not a fast-gate-shaped check. It expands into:
@@ -78,7 +82,7 @@ The tiers are defined by feedback purpose rather than by where a check happens t
 
 | Tier | Purpose | Signal | Cost / variance | Blocking intent |
 | --- | --- | --- | --- | --- |
-| **Fast** | Catch common correctness and source-quality regressions before merge | High and immediate | Strictly bounded; low environmental variance | Blocking for normal PRs to `dev` once #375 implements and wires the status |
+| **Fast** | Catch common correctness and source-quality regressions before merge | High and immediate | Strictly bounded; minimize environmental variance and actively track flakes | Blocking for normal PRs to `dev` once #375 implements and wires the status |
 | **Extended** | Validate integration, packaging, AOT and compatibility confidence that is valuable on PRs but too costly for the fast feedback loop | High, often release-relevant | Medium/high or platform-sensitive | Visible on PRs; advisory by default unless a later policy explicitly makes it required |
 | **Nightly / merge-to-dev** | Exercise stochastic, endurance, broad matrix and expensive confidence checks after merge and on schedule | High confidence, lower immediacy | High, intentionally time-based, or higher flake/environment exposure | Non-blocking for the normal PR fast gate |
 | **Release** | Preserve the existing comprehensive release contract for `main` and tags | Release-critical | High, comprehensive | Existing `release-summary` remains required on `main` |
@@ -96,7 +100,7 @@ Setup/checkout/upload plumbing follows the tier that owns the validation it supp
 | Build Debug | Medium | Medium | Low | Medium | **Extended** | A second full configuration build duplicates most compile cost; useful configuration coverage but not necessary for fastest feedback. |
 | Build Release | High | Medium | Low | High | **Fast** | Production configuration and prerequisite for the bounded tests/guards. |
 | Verify Generated Assemblies Do Not Reference Runtime | High | Low | Low | High | **Fast** | Very cheap architecture boundary guard with high regression value. |
-| Unit Tests | High | Low/medium | Low | High | **Fast** | Primary bounded regression signal. |
+| Unit Tests | High | Low/medium | **Medium (observed repeated flake)** | High | **Fast** | Primary bounded regression signal. #2484 failed here on attempts 1 and 2 at the same head before attempt 3 passed, so flake exposure must be tracked/remediated even though the check remains Fast. |
 | Generator Tests | High | Medium | Low | High | **Fast** | Source-generation correctness is core compile/runtime behavior and remains bounded. |
 | Load Test Tests | High | Low | Low | Medium | **Fast** | These are the load-test component's unit tests, not a timed load run; sampled cost is about 2s. |
 | Integration Tests | High | Medium | Medium | High | **Extended** | Important end-to-end signal but materially lengthens the serial gate and has more scheduling/environment exposure. |
@@ -140,9 +144,9 @@ The Fast tier should be implemented with a stable workflow/status contract and a
 - Hard job timeout: **5 minutes**.
 - Intended blocking semantics: required for normal merges to `dev` after the status exists and the repository ruleset is deliberately updated.
 
-The current #2484 sample gives a practical basis for the <=3 minute target: restore + formatting + Release build + architecture guard + unit tests + generator tests + load-test unit tests consume about two minutes of observed step time before normal setup/cleanup overhead. #375 also expects the maintainability baseline check; that is a **new Fast check**, not a current `PR Quick` step, and it must fit inside the same budget.
+The current #2484 successful `quick` sample gives a practical step-cost basis for the <=3 minute target: restore + formatting + Release build + architecture guard + unit tests + generator tests + load-test unit tests consume about two minutes of observed step time before normal setup/cleanup overhead. This is a cost estimate only; the same run's prior attempts demonstrate that Fast-gate reliability also needs explicit flake monitoring. #375 also expects the maintainability baseline check; that is a **new Fast check**, not a current `PR Quick` step, and it must fit inside the same budget.
 
-If the implemented Fast workflow cannot normally stay inside the three-minute target, membership should be re-evaluated rather than increasing the timeout until the distinction from Extended disappears.
+If the implemented Fast workflow cannot normally stay inside the three-minute target, membership should be re-evaluated rather than increasing the timeout until the distinction from Extended disappears. If a Fast member shows repeated nondeterministic failures, fix or isolate the flake rather than treating reruns as normal gate behavior.
 
 ## Extended and Nightly trigger contract for #376
 
@@ -174,7 +178,7 @@ Implications:
 
 ## Acceptance checklist for #374
 
-- [x] Current gate duration and major contributors are recorded.
+- [x] Current gate duration and major contributors are recorded from fresh workflow invocations plus an explicitly scoped successful `quick`-job step sample.
 - [x] Every current serial `quick` validation has an intended target tier and rationale.
 - [x] Every codec-compatibility validation family has an intended target tier and rationale.
 - [x] The Fast gate has a documented expected duration (<=3m) and hard timeout (5m).
