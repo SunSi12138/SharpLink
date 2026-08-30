@@ -14,11 +14,25 @@ internal sealed partial class SharpLinkClient
         // Method policy overrides the client-wide fallback. These are policy-selection layers,
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
         // the client-wide value even on call shapes that do not otherwise use the client default.
-        TimeSpan? selectedTimeout = hasMethodTimeout
-            ? methodTimeout ?? (_hasRequestTimeout ? _requestTimeoutValue : null)
-            : includeClientDefault && _hasRequestTimeout
-                ? _requestTimeoutValue
-                : null;
+        TimeSpan? selectedTimeout;
+        ClientCallLifetimeSource lifetimeSource;
+        if (hasMethodTimeout && methodTimeout is { } explicitMethodTimeout)
+        {
+            selectedTimeout = explicitMethodTimeout;
+            lifetimeSource = ClientCallLifetimeSource.MethodTimeout;
+        }
+        else if ((hasMethodTimeout || includeClientDefault) && _hasRequestTimeout)
+        {
+            selectedTimeout = _requestTimeoutValue;
+            lifetimeSource = ClientRequestTimeoutRuntimeSource
+                .Get(_runtimeContext)
+                .ToLifetimeSource();
+        }
+        else
+        {
+            selectedTimeout = null;
+            lifetimeSource = ClientCallLifetimeSource.None;
+        }
 
         var timeProvider = _runtimeContext.TimeProvider;
         var localAnchor = timeProvider.GetTimestamp();
@@ -70,7 +84,10 @@ internal sealed partial class SharpLinkClient
             }
 
             if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, comparisonTimestamp))
+            {
                 deadline = inheritedDeadline;
+                lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
+            }
         }
 
         if (deadline.IsExpired(timeProvider))
@@ -78,7 +95,8 @@ internal sealed partial class SharpLinkClient
         return new ResolvedCallControl(
             deadline,
             metadata is { Count: > 0 } ? metadata : null,
-            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null);
+            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null,
+            lifetimeSource);
     }
 
     private async ValueTask DelayForRetryOrAdmissionAsync(
@@ -145,5 +163,6 @@ internal sealed partial class SharpLinkClient
     internal readonly record struct ResolvedCallControl(
         RpcDeadline Deadline,
         SharpLinkMetadata? Metadata,
-        ClientLogicalCallState? LogicalCall);
+        ClientLogicalCallState? LogicalCall,
+        ClientCallLifetimeSource LifetimeSource);
 }
