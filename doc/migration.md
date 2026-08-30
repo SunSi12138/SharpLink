@@ -42,6 +42,27 @@ Generated ABI 与网络 minor 是独立版本轴。SharpLink 2.0 以 Protocol v2
 
 因此生成的业务签名和 `IRpcChannel` ABI 都不再接收 `SharpLinkCallOptions`。迁移时应删除旧 options 参数并重新生成全部 API 4 proxy/stub，而不是创建新的通用调用控制对象。
 
+## Client request-timeout policy
+
+2.0 不再为 Client builder 隐式选择 30 秒 request timeout。升级后，每个 `SharpClientBuilder` 和 `SharpLinkMultiClusterClientBuilder` 都必须在 `Build()` 前显式选择 request-timeout policy；旧代码如果没有选择，会在 Build 或 Generic Host 启动时抛出配置错误，而不是继续静默使用 30 秒默认值。
+
+按应用意图选择以下一种：
+
+```csharp
+// 推荐策略：普通 Unary 使用 30 秒 Client fallback。
+builder.UseRequestTimeout();
+
+// 自定义普通 Unary fallback。
+builder.UseRequestTimeout(TimeSpan.FromSeconds(10));
+
+// 明确不提供 Client-wide fallback。
+builder.DisableRequestTimeout();
+```
+
+方法 `[Timeout]` 仍优先于 Client fallback；继承的父调用 `TimeBudget` 仍是独立 hard cap。OneWay 和三类 Streaming 不会仅因为选择了 Client-wide fallback 就自动获得该 fallback，它们仍依赖方法 `[Timeout]` 或继承的父调用 lifetime。
+
+MultiCluster coordinator 同样必须显式选择 policy。静态 child slot 以及运行时 Add/Replace child 在没有自行选择 timeout policy 时继承 coordinator 在 Build 后冻结的 policy；child 显式调用 `UseRequestTimeout(...)` 或 `DisableRequestTimeout()` 时覆盖 coordinator policy。迁移时应在 coordinator builder 上做一次明确选择，只在确有不同 lifetime 需求的 child 上覆盖。
+
 ## Runtime engine API boundary
 
 `IRpcSession`、`IStreamManager`、raw stream dispatcher interfaces、`PooledAsyncStreamDispatcher<T>`、
@@ -126,12 +147,13 @@ serverBuilder.UseConnectionAdmission(options =>
 
 1. 统一 SDK、Generator、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 为 2.0；同一进程不混装 1.1.x。
 2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 4，并把 Generator diagnostics 当错误处理。
-3. 为所有没有 token 的 RPC 显式确认 `[NonCancellable]` 是否合理。
-4. 验证 DTO field id、required/nullability 和 custom Codec wire identity。
-5. 验证 TLS、authentication、authorization、metadata 与错误消息不泄露敏感数据。
-6. 验证 Unary、OneWay、三类 Streaming、deadline、取消、断连和 Server Stop。
-7. 若使用 topology/resilience，验证 generation churn、last-good、retry deadline 和 breaker。
-8. 若使用动态模块，验证替换期间旧调用排空与 ALC 最终回收。
-9. 对实际发布入口执行包含五种调用形态的 NativeAOT smoke（若适用）、PackageSmoke 和固定负载基线。
+3. 为每个 Client 和 MultiCluster builder 显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；不要依赖旧的隐式 30 秒 fallback。
+4. 为所有没有 token 的 RPC 显式确认 `[NonCancellable]` 是否合理。
+5. 验证 DTO field id、required/nullability 和 custom Codec wire identity。
+6. 验证 TLS、authentication、authorization、metadata 与错误消息不泄露敏感数据。
+7. 验证 Unary、OneWay、三类 Streaming、deadline、取消、断连和 Server Stop。
+8. 若使用 topology/resilience，验证 generation churn、last-good、retry deadline 和 breaker。
+9. 若使用动态模块，验证替换期间旧调用排空与 ALC 最终回收。
+10. 对实际发布入口执行包含五种调用形态的 NativeAOT smoke（若适用）、PackageSmoke 和固定负载基线。
 
 Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。Generated ABI（API 4）与 Protocol v2 minor 是独立版本轴；2.0 的 wire lifetime baseline 是 minor-4 `TimeBudget`。pre-2.0 跨版本互操作不在本版本发布门禁范围内。
