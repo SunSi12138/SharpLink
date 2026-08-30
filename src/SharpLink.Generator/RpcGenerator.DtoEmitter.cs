@@ -121,9 +121,7 @@ public partial class RpcGenerator
         sb.AppendLine();
     }
 
-    private static void AppendFactoryCodecHash(StringBuilder sb, GeneratedCodecModel model)
-        => sb.AppendLine(
-            $"        public RpcHash128 CodecHash => new(0x{model.CodecHashHigh.ToString("x16", InvariantCulture)}UL, 0x{model.CodecHashLow.ToString("x16", InvariantCulture)}UL);");
+    private static void AppendFactoryCodecHash(StringBuilder sb, GeneratedCodecModel model) => sb.AppendLine($"        public RpcHash128 CodecHash => new(0x{model.CodecHashHigh.ToString("x16", InvariantCulture)}UL, 0x{model.CodecHashLow.ToString("x16", InvariantCulture)}UL);");
 
     private static string GetAdapterHolderName(string adapterId)
         => "__SharpLinkGeneratedAdapter_" + ComputeEmitterHash(adapterId).ToString("X16", InvariantCulture);
