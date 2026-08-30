@@ -67,6 +67,75 @@ public class SharpLinkClientLifetimeTelemetryTests
 
     [Test]
     [NotInParallel("client-lifetime-telemetry")]
+    public async Task ExpiredInheritedTimeBudgetShouldEmitFailedLogicalCallBeforeDispatch()
+    {
+        var method = Method(methodId: 907);
+        Activity? logicalActivity = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "SharpLink.Client",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (activity.DisplayName == "sharplink.rpc" &&
+                    string.Equals(
+                        activity.GetTagItem("rpc.sharplink.method_id")?.ToString(),
+                        method.MethodId.ToString(),
+                        StringComparison.Ordinal))
+                {
+                    logicalActivity = activity;
+                }
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseRequestTimeout());
+
+        var provider = new ManualTimeProvider();
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
+        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(2));
+        using var parent = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
+            "parent",
+            null,
+            deadline,
+            provider));
+
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        SharpLinkException? failure = null;
+        try
+        {
+            _ = await channel.InvokeUnaryAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                metadata: null,
+                cancellationToken: default);
+        }
+        catch (SharpLinkException exception)
+        {
+            failure = exception;
+        }
+
+        // The client is intentionally not connected. If the expired inherited budget leaked past
+        // call-control resolution, dispatch would fail as unavailable instead of DeadlineExceeded.
+        Ensure(failure?.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "expired inherited time budget should terminate before dispatch");
+        var activity = logicalActivity ?? throw new Exception(
+            "expired inherited time budget should emit a logical client activity");
+        Ensure(activity.GetTagItem(LifetimeSourceTag)?.ToString() == "inherited_time_budget",
+            "expired inherited time budget lifetime source");
+        Ensure(activity.Status == ActivityStatusCode.Error,
+            "expired inherited time budget logical activity should fail");
+    }
+
+    [Test]
+    [NotInParallel("client-lifetime-telemetry")]
     public async Task DroppedLogicalActivityShouldNotTagAmbientParent()
     {
         using var listener = new ActivityListener
