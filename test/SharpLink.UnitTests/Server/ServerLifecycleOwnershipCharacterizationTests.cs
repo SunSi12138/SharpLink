@@ -204,7 +204,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
                 Ensure(drainSnapshot.GlobalActiveCalls == 0 &&
                        drainSnapshot.PendingAdmissions == 0 &&
                        drainSnapshot.ReleasingConnectionActiveCalls == 0,
-                    "call drain may publish only after pending, global, and releasing-local ownership reach zero");
+                    "the call-drain publication winner must have observed zero pending, global, and releasing-local ownership");
 
                 await connection.CloseAsync();
                 await connection.ServiceCleanupTask;
@@ -270,6 +270,8 @@ public class ServerLifecycleOwnershipCharacterizationTests
         _ = await connection.AcquireServiceAsync(registration, default);
 
         await DisconnectConnectionAsync(server, connection).WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(IsRetiredConnectionTracked(server, connection),
+            "deferred cleanup must retain server registry ownership for the retired connection");
         Ensure(server.DeferredTaskSnapshotForDiagnostics.DeferredConnectionCleanups == 1,
             "retiring a connection with an active call must publish deferred connection cleanup ownership");
         Ensure(!connection.ServiceCleanupTask.IsCompleted,
@@ -280,6 +282,8 @@ public class ServerLifecycleOwnershipCharacterizationTests
         await runTask.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(!connection.ServiceCleanupTask.IsCompleted,
             "zero-grace server stop may complete while deferred connection cleanup still waits for an active call");
+        Ensure(IsRetiredConnectionTracked(server, connection),
+            "server stop must not release retired registry ownership before deferred cleanup completes");
 
         server.ReleaseCall(connection);
         await service.DisposeStarted.WaitAsync(TimeSpan.FromSeconds(2));
@@ -290,6 +294,9 @@ public class ServerLifecycleOwnershipCharacterizationTests
         await WaitUntilAsync(
             () => server.DeferredTaskSnapshotForDiagnostics.DeferredConnectionCleanups == 0,
             "deferred retired connection cleanup did not leave the server observer set");
+        await WaitUntilAsync(
+            () => !IsRetiredConnectionTracked(server, connection),
+            "deferred retired connection cleanup did not release server registry ownership");
         Ensure(service.DisposeCount == 1,
             "deferred retired connection cleanup must dispose the connection service exactly once");
     }
@@ -327,6 +334,19 @@ public class ServerLifecycleOwnershipCharacterizationTests
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find retired connection cleanup path");
         await ((ValueTask)method.Invoke(server, [connection])!).ConfigureAwait(false);
+    }
+
+    private static bool IsRetiredConnectionTracked(
+        SharpLinkServer server,
+        ServerConnectionState connection)
+    {
+        var field = typeof(SharpLinkServer).GetField(
+            "_retiredConnections",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find retired connection registry");
+        var retiredConnections =
+            (System.Collections.Concurrent.ConcurrentDictionary<ServerConnectionState, byte>)field.GetValue(server)!;
+        return retiredConnections.ContainsKey(connection);
     }
 
     private static ServiceRegistration CreateConnectionRegistration(
