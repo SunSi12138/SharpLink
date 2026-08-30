@@ -11,7 +11,7 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     private static readonly Regex LegacyAdapterRegistrationPattern = new(
-        """RpcCodecAdapterRegistration\(typeof\((?<type>[^)]+)\),\s*"(?<id>[^"]*)",\s*"(?<wire>[^"]*)"(?<tail>\s*(?:,\s*SelectorAttributeType\s*=\s*typeof\([^)]+\))?)\)""",
+        """RpcCodecAdapterRegistration\(\s*typeof\((?<type>[^)]+)\),\s*"(?<id>[^"]*)",\s*"(?<wire>[^"]*)"(?<tail>\s*(?:,\s*SelectorAttributeType\s*=\s*typeof\([^)]+\))?)\)""",
         RegexOptions.CultureInvariant);
     private static readonly Regex LegacyCodecIdentityPattern = new(
         """(?<prefix>SharpLink\.Sdk\.)?RpcCodecImplementation\("(?<wire>[^"]*)",\s*"(?<schema>[^"]*)"\)""",
