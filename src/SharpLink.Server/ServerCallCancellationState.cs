@@ -230,7 +230,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         }
     }
 
-    internal bool TryActivateRequest(SharpLinkServer.ServerRequestPermit requestPermit)
+    internal bool TryActivateRequest(ServerRequestPermit requestPermit)
     {
         ArgumentNullException.ThrowIfNull(requestPermit);
         Volatile.Read(ref s_beforeRequestActivationForTests)?.Invoke(this);

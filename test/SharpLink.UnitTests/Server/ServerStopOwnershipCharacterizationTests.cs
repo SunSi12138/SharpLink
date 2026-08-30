@@ -20,7 +20,7 @@ public class ServerStopOwnershipCharacterizationTests
 
         var connection = CreateState();
         Ensure(connection.MarkReady(null), "connection ready");
-        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+        Ensure(server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
             "the synthetic invocation must own server and connection call capacity");
 
         runCancellation.Cancel();
@@ -57,7 +57,7 @@ public class ServerStopOwnershipCharacterizationTests
 
         var connection = CreateState();
         Ensure(connection.MarkReady(null), "connection ready");
-        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+        Ensure(server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
             "the synthetic invocation must own server and connection call capacity");
 
         using var callerCancellation = new CancellationTokenSource();
@@ -116,7 +116,7 @@ public class ServerStopOwnershipCharacterizationTests
 
         var connection = CreateState();
         Ensure(connection.MarkReady(null), "connection ready");
-        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+        Ensure(server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
             "the synthetic invocation must own server and connection call capacity");
 
         using var callerCancellation = new CancellationTokenSource();
@@ -174,7 +174,7 @@ public class ServerStopOwnershipCharacterizationTests
             await longFirstListener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "long-first connection ready");
-            Ensure(longFirstServer.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+            Ensure(longFirstServer.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
                 "long-first call must own capacity before stop begins");
 
             var longFirstStop = longFirstServer.StopAsync(TimeSpan.FromSeconds(30)).AsTask();
@@ -209,7 +209,7 @@ public class ServerStopOwnershipCharacterizationTests
             await zeroFirstListener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "zero-first connection ready");
-            Ensure(zeroFirstServer.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+            Ensure(zeroFirstServer.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
                 "zero-first call must own capacity before stop begins");
 
             var zeroFirstStop = zeroFirstServer.StopAsync(TimeSpan.Zero).AsTask();

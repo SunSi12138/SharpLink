@@ -36,6 +36,12 @@ jobs:
       - name: Build Debug
         run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
 
+      - name: Debug Admission Rollback Test
+        run: >-
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Debug --no-build
+          --treenode-filter "/*/*/ServerCallAdmissionTests/LifecycleChangeAfterCapacityAcquisitionShouldRollbackBothScopes"
+
       - name: Build Release prerequisite
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 

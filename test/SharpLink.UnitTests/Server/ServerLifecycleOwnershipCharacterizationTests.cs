@@ -186,7 +186,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
 
                 start.Set();
                 var admission = await admissionTask.WaitAsync(TimeSpan.FromSeconds(2));
-                if (admission == SharpLinkServer.ServerCallAdmissionResult.Acquired)
+                if (admission == ServerCallAdmissionResult.Acquired)
                 {
                     if (server.CallsDrainedForDiagnostics.IsCompletedSuccessfully)
                         lateAdmissionCount++;
@@ -221,7 +221,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
             await admissionFirstListener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "admission-first connection ready");
-            Ensure(admissionFirstServer.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+            Ensure(admissionFirstServer.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
                 "admission-first path must acquire before stop starts");
             var stopTask = admissionFirstServer.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
             Ensure(!admissionFirstServer.CallsDrainedForDiagnostics.IsCompleted,
@@ -241,7 +241,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "stop-first connection ready");
             await stopFirstServer.StopAsync(TimeSpan.FromSeconds(2)).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-            Ensure(stopFirstServer.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Unavailable,
+            Ensure(stopFirstServer.TryAcquireCall(connection) == ServerCallAdmissionResult.Unavailable,
                 "admission starting after the stop boundary must be rejected");
             Ensure(stopFirstServer.PendingCallAdmissionsForDiagnostics == 0 &&
                    stopFirstServer.ActiveCallCountForDiagnostics == 0 &&
@@ -265,7 +265,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         var service = new BlockingTrackingService();
         var registration = CreateConnectionRegistration(service, new TrackingScopeFactory());
         Ensure(connection.MarkReady(null), "connection ready");
-        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+        Ensure(server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
             "the synthetic invocation must own server and connection call capacity");
         _ = await connection.AcquireServiceAsync(registration, default);
 

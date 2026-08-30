@@ -22,15 +22,15 @@ public class ServerResourceGovernorTests
         Ensure(connection.MarkReady(null), "connection ready");
         SetServerState(server, 2); // Running
 
-        SharpLinkServer.ServerRequestPermit? firstRequest = null;
-        SharpLinkServer.ServerRequestPermit? secondRequest = null;
+        ServerRequestPermit? firstRequest = null;
+        ServerRequestPermit? secondRequest = null;
         try
         {
             Ensure(server.TryReserveCall(connection, out firstRequest) ==
-                   SharpLinkServer.ServerCallAdmissionResult.Acquired && firstRequest is not null,
+                   ServerCallAdmissionResult.Acquired && firstRequest is not null,
                 "first call reservation");
             Ensure(server.TryReserveCall(connection, out secondRequest) ==
-                   SharpLinkServer.ServerCallAdmissionResult.Acquired && secondRequest is not null,
+                   ServerCallAdmissionResult.Acquired && secondRequest is not null,
                 "second call reservation");
             var first = firstRequest!;
             var second = secondRequest!;
@@ -116,15 +116,15 @@ public class ServerResourceGovernorTests
         Ensure(connection.MarkReady(null), "connection ready");
         SetServerState(server, 2); // Running
 
-        SharpLinkServer.ServerRequestPermit? firstRequest = null;
-        SharpLinkServer.ServerRequestPermit? secondRequest = null;
+        ServerRequestPermit? firstRequest = null;
+        ServerRequestPermit? secondRequest = null;
         try
         {
             Ensure(server.TryReserveCall(connection, out firstRequest) ==
-                   SharpLinkServer.ServerCallAdmissionResult.Acquired && firstRequest is not null,
+                   ServerCallAdmissionResult.Acquired && firstRequest is not null,
                 "first call reservation");
             Ensure(server.TryReserveCall(connection, out secondRequest) ==
-                   SharpLinkServer.ServerCallAdmissionResult.Acquired && secondRequest is not null,
+                   ServerCallAdmissionResult.Acquired && secondRequest is not null,
                 "second call reservation");
             var first = firstRequest!;
             var second = secondRequest!;

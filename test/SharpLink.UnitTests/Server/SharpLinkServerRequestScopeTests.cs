@@ -309,9 +309,12 @@ public class SharpLinkServerRequestScopeTests
         private static readonly FieldInfo LoggerField = typeof(SharpLinkServer).GetField(
             "_logger", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server logger");
-        private static readonly FieldInfo GlobalActiveCallsField = typeof(SharpLinkServer).GetField(
+        private static readonly FieldInfo CallAdmissionField = typeof(SharpLinkServer).GetField(
+            "_callAdmission", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server call-admission owner");
+        private static readonly FieldInfo GlobalActiveCallsField = typeof(ServerCallAdmission).GetField(
             "_globalActiveCalls", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find global active-call counter");
+            ?? throw new Exception("cannot find admission active-call counter");
         private static readonly FieldInfo ConnectionActiveCallsField = typeof(ServerConnectionState).GetField(
             "_activeCalls", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find connection active-call counter");
@@ -413,7 +416,7 @@ public class SharpLinkServerRequestScopeTests
 
         public async ValueTask DisposeAsync()
         {
-            GlobalActiveCallsField.SetValue(Server, 0);
+            GlobalActiveCallsField.SetValue(CallAdmissionField.GetValue(Server), 0);
             ConnectionActiveCallsField.SetValue(Connection, 0);
             await Connection.CloseAsync();
             await Server.DisposeAsync();
