@@ -186,11 +186,8 @@ public class SharpLinkServerInvocationTests
                 BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server call admission path"));
         var setState = CreateInterlockedInt32Setter<SharpLinkServer>("_state");
-        var callAdmission = typeof(SharpLinkServer).GetField(
-            "_callAdmission",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(server)
-            ?? throw new Exception("cannot find Server call-admission owner");
+        var callAdmission = typeof(SharpLinkServer).GetField("_callAdmission", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(server) ?? throw new Exception("cannot find Server call-admission owner");
         var globalActiveCalls = typeof(ServerCallAdmission).GetField(
             "_globalActiveCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
