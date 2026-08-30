@@ -36,6 +36,9 @@ jobs:
       - name: Verify Formatting
         run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
 
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
       - name: Maintainability Debt Gate
         run: bash eng/check-maintainability.sh
 
