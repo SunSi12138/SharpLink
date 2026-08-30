@@ -20,6 +20,8 @@ Representative fresh successful runs:
 
 The representative fresh-run range is **6m 47s to 7m 06s**, with a **7m 03s median** active wall-clock duration.
 
+`PR Quick` currently uses an unfiltered `pull_request:` trigger, so its PR coverage is **not limited to `dev`**. This matters for the tier split: stacked feature-to-feature PRs and release PRs to `main` receive the current validation too. For example, #395 targeted `sync/386-merge-base` and still ran `PR Quick` #2416, while #390 targeted `main` and ran both `PR Quick` and `Release Gate`. The #375/#376 implementation must preserve that PR-target coverage unless a separate policy change explicitly narrows it.
+
 `PR Quick` on `dev` currently consists of the serial `quick` job plus the reusable codec-compatibility workflow. A fresh invocation expands to **23 jobs** in total: one `quick` job and 22 codec-compatibility jobs.
 
 Run [#2484](https://github.com/SunSi12138/SharpLink/actions/runs/33289641055) attempt 3 is deliberately **not** included in the workflow wall-clock baseline. It was a rerun after attempts 1 and 2 failed in `Unit Tests`; the attempt-3 `quick` job restarted around 03:17 while successful codec-compatibility jobs retained timestamps/results from the earlier invocation around 03:10. Its roughly 7m10 displayed run span therefore does not represent a fresh end-to-end workflow invocation. Attempt 3 remains useful below only as a detailed successful `quick`-job step-timing sample.
@@ -82,12 +84,12 @@ The tiers are defined by feedback purpose rather than by where a check happens t
 
 | Tier | Purpose | Signal | Cost / variance | Blocking intent |
 | --- | --- | --- | --- | --- |
-| **Fast** | Catch common correctness and source-quality regressions before merge | High and immediate | Strictly bounded; minimize environmental variance and actively track flakes | Blocking for normal PRs to `dev` once #375 implements and wires the status |
-| **Extended** | Validate integration, packaging, AOT and compatibility confidence that is valuable on PRs but too costly for the fast feedback loop | High, often release-relevant | Medium/high or platform-sensitive | Visible on PRs; advisory by default unless a later policy explicitly makes it required |
-| **Nightly / merge-to-dev** | Exercise stochastic, endurance, broad matrix and expensive confidence checks after merge and on schedule | High confidence, lower immediacy | High, intentionally time-based, or higher flake/environment exposure | Non-blocking for the normal PR fast gate |
-| **Release** | Preserve the existing comprehensive release contract for `main` and tags | Release-critical | High, comprehensive | Existing `release-summary` remains required on `main` |
+| **Fast** | Catch common correctness and source-quality regressions before merge | High and immediate | Strictly bounded; minimize environmental variance and actively track flakes | Runs on every PR target; becomes required only where repository policy explicitly wires its stable status (intended first for normal PRs to `dev`) |
+| **Extended** | Validate integration, packaging, AOT and compatibility confidence that is valuable on PRs but too costly for the fast feedback loop | High, often release-relevant | Medium/high or platform-sensitive | Visible on every PR target; advisory by default unless a later policy explicitly makes it required |
+| **Nightly / merge-to-dev** | Exercise stochastic, endurance, broad matrix and expensive confidence checks after merge and on schedule | High confidence, lower immediacy | High, intentionally time-based, or higher flake/environment exposure | Non-blocking for the normal PR fast gate; additive to PR-time coverage, not a replacement for it |
+| **Release** | Preserve the existing comprehensive release contract for `main` and tags | Release-critical | High, comprehensive | Existing `release-summary` remains required on `main`; additive to Fast/Extended on `main` PRs |
 
-`merge-to-dev` means a post-merge `push` to `dev`; it is not a second pre-merge blocker.
+`merge-to-dev` means a post-merge `push` to `dev`; it is not a second pre-merge blocker and cannot replace validation for PRs whose base is not `dev`.
 
 ## Intended ownership of current `quick` validation
 
@@ -139,10 +141,12 @@ The Fast tier should be implemented with a stable workflow/status contract and a
 
 - Recommended workflow name: **`PR Fast`**.
 - Recommended stable job/status context: **`fast`**.
-- Trigger: every pull request targeting `dev` plus `workflow_dispatch` for diagnosis.
+- Trigger: unfiltered `pull_request` (all PR base branches), preserving current `PR Quick` target coverage, plus `workflow_dispatch` for diagnosis.
 - Expected successful active duration: **<= 3 minutes** under normal hosted-runner conditions.
 - Hard job timeout: **5 minutes**.
-- Intended blocking semantics: required for normal merges to `dev` after the status exists and the repository ruleset is deliberately updated.
+- Intended blocking semantics: the status exists on every PR; it becomes required only on branches whose ruleset explicitly requires it, with `dev` the intended first wiring under #375.
+
+Do **not** add a `branches: [dev]` filter as part of #375. A stacked PR such as #395 (`sync/386-dev-merge-source` -> `sync/386-merge-base`) currently receives `PR Quick`, and Fast must continue to provide bounded PR feedback for that shape.
 
 The current #2484 successful `quick` sample gives a practical step-cost basis for the <=3 minute target: restore + formatting + Release build + architecture guard + unit tests + generator tests + load-test unit tests consume about two minutes of observed step time before normal setup/cleanup overhead. This is a cost estimate only; the same run's prior attempts demonstrate that Fast-gate reliability also needs explicit flake monitoring. #375 also expects the maintainability baseline check; that is a **new Fast check**, not a current `PR Quick` step, and it must fit inside the same budget.
 
@@ -150,14 +154,26 @@ If the implemented Fast workflow cannot normally stay inside the three-minute ta
 
 ## Extended and Nightly trigger contract for #376
 
-#376 should preserve every capability while moving it out of the normal Fast critical path.
+#376 should preserve every capability while moving expensive work out of the normal Fast critical path. Splitting tiers is not permission to reduce the set of PR targets that receive validation.
 
 | Tier | Recommended trigger | PR merge blocking | Notes |
 | --- | --- | --- | --- |
-| Fast | `pull_request` -> `dev`, manual | Yes, after ruleset wiring | Bounded source/build/test feedback. |
-| Extended | `pull_request` -> `dev`, manual | Advisory by default | Run concurrently with Fast so expensive confidence does not delay the Fast result. Change-path filtering can be considered only if it does not silently drop required coverage. |
-| Nightly / merge-to-dev | `push` -> `dev`, nightly schedule, manual | No | Owns stochastic/endurance/broad platform evidence and provides post-merge confidence. |
-| Release | Existing PR -> `main`, tag, manual | Existing `release-summary` contract | Keep the current comprehensive release gate independent of PR tier refactoring. |
+| Fast | Unfiltered `pull_request` (all bases), manual | Required only where a ruleset wires `fast`; intended first on `dev` | Preserves current PR-target coverage, including stacked feature -> feature and PRs to `main`. |
+| Extended | Unfiltered `pull_request` (all bases), manual | Advisory by default | Run concurrently with Fast on every PR target. Change-path filtering can be considered only if it does not silently drop required coverage. |
+| Nightly / merge-to-dev | `push` -> `dev`, nightly schedule, manual | No | Owns stochastic/endurance/broad platform evidence and provides additive post-merge confidence; it does not replace Fast/Extended for non-`dev` PRs. |
+| Release | Existing PR -> `main`, tag, manual | Existing `release-summary` contract | Keep the current comprehensive release gate independent of PR tier refactoring and run it in addition to the PR tiers on `main` PRs. |
+
+### PR target coverage preservation
+
+The current behavior establishes a coverage invariant for #375/#376:
+
+1. `PR Quick` has no `branches` filter, so every `pull_request` target is eligible.
+2. #395 demonstrates a stacked/non-`dev` PR in practice: its base was `sync/386-merge-base`, and `PR Quick` #2416 ran successfully.
+3. #390 demonstrates the `main` case: the PR targeted `main` and ran both `PR Quick` #2307 and `Release Gate` #441 on the same head.
+4. `Release Gate` is comprehensive but is **not a strict superset** of `PR Quick`. In particular, it does not currently run `Verify Formatting`, a Debug build, `Demo Oneway`, or `Load Smoke`.
+5. Therefore Fast and Extended must retain unfiltered PR coverage after `PR Quick` is split/retired. Release remains additive for `main`; Nightly/merge-to-dev remains additive after merge to `dev`.
+
+Any future narrowing of PR targets is a separate coverage-policy decision and should not be smuggled into the tier migration.
 
 Workflow deduplication remains a separate concern under #348; #374 does not require consolidating reusable jobs.
 
@@ -171,10 +187,11 @@ Repository rulesets observed on 2026-08-30:
 Implications:
 
 1. This #374 documentation PR makes **no ruleset change**.
-2. #375 can introduce `PR Fast` / `fast` without having to preserve a currently-required `PR Quick` context on `dev`, because no required check is configured there today.
-3. If `fast` is to become required, create and successfully exercise the new status first, then add that exact context to **Protect dev integration**. Do not configure a required context before GitHub has produced it.
-4. Extended should expose a stable visible result (for example an `extended-summary` aggregate if #376 chooses to add one), but it should remain advisory unless the merge policy is explicitly changed later.
-5. Do not rename or remove `release-summary` as part of #375/#376. `main` currently relies on that exact required context.
+2. #375 can introduce `PR Fast` / `fast` on all PR targets without having to preserve a currently-required `PR Quick` context on `dev`, because no required check is configured there today.
+3. If `fast` is to become required on `dev`, create and successfully exercise the new status first, then add that exact context to **Protect dev integration**. Do not configure a required context before GitHub has produced it.
+4. Running `fast` on stacked/non-`dev` PRs does not imply making it required there; trigger coverage and branch-protection requirements are separate concerns.
+5. Extended should expose a stable visible result (for example an `extended-summary` aggregate if #376 chooses to add one), but it should remain advisory unless the merge policy is explicitly changed later.
+6. Do not rename or remove `release-summary` as part of #375/#376. `main` currently relies on that exact required context, and its Release Gate is additive rather than a substitute for the PR-tier coverage inherited from `PR Quick`.
 
 ## Acceptance checklist for #374
 
@@ -182,6 +199,7 @@ Implications:
 - [x] Every current serial `quick` validation has an intended target tier and rationale.
 - [x] Every codec-compatibility validation family has an intended target tier and rationale.
 - [x] The Fast gate has a documented expected duration (<=3m) and hard timeout (5m).
+- [x] Existing unfiltered PR-target coverage is documented and preserved in the #375/#376 trigger contract.
 - [x] Current status/ruleset implications for `dev` and `main` are documented.
 - [x] No workflow migration is included.
 
