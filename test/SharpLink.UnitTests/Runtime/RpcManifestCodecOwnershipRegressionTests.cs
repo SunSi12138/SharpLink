@@ -149,7 +149,6 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
     private sealed class SharedAdapter(SharedScopeState state) : IRpcCodecAdapter
     {
         public string AdapterId => "shared-owner-lifetime/v1";
-        public string WireFormatId => "shared-owner-wire/v1";
         public IRpcCodecAdapterScope CreateScope() => new SharedAdapterScope(state);
     }
 
@@ -163,12 +162,10 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         public void Dispose() => state.Disposed = true;
     }
 
-    private sealed class NativeFactory<T>(Func<IRpcCodecProvider, IRpcCodec<T>> create, string schemaId)
-        : IRpcGeneratedCodecFactory
+    private sealed class NativeFactory<T>(Func<IRpcCodecProvider, IRpcCodec<T>> create)
+        : ITestGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId { get; } = schemaId;
-        public string WireFormatId => "sharplink-native/v1";
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
 
@@ -182,11 +179,9 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<T>;
     }
 
-    private sealed class SharedAdapterFactory(SharedAdapter adapter) : IRpcGeneratedCodecFactory
+    private sealed class SharedAdapterFactory(SharedAdapter adapter) : ITestGeneratedCodecFactory
     {
         public Type TargetType => typeof(SharedValue);
-        public string SchemaId => "shared-owner-schema/v1";
-        public string WireFormatId => adapter.WireFormatId;
         public string? AdapterId => adapter.AdapterId;
         public IRpcCodecAdapter? Adapter => adapter;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -195,7 +190,7 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
     }
 
     private sealed class PolicyManifest(Assembly ownerAssembly, PolicyPointCodec codec)
-        : ISharpLinkGeneratedAssemblyManifest
+        : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
@@ -206,12 +201,12 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } =
-            [new NativeFactory<PolicyPoint>(_ => codec, "policy-point/v1")];
+            [new NativeFactory<PolicyPoint>(_ => codec)];
         public IReadOnlyList<string> Dependencies => [];
     }
 
     private sealed class SharedAdapterManifest(Assembly ownerAssembly, SharedAdapter adapter)
-        : ISharpLinkGeneratedAssemblyManifest
+        : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
@@ -226,7 +221,7 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
     }
 
     private sealed class IncomingGeneratedManifest(Assembly ownerAssembly)
-        : ISharpLinkGeneratedAssemblyManifest
+        : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
@@ -236,7 +231,7 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } =
-            [new NativeFactory<IncomingValue>(static _ => new IncomingValueCodec(), "incoming-generated/v1")];
+            [new NativeFactory<IncomingValue>(static _ => new IncomingValueCodec())];
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [];
         public IReadOnlyList<string> Dependencies => [];
     }
