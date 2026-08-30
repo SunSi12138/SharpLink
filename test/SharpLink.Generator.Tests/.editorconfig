@@ -2,3 +2,4 @@ root = false
 
 [RpcAnalyzerTests.cs]
 generated_code = true
+dotnet_diagnostic.CS8669.severity = none
