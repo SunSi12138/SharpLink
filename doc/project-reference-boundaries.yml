@@ -5,6 +5,7 @@ schema_version: 1
 # temporary_exceptions is forbidden.
 scope:
   production_root: src
+  production_project_glob: "**/*.csproj"
   reference_kind: ProjectReference
   default: deny
   package_references: out_of_scope
@@ -64,16 +65,19 @@ temporary_exceptions:
     to: client
     mode: assembly
     provenance_issue: 337
-    reason: Existing Hosting coupling retained on dev; no new Hosting-to-Client dependency is permitted by this exception.
+    provenance_role: umbrella_roadmap
+    reason: Existing Hosting-to-Client edge retained on dev as debt; no new Hosting-to-Client dependency is permitted by this exception.
 
   - from: hosting
     to: server
     mode: assembly
     provenance_issue: 337
-    reason: Existing Hosting coupling retained on dev; no new Hosting-to-Server dependency is permitted by this exception.
+    provenance_role: umbrella_roadmap
+    reason: Existing Hosting-to-Server edge retained on dev as debt; no new Hosting-to-Server dependency is permitted by this exception.
 
 mechanical_rules:
   canonical_projects_are_exact: true
+  discovered_production_projects_must_equal_registered_projects: true
   unlisted_production_project_references: deny
   production_references_to_test_or_sample_projects: deny
   temporary_exceptions_are_not_precedent: true
