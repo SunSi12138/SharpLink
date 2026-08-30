@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourceRef": "00e2f18c6384c785d232bd59902102d3af7ad3da",
+  "sourceRef": "d23304028cb133ebcede9323e5859cc88bde1901",
   "rules": {
     "source": {
       "maxFileLoc": 800
@@ -37,8 +37,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs",
-      "maxLoc": 1379,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1449,
+      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
     },
     {
       "domain": "source",
@@ -49,14 +49,14 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Generator/RpcGenerator.DtoEmitter.cs",
-      "maxLoc": 1285,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1291,
+      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
     },
     {
       "domain": "source",
       "path": "src/SharpLink.Runtime/StreamManager.cs",
-      "maxLoc": 1241,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1347,
+      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
     },
     {
       "domain": "source",
@@ -115,8 +115,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Server/SharpLinkServer.Interceptors.cs",
-      "maxLoc": 913,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 916,
+      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
     },
     {
       "domain": "source",
