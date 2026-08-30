@@ -54,9 +54,11 @@ graph LR
 | `SharpLink.Hosting` | `SharpLink.Abstractions` | assembly | none |
 | `SharpLink.Serializer.SharpPack` | `SharpLink.Abstractions` | assembly | none |
 | `SharpLink.Sdk` | `SharpLink.Abstractions` | assembly | none |
-| `SharpLink.Sdk` | `SharpLink.Generator` | analyzer | `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"`, `PrivateAssets="all"` |
+| `SharpLink.Sdk` | `SharpLink.Generator` | analyzer | `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"` |
 
 The table is explanatory. The YAML is normative and is the input a future guard should consume.
+
+For an analyzer edge, `required_metadata` defines required key/value invariants, not the complete metadata set. The current `dev` reference also has `Condition` and `GlobalPropertiesToRemove`; those are build/publishing details and are intentionally not frozen by this project-reference boundary. A future guard must require the listed metadata values while permitting additional metadata unless the policy explicitly models it.
 
 ## Forbidden directions
 
@@ -108,7 +110,7 @@ A future guard can enforce this file without inferring architectural intent:
 3. Parse every canonical `.csproj` and enumerate its `ProjectReference` items.
 4. Resolve each target path to a canonical project id. Reject a reference whose target is outside the canonical mapping.
 5. Match each edge against `allowed_references` or `temporary_exceptions`.
-6. For `mode: analyzer`, require every `required_metadata` key/value to match exactly; otherwise treat the reference as forbidden.
+6. For `mode: analyzer`, require every `required_metadata` key/value to match exactly. Additional metadata is allowed unless the policy explicitly constrains it; a missing or mismatched required key makes the reference forbidden.
 7. Reject every unlisted edge because `scope.default` is `deny`.
 8. Do not inspect or infer rules from `PackageReference`; package dependency enforcement is a separate concern.
 
