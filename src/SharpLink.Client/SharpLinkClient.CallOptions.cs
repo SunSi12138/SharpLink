@@ -24,9 +24,7 @@ internal sealed partial class SharpLinkClient
         else if ((hasMethodTimeout || includeClientDefault) && _hasRequestTimeout)
         {
             selectedTimeout = _requestTimeoutValue;
-            lifetimeSource = ClientRequestTimeoutRuntimeSource
-                .Get(_runtimeContext)
-                .ToLifetimeSource();
+            lifetimeSource = _requestTimeoutSource.ToLifetimeSource();
         }
         else
         {
