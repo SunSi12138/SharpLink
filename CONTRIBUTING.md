@@ -62,6 +62,7 @@ dotnet pack Sharplink.slnx -c Release -o artifacts/nuget
 提交 PR 前请确认：
 - 能在本地完成构建与相关测试。
 - 变更内容与 PR 描述一致，说明动机与影响范围。
+- 仓库唯一的文档根目录是 `doc/`；新增文档请放入 `doc/`，不要创建并行的 `docs/` 目录。
 - 若涉及行为变更，补充文档（如 `README.md`、`doc/*`、`CHANGELOG.md`）。
 
 PR 描述建议包含：
