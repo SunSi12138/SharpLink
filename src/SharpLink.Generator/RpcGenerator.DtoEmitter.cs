@@ -60,8 +60,7 @@ public partial class RpcGenerator
         sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
         sb.AppendLine("    {");
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
-        sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
-        sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
+        AppendFactoryCodecHash(sb, model);
         sb.AppendLine("        public string? AdapterId => null;");
         sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
         sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
@@ -107,8 +106,7 @@ public partial class RpcGenerator
         sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
         sb.AppendLine("    {");
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
-        sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
-        sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
+        AppendFactoryCodecHash(sb, model);
         sb.AppendLine($"        public string? AdapterId => \"{EscapeString(model.AdapterId!)}\";");
         sb.AppendLine($"        public IRpcCodecAdapter Adapter => {GetAdapterHolderName(model.AdapterId!)}.Instance;");
         sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
@@ -122,6 +120,10 @@ public partial class RpcGenerator
         sb.AppendLine("}");
         sb.AppendLine();
     }
+
+    private static void AppendFactoryCodecHash(StringBuilder sb, GeneratedCodecModel model)
+        => sb.AppendLine(
+            $"        public RpcHash128 CodecHash => new(0x{model.CodecHashHigh.ToString("x16", InvariantCulture)}UL, 0x{model.CodecHashLow.ToString("x16", InvariantCulture)}UL);");
 
     private static string GetAdapterHolderName(string adapterId)
         => "__SharpLinkGeneratedAdapter_" + ComputeEmitterHash(adapterId).ToString("X16", InvariantCulture);
@@ -1250,8 +1252,7 @@ public partial class RpcGenerator
         sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
         sb.AppendLine("    {");
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
-        sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
-        sb.AppendLine("        public string WireFormatId => \"sharplink-native/v1\";");
+        AppendFactoryCodecHash(sb, model);
         sb.AppendLine("        public string? AdapterId => null;");
         sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
         sb.AppendLine($"        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
