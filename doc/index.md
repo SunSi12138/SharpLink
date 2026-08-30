@@ -18,7 +18,7 @@
 12. [故障排查](troubleshooting.md)：常见配置、协议、资源和生命周期错误。
 13. [迁移到 2.0](migration.md)：Generated ABI（API 4）、包依赖变化和完整重建要求。
 
-深入资料：[架构](architecture.md)、[项目引用边界](project-reference-boundaries.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
+深入资料：[架构](architecture.md)、[生产项目引用边界](project-reference-boundaries.md)、[测试项目引用边界](test-project-reference-boundaries.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
 
 ## 特性与可运行证据
 
