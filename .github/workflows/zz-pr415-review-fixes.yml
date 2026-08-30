@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply:
-    if: "${{ github.event.head_commit.message == 'chore: rerun PR 415 review fixer' }}"
+    if: "${{ github.event.head_commit.message == 'chore: validate PR 415 review fixes' }}"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -41,6 +41,15 @@ jobs:
           path.write_text(text, encoding='utf-8')
           PY
           python3 eng/apply-pr415-review-fixes.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('test/SharpLink.UnitTests/Runtime/RpcUnsafeBlitPlatformTests.cs')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('public int Prefix;', 'public int Prefix { get; set; }')
+          text = text.replace('public nint Handle;', 'public nint Handle { get; set; }')
+          text = text.replace('public long Value;', 'public long Value { get; set; }')
+          path.write_text(text, encoding='utf-8')
+          PY
 
       - name: Restore and format
         run: |
