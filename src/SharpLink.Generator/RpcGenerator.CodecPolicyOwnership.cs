@@ -710,8 +710,8 @@ public partial class RpcGenerator
                 {
                     AssemblyDependencies = dependencies
                         .OrderBy(static identity => identity, StringComparer.Ordinal)
-                        .ToImmutableArray();
-                }
+                        .ToImmutableArray()
+                };
             }
         }
 
