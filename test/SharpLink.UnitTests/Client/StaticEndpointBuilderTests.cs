@@ -623,6 +623,7 @@ public class StaticEndpointBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(ThrowingScopeManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x6275696c6465722dUL, 0x726f6c6c6261636bUL);
         public string CompileTimeDescriptor => "client-build-rollback";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -633,8 +634,7 @@ public class StaticEndpointBuilderTests
     private sealed class ThrowingScopeCodecFactory : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(BuilderValue);
-        public string SchemaId => "builder-value/v1";
-        public string WireFormatId => "builder-wire/v1";
+        public RpcHash128 CodecHash => new(0x6275696c6465722dUL, 0x636f6465632d7631UL);
         public string AdapterId => "builder-adapter/v1";
         public IRpcCodecAdapter Adapter { get; } = new ThrowingScopeAdapter();
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -645,7 +645,6 @@ public class StaticEndpointBuilderTests
     private sealed class ThrowingScopeAdapter : IRpcCodecAdapter
     {
         public string AdapterId => "builder-adapter/v1";
-        public string WireFormatId => "builder-wire/v1";
         public IRpcCodecAdapterScope CreateScope() => new ThrowingScope();
     }
 
