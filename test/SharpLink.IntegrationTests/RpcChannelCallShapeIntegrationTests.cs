@@ -168,17 +168,8 @@ public class RpcChannelCallShapeIntegrationTests
 
     private static async Task EnsureEventuallyAsync(Func<Task<bool>> condition, string name)
     {
-        var deadline = TimeProvider.System.GetTimestamp() + TimeProvider.System.TimestampFrequency;
-
-        while (TimeProvider.System.GetTimestamp() < deadline)
-        {
-            if (await condition())
-                return;
-
+        while (!await condition())
             await Task.Delay(10);
-        }
-
-        Ensure(await condition(), name);
     }
 
     private static async Task<TException> EnsureThrows<TException>(Task task, string name) where TException : Exception
@@ -234,7 +225,7 @@ public class RpcChannelCallShapeIntegrationTests
                 serverBuilder.UseSharedMemory(sharedMemoryName);
             else
             {
-                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString(), port);
                 port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             }
             var server = serverBuilder.Build();
