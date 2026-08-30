@@ -18,6 +18,28 @@ public sealed class RpcUnsafeBlitPlatformTests
             "fixed-width UnsafeBlit payloads must remain valid on a 32-bit runtime");
     }
 
+    [Test]
+    public void RuntimeSizedVectorShouldNeverUseUnsafeBlit()
+    {
+        Ensure(
+            !RpcUnsafeBlitPlatform.IsSupported(typeof(System.Numerics.Vector<int>), 8),
+            "runtime-sized Vector<T> must not be accepted by UnsafeBlit even on 64-bit runtimes");
+        Ensure(
+            !RpcUnsafeBlitPlatform.IsSupported(typeof(VectorPayload), 8),
+            "a value type containing Vector<T> must also be rejected by UnsafeBlit");
+
+        try
+        {
+            RpcUnsafeBlitPlatform.EnsureSupported(typeof(System.Numerics.Vector<int>));
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException("Vector<T> must fail the runtime UnsafeBlit guard.");
+    }
+
     private struct NativeSizedPayload
     {
         public int Prefix { get; set; }
@@ -28,6 +50,11 @@ public sealed class RpcUnsafeBlitPlatformTests
     {
         public int Prefix { get; set; }
         public long Value { get; set; }
+    }
+
+    private struct VectorPayload
+    {
+        public System.Numerics.Vector<int> Value { get; set; }
     }
 
     private static void Ensure(bool condition, string message)
