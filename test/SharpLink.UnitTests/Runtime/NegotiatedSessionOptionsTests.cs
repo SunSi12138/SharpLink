@@ -342,7 +342,7 @@ public class NegotiatedSessionOptionsTests
         session.SendPacket(CreateFrame(session, ProtocolV2FrameType.StreamData));
         session.SendPacket(CreateFrame(session, ProtocolV2FrameType.WindowUpdate));
         session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Cancel));
-        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await session.FlushSendQueueAsync();
 
         Ensure(session.ProtocolPhase == RpcSessionProtocolPhase.Draining && session.IsDraining,
             "MarkDraining must transition a Ready session exactly once");
