@@ -23,7 +23,7 @@ public interface IVectorContract : SharpLink.Sdk.IService
         Ensure(
             diagnostics.Any(static diagnostic =>
                 diagnostic.GetMessage().Contains("runtime-sized intrinsic unmanaged types", StringComparison.Ordinal)),
-            $"Vector<T> must be rejected from the implicit UnsafeBlit path. Diagnostics: {FormatDiagnostics(diagnostics)}");
+            "Vector<T> must be rejected from the implicit UnsafeBlit path");
         return Task.CompletedTask;
     }
 
