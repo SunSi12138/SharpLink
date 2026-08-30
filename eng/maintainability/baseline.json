@@ -84,12 +84,6 @@
     },
     {
       "domain": "source",
-      "path": "src/SharpLink.Generator/RpcGenerator.ContractManifest.cs",
-      "maxLoc": 1098,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Client/SharpClientBuilder.cs",
       "maxLoc": 1044,
       "reason": "Existing dev debt captured by issue #350."
