@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import glob
 import json
 import os
@@ -58,6 +59,13 @@ class PropertyPath:
     value: str
     source: Path
     conditioned: bool
+
+
+@dataclass(frozen=True)
+class SdkLayout:
+    kind: str
+    props_index: int | None = None
+    targets_index: int | None = None
 
 
 def _scalar(value: str) -> str:
@@ -173,6 +181,16 @@ def _parents(xml: ET.Element) -> dict[ET.Element, ET.Element]:
     return {child: parent for parent in xml.iter() for child in parent}
 
 
+def _under(element: ET.Element, parents: dict[ET.Element, ET.Element], tag: str) -> bool:
+    target = tag.lower()
+    current = parents.get(element)
+    while current is not None:
+        if _local(current.tag).lower() == target:
+            return True
+        current = parents.get(current)
+    return False
+
+
 def _node_conditioned(element: ET.Element, parents: dict[ET.Element, ET.Element], inherited: bool = False) -> bool:
     if inherited:
         return True
@@ -283,40 +301,99 @@ def _expand_import(value: str, source: Path, project: Path, root: Path, violatio
     return result
 
 
+def _read_doc(path: Path, root: Path, conditioned: bool) -> SourceDoc:
+    try:
+        xml = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as exc:
+        raise GuardConfigurationError(f"cannot parse MSBuild XML {_display(path, root)}: {exc}") from exc
+    return SourceDoc(path.resolve(), xml, conditioned)
+
+
+def _import_seeds(doc: SourceDoc, project: Path, root: Path, violations: list[str]) -> list[tuple[Path, bool]]:
+    seeds: list[tuple[Path, bool]] = []
+    parents = _parents(doc.xml)
+    for element in doc.xml.iter():
+        if _local(element.tag).lower() != "import":
+            continue
+        if _under(element, parents, "target"):
+            continue
+        if _attribute(element, "Sdk") is not None:
+            continue
+        import_path = _attribute(element, "Project")
+        if import_path is None:
+            continue
+        conditioned = _node_conditioned(element, parents, doc.conditioned)
+        for target in _expand_import(import_path, doc.path, project, root, violations):
+            seeds.append((target, conditioned))
+    return seeds
+
+
 def _parse_sources(
-    initial: Iterable[tuple[Path, bool] | Path],
+    initial: Iterable[tuple[Path, bool] | Path | SourceDoc],
     project: Path,
     root: Path,
     violations: list[str],
 ) -> list[SourceDoc]:
-    queue: list[tuple[Path, bool]] = []
+    queue: list[SourceDoc | tuple[Path, bool]] = []
     for item in initial:
-        queue.append((item.resolve(), False) if isinstance(item, Path) else (item[0].resolve(), item[1]))
+        if isinstance(item, SourceDoc):
+            queue.append(item)
+        elif isinstance(item, Path):
+            queue.append((item.resolve(), False))
+        else:
+            queue.append((item[0].resolve(), item[1]))
     visited: set[tuple[Path, bool]] = set()
     result: list[SourceDoc] = []
     while queue:
-        path, inherited_condition = queue.pop(0)
-        state = (path.resolve(), inherited_condition)
+        item = queue.pop(0)
+        doc = item if isinstance(item, SourceDoc) else _read_doc(item[0], root, item[1])
+        state = (doc.path.resolve(), doc.conditioned)
         if state in visited:
             continue
         visited.add(state)
-        try:
-            xml = ET.parse(path).getroot()
-        except (OSError, ET.ParseError) as exc:
-            raise GuardConfigurationError(f"cannot parse MSBuild XML {_display(path, root)}: {exc}") from exc
-        doc = SourceDoc(path.resolve(), xml, inherited_condition)
         result.append(doc)
-        parents = _parents(xml)
-        for element in xml.iter():
-            if _local(element.tag).lower() != "import":
-                continue
-            import_path = _attribute(element, "Project")
-            if import_path is None:
-                continue
-            conditioned = _node_conditioned(element, parents, inherited_condition)
-            for target in _expand_import(import_path, path, project, root, violations):
-                queue.append((target, conditioned))
+        queue.extend(_import_seeds(doc, project, root, violations))
     return result
+
+
+def _sdk_import_kind(element: ET.Element) -> str | None:
+    if _local(element.tag).lower() != "import" or _attribute(element, "Sdk") is None:
+        return None
+    raw = (_attribute(element, "Project") or "").strip().replace("\\", "/").lower()
+    name = raw.rsplit("/", 1)[-1]
+    if name == "sdk.props":
+        return "props"
+    if name == "sdk.targets":
+        return "targets"
+    return None
+
+
+def _sdk_layout(xml: ET.Element, source: Path, root: Path, violations: list[str]) -> SdkLayout:
+    if _attribute(xml, "Sdk") is not None or any(_local(child.tag).lower() == "sdk" for child in xml):
+        return SdkLayout("implicit")
+    children = list(xml)
+    props = [i for i, child in enumerate(children) if _sdk_import_kind(child) == "props"]
+    targets = [i for i, child in enumerate(children) if _sdk_import_kind(child) == "targets"]
+    if not props and not targets:
+        return SdkLayout("none")
+    if len(props) == 1 and len(targets) == 1 and props[0] < targets[0]:
+        return SdkLayout("explicit", props[0], targets[0])
+    violations.append(f"{_display(source, root)}: explicit SDK import order is not statically modelable")
+    return SdkLayout("ambiguous")
+
+
+def _slice_sources(
+    project: Path,
+    xml: ET.Element,
+    start: int,
+    end: int,
+    root: Path,
+    violations: list[str],
+) -> list[SourceDoc]:
+    sliced = ET.Element(xml.tag, dict(xml.attrib))
+    for child in list(xml)[start:end]:
+        sliced.append(copy.deepcopy(child))
+    return _parse_sources([SourceDoc(project.resolve(), sliced, False)], project, root, violations)
 
 
 def _property_paths(sources: Iterable[SourceDoc], name: str) -> list[PropertyPath]:
@@ -329,6 +406,8 @@ def _property_paths(sources: Iterable[SourceDoc], name: str) -> list[PropertyPat
                 continue
             parent = parents.get(element)
             if parent is None or _local(parent.tag).lower() != "propertygroup":
+                continue
+            if _under(element, parents, "target"):
                 continue
             values.append(
                 PropertyPath(
@@ -390,21 +469,54 @@ def _merge_sources(*groups: Iterable[SourceDoc]) -> list[SourceDoc]:
 
 
 def _closure(project: Path, root: Path, violations: list[str]) -> list[SourceDoc]:
-    build_props = _automatic(project, root, "Directory.Build.props")
-    props = _parse_sources([build_props] if build_props is not None else [], project, root, violations)
+    project = project.resolve()
+    project_doc = _read_doc(project, root, False)
+    layout = _sdk_layout(project_doc.xml, project, root, violations)
 
+    if layout.kind == "explicit":
+        assert layout.props_index is not None and layout.targets_index is not None
+        pre_props_project = _slice_sources(project, project_doc.xml, 0, layout.props_index, root, violations)
+        pre_targets_project = _slice_sources(project, project_doc.xml, 0, layout.targets_index, root, violations)
+    elif layout.kind == "implicit":
+        pre_props_project = []
+        pre_targets_project = _parse_sources([project], project, root, violations)
+    else:
+        pre_props_project = []
+        pre_targets_project = _parse_sources([project], project, root, violations)
+
+    before_props_seeds = _expand_property_paths(
+        _property_paths(pre_props_project, "CustomBeforeDirectoryBuildProps"),
+        "CustomBeforeDirectoryBuildProps",
+        project,
+        root,
+        violations,
+    )
+    before_props = _parse_sources(before_props_seeds, project, root, violations)
+    props_select_context = _merge_sources(pre_props_project, before_props)
+    build_props_seeds = _automatic_or_overrides(
+        props_select_context,
+        "DirectoryBuildPropsPath",
+        "Directory.Build.props",
+        project,
+        root,
+        violations,
+    )
+    build_props = _parse_sources(build_props_seeds, project, root, violations)
+
+    after_props_context = _merge_sources(props_select_context, build_props)
     after_props_seeds = _expand_property_paths(
-        _property_paths(props, "CustomAfterDirectoryBuildProps"),
+        _property_paths(after_props_context, "CustomAfterDirectoryBuildProps"),
         "CustomAfterDirectoryBuildProps",
         project,
         root,
         violations,
     )
     after_props = _parse_sources(after_props_seeds, project, root, violations)
-    props_phase = _merge_sources(props, after_props)
+    automatic_props = _merge_sources(before_props, build_props, after_props)
 
+    package_context = _merge_sources(pre_props_project, automatic_props)
     package_seeds = _automatic_or_overrides(
-        props_phase,
+        package_context,
         "DirectoryPackagesPropsPath",
         "Directory.Packages.props",
         project,
@@ -413,37 +525,39 @@ def _closure(project: Path, root: Path, violations: list[str]) -> list[SourceDoc
     )
     packages = _parse_sources(package_seeds, project, root, violations)
 
-    project_phase = _parse_sources([project.resolve()], project, root, violations)
-    pre_targets = _merge_sources(props_phase, packages, project_phase)
+    project_phase = _parse_sources([project], project, root, violations)
+    target_context = _merge_sources(automatic_props, packages, pre_targets_project)
 
-    target_seeds = _automatic_or_overrides(
-        pre_targets,
-        "DirectoryBuildTargetsPath",
-        "Directory.Build.targets",
-        project,
-        root,
-        violations,
-    )
     before_target_seeds = _expand_property_paths(
-        _property_paths(pre_targets, "CustomBeforeDirectoryBuildTargets"),
+        _property_paths(target_context, "CustomBeforeDirectoryBuildTargets"),
         "CustomBeforeDirectoryBuildTargets",
         project,
         root,
         violations,
     )
     before_targets = _parse_sources(before_target_seeds, project, root, violations)
+    target_select_context = _merge_sources(target_context, before_targets)
+    target_seeds = _automatic_or_overrides(
+        target_select_context,
+        "DirectoryBuildTargetsPath",
+        "Directory.Build.targets",
+        project,
+        root,
+        violations,
+    )
     targets = _parse_sources(target_seeds, project, root, violations)
 
-    before_after = _merge_sources(pre_targets, before_targets, targets)
+    after_target_context = _merge_sources(target_select_context, targets)
     after_target_seeds = _expand_property_paths(
-        _property_paths(before_after, "CustomAfterDirectoryBuildTargets"),
+        _property_paths(after_target_context, "CustomAfterDirectoryBuildTargets"),
         "CustomAfterDirectoryBuildTargets",
         project,
         root,
         violations,
     )
     after_targets = _parse_sources(after_target_seeds, project, root, violations)
-    return _merge_sources(pre_targets, before_targets, targets, after_targets)
+
+    return _merge_sources(project_phase, automatic_props, packages, before_targets, targets, after_targets)
 
 
 def _references(xml: ET.Element) -> Iterable[tuple[ET.Element, bool, bool]]:
