@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Reflection;
 using SharpLink.Sdk;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
@@ -25,8 +26,8 @@ public class ServerStopOwnershipCharacterizationTests
         runCancellation.Cancel();
         await runTask.WaitAsync(TimeSpan.FromSeconds(2));
 
-        Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
-            "first-run cancellation must leave the server in a normal terminal health state without explicit StopAsync");
+        Ensure(GetServerStateName(server) == "Stopped",
+            "first-run cancellation must complete the normal zero-grace stop path in Stopped without explicit StopAsync");
         Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
             "run cancellation must use zero grace so the run task can complete while an active call still owns capacity");
         Ensure(!server.CallsDrainedForDiagnostics.IsCompleted,
@@ -34,6 +35,8 @@ public class ServerStopOwnershipCharacterizationTests
 
         var laterStopTask = server.StopAsync(TimeSpan.FromSeconds(30)).AsTask();
         await laterStopTask.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(GetServerStateName(server) == "Stopped",
+            "a later StopAsync must reuse the already-completed normal stop instead of changing its terminal state");
         Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
             "a later StopAsync must reuse the cancellation-owned zero-grace shared stop instead of applying a new grace period");
 
@@ -63,12 +66,20 @@ public class ServerStopOwnershipCharacterizationTests
             var laterZeroStop = longFirstServer.StopAsync(TimeSpan.Zero).AsTask();
             Ensure(ReferenceEquals(longFirstStop, laterZeroStop),
                 "later StopAsync calls must reuse the shared task established by the first stop owner");
-            Ensure(!laterZeroStop.IsCompleted,
-                "a later zero-grace StopAsync must not shorten the first owner's graceful wait");
+
+            var zeroOverrideWindow = Task.Delay(TimeSpan.FromSeconds(1));
+            Ensure(await Task.WhenAny(laterZeroStop, zeroOverrideWindow) == zeroOverrideWindow,
+                "a later zero-grace StopAsync must not shorten the first owner's graceful wait while the active call remains owned");
+            Ensure(longFirstServer.HealthStatus == SharpLinkHealthStatus.Draining &&
+                   longFirstServer.ActiveCallCountForDiagnostics == 1 &&
+                   connection.ActiveCalls == 1,
+                "the shared stop must remain in its first owner's long-grace drain after the later zero-grace caller has had time to run");
 
             longFirstServer.ReleaseCall(connection);
             await longFirstStop.WaitAsync(TimeSpan.FromSeconds(2));
             await laterZeroStop.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(GetServerStateName(longFirstServer) == "Stopped",
+                "long-first shared stop should complete normally after the active call releases ownership");
             await runTask.WaitAsync(TimeSpan.FromSeconds(2));
             await connection.CloseAsync();
             await connection.ServiceCleanupTask;
@@ -90,6 +101,8 @@ public class ServerStopOwnershipCharacterizationTests
                 "a later long-grace StopAsync must reuse the zero-grace task established by the first stop owner");
             await zeroFirstStop.WaitAsync(TimeSpan.FromSeconds(2));
             await laterLongStop.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(GetServerStateName(zeroFirstServer) == "Stopped",
+                "zero-first shared stop must reach the normal Stopped terminal state without waiting for the later grace period");
             Ensure(zeroFirstServer.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
                 "a later long grace period must not extend the first owner's zero-grace stop while the call remains active");
             await runTask.WaitAsync(TimeSpan.FromSeconds(2));
@@ -123,6 +136,21 @@ public class ServerStopOwnershipCharacterizationTests
             new StripedLongMap<ServerCallCancellationState>(RpcSessionTestFixture.RuntimeContext.Concurrency),
             CancellationToken.None,
             RpcSessionTestFixture.RuntimeContext.TimeProvider);
+    }
+
+    private static string GetServerStateName(SharpLinkServer server)
+    {
+        var stateField = typeof(SharpLinkServer).GetField(
+            "_state",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find server lifecycle state");
+        var stateType = typeof(SharpLinkServer).GetNestedType(
+            "ServerState",
+            BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find server lifecycle enum");
+        var stateValue = (int)stateField.GetValue(server)!;
+        return Enum.GetName(stateType, stateValue)
+            ?? throw new Exception($"unknown server lifecycle state value {stateValue}");
     }
 
     private sealed class BlockingListener : IServerTransportListener
