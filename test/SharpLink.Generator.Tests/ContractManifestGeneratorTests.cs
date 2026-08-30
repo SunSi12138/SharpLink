@@ -55,8 +55,10 @@ public sealed class HelloService : IHelloService
             "RPC call shape");
         Ensure(first.Json.Contains("\"wireType\": \"LengthDelimited\"", StringComparison.Ordinal),
             "DTO wire type");
-        Ensure(first.Json.Contains("\"wireFormatId\": \"sharplink-native/v1\"", StringComparison.Ordinal),
-            "native wire-format identity");
+        Ensure(!first.Json.Contains("wireFormatId", StringComparison.Ordinal),
+            "legacy wire-format identity must not be emitted");
+        Ensure(first.Json.Contains("\"codecHash\":", StringComparison.Ordinal),
+            "reachable Codec inventory must contain deterministic identities");
         Ensure(first.Json.Contains("\"required\": true", StringComparison.Ordinal),
             "required DTO member");
         Ensure(first.Json.Contains("\"underlyingType\": \"byte\"", StringComparison.Ordinal),
@@ -84,13 +86,13 @@ public sealed class HelloService : IHelloService
     }
 
     [Test]
-    public Task CustomCodecSchemaIdentityShouldBeRecordedInContractManifest()
+    public Task CustomCodecHashShouldBeRecordedInContractManifest()
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcCodec(typeof(MoneyCodec))]
 public sealed record Money(decimal Value);
 
-[SharpLink.Sdk.RpcCodecImplementation("money-wire/v1", "money-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x1111111111111111UL, 0x2222222222222222UL)]
 public sealed class MoneyCodec : SharpLink.Abstractions.IRpcCodec<Money>
 {
 }
@@ -108,21 +110,22 @@ public interface IMoneyService : SharpLink.Sdk.IService
             .Select(static item => item!.AsObject())
             .Single(static item => item["type"]!.GetValue<string>() == "Money");
 
-        Ensure(moneyCodec["wireFormatId"]!.GetValue<string>() == "money-wire/v1",
-            "custom Codec wire format must be recorded in the Contract Manifest");
-        Ensure(!string.IsNullOrWhiteSpace(moneyCodec["schemaId"]?.GetValue<string>()),
-            "custom Codec schema identity must be recorded in the Contract Manifest");
+        Ensure(moneyCodec["kind"]!.GetValue<string>() == "Custom", "custom Codec kind");
+        Ensure(IsValidCodecHashText(moneyCodec["codecHash"]?.GetValue<string>()),
+            "custom Codec must record a fixed-width CodecHash");
+        Ensure(!moneyCodec.ContainsKey("wireFormatId") && !moneyCodec.ContainsKey("schemaId"),
+            "custom Codec inventory must not restore legacy string identities");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task CustomCodecSchemaChangeShouldBeDetectedForDirectPayloads()
+    public Task CustomCodecSemanticIdentityChangeShouldBeDetectedForDirectPayloads()
     {
-        string ContractSource(string schemaId) => BuildSource($$"""
+        string ContractSource(ulong semanticLow) => BuildSource($$"""
 [SharpLink.Sdk.RpcCodec(typeof(MoneyCodec))]
 public sealed record Money(decimal Value);
 
-[SharpLink.Sdk.RpcCodecImplementation("money-wire/v1", "{{schemaId}}")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x1111111111111111UL, {{semanticLow}}UL)]
 public sealed class MoneyCodec : SharpLink.Abstractions.IRpcCodec<Money>
 {
 }
@@ -134,11 +137,11 @@ public interface IMoneyService : SharpLink.Sdk.IService
 }
 """);
 
-        var baseline = RunContractGenerator(ContractSource("money-schema/v1")).Json;
-        var changed = RunContractGenerator(ContractSource("money-schema/v2"), baseline);
+        var baseline = RunContractGenerator(ContractSource(0x2222222222222222UL)).Json;
+        var changed = RunContractGenerator(ContractSource(0x3333333333333333UL), baseline);
 
-        Ensure(changed.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK030") == 1,
-            "changing a custom Codec schema identity while keeping wire format must fail baseline compatibility");
+        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            "changing an opaque custom Codec semantic identity must fail baseline comparison");
         return Task.CompletedTask;
     }
 
@@ -263,33 +266,33 @@ public sealed class ImmutableManifestService : IImmutableManifestService
     }
 
     [Test]
-    public Task BaselineWithoutAdapterWireFormatShouldBeRejected()
+    public Task BaselineWithoutAdapterCodecHashShouldBeRejected()
     {
         var source = AdapterContractSource();
-        var baseline = RemoveWireFormat(RunContractGenerator(source).Json, "fake-wire/v1");
+        var baseline = RemoveCodecHashForType(RunContractGenerator(source).Json, "Graph");
 
         var compared = RunContractGenerator(source, baseline);
 
         Ensure(compared.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
-            $"a baseline missing adapter wireFormatId is invalid. Baseline: {baseline} Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+            $"a baseline missing an opaque Adapter CodecHash is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task BaselineWithoutDtoMemberWireFormatShouldBeRejected()
+    public Task BaselineWithoutDtoMemberCodecHashShouldBeRejected()
     {
         var source = AdapterContractSource(includeNativeEnvelope: true);
-        var baseline = RemoveWireFormat(RunContractGenerator(source).Json, "fake-wire/v1");
+        var baseline = RemoveDtoMemberCodecHash(RunContractGenerator(source).Json, "Envelope", "Graph");
 
         var compared = RunContractGenerator(source, baseline);
 
         Ensure(compared.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
-            $"a baseline missing a DTO member wireFormatId is invalid. Baseline: {baseline} Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+            $"a baseline missing an opaque DTO-member CodecHash is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task BaselineWithoutReachableCodecWireInventoryShouldBeRejected()
+    public Task BaselineWithoutReachableCodecIdentityInventoryShouldBeRejected()
     {
         var source = AdapterContractSource();
         var baseline = RemoveTopLevelProperty(RunContractGenerator(source).Json, "codecs");
@@ -297,12 +300,12 @@ public sealed class ImmutableManifestService : IImmutableManifestService
         var compared = RunContractGenerator(source, baseline);
 
         Ensure(compared.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
-            $"a baseline missing the reachable Codec wire inventory is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+            $"a baseline missing the reachable Codec identity inventory is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task BaselineWithNullReachableCodecWireInventoryShouldBeRejected()
+    public Task BaselineWithNullReachableCodecIdentityInventoryShouldBeRejected()
     {
         var source = AdapterContractSource();
         var baseline = SetTopLevelPropertyToNull(RunContractGenerator(source).Json, "codecs");
@@ -310,26 +313,25 @@ public sealed class ImmutableManifestService : IImmutableManifestService
         var compared = RunContractGenerator(source, baseline);
 
         Ensure(compared.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
-            $"a null reachable Codec wire inventory is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+            $"a null reachable Codec identity inventory is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task ExplicitWireFormatChangeShouldBeRejected()
+    public Task ExplicitAdapterSemanticIdentityChangeShouldBeRejected()
     {
-        var baselineSource = AdapterContractSource();
-        var baseline = RunContractGenerator(baselineSource).Json;
-        var changedSource = baselineSource.Replace("fake-wire/v1", "other-wire/v1", StringComparison.Ordinal);
-
-        var changed = RunContractGenerator(changedSource, baseline);
+        var baseline = RunContractGenerator(AdapterContractSource()).Json;
+        var changed = RunContractGenerator(
+            AdapterContractSource(semanticLow: 0x3333333333333333UL),
+            baseline);
 
         Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            "an explicit wire-format identity change is incompatible");
+            "an opaque Adapter semantic identity change is incompatible");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task AdapterWireFormatChangeInsideNativeCollectionShouldBeRejected()
+    public Task AdapterSemanticIdentityChangeInsideNativeCollectionShouldBeRejected()
     {
         var baselineSource = AdapterContractSource().Replace(
             "ValueTask<Graph> Echo(Graph value);",
@@ -340,24 +342,24 @@ public sealed class ImmutableManifestService : IImmutableManifestService
         var nestedCodec = baselineDocument["codecs"]!.AsArray()
             .Select(static item => item!.AsObject())
             .Single(static item => item["type"]!.GetValue<string>() == "Graph");
-        Ensure(nestedCodec["wireFormatId"]!.GetValue<string>() == "fake-wire/v1",
-            "the Manifest records the nested collection element Codec wire identity");
-        var changedSource = baselineSource.Replace(
-            "fake-wire/v1",
-            "other-wire/v1",
+        Ensure(IsValidCodecHashText(nestedCodec["codecHash"]?.GetValue<string>()),
+            "the Manifest records the nested collection element CodecHash");
+        var changedSource = AdapterContractSource(semanticLow: 0x3333333333333333UL).Replace(
+            "ValueTask<Graph> Echo(Graph value);",
+            "ValueTask<List<Graph>> Echo(List<Graph> value);",
             StringComparison.Ordinal);
 
         var changed = RunContractGenerator(changedSource, baseline);
 
         Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
-            "a nested Adapter wire-format change inside a native collection is incompatible");
+            "a nested Adapter semantic identity change inside a native collection is incompatible");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task BaselineWithoutNativeWireFormatShouldBeRejected()
+    public Task NativePayloadManifestShouldNotContainLegacyWireIdentity()
     {
-        var baselineSource = BuildSource("""
+        var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
 public sealed class Graph
 {
@@ -370,20 +372,23 @@ public interface IGraphService : SharpLink.Sdk.IService
     ValueTask<Graph> Echo(Graph value);
 }
 """);
-        var invalidBaseline = RemoveWireFormat(
-            RunContractGenerator(baselineSource).Json,
-            "sharplink-native/v1");
-        var currentSource = AdapterContractSource();
-
-        var changed = RunContractGenerator(currentSource, invalidBaseline);
-
-        Ensure(changed.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
-            $"a baseline missing native wireFormatId is invalid. Baseline: {invalidBaseline} Diagnostics: {FormatDiagnostics(changed.Diagnostics)}");
+        var current = RunContractGenerator(source);
+        var root = System.Text.Json.Nodes.JsonNode.Parse(current.Json)!.AsObject();
+        Ensure(!current.Json.Contains("wireFormatId", StringComparison.Ordinal),
+            "native Manifest must not restore legacy wireFormatId");
+        var method = root["contracts"]!.AsArray().Single()!["methods"]!.AsArray().Single()!.AsObject();
+        EnsurePayloadIdentity(method["request"]!.AsArray()[0]!, false, false, "native request");
+        EnsurePayloadIdentity(method["response"]!, false, false, "native response");
+        var codec = root["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(static item => item["type"]!.GetValue<string>() == "Graph");
+        Ensure(IsValidCodecHashText(codec["codecHash"]?.GetValue<string>()),
+            "native Codec inventory still publishes deterministic CodecHash");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task ManifestShouldRecordRequiredWireFormatsAtEveryPayloadPosition()
+    public Task ManifestShouldRecordStructuralWireTypesAndOpaqueCodecHashes()
     {
         var current = RunContractGenerator(AdapterStreamingContractSource());
         var root = System.Text.Json.Nodes.JsonNode.Parse(current.Json)!.AsObject();
@@ -392,8 +397,10 @@ public interface IGraphService : SharpLink.Sdk.IService
             .ToArray();
         Ensure(wireEntries.Length == 9, "eight method payload positions and one DTO member");
         Ensure(wireEntries.All(static item =>
-                !string.IsNullOrWhiteSpace(item["wireFormatId"]?.GetValue<string>())),
-            "every serialized Manifest position has a required non-empty wireFormatId");
+                !string.IsNullOrWhiteSpace(item["wireType"]?.GetValue<string>())),
+            "every serialized Manifest position has a structural wireType");
+        Ensure(wireEntries.All(static item => !item.ContainsKey("wireFormatId")),
+            "serialized Manifest positions must not contain legacy wireFormatId");
 
         var contract = root["contracts"]!.AsArray().Single()!.AsObject();
         var methods = contract["methods"]!.AsArray()
@@ -402,20 +409,20 @@ public interface IGraphService : SharpLink.Sdk.IService
                 static item => item["name"]!.GetValue<string>(),
                 StringComparer.Ordinal);
         var echo = methods["Echo"];
-        EnsureWireFormat(echo["request"]!.AsArray()[0]!, "fake-wire/v1", stream: false, "unary request");
-        EnsureWireFormat(echo["response"]!, "fake-wire/v1", stream: false, "unary response");
+        EnsurePayloadIdentity(echo["request"]!.AsArray()[0]!, true, false, "unary request");
+        EnsurePayloadIdentity(echo["response"]!, true, false, "unary response");
 
         var upload = methods["Upload"];
-        EnsureWireFormat(upload["request"]!.AsArray()[0]!, "fake-wire/v1", stream: true, "request stream item");
-        EnsureWireFormat(upload["response"]!, "sharplink-native/v1", stream: false, "upload response");
+        EnsurePayloadIdentity(upload["request"]!.AsArray()[0]!, true, true, "request stream item");
+        EnsurePayloadIdentity(upload["response"]!, false, false, "upload response");
 
         var watch = methods["Watch"];
-        EnsureWireFormat(watch["request"]!.AsArray()[0]!, "sharplink-native/v1", stream: false, "watch request");
-        EnsureWireFormat(watch["response"]!, "fake-wire/v1", stream: true, "response stream item");
+        EnsurePayloadIdentity(watch["request"]!.AsArray()[0]!, false, false, "watch request");
+        EnsurePayloadIdentity(watch["response"]!, true, true, "response stream item");
 
         var wrap = methods["Wrap"];
-        EnsureWireFormat(wrap["request"]!.AsArray()[0]!, "sharplink-native/v1", stream: false, "native envelope request");
-        EnsureWireFormat(wrap["response"]!, "sharplink-native/v1", stream: false, "native envelope response");
+        EnsurePayloadIdentity(wrap["request"]!.AsArray()[0]!, false, false, "native envelope request");
+        EnsurePayloadIdentity(wrap["response"]!, false, false, "native envelope response");
 
         var envelope = root["dtos"]!.AsArray()
             .Select(static item => item!.AsObject())
@@ -423,33 +430,35 @@ public interface IGraphService : SharpLink.Sdk.IService
         var graphMember = envelope["members"]!.AsArray()
             .Select(static item => item!.AsObject())
             .Single(static item => item["name"]!.GetValue<string>() == "Graph");
-        EnsureWireFormat(graphMember, "fake-wire/v1", stream: null, "nested DTO member");
+        EnsurePayloadIdentity(graphMember, true, stream: null, "nested DTO member");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task NullBlankOrWhitespaceWireFormatShouldInvalidateBaseline()
+    public Task InvalidCodecHashesShouldInvalidateBaseline()
     {
         var source = AdapterContractSource();
         var valid = RunContractGenerator(source).Json;
         var invalidBaselines = new[]
         {
-            SetWireFormat(valid, "fake-wire/v1", replacement: null),
-            SetWireFormat(valid, "fake-wire/v1", string.Empty),
-            SetWireFormat(valid, "fake-wire/v1", " ")
+            SetCodecInventoryHash(valid, "Graph", replacement: null),
+            SetCodecInventoryHash(valid, "Graph", string.Empty),
+            SetCodecInventoryHash(valid, "Graph", " "),
+            SetCodecInventoryHash(valid, "Graph", "abc"),
+            SetCodecInventoryHash(valid, "Graph", new string('g', 32))
         };
 
         foreach (var baseline in invalidBaselines)
         {
             var compared = RunContractGenerator(source, baseline);
             Ensure(compared.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
-                $"null, blank, and whitespace wireFormatId values each invalidate the baseline. Baseline: {baseline} Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+                $"missing or malformed fixed-width CodecHash invalidates the baseline. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
         }
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task AdapterIdentityChangeWithStableWireFormatShouldRemainCompatible()
+    public Task AdapterImplementationAndIdChangeWithStableSemanticIdentityShouldRemainCompatible()
     {
         var baselineSource = AdapterContractSource();
         var baseline = RunContractGenerator(baselineSource).Json;
@@ -460,7 +469,7 @@ public interface IGraphService : SharpLink.Sdk.IService
         var changed = RunContractGenerator(changedSource, baseline);
 
         Ensure(!changed.Diagnostics.Any(IsCompatibilityDiagnostic),
-            $"Adapter implementation and ID changes are compatible when wireFormatId is stable. Diagnostics: {FormatDiagnostics(changed.Diagnostics)}");
+            $"Adapter implementation/lifecycle identity changes do not change wire semantics when the explicit semantic identity is stable. Diagnostics: {FormatDiagnostics(changed.Diagnostics)}");
         return Task.CompletedTask;
     }
 
@@ -514,7 +523,7 @@ public interface INullableService : SharpLink.Sdk.IService
             "damaged baseline diagnostic");
 
         var baseline = RunContractGenerator(source).Json.Replace(
-            "\"version\": 2", "\"version\": 99", StringComparison.Ordinal);
+            "\"version\": 3", "\"version\": 99", StringComparison.Ordinal);
         var unsupported = RunContractGenerator(source, baseline);
         Ensure(unsupported.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK025"),
             "unsupported baseline version diagnostic");
@@ -629,7 +638,7 @@ public string DisplayName { get; set; } = string.Empty;
 public int OptionalCount { get; set; }
 """), baseline);
         Ensure(!compatible.Diagnostics.Any(IsCompatibilityDiagnostic),
-            "explicit member ID rename and optional addition are compatible");
+            "legacy Contract Manifest structural baseline rules remain independent from #396 exact RpcAssemblyHash identity");
         return Task.CompletedTask;
     }
 
@@ -749,291 +758,5 @@ public interface IHelloService : SharpLink.Sdk.IService
                 output.Reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged),
             "unrelated implementation edits must not rerun contract Manifest analysis");
         return Task.CompletedTask;
-    }
-
-    private static string SimpleContract(string methods) => BuildSource($$"""
-[SharpLink.Sdk.RpcContract]
-public interface IHelloService : SharpLink.Sdk.IService
-{
-    {{methods}}
-}
-""");
-
-    private static string DtoContract(string members) => BuildSource($$"""
-[SharpLink.Sdk.RpcSerializable]
-public sealed class Payload
-{
-    {{members}}
-}
-
-[SharpLink.Sdk.RpcContract]
-public interface IHelloService : SharpLink.Sdk.IService
-{
-    ValueTask<Payload> Echo(Payload value, CancellationToken cancellationToken);
-}
-""");
-
-    private static string AdapterContractSource(bool includeNativeEnvelope = false)
-    {
-        var payloadType = includeNativeEnvelope ? "Envelope" : "Graph";
-        var envelope = includeNativeEnvelope
-            ? """
-[SharpLink.Sdk.RpcSerializable]
-public sealed class Envelope
-{
-    public Graph Graph { get; set; } = new();
-}
-
-"""
-            : string.Empty;
-        return AddAssemblyAttribute(BuildSource($$"""
-[FakePackable]
-public sealed class Graph
-{
-    public Graph? Parent { get; set; }
-}
-
-{{envelope}}[SharpLink.Sdk.RpcContract]
-public interface IGraphService : SharpLink.Sdk.IService
-{
-    ValueTask<{{payloadType}}> Echo({{payloadType}} value);
-}
-
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
-public sealed class FakePackableAttribute : Attribute { }
-
-public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
-{
-    public string AdapterId => "fake.adapter/v1";
-    public string WireFormatId => "fake-wire/v1";
-    public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
-}
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\", SelectorAttributeType = typeof(FakePackableAttribute))]");
-    }
-
-    private static string AdapterStreamingContractSource()
-        => AddAssemblyAttribute(BuildSource("""
-[FakePackable]
-public sealed class Graph
-{
-    public Graph? Parent { get; set; }
-}
-
-[SharpLink.Sdk.RpcSerializable]
-public sealed class Envelope
-{
-    public Graph Graph { get; set; } = new();
-}
-
-[SharpLink.Sdk.RpcContract]
-public interface IGraphService : SharpLink.Sdk.IService
-{
-    ValueTask<Graph> Echo(Graph value);
-    ValueTask<int> Upload(IAsyncEnumerable<Graph> values);
-    IAsyncEnumerable<Graph> Watch(int count);
-    ValueTask<Envelope> Wrap(Envelope value);
-}
-
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
-public sealed class FakePackableAttribute : Attribute { }
-
-public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
-{
-    public string AdapterId => "fake.adapter/v1";
-    public string WireFormatId => "fake-wire/v1";
-    public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
-}
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\", SelectorAttributeType = typeof(FakePackableAttribute))]");
-
-    private static string RemoveWireFormat(string json, string wireFormatId)
-    {
-        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
-        RemoveWireFormat(root, wireFormatId);
-        root["schemaFingerprint"] = string.Empty;
-        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-        var canonical = root.ToJsonString(options);
-        var fingerprint = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
-        root["schemaFingerprint"] = Convert.ToHexStringLower(fingerprint);
-        return root.ToJsonString(options) + "\n";
-    }
-
-    private static string RemoveTopLevelProperty(string json, string propertyName)
-    {
-        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
-        root.Remove(propertyName);
-        root["schemaFingerprint"] = string.Empty;
-        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-        var canonical = root.ToJsonString(options);
-        var fingerprint = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
-        root["schemaFingerprint"] = Convert.ToHexStringLower(fingerprint);
-        return root.ToJsonString(options) + "\n";
-    }
-
-    private static string SetTopLevelPropertyToNull(string json, string propertyName)
-    {
-        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
-        root[propertyName] = null;
-        root["schemaFingerprint"] = string.Empty;
-        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-        var canonical = root.ToJsonString(options);
-        var fingerprint = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
-        root["schemaFingerprint"] = Convert.ToHexStringLower(fingerprint);
-        return root.ToJsonString(options) + "\n";
-    }
-
-    private static void RemoveWireFormat(System.Text.Json.Nodes.JsonNode node, string wireFormatId)
-    {
-        if (node is System.Text.Json.Nodes.JsonObject jsonObject)
-        {
-            if (jsonObject["wireFormatId"]?.GetValue<string>() == wireFormatId)
-                jsonObject.Remove("wireFormatId");
-            foreach (var child in jsonObject.Select(static property => property.Value).OfType<System.Text.Json.Nodes.JsonNode>().ToArray())
-                RemoveWireFormat(child, wireFormatId);
-        }
-        else if (node is System.Text.Json.Nodes.JsonArray jsonArray)
-        {
-            foreach (var child in jsonArray.OfType<System.Text.Json.Nodes.JsonNode>())
-                RemoveWireFormat(child, wireFormatId);
-        }
-    }
-
-    private static string SetWireFormat(string json, string wireFormatId, string? replacement)
-    {
-        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
-        SetWireFormat(root, wireFormatId, replacement);
-        root["schemaFingerprint"] = string.Empty;
-        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-        var canonical = root.ToJsonString(options);
-        var fingerprint = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
-        root["schemaFingerprint"] = Convert.ToHexStringLower(fingerprint);
-        return root.ToJsonString(options) + "\n";
-    }
-
-    private static void SetWireFormat(
-        System.Text.Json.Nodes.JsonNode node,
-        string wireFormatId,
-        string? replacement)
-    {
-        if (node is System.Text.Json.Nodes.JsonObject jsonObject)
-        {
-            if (jsonObject["wireFormatId"]?.GetValue<string>() == wireFormatId)
-                jsonObject["wireFormatId"] = replacement;
-            foreach (var child in jsonObject.Select(static property => property.Value).OfType<System.Text.Json.Nodes.JsonNode>().ToArray())
-                SetWireFormat(child, wireFormatId, replacement);
-        }
-        else if (node is System.Text.Json.Nodes.JsonArray jsonArray)
-        {
-            foreach (var child in jsonArray.OfType<System.Text.Json.Nodes.JsonNode>())
-                SetWireFormat(child, wireFormatId, replacement);
-        }
-    }
-
-    private static IEnumerable<System.Text.Json.Nodes.JsonObject> EnumerateJsonObjects(
-        System.Text.Json.Nodes.JsonNode node)
-    {
-        if (node is System.Text.Json.Nodes.JsonObject jsonObject)
-        {
-            yield return jsonObject;
-            foreach (var child in jsonObject.Select(static property => property.Value).OfType<System.Text.Json.Nodes.JsonNode>())
-            {
-                foreach (var nested in EnumerateJsonObjects(child))
-                    yield return nested;
-            }
-        }
-        else if (node is System.Text.Json.Nodes.JsonArray jsonArray)
-        {
-            foreach (var child in jsonArray.OfType<System.Text.Json.Nodes.JsonNode>())
-            {
-                foreach (var nested in EnumerateJsonObjects(child))
-                    yield return nested;
-            }
-        }
-    }
-
-    private static void EnsureWireFormat(
-        System.Text.Json.Nodes.JsonNode node,
-        string expectedWireFormatId,
-        bool? stream,
-        string scenario)
-    {
-        var value = node.AsObject();
-        Ensure(value["wireFormatId"]?.GetValue<string>() == expectedWireFormatId,
-            $"{scenario} wireFormatId");
-        if (stream is not null)
-            Ensure(value["stream"]?.GetValue<bool>() == stream, $"{scenario} stream shape");
-    }
-
-    private static bool IsCompatibilityDiagnostic(Diagnostic diagnostic)
-        => string.CompareOrdinal(diagnostic.Id, "SHARPLINK024") >= 0 &&
-           string.CompareOrdinal(diagnostic.Id, "SHARPLINK035") <= 0;
-
-    private static ContractGeneratorResult RunContractGenerator(
-        string source,
-        string? baseline = null,
-        string? outputPath = null)
-    {
-        const string baselinePath = "/contracts/previous.sharplink.json";
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
-        var compilation = CSharpCompilation.Create(
-            "ContractManifestTestAssembly",
-            [syntaxTree],
-            GetPlatformReferences(),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-        var properties = new Dictionary<string, string>(StringComparer.Ordinal);
-        var additionalTexts = ImmutableArray<AdditionalText>.Empty;
-        if (baseline is not null)
-        {
-            properties["build_property.SharpLinkContractBaseline"] = baselinePath;
-            additionalTexts = [new InMemoryAdditionalText(baselinePath, baseline)];
-        }
-        if (outputPath is not null)
-            properties["build_property.SharpLinkContractManifestOutput"] = outputPath;
-
-        IIncrementalGenerator generator = new RpcGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(
-            [generator.AsSourceGenerator()],
-            additionalTexts,
-            CSharpParseOptions.Default,
-            new TestAnalyzerConfigOptionsProvider(properties));
-        driver = driver.RunGenerators(compilation);
-        var result = driver.GetRunResult();
-        var generated = result.GeneratedTrees
-            .Select(static tree => tree.GetText().ToString())
-            .First(static text => text.Contains("__SharpLinkContractManifest", StringComparison.Ordinal));
-        const string startMarker = "internal const string Json = @\"";
-        const string endMarker = "\";";
-        var start = generated.IndexOf(startMarker, StringComparison.Ordinal) + startMarker.Length;
-        var end = generated.LastIndexOf(endMarker, StringComparison.Ordinal);
-        Ensure(start >= startMarker.Length && end > start, "generated contract Manifest constant");
-        var json = generated.Substring(start, end - start).Replace("\"\"", "\"", StringComparison.Ordinal);
-        return new ContractGeneratorResult(json, result.Diagnostics);
-    }
-
-    private sealed record ContractGeneratorResult(string Json, ImmutableArray<Diagnostic> Diagnostics);
-
-    private sealed class InMemoryAdditionalText(string path, string content) : AdditionalText
-    {
-        public override string Path { get; } = path;
-        public override SourceText GetText(CancellationToken cancellationToken = default)
-            => SourceText.From(content);
-    }
-
-    private sealed class TestAnalyzerConfigOptionsProvider(
-        IReadOnlyDictionary<string, string> properties) : AnalyzerConfigOptionsProvider
-    {
-        private readonly AnalyzerConfigOptions _global = new TestAnalyzerConfigOptions(properties);
-        public override AnalyzerConfigOptions GlobalOptions => _global;
-        public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => TestAnalyzerConfigOptions.Empty;
-        public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => TestAnalyzerConfigOptions.Empty;
-    }
-
-    private sealed class TestAnalyzerConfigOptions(
-        IReadOnlyDictionary<string, string> values) : AnalyzerConfigOptions
-    {
-        internal static TestAnalyzerConfigOptions Empty { get; } = new(new Dictionary<string, string>());
-        public override bool TryGetValue(string key, out string value)
-            => values.TryGetValue(key, out value!);
     }
 }
