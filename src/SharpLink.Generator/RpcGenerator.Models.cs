@@ -214,7 +214,8 @@ internal readonly record struct GeneratedCodecHashModel(
 internal readonly record struct RpcHashValue(ulong High, ulong Low)
 {
     public string ToHex()
-        => High.ToString("x16", InvariantCulture) + Low.ToString("x16", InvariantCulture);
+        => High.ToString("x16", CultureInfo.InvariantCulture) +
+           Low.ToString("x16", CultureInfo.InvariantCulture);
 }
 
 internal enum DtoDiagnosticKind
