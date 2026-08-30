@@ -151,21 +151,29 @@ public class SharpLinkClientRetryTests
     {
         for (var iteration = 0; iteration < 32; iteration++)
         {
+            var provider = new ManualTimeProvider();
             var transport = new TestClientTransportFactory();
             await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+            {
+                builder.UseTimeProvider(provider);
                 builder.UseRetry(options =>
                 {
                     options.MaxAttempts = 2;
                     options.InitialBackoff = TimeSpan.MaxValue;
                     options.MaxBackoff = TimeSpan.MaxValue;
                     options.JitterRatio = 1;
-                }));
+                });
+            });
             await client.ConnectAsync();
+            while (provider.ActiveTimerCount == 0)
+                await Task.Yield();
+            var baselineTimerCount = provider.ActiveTimerCount;
 
             var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
             var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
             await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
-            await Task.Delay(20);
+            while (provider.ActiveTimerCount <= baselineTimerCount)
+                await Task.Yield();
 
             var stop = client.StopAsync().AsTask();
             var exception = await EnsureThrows<SharpLinkException>(
