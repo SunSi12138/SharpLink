@@ -24,6 +24,10 @@ public partial class RpcAnalyzerTests
             "public RpcCodecAdapterRegistrationAttribute(Type adapterType, string adapterId) { }",
             StringComparison.Ordinal);
         source = source.Replace(
+            "        string WireFormatId { get; }\n",
+            string.Empty,
+            StringComparison.Ordinal);
+        source = source.Replace(
             """
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
     public sealed class RpcCodecImplementationAttribute : Attribute
