@@ -153,7 +153,7 @@ public partial class RpcGenerator
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more payload, DTO member, or Codec entries are missing required wire framing or semantic identity",
+                            "one or more Codec entries or opaque payload references are missing required semantic identity",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -211,10 +211,6 @@ public partial class RpcGenerator
                 static group => group.Key,
                 static group => group.First(),
                 StringComparer.Ordinal);
-        var wireFormats = codecsByType.ToDictionary(
-            static pair => pair.Key,
-            static pair => pair.Value.WireFormatId,
-            StringComparer.Ordinal);
         var opaqueCodecHashes = codecsByType
             .Where(static pair => pair.Value.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
             .ToDictionary(
@@ -259,7 +255,6 @@ public partial class RpcGenerator
                         WireType = GetContractWireType(typeName, parameter.IsStream
                             ? parameter.StreamItemEnumUnderlyingType
                             : parameter.EnumUnderlyingType),
-                        WireFormatId = GetWireFormatId(typeName, wireFormats),
                         CodecHash = GetOpaqueCodecHash(typeName, opaqueCodecHashes),
                         Nullable = parameter.PayloadNullable,
                         Stream = parameter.IsStream,
@@ -280,7 +275,6 @@ public partial class RpcGenerator
                         method.IsStreamReturn
                             ? method.StreamItemEnumUnderlyingType
                             : method.ResponseEnumUnderlyingType),
-                    WireFormatId = GetWireFormatId(responseType, wireFormats),
                     CodecHash = GetOpaqueCodecHash(responseType, opaqueCodecHashes),
                     Nullable = method.ResponseNullable,
                     Stream = method.IsStreamReturn,
@@ -309,7 +303,6 @@ public partial class RpcGenerator
                     Id = member.FieldId,
                     Type = RemoveGlobalPrefix(member.TypeName),
                     WireType = GetMemberWireType(member),
-                    WireFormatId = GetWireFormatId(member.TypeName, wireFormats),
                     CodecHash = GetOpaqueCodecHash(member.TypeName, opaqueCodecHashes),
                     Nullable = member.Nullable,
                     Required = member.Required,
