@@ -329,15 +329,20 @@ public class SharpLinkServerHostedServiceTests
             .Build();
         var concrete = (SharpLinkServer)server;
         var runTask = server.RunAsync().AsTask();
-        var activeCalls = typeof(SharpLinkServer).GetField(
+        var callAdmission = typeof(SharpLinkServer).GetField(
+            "_callAdmission",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(server)
+            ?? throw new Exception("cannot find Server call-admission owner");
+        var activeCalls = typeof(ServerCallAdmission).GetField(
             "_globalActiveCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server active-call counter");
+            ?? throw new Exception("cannot find admission active-call counter");
         var callsDrained = (TaskCompletionSource<bool>)(typeof(SharpLinkServer).GetField(
             "_callsDrained",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(server) ?? throw new Exception("cannot find Server call-drain signal"));
-        activeCalls.SetValue(server, 1);
+        activeCalls.SetValue(callAdmission, 1);
 
         var stop = server.StopAsync(TimeSpan.FromSeconds(5)).AsTask();
         provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
@@ -357,7 +362,7 @@ public class SharpLinkServerHostedServiceTests
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(server) ?? throw new Exception("cannot find Server deferred service cleanup owner"));
 
-        activeCalls.SetValue(server, 0);
+        activeCalls.SetValue(callAdmission, 0);
         callsDrained.TrySetResult(true);
         await deferredCleanup;
         Ensure(concrete.DeferredTaskSnapshotForDiagnostics.DeferredServiceCleanup ==
