@@ -2,6 +2,8 @@
 
 `PR Fast` is the bounded pull-request validation tier defined by #374 and implemented by #375. It runs for every pull request target and can also be started manually with `workflow_dispatch`.
 
+The pull-request trigger explicitly covers `opened`, `synchronize`, `reopened`, and `edited`. `edited` ensures that a base-branch retarget (including stacked PRs later retargeted to `dev`) produces a fresh `fast` result for the new PR merge commit before the status is required. GitHub does not expose a trigger filter limited only to base edits here, so title/body edits can also cause an extra Fast run.
+
 The stable blocking-shaped job/status is `fast`. The job has a 5-minute hard timeout and targets successful active duration of 3 minutes or less under normal GitHub-hosted runner conditions.
 
 ## Fast checks
