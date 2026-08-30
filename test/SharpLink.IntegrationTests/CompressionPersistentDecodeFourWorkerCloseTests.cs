@@ -244,7 +244,7 @@ public class CompressionPersistentDecodeWorkerSaturationTests
                 ?? throw new Exception($"cannot find {name}")).GetValue(_server)!;
 
         private static ISharpLinkClient CreateClient(int port, string profile, string tag)
-            => SharpClientBuilder.Create()
+            => SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(new Provider(profile, tag, null)))

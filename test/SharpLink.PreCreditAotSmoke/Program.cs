@@ -61,14 +61,14 @@ public static class Program
         ISharpLinkClient client;
         if (useSharedMemory)
         {
-            client = SharpClientBuilder.Create()
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseRuntime(ConfigureRuntime)
                 .UseSharedMemory(sharedMemoryName)
                 .Build();
         }
         else
         {
-            client = SharpClientBuilder.Create()
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseRuntime(ConfigureRuntime)
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();

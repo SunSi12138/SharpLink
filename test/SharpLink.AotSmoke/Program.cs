@@ -85,14 +85,14 @@ public static class Program
         ISharpLinkClient client;
         if (useSharedMemory)
         {
-            client = SharpClientBuilder.Create()
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseRuntime(ConfigureCompression)
                 .UseSharedMemory(sharedMemoryName)
                 .Build();
         }
         else
         {
-            client = SharpClientBuilder.Create()
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseRuntime(ConfigureCompression)
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
@@ -167,7 +167,7 @@ public static class Program
     private static async Task<int> RunClientOnlyAsync(string name)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseSharedMemory(name)
             .UseRuntime(ConfigureCompression)
             .Build();
@@ -300,7 +300,7 @@ public static class Program
                 Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
             }
         };
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseRuntime(ConfigureCompression)
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
@@ -349,7 +349,7 @@ public static class Program
         bool useSharedMemory,
         string sharedMemoryName,
         int port)
-        => SharpLinkMultiClusterClientBuilder.Create()
+        => SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "orders",
                 child => ConfigureClientTransport(child, useSharedMemory, sharedMemoryName, port),

@@ -15,7 +15,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
     {
         await using var first = await ServerScope.StartAsync("first");
         await using var second = await ServerScope.StartAsync("second");
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "bootstrap",
                 child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port),
@@ -60,7 +60,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(
             1,
             [Endpoint("resolver-first", first.Port)]));
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "bootstrap",
                 child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port),

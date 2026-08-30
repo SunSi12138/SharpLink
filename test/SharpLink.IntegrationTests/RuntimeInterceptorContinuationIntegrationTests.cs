@@ -283,7 +283,7 @@ public class RuntimeInterceptorContinuationIntegrationTests
             var server = serverBuilder.Build();
             var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
 
-            var clientBuilder = SharpClientBuilder.Create()
+            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             if (clientInterceptor is not null)

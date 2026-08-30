@@ -93,7 +93,7 @@ public static class Program
         var server = serverBuilder.Build();
         var serverTask = RunServerAsync(server, cancellationToken);
 
-        var clientBuilder = SharpClientBuilder.Create()
+        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseRuntime(ConfigureCompression);
         if (useSharedMemory)
             clientBuilder.UseSharedMemory(sharedMemoryName);
@@ -147,7 +147,7 @@ public static class Program
         int port,
         CancellationToken cancellationToken)
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "bootstrap",
                 child => child.UseTcp(IPAddress.Loopback.ToString(), port),
@@ -209,7 +209,7 @@ public static class Program
                 Attributes = new Dictionary<string, string> { ["zone"] = "b" }
             }
         };
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseRuntime(ConfigureCompression)
             .UseEndpoints(
                 endpoints,
@@ -238,7 +238,7 @@ public static class Program
             if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
-            await using var dynamicClient = SharpClientBuilder.Create()
+            await using var dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseRuntime(ConfigureCompression)
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
@@ -498,7 +498,7 @@ public static class Program
         AssertPublicSpi<ISharpLinkClientInterceptor, PackageClientInterceptor>(clientInterceptor);
         AssertPublicSpi<ISharpLinkServerInterceptor, PackageInterceptor>(serverInterceptor);
 
-        var directClientBuilder = SharpClientBuilder.Create();
+        var directClientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
         AssertBuilderReturnsSelf(
             directClientBuilder,
             directClientBuilder
@@ -513,7 +513,7 @@ public static class Program
         SharpLinkEndpointTransportFactory endpointTransportFactory =
             static _ => new PackageClientTransportFactory();
         AssertPublicType<SharpLinkEndpointTransportFactory>();
-        var resolverClientBuilder = SharpClientBuilder.Create();
+        var resolverClientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
         AssertBuilderReturnsSelf(
             resolverClientBuilder,
             resolverClientBuilder.UseEndpointResolver(endpointResolver, endpointTransportFactory),

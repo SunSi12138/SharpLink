@@ -222,11 +222,11 @@ public sealed class Api3BinaryFixtureIntegrationTests
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = server.RunAsync(cancellation.Token).AsTask();
-            var client = SharpClientBuilder.Create()
+            var client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();
             await client.ConnectAsync();
-            var multiClient = SharpLinkMultiClusterClientBuilder.Create()
+            var multiClient = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
                 .AddCluster(
                     "plugins",
                     child => child.UseTcp(IPAddress.Loopback.ToString(), port),
