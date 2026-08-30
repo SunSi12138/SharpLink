@@ -1693,7 +1693,7 @@ public sealed class SharpLinkMultiClusterClientTests
         ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; } = [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } =
-            [new TestCodecFactory<OrdersValue>("orders-value")];
+            [new TestCodecFactory<OrdersValue>()];
         public IReadOnlyList<string> Dependencies { get; } = [];
     }
 
@@ -1710,7 +1710,7 @@ public sealed class SharpLinkMultiClusterClientTests
         ];
     }
 
-    private sealed class TestCodecFactory<T>(string _) : IRpcGeneratedCodecFactory
+    private sealed class TestCodecFactory<T> : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
         public RpcHash128 CodecHash => new(0x6d756c7469636c75UL, 0x737465722d636f64UL);
