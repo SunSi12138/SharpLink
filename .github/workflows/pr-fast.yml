@@ -19,7 +19,7 @@ jobs:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
-      - name: Start Fast timing
+      - name: Start Fast validation timing
         run: echo "FAST_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Checkout
@@ -35,6 +35,9 @@ jobs:
 
       - name: Verify Formatting
         run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
 
       - name: Maintainability Debt Gate
         run: bash eng/check-maintainability.sh
@@ -54,7 +57,7 @@ jobs:
       - name: Load Test Tests
         run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
 
-      - name: Record Fast duration
+      - name: Record Fast validation steps elapsed
         if: always()
         shell: bash
         run: |
@@ -63,10 +66,12 @@ jobs:
           minutes=$((elapsed / 60))
           seconds=$((elapsed % 60))
           {
-            echo "### PR Fast duration"
+            echo "### PR Fast timing"
             echo
-            printf -- "- This run: %dm %02ds\n" "$minutes" "$seconds"
-            echo "- Target: <= 3m under normal hosted-runner conditions"
+            printf -- "- Fast validation steps elapsed: %dm %02ds\n" "$minutes" "$seconds"
+            echo "- Scope: first workflow step through the final validation step; runner setup and action post-cleanup are excluded"
+            echo "- Full Fast job target: <= 3m under normal hosted-runner conditions"
             echo "- Hard timeout: 5m"
-            echo "- Previous PR Quick median: 7m 03s (representative fresh-run range: 6m 47s to 7m 06s)"
+            echo "- Previous PR Quick full active-duration median: 7m 03s (representative fresh-run range: 6m 47s to 7m 06s)"
+            echo "- Compare the completed Actions job timestamps for an exact like-for-like full-duration comparison"
           } >> "$GITHUB_STEP_SUMMARY"
