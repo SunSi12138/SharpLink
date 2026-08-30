@@ -4,12 +4,62 @@ permissions:
   contents: read
 
 on:
+  push:
+    branches: [dev]
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
 jobs:
+  codec-compatibility:
+    uses: ./.github/workflows/codec-compatibility.yml
+
+  merge-chaos-smoke:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore Chaos Tests
+        run: dotnet restore test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj
+
+      - name: Build Chaos Tests
+        run: dotnet build test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj --no-restore -c Release -v minimal
+
+      - name: Chaos Smoke
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.ChaosTests
+          --
+          --duration-seconds 120
+          --transport sharedmemory
+          --concurrency 16
+          --restart-interval-seconds 10
+          --json-output artifacts/chaos/merge-to-dev-smoke.json
+
+      - name: Upload Chaos Report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaos-merge-to-dev-smoke
+          path: |
+            artifacts/chaos/merge-to-dev-smoke.json
+            artifacts/chaos/merge-to-dev-smoke.dmp
+            artifacts/chaos/merge-to-dev-smoke.dmp.crashreport.json
+          if-no-files-found: warn
+          retention-days: 14
+
   matrix-build-test:
+    if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +119,7 @@ jobs:
           NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
 
   aot-smoke:
+    if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -100,6 +151,7 @@ jobs:
         run: ./eng/run-shared-memory-aot-process-smoke.sh
 
   perf-smoke:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -117,6 +169,7 @@ jobs:
         run: dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,8,32 --warmup 2 --duration 8 --metrics-port 0
 
   chaos-soak:
+    if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -164,6 +217,7 @@ jobs:
           retention-days: 14
 
   generated-abi-dynamic-module-soak:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 135
     env:

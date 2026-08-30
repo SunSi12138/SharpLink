@@ -1,0 +1,112 @@
+name: PR Extended
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types: [ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-extended-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codec-compatibility:
+    uses: ./.github/workflows/codec-compatibility.yml
+    with:
+      browser_evidence: false
+
+  extended:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build Debug
+        run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
+
+      - name: Build Release prerequisite
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Run NativeAOT Transport and Topology Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify SDK Contains Generator
+        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+
+      - name: Verify package metadata, XML documentation, and symbols
+        run: ./eng/verify-packages.sh artifacts/nuget
+
+      - name: Verify Hosting direct Runtime dependency
+        run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
+
+      - name: Verify Abstractions has no DI dependency
+        run: ./eng/verify-abstractions-package-dependency.sh artifacts/nuget
+
+      - name: Restore Package Smoke
+        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Run Package Smoke
+        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Demo Oneway
+        run: dotnet run -c Release --no-build --project demo/Oneway
+
+      - name: Load Smoke
+        run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+
+  extended-summary:
+    needs: [extended, codec-compatibility]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report Extended confidence
+        shell: bash
+        env:
+          EXTENDED_RESULT: ${{ needs.extended.result }}
+          CODEC_RESULT: ${{ needs.codec-compatibility.result }}
+        run: |
+          {
+            echo "### PR Extended confidence"
+            echo
+            echo "- Integration/AOT/package/demo/load: $EXTENDED_RESULT"
+            echo "- Desktop codec compatibility: $CODEC_RESULT"
+            echo "- Browser/WASM codec evidence is owned by Nightly/merge-to-dev."
+            echo "- This tier is advisory by default; PR Fast / fast remains the normal required gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$EXTENDED_RESULT" != "success" || "$CODEC_RESULT" != "success" ]]; then
+            exit 1
+          fi
