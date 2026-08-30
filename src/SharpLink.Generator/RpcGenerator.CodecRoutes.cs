@@ -197,7 +197,7 @@ public partial class RpcGenerator
 
         private void AddAdapterModel(ITypeSymbol type, string typeName, AdapterRegistration adapter)
         {
-            var schema = $"adapter|{adapter.AdapterId}|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}";
+            var schema = $"adapter|{adapter.AdapterId}|{GetTypeName(adapter.AdapterType)}";
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
                 GetCodecName(typeName, _contractMode),
@@ -212,7 +212,7 @@ public partial class RpcGenerator
                 null,
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
-                adapter.WireFormatId,
+                string.Empty,
                 GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
         }
