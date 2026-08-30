@@ -91,36 +91,23 @@ public class SharpLinkClientLifetimeTelemetryTests
 
     [Test]
     [NotInParallel("client-lifetime-telemetry")]
-    public async Task PropagationOnlyLogicalActivityShouldNotCollectLifetimeSource()
+    public void PropagationOnlyCallScopeShouldNotCollectLifetimeSource()
     {
-        Activity? logicalActivity = null;
-        using var listener = new ActivityListener
+        using var activity = new Activity("propagation-only")
         {
-            ShouldListenTo = static source => source.Name == "SharpLink.Client",
-            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
-                ActivitySamplingResult.PropagationData,
-            ActivityStopped = activity =>
-            {
-                if (activity.DisplayName == "sharplink.rpc")
-                    logicalActivity = activity;
-            }
+            IsAllDataRequested = false
         };
-        ActivitySource.AddActivityListener(listener);
+        activity.Start();
 
-        var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(
-            transport,
-            builder => builder.UseRequestTimeout());
-        await client.ConnectAsync();
+        var scope = new SharpLinkTelemetry.CallScope(
+            "client",
+            Method(methodId: 906),
+            activity,
+            started: 0);
+        scope.SetTag(LifetimeSourceTag, "client_recommended_timeout");
 
-        await InvokeUnaryAsync(client, transport, Method(methodId: 906));
-
-        var capturedActivity = logicalActivity ??
-            throw new Exception("propagation-only logical activity should still be created");
-        Ensure(!capturedActivity.IsAllDataRequested,
-            "propagation-only logical activity should not request tag data");
-        Ensure(capturedActivity.GetTagItem(LifetimeSourceTag) is null,
-            "propagation-only logical activity must not collect the lifetime source tag");
+        Ensure(activity.GetTagItem(LifetimeSourceTag) is null,
+            "a propagation-only call scope must not collect the lifetime source tag");
     }
 
     private static async Task<string?> CaptureLifetimeSourceAsync(
