@@ -107,6 +107,64 @@ public class ServerStopOwnershipCharacterizationTests
 
     [Test]
     [NotInParallel]
+    public async Task PreCancelledStopCallerShouldStillStartSharedCleanup()
+    {
+        var listener = new BlockingListener();
+        await using var server = CreateServer(listener);
+        var runTask = server.RunAsync().AsTask();
+        await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var connection = CreateState();
+        Ensure(connection.MarkReady(null), "connection ready");
+        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+            "the synthetic invocation must own server and connection call capacity");
+
+        using var callerCancellation = new CancellationTokenSource();
+        callerCancellation.Cancel();
+
+        var cancelledCallerWait = server.StopAsync(TimeSpan.FromSeconds(30), callerCancellation.Token).AsTask();
+        var sharedStop = GetSharedStopTask(server)
+            ?? throw new Exception("a pre-cancelled StopAsync caller must still establish shared cleanup");
+
+        Ensure(GetServerStateName(server) == "Draining",
+            "StopAsync must establish shared shutdown before applying a pre-cancelled caller token");
+        Ensure(!sharedStop.IsCompleted,
+            "the shared cleanup must continue waiting for the active call under the established grace period");
+        Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
+            "a pre-cancelled caller must not bypass active-call ownership");
+
+        var callerObservedCancellation = false;
+        try
+        {
+            await cancelledCallerWait.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (OperationCanceledException) when (callerCancellation.IsCancellationRequested)
+        {
+            callerObservedCancellation = true;
+        }
+
+        Ensure(callerObservedCancellation,
+            "the pre-cancelled StopAsync token must cancel only that caller's wait");
+        Ensure(ReferenceEquals(sharedStop, GetSharedStopTask(server)) && !sharedStop.IsCompleted,
+            "pre-cancelled caller cancellation must not cancel or replace shared cleanup");
+        Ensure(GetServerStateName(server) == "Draining",
+            "shared cleanup must remain in Draining after the pre-cancelled caller exits");
+
+        var laterStop = server.StopAsync(TimeSpan.FromSeconds(30)).AsTask();
+        Ensure(ReferenceEquals(sharedStop, laterStop),
+            "a later uncancelled StopAsync caller must join the cleanup started by the pre-cancelled caller");
+
+        server.ReleaseCall(connection);
+        await laterStop.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(GetServerStateName(server) == "Stopped",
+            "the shared cleanup must complete normally after the active call releases ownership");
+        await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await connection.CloseAsync();
+        await connection.ServiceCleanupTask;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FirstStopOwnerShouldOwnSharedGraceTimeout()
     {
         var longFirstListener = new BlockingListener();
