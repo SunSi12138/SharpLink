@@ -1,0 +1,71 @@
+name: tmp-pr443-dispatch-extended
+
+on:
+  push:
+    branches:
+      - fix/282-explicit-timeout-policy
+    paths:
+      - .github/workflows/tmp-pr443-dispatch-extended.yml
+
+permissions:
+  contents: write
+  actions: write
+  pull-requests: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/282-explicit-timeout-policy
+          fetch-depth: 0
+
+      - name: Remove helper and publish final head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/tmp-pr443-dispatch-extended.yml
+          git commit -m "ci: remove temporary PR 443 Extended dispatcher"
+          git push origin HEAD:fix/282-explicit-timeout-policy
+          echo "FINAL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Wait for final-head Fast and CodeQL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$FINAL_SHA&per_page=100")"
+            fast="$(jq -r '[.workflow_runs[] | select(.name == "PR Fast" and .event == "pull_request")] | sort_by(.created_at) | last | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end' <<<"$runs")"
+            codeql="$(jq -r '[.workflow_runs[] | select(.name == "CodeQL" and .event == "pull_request")] | sort_by(.created_at) | last | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end' <<<"$runs")"
+            echo "Fast=$fast CodeQL=$codeql"
+
+            if [[ "$fast" == "completed:success" && "$codeql" == "completed:success" ]]; then
+              exit 0
+            fi
+            if [[ "$fast" == completed:* && "$fast" != "completed:success" ]]; then
+              echo "PR Fast failed for $FINAL_SHA" >&2
+              exit 1
+            fi
+            if [[ "$codeql" == completed:* && "$codeql" != "completed:success" ]]; then
+              echo "CodeQL failed for $FINAL_SHA" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for Fast + CodeQL on $FINAL_SHA" >&2
+          exit 1
+
+      - name: Dispatch PR Extended for final head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/pr-extended.yml/dispatches" \
+            -f ref=fix/282-explicit-timeout-policy
