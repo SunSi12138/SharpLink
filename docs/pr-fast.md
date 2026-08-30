@@ -6,16 +6,17 @@ The stable blocking-shaped job/status is `fast`. The job has a 5-minute hard tim
 
 ## Fast checks
 
-The Fast job intentionally contains only the high-signal bounded checks assigned to Fast by #374:
+The Fast job intentionally contains only the high-signal bounded checks assigned to Fast by #374, including the verifier regression coverage that protects the maintainability baseline gate:
 
 1. Restore.
 2. Whitespace formatting verification.
-3. Maintainability debt baseline gate.
-4. Release build.
-5. Generated-assembly Runtime dependency guard.
-6. Unit tests.
-7. Generator tests.
-8. Load-test component unit tests.
+3. Maintainability verifier regression tests.
+4. Maintainability debt baseline gate.
+5. Release build.
+6. Generated-assembly Runtime dependency guard.
+7. Unit tests.
+8. Generator tests.
+9. Load-test component unit tests.
 
 Debug build, integration tests, NativeAOT smoke, packaging checks, package smoke, demo/load smoke, chaos validation, and codec compatibility remain in their existing workflows until #376 moves them deliberately.
 
@@ -26,6 +27,7 @@ Run these commands from the repository root with the .NET 10 SDK available:
 ```bash
 dotnet restore Sharplink.slnx
 dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+python3 eng/test-verify-maintainability.py
 bash eng/check-maintainability.sh
 dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 ./eng/verify-generated-assembly-dependencies.sh
@@ -38,6 +40,8 @@ dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csp
 
 #374 measured representative fresh `PR Quick` runs at 6m 47s to 7m 06s, with a 7m 03s median. The bounded Fast-member steps from the sampled Quick job accounted for roughly two minutes before normal setup and cleanup overhead, which is the basis for the <=3-minute Fast target.
 
-Every `PR Fast / fast` run records its own elapsed job duration in the GitHub Actions job summary and displays it next to the <=3-minute target, 5-minute hard timeout, and previous 7m 03s `PR Quick` median. This keeps the comparison visible on each run instead of relying on a stale one-off measurement.
+Every `PR Fast / fast` run records `Fast validation steps elapsed` in the GitHub Actions job summary. This timer starts in the first workflow step and stops immediately after the final validation step, so it intentionally excludes GitHub runner `Set up job` time and action post-cleanup. It must not be described as the complete job duration.
 
-The Fast tier must not expand its timeout to absorb checks that belong to Extended or Nightly. If normal successful runs exceed the 3-minute target, Fast membership should be re-evaluated.
+For a like-for-like comparison with the #374 `PR Quick` active-duration baseline, use the completed GitHub Actions job `started_at` and `completed_at` timestamps. The first live `PR Fast / fast` run on #437 completed successfully in 2m 18s by that full-job measure, versus the 7m 03s previous `PR Quick` median. The job summary keeps the <=3-minute full-job target, 5-minute hard timeout, and previous baseline visible while clearly identifying the narrower in-job timer scope.
+
+The Fast tier must not expand its timeout to absorb checks that belong to Extended or Nightly. If normal successful full-job durations exceed the 3-minute target, Fast membership should be re-evaluated.
