@@ -132,17 +132,8 @@ jobs:
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-restore -c Release -o artifacts/nuget -v minimal
 
-      - name: Verify SDK Contains Generator
-        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
-
-      - name: Verify package metadata, XML documentation, and symbols
-        run: ./eng/verify-packages.sh artifacts/nuget
-
-      - name: Verify Hosting direct Runtime dependency
-        run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
-
-      - name: Verify Abstractions has no DI dependency
-        run: ./eng/verify-abstractions-package-dependency.sh artifacts/nuget
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
 
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
@@ -150,15 +141,8 @@ jobs:
       - name: Verify Protocol v2 Cross-version Matrix
         run: ./eng/verify-protocol-v2-cross-version.sh
 
-      - name: Restore Package Smoke
-        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
-        env:
-          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
-
-      - name: Run Package Smoke
-        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
-        env:
-          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
 
       - name: Verify packages exist
         run: |
