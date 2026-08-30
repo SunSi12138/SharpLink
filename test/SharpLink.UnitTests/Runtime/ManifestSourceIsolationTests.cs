@@ -79,6 +79,7 @@ public sealed class ManifestSourceIsolationTests
         {
             await using var client = SharpClientBuilder.Create()
                 .UseGeneratedManifestSource(clientSource)
+                .DisableRequestTimeout()
                 .UseTransport(clientTransport)
                 .Build();
             await using var server = SharpLinkServerBuilder.Create()
@@ -95,6 +96,7 @@ public sealed class ManifestSourceIsolationTests
                 "the Server service plan must materialize once from the same snapshot as its Runtime Codec");
 
             var planBuilder = SharpClientBuilder.Create()
+                .DisableRequestTimeout()
                 .UseTransport(new TrackingClientTransport());
             var plan = planBuilder.CompileForMultiCluster([clientManifest]);
             var clientPlanSnapshot = plan.RuntimeContext.GeneratedManifests;
@@ -201,10 +203,12 @@ public sealed class ManifestSourceIsolationTests
 
         await using var clientA = SharpClientBuilder.Create()
             .UseGeneratedManifestSource(sourceA)
+            .DisableRequestTimeout()
             .UseTransport(new TrackingClientTransport())
             .Build();
         await using var clientB = SharpClientBuilder.Create()
             .UseGeneratedManifestSource(sourceB)
+            .DisableRequestTimeout()
             .UseTransport(new TrackingClientTransport())
             .Build();
         Ensure(clientA.Get<IContractA>() is ContractAProxy && clientB.Get<IContractB>() is ContractBProxy,
@@ -218,6 +222,7 @@ public sealed class ManifestSourceIsolationTests
         ]);
         var failure = Capture(() => SharpClientBuilder.Create()
             .UseGeneratedManifestSource(conflictingSource)
+            .DisableRequestTimeout()
             .UseTransport(conflictingTransport)
             .Build());
 
@@ -269,6 +274,7 @@ public sealed class ManifestSourceIsolationTests
 
         var clientFailure = Capture(() => SharpClientBuilder.Create()
             .UseGeneratedManifestSource(clientSource)
+            .DisableRequestTimeout()
             .Build());
         var serverFailure = Capture(() => SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(serverSource)
@@ -298,6 +304,7 @@ public sealed class ManifestSourceIsolationTests
         var clients = await Task.WhenAll(clientTransports.Select(transport => Task.Run(() =>
             SharpClientBuilder.Create()
                 .UseGeneratedManifestSource(source)
+                .DisableRequestTimeout()
                 .UseTransport(transport)
                 .Build())));
         var servers = await Task.WhenAll(serverListeners.Select(listener => Task.Run(() =>

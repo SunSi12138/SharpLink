@@ -10,10 +10,13 @@
 
 ```csharp
 var client = SharpLinkMultiClusterClientBuilder.Create()
+    .UseRequestTimeout()
     .AddCluster("orders", child => child.UseTcp("127.0.0.1", 19091))
     .AddCluster("payments", child => child.UseTcp("127.0.0.1", 19092))
     .Build();
 ```
+
+Coordinator 也必须显式选择 child Client 的 request-timeout policy。`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 fallback；slot 配置委托仍可为该 child 显式覆盖 coordinator policy。运行时 Add/Replace 同样继承当前 coordinator policy，除非对应 child 配置覆盖它。
 
 路由粒度是“拥有契约的程序集”，不是单个接口。一个契约程序集只能静态归属一个 cluster；需要不同目的地时拆分契约程序集。`demo/MultiCluster` 用两个独立契约项目证明 orders/payments 路由。
 

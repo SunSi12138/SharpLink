@@ -163,7 +163,6 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
-    // The rollback plugin exposes a process-wide environment switch and disposal counter.
     [NotInParallel("rollback-plugin")]
     public void ServerCompileValidationFailureShouldNotMaterializeRuntimeContext()
     {
@@ -193,7 +192,6 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
-    // The rollback plugin exposes a process-wide environment switch and disposal counter.
     [NotInParallel("rollback-plugin")]
     public void ServerFinalMaterializationFailureShouldDisposeRuntimeContextAndPreserveBothFailures()
     {
@@ -390,7 +388,8 @@ public class BuilderOwnershipRollbackTests
 
     private static SharpClientBuilder CreateClientBuilder()
         => SharpClientBuilder.Create()
-            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout();
 
     private static SharpLinkServerBuilder CreateServerBuilder(
         params ISharpLinkGeneratedAssemblyManifest[] manifests)
@@ -401,6 +400,7 @@ public class BuilderOwnershipRollbackTests
 
     private static SharpLinkMultiClusterClientBuilder CreateMultiClusterBuilder()
         => SharpLinkMultiClusterClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseGeneratedDiscoverySources(
                 FixedGeneratedManifestSource.Empty,
                 FixedGeneratedClusterRouteSource.Empty);

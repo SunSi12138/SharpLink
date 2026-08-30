@@ -45,6 +45,7 @@ public sealed class SharpLinkMultiClusterClientTests
         });
 
         await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseGeneratedDiscoverySources(manifestSource, routeSource)
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .AddCluster(
@@ -96,7 +97,9 @@ public sealed class SharpLinkMultiClusterClientTests
 
         var prepared = SharpLinkMultiClusterClientBuilder.PrepareRuntimeCluster(
             "orders",
-            SharpClientBuilder.Create().UseTransport(new TestClientTransportFactory()),
+            SharpClientBuilder.Create()
+                .DisableRequestTimeout()
+                .UseTransport(new TestClientTransportFactory()),
             allowDynamicContracts: false,
             manifestSource,
             routeSource);
@@ -209,6 +212,7 @@ public sealed class SharpLinkMultiClusterClientTests
             unrelatedRoute = RegisterUnconfiguredRouteManifest();
 
             await using (var client = SharpLinkMultiClusterClientBuilder.Create()
+                .DisableRequestTimeout()
                 .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
                 .Build())
             {
@@ -455,7 +459,7 @@ public sealed class SharpLinkMultiClusterClientTests
         var rejectedTransport = new ControlledMutationTransportFactory();
         var replacementFailure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
             cluster,
-            childBuilder => childBuilder.UseTransport(rejectedTransport),
+            childBuilder => childBuilder.DisableRequestTimeout().UseTransport(rejectedTransport),
             TimeSpan.Zero).AsTask());
         child.RejectUnregister(new InvalidOperationException("controlled child unregister failed"));
         var firstFailure = await CaptureExceptionAsync(first);
@@ -679,7 +683,9 @@ public sealed class SharpLinkMultiClusterClientTests
 
         var prepared = SharpLinkMultiClusterClientBuilder.PrepareReplacementCluster(
             existingSlot,
-            SharpClientBuilder.Create().UseTransport(replacementTransport));
+            SharpClientBuilder.Create()
+                .DisableRequestTimeout()
+                .UseTransport(replacementTransport));
 
         Ensure(replacementTransport.DisposeCount == 0,
             "successful replacement preparation must transfer its child instead of cleaning it");
@@ -869,7 +875,7 @@ public sealed class SharpLinkMultiClusterClientTests
 
         var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
             "heavy",
-            child => child.UseTransport(rejectedTransport),
+            child => child.DisableRequestTimeout().UseTransport(rejectedTransport),
             TimeSpan.Zero).AsTask());
 
         Ensure(failure is InvalidOperationException exception &&
@@ -1582,6 +1588,7 @@ public sealed class SharpLinkMultiClusterClientTests
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
         IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> routes)
         => SharpLinkMultiClusterClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseGeneratedDiscoverySources(
                 new FixedGeneratedManifestSource(manifests),
                 new FixedGeneratedClusterRouteSource(routes));
@@ -1613,7 +1620,11 @@ public sealed class SharpLinkMultiClusterClientTests
         IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest>? routes = null)
         => client.AddClusterAsync(
             cluster,
-            configure,
+            child =>
+            {
+                child.DisableRequestTimeout();
+                configure(child);
+            },
             configureSlot,
             cancellationToken,
             new FixedGeneratedManifestSource(manifests ?? [Manifest.Instance]),

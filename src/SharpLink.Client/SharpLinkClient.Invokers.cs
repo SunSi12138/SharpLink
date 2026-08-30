@@ -13,11 +13,10 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControl(
+        var control = ResolveCallControlForInvocation(
+            method,
             metadata,
-            includeClientDefault: true,
-            method.HasMethodTimeout,
-            method.MethodTimeout);
+            includeClientDefault: true);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -58,11 +57,10 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControl(
+        var control = ResolveCallControlForInvocation(
+            method,
             metadata,
-            includeClientDefault: false,
-            method.HasMethodTimeout,
-            method.MethodTimeout);
+            includeClientDefault: false);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -110,11 +108,10 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControl(
+        var control = ResolveCallControlForInvocation(
+            method,
             metadata,
-            includeClientDefault: false,
-            method.HasMethodTimeout,
-            method.MethodTimeout);
+            includeClientDefault: false);
         var interceptors = Volatile.Read(ref _clientInterceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -158,8 +155,10 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
     {
-        var control = ResolveCallControl(
-            metadata, false, method.HasMethodTimeout, method.MethodTimeout);
+        var control = ResolveCallControlForInvocation(
+            method,
+            metadata,
+            includeClientDefault: false);
         return InvokeServerStreamingResolved(
             method, request, requestCodec, responseCodec, control, cancellationToken);
     }
@@ -238,8 +237,10 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var control = ResolveCallControl(
-            metadata, false, method.HasMethodTimeout, method.MethodTimeout);
+        var control = ResolveCallControlForInvocation(
+            method,
+            metadata,
+            includeClientDefault: false);
         return InvokeDuplexStreamingResolved(
             method, request, requestCodec, responseCodec, streams, control, cancellationToken);
     }

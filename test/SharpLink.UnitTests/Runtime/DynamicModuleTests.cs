@@ -1,12 +1,18 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
+using SharpLink.Client;
+using SharpLink.Sdk;
 using SharpLink.Server;
+using SharpLink.UnitTests.Client;
 
 namespace SharpLink.UnitTests.Runtime;
 
 public class DynamicModuleTests
 {
+    private const string LifetimeSourceTag = "rpc.sharplink.lifetime_source";
+
     [Test]
     public void DrainShouldBlockNewLeasesAndWaitUntilEveryConcurrentLeaseIsReleased()
     {
@@ -154,6 +160,88 @@ public class DynamicModuleTests
         provider.Advance(TimeSpan.FromHours(1));
         Ensure(wait.IsCompletedSuccessfully && wait.Result,
             "later fake-time advancement must not change a successful drain result");
+    }
+
+    [Test]
+    [NotInParallel("client-lifetime-telemetry")]
+    public async Task DynamicServerStreamExpiredInheritedBudgetShouldEmitFailedLogicalCallBeforeEnumeration()
+    {
+        const int methodId = 1901;
+        Activity? logicalActivity = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "SharpLink.Client",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (activity.DisplayName == "sharplink.rpc" &&
+                    string.Equals(
+                        activity.GetTagItem("rpc.sharplink.method_id")?.ToString(),
+                        methodId.ToString(),
+                        StringComparison.Ordinal))
+                {
+                    logicalActivity = activity;
+                }
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseRequestTimeout());
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest();
+        using var registration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(DynamicModuleTests).Assembly,
+            manifest,
+            registration);
+        var channel = new SharpLinkModuleRpcChannel(client, module);
+
+        var provider = new ManualTimeProvider();
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
+        provider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(2));
+        using var parent = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
+            "parent",
+            null,
+            deadline,
+            provider));
+
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: methodId,
+            Kind: RpcMethodKind.ServerStreaming,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: false,
+            MethodTimeout: null);
+        var request = default(RpcEmptyRequest);
+        SharpLinkException? failure = null;
+        try
+        {
+            _ = channel.InvokeServerStreamingAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                metadata: null,
+                cancellationToken: default);
+        }
+        catch (SharpLinkException exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(failure?.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "expired inherited budget should terminate dynamic server streaming before deferred enumeration");
+        var activity = logicalActivity ?? throw new Exception(
+            "expired inherited budget should emit a logical client activity for dynamic server streaming");
+        Ensure(activity.GetTagItem(LifetimeSourceTag)?.ToString() == "inherited_time_budget",
+            "dynamic server streaming expired budget lifetime source");
+        Ensure(activity.Status == ActivityStatusCode.Error,
+            "dynamic server streaming expired budget logical activity should fail");
     }
 
     private static void Ensure(bool condition, string message)

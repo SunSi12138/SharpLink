@@ -50,11 +50,14 @@ var serverTask = server.RunAsync(stopping.Token);
 
 var client = SharpClientBuilder.Create()
     .UseTcp("127.0.0.1", 19090)
+    .UseRequestTimeout()
     .Build();
 
 await client.ConnectAsync();
 var value = await client.Get<ICalculator>().AddAsync(20, 22, CancellationToken.None);
 ```
+
+每个 Client 都必须在 Build 前显式选择请求超时策略：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 则明确关闭 Client-wide fallback。没有选择策略时 Build 会失败；方法 `[Timeout]` 和继承的父调用 `TimeBudget` 仍按各自规则生效。
 
 Client 和 Server 都是异步可释放对象。生产代码必须在停止时先阻止新工作，再 `DisposeAsync`，并观察后台运行任务；不要用进程退出替代资源收口。
 

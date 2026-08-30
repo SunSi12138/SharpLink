@@ -29,6 +29,7 @@ public static class DemoTcp
     {
         var builder = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseRequestTimeout()
             ;
 
         configure?.Invoke(builder);

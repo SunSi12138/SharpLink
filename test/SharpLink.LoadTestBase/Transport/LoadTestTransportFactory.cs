@@ -86,6 +86,8 @@ public static class LoadTestTransportFactory
             builder.DisableRequestTimeout();
         else if (requestTimeout is { } timeout)
             builder.UseRequestTimeout(timeout);
+        else
+            builder.UseRequestTimeout();
 
         return transport switch
         {
@@ -180,6 +182,8 @@ public static class LoadTestTransportFactory
             clientAnonymous.DisableRequestTimeout();
         else if (requestTimeout is { } timeout)
             clientAnonymous.UseRequestTimeout(timeout);
+        else
+            clientAnonymous.UseRequestTimeout();
 
         return new LocalHarness(serverAnonymous, clientAnonymous.Build(), static () => { });
     }

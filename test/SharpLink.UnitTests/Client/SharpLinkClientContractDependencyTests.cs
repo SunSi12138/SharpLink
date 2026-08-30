@@ -19,6 +19,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task DynamicDependencyValidationShouldIncludeContractDependencies()
     {
         await using var client = SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
         var implementation = client.GetType();
@@ -44,6 +45,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task ClientUnregisterShouldProtectContractDependencies()
     {
         await using var client = SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
         var implementation = client.GetType();
@@ -99,6 +101,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task StaleApi4DescriptorAbiShouldBeRejectedBeforeManifestActivation()
     {
         await using var client = SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
         var assemblyName = new AssemblyName(

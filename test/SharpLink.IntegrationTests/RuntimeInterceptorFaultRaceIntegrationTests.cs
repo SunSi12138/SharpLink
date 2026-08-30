@@ -6,7 +6,7 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
     public async Task ClientReplacementShouldSerializeWithFaultPublication()
     {
         var transport = new GatedFailClientTransportFactory();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTransport(transport)
             .Build();
 

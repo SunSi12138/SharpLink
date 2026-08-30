@@ -8,17 +8,44 @@ internal sealed partial class SharpLinkClient
         bool hasMethodTimeout,
         TimeSpan? methodTimeout)
     {
+        var lifetimeSource = ClientCallLifetimeSource.None;
+        return ResolveCallControl(
+            metadata,
+            includeClientDefault,
+            hasMethodTimeout,
+            methodTimeout,
+            ref lifetimeSource);
+    }
+
+    private ResolvedCallControl ResolveCallControl(
+        SharpLinkMetadata? metadata,
+        bool includeClientDefault,
+        bool hasMethodTimeout,
+        TimeSpan? methodTimeout,
+        ref ClientCallLifetimeSource lifetimeSource)
+    {
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
 
         // Method policy overrides the client-wide fallback. These are policy-selection layers,
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
         // the client-wide value even on call shapes that do not otherwise use the client default.
-        TimeSpan? selectedTimeout = hasMethodTimeout
-            ? methodTimeout ?? (_hasRequestTimeout ? _requestTimeoutValue : null)
-            : includeClientDefault && _hasRequestTimeout
-                ? _requestTimeoutValue
-                : null;
+        TimeSpan? selectedTimeout;
+        if (hasMethodTimeout && methodTimeout is { } explicitMethodTimeout)
+        {
+            selectedTimeout = explicitMethodTimeout;
+            lifetimeSource = ClientCallLifetimeSource.MethodTimeout;
+        }
+        else if ((hasMethodTimeout || includeClientDefault) && _hasRequestTimeout)
+        {
+            selectedTimeout = _requestTimeoutValue;
+            lifetimeSource = _requestTimeoutSource.ToLifetimeSource();
+        }
+        else
+        {
+            selectedTimeout = null;
+            lifetimeSource = ClientCallLifetimeSource.None;
+        }
 
         var timeProvider = _runtimeContext.TimeProvider;
         var localAnchor = timeProvider.GetTimestamp();
@@ -42,7 +69,10 @@ internal sealed partial class SharpLinkClient
                 comparisonTimestamp = timeProvider.GetTimestamp();
                 inheritedDeadline = ambientCall.LocalRpcDeadline;
                 if (inheritedDeadline.IsExpired(comparisonTimestamp))
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
                     throw CreateDeadlineExceededException();
+                }
             }
             else
             {
@@ -54,14 +84,20 @@ internal sealed partial class SharpLinkClient
                 var inheritedRemaining = ambientCall.LocalRpcDeadline.GetRemaining(inheritedTimeProvider);
                 comparisonTimestamp = timeProvider.GetTimestamp();
                 if (inheritedRemaining <= TimeSpan.Zero)
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
                     throw CreateDeadlineExceededException();
+                }
 
                 var projectionElapsed = SharpLinkTime.GetElapsed(
                     projectionStarted,
                     comparisonTimestamp,
                     timeProvider.TimestampFrequency);
                 if (projectionElapsed >= inheritedRemaining)
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
                     throw CreateDeadlineExceededException();
+                }
                 inheritedRemaining -= projectionElapsed;
                 inheritedDeadline = RpcDeadline.Create(
                     inheritedRemaining,
@@ -70,7 +106,10 @@ internal sealed partial class SharpLinkClient
             }
 
             if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, comparisonTimestamp))
+            {
                 deadline = inheritedDeadline;
+                lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
+            }
         }
 
         if (deadline.IsExpired(timeProvider))
@@ -78,7 +117,8 @@ internal sealed partial class SharpLinkClient
         return new ResolvedCallControl(
             deadline,
             metadata is { Count: > 0 } ? metadata : null,
-            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null);
+            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null,
+            lifetimeSource);
     }
 
     private async ValueTask DelayForRetryOrAdmissionAsync(
@@ -145,5 +185,6 @@ internal sealed partial class SharpLinkClient
     internal readonly record struct ResolvedCallControl(
         RpcDeadline Deadline,
         SharpLinkMetadata? Metadata,
-        ClientLogicalCallState? LogicalCall);
+        ClientLogicalCallState? LogicalCall,
+        ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None);
 }

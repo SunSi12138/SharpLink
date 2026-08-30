@@ -174,6 +174,7 @@ internal sealed class ClientRuntimeComposition
         TimeSpan heartbeatTimeout,
         bool hasRequestTimeout,
         TimeSpan requestTimeout,
+        ClientRequestTimeoutSource requestTimeoutSource,
         ISharpLinkClientAuthenticator? authenticator,
         SharpLinkProtocolOptions protocolOptions,
         RpcSessionFlushOptions? rpcSessionFlushOptions,
@@ -220,6 +221,7 @@ internal sealed class ClientRuntimeComposition
         HeartbeatTimeout = heartbeatTimeout;
         HasRequestTimeout = hasRequestTimeout;
         RequestTimeout = requestTimeout;
+        RequestTimeoutSource = requestTimeoutSource;
         Authenticator = authenticator;
         ProtocolOptions = protocolOptions;
         RpcSessionFlushOptions = rpcSessionFlushOptions;
@@ -249,6 +251,8 @@ internal sealed class ClientRuntimeComposition
     internal bool HasRequestTimeout { get; }
 
     internal TimeSpan RequestTimeout { get; }
+
+    internal ClientRequestTimeoutSource RequestTimeoutSource { get; }
 
     internal ISharpLinkClientAuthenticator? Authenticator { get; }
 
