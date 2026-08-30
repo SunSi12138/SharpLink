@@ -138,6 +138,9 @@ public interface ISharpLinkGeneratedAssemblyManifest
     /// <summary>Gets the assembly that owns this manifest.</summary>
     Assembly OwnerAssembly { get; }
 
+    /// <summary>Gets the deterministic identity of the complete RPC-visible semantic graph.</summary>
+    RpcHash128 RpcAssemblyHash => default;
+
     /// <summary>Gets the canonical compile-time descriptor used by downstream analyzers.</summary>
     string CompileTimeDescriptor { get; }
 
