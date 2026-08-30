@@ -79,8 +79,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Client/SharpLinkClient.Invokers.cs",
-      "maxLoc": 1099,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1100,
+      "reason": "Issue #282 adds the reviewed terminal call-control telemetry invocation seam; existing invoker decomposition debt remains tracked by issue #350."
     },
     {
       "domain": "source",
