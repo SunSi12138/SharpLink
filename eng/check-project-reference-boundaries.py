@@ -240,7 +240,7 @@ def _expand_import(value: str, source: Path, project: Path, root: Path, violatio
 
 def _closure(project: Path, root: Path, violations: list[str]) -> list[tuple[Path, ET.Element]]:
     queue = [project.resolve()]
-    for name in ("Directory.Build.props", "Directory.Build.targets"):
+    for name in ("Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props"):
         path = _automatic(project, root, name)
         if path is not None:
             queue.append(path.resolve())
@@ -265,14 +265,14 @@ def _closure(project: Path, root: Path, violations: list[str]) -> list[tuple[Pat
 def _references(xml: ET.Element) -> Iterable[tuple[ET.Element, bool, bool]]:
     parents = {child: parent for parent in xml.iter() for child in parent}
     for element in xml.iter():
-        if _local(element.tag) != "ProjectReference":
+        if _local(element.tag).lower() != "projectreference":
             continue
         parent = parents.get(element)
         in_definition = in_target = False
         while parent is not None:
-            name = _local(parent.tag)
-            in_definition |= name == "ItemDefinitionGroup"
-            in_target |= name == "Target"
+            name = _local(parent.tag).lower()
+            in_definition |= name == "itemdefinitiongroup"
+            in_target |= name == "target"
             parent = parents.get(parent)
         yield element, in_definition, in_target
 
