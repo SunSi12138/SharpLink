@@ -89,6 +89,38 @@ public class SharpLinkClientLifetimeTelemetryTests
             "a sampled-out logical call must not write its lifetime source onto the ambient parent activity");
     }
 
+    [Test]
+    [NotInParallel("client-lifetime-telemetry")]
+    public async Task PropagationOnlyLogicalActivityShouldNotCollectLifetimeSource()
+    {
+        Activity? logicalActivity = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "SharpLink.Client",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.PropagationData,
+            ActivityStopped = activity =>
+            {
+                if (activity.DisplayName == "sharplink.rpc")
+                    logicalActivity = activity;
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseRequestTimeout());
+        await client.ConnectAsync();
+
+        await InvokeUnaryAsync(client, transport, Method(methodId: 906));
+
+        Ensure(logicalActivity is not null, "propagation-only logical activity should still be created");
+        Ensure(!logicalActivity.IsAllDataRequested, "propagation-only logical activity should not request tag data");
+        Ensure(logicalActivity.GetTagItem(LifetimeSourceTag) is null,
+            "propagation-only logical activity must not collect the lifetime source tag");
+    }
+
     private static async Task<string?> CaptureLifetimeSourceAsync(
         Action<SharpClientBuilder> configure,
         RpcMethodDescriptor method,
