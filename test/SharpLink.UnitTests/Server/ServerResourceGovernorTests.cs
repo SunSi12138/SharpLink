@@ -22,8 +22,8 @@ public class ServerResourceGovernorTests
         Ensure(connection.MarkReady(null), "connection ready");
         SetServerState(server, 2); // Running
 
-        SharpLinkServer.ServerRequestPermit? firstRequest = null;
-        SharpLinkServer.ServerRequestPermit? secondRequest = null;
+        ServerRequestPermit? firstRequest = null;
+        ServerRequestPermit? secondRequest = null;
         try
         {
             Ensure(server.TryReserveCall(connection, out firstRequest) ==
@@ -116,8 +116,8 @@ public class ServerResourceGovernorTests
         Ensure(connection.MarkReady(null), "connection ready");
         SetServerState(server, 2); // Running
 
-        SharpLinkServer.ServerRequestPermit? firstRequest = null;
-        SharpLinkServer.ServerRequestPermit? secondRequest = null;
+        ServerRequestPermit? firstRequest = null;
+        ServerRequestPermit? secondRequest = null;
         try
         {
             Ensure(server.TryReserveCall(connection, out firstRequest) ==
