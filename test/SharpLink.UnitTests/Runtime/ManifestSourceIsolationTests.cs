@@ -658,6 +658,7 @@ public sealed class ManifestSourceIsolationTests
             return new DisposableScope(counters);
         }
     }
+
     private sealed class DisposableScope(DisposableScopeCounters counters) : IRpcCodecAdapterScope
     {
         private int _disposed;
