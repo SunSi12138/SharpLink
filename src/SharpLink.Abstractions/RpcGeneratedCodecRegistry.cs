@@ -9,12 +9,6 @@ public interface IRpcGeneratedCodecFactory
     /// <summary>Gets the deterministic identity of the finalized Codec semantics.</summary>
     RpcHash128 CodecHash => default;
 
-    /// <summary>Gets the legacy deterministic schema identifier.</summary>
-    string SchemaId { get; }
-
-    /// <summary>Gets the legacy binary wire-format identity.</summary>
-    string WireFormatId { get; }
-
     /// <summary>Gets the adapter lifecycle identity, or null for adapter-free Codecs.</summary>
     string? AdapterId { get; }
 
