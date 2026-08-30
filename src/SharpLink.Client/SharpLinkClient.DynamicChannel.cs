@@ -85,8 +85,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
     {
         var requestValue = request;
-        var control = inner.ResolveCallControl(
-            metadata, false, method.HasMethodTimeout, method.MethodTimeout);
+        var control = inner.ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
         return InvokeServerStreamingDeferred(
             method, requestValue, requestCodec, responseCodec, control, cancellationToken);
     }
@@ -98,8 +97,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     {
         var requestValue = request;
         var streamsValue = streams;
-        var control = inner.ResolveCallControl(
-            metadata, false, method.HasMethodTimeout, method.MethodTimeout);
+        var control = inner.ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
         return InvokeDuplexStreamingDeferred(
             method, requestValue, requestCodec, responseCodec, streamsValue, control, cancellationToken);
     }

@@ -29,6 +29,7 @@ builder.Services.AddSharpLinkClient(client =>
 {
     client
         .UseTcp("127.0.0.1", port)
+        .UseRequestTimeout()
         ;
 });
 

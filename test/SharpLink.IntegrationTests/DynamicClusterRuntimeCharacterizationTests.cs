@@ -27,7 +27,7 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         TrackingTransportFactory? firstFactory = null;
         TrackingTransportFactory? replacementFactory = null;
         var factoryCreates = 0;
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(
                 resolver,
                 endpoint =>
@@ -87,7 +87,7 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         TrackingTransportFactory? firstFactory = null;
         TrackingTransportFactory? replacementFactory = null;
         var factoryCreates = 0;
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(
                 resolver,
@@ -145,7 +145,7 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         var resolver = new ControllableResolver(
             new SharpLinkEndpointSnapshot(1, [Endpoint("failing", 1, "red")]));
         var factory = new FailThenBlockReconnectFactory();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => factory)
             .Build();
 

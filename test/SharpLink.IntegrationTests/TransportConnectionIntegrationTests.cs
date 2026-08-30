@@ -263,7 +263,7 @@ public class TransportConnectionIntegrationTests
     public async Task ClientMalformedHandshakeShouldReleaseItsReadBeforeCompletingTheReader()
     {
         var connection = new CompletionJoiningTransportConnection();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTransport(new SingleConnectionClientFactory(connection))
             .Build();
 
@@ -444,7 +444,7 @@ public class TransportConnectionIntegrationTests
     public async Task TcpConnectWithoutServerShouldThrowSocketException()
     {
         var port = GetFreePort();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -464,7 +464,7 @@ public class TransportConnectionIntegrationTests
     public async Task NamedPipeConnectWithoutServerShouldHonorCancellation()
     {
         var pipeName = $"sharplink-int-no-server-{Guid.NewGuid():N}";
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseNamedPipe(pipeName)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -490,7 +490,7 @@ public class TransportConnectionIntegrationTests
             return;
 
         var socketPath = GetUniqueUdsPath();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseUds(socketPath)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -511,7 +511,7 @@ public class TransportConnectionIntegrationTests
     public async Task TcpConnectWithCanceledTokenShouldThrowOperationCanceledException()
     {
         var port = GetFreePort();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -549,7 +549,7 @@ public class TransportConnectionIntegrationTests
             {
             }
         }, CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120))
@@ -591,7 +591,7 @@ public class TransportConnectionIntegrationTests
             {
             }
         }, CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromSeconds(5))
@@ -673,7 +673,7 @@ public class TransportConnectionIntegrationTests
             await stream.FlushAsync();
         });
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -812,7 +812,7 @@ public class TransportConnectionIntegrationTests
             await stream.FlushAsync();
         });
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.MaxFramePayloadBytes = maxFramePayloadBytes)
@@ -873,7 +873,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
@@ -924,7 +924,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("unexpected-token"))
@@ -977,7 +977,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expired-token"))
@@ -1019,7 +1019,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
 
@@ -1058,7 +1058,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
 
@@ -1095,7 +1095,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .Build();
@@ -1129,7 +1129,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.MaxMetadataBytes = maxAuthenticationBytes)
@@ -1191,7 +1191,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
@@ -1237,12 +1237,12 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var firstClient = SharpClientBuilder.Create()
+        var firstClient = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("connection-a"))
             .Build();
-        var secondClient = SharpClientBuilder.Create()
+        var secondClient = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("connection-b"))
@@ -1317,7 +1317,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
@@ -1598,7 +1598,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(options => options.MaxFramePayloadBytes = clientLimit)
@@ -1631,7 +1631,7 @@ public class TransportConnectionIntegrationTests
 
     private static ISharpLinkClient BuildClientForEndpoint(TransportEndpoint endpoint)
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
@@ -1709,7 +1709,7 @@ public class TransportConnectionIntegrationTests
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
-            var clientBuilder = SharpClientBuilder.Create()
+            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 

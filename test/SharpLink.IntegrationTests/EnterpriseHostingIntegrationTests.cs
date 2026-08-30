@@ -226,7 +226,7 @@ public class EnterpriseHostingIntegrationTests
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             var server = builder.Build();
             var serverTask = Task.Run(() => server.RunAsync(serverCts.Token).AsTask());
-            var client = SharpClientBuilder.Create()
+            var client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))

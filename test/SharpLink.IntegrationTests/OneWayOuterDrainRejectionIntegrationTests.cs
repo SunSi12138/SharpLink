@@ -130,7 +130,7 @@ public class OneWayOuterDrainRejectionIntegrationTests
                 () => server.RunAsync(cts.Token).AsTask(),
                 CancellationToken.None);
 
-            var client = SharpClientBuilder.Create()
+            var client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                 .UseRuntime(runtimeConfigure)

@@ -12,6 +12,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
+        TagLifetimeSource(scope, control.LifetimeSource);
         try
         {
             ValueTask<TResponse> invocation;
@@ -45,6 +46,7 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
+        TagLifetimeSource(scope, control.LifetimeSource);
         try
         {
             ValueTask invocation;
@@ -80,6 +82,7 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
+        TagLifetimeSource(scope, control.LifetimeSource);
         try
         {
             ValueTask<TResponse> invocation;
@@ -116,7 +119,7 @@ internal sealed partial class SharpLinkClient
                 method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
             : InvokeServerStreamingCore(
                 method, request, requestCodec, responseCodec, control, cancellationToken);
-        return ObserveStream(method, stream);
+        return ObserveStream(method, stream, control.LifetimeSource);
     }
 
     private IAsyncEnumerable<TResponse> InvokeDuplexStreamingWithTelemetry<TRequest, TResponse, TStreams>(
@@ -135,7 +138,7 @@ internal sealed partial class SharpLinkClient
                 method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
             : InvokeDuplexStreamingCore(
                 method, request, requestCodec, responseCodec, streams, control, cancellationToken);
-        return ObserveStream(method, stream);
+        return ObserveStream(method, stream, control.LifetimeSource);
     }
 
     private static async ValueTask<T> ObserveCallAsync<T>(
@@ -173,16 +176,19 @@ internal sealed partial class SharpLinkClient
 
     private static IAsyncEnumerable<T> ObserveStream<T>(
         RpcMethodDescriptor method,
-        IAsyncEnumerable<T> stream)
-        => new TelemetryAsyncEnumerable<T>(method, stream);
+        IAsyncEnumerable<T> stream,
+        ClientCallLifetimeSource lifetimeSource)
+        => new TelemetryAsyncEnumerable<T>(method, stream, lifetimeSource);
 
     private sealed class TelemetryAsyncEnumerable<T>(
         RpcMethodDescriptor method,
-        IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
+        IAsyncEnumerable<T> stream,
+        ClientCallLifetimeSource lifetimeSource) : IAsyncEnumerable<T>
     {
         public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         {
             var scope = SharpLinkTelemetry.StartClientCall(method);
+            TagLifetimeSource(scope, lifetimeSource);
             try
             {
                 return new TelemetryAsyncEnumerator<T>(
@@ -260,5 +266,14 @@ internal sealed partial class SharpLinkClient
                 "The response stream consumer stopped before remote completion."));
             SharpLinkTelemetry.RecordAbandonedCall("client", "consumer_abandoned");
         }
+    }
+
+    private static void TagLifetimeSource(
+        SharpLinkTelemetry.CallScope scope,
+        ClientCallLifetimeSource lifetimeSource)
+    {
+        var value = lifetimeSource.ToTelemetryValue();
+        if (value is not null)
+            scope.SetTag("rpc.sharplink.lifetime_source", value);
     }
 }

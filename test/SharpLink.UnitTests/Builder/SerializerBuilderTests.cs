@@ -40,10 +40,12 @@ public class SerializerBuilderTests
         var secondCodec = new TaggedCodec("second");
         var firstClient = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
+            .DisableRequestTimeout()
             .UseSerializer(type => type == typeof(Payload) ? firstCodec : null)
             .Build();
         var secondClient = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
+            .DisableRequestTimeout()
             .UseSerializer(type => type == typeof(Payload) ? secondCodec : null)
             .Build();
         var firstServer = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)

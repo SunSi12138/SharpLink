@@ -148,7 +148,10 @@ public class SharpLinkClientAccessorTests
     public async Task HostedStartShouldPreserveConnectAndCleanupFailures()
     {
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new ThrowingLifecycleTransportFactory()),
+            SharpClientBuilder.Create()
+                .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .UseTransport(new ThrowingLifecycleTransportFactory())
+                .DisableRequestTimeout(),
             new SharpLinkClientAccessor(),
             NullLoggerFactory.Instance);
 
@@ -179,6 +182,7 @@ public class SharpLinkClientAccessorTests
         var accessor = new SharpLinkClientAccessor();
         await using var service = new SharpLinkClientHostedService(
             SharpClientBuilder.Create()
+                .DisableRequestTimeout()
                 .UseEndpoints(
                 [
                     new SharpLinkEndpoint

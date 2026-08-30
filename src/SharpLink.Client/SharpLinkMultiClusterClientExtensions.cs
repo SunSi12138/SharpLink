@@ -68,10 +68,11 @@ public static class SharpLinkMultiClusterClientExtensions
         var builder = SharpClientBuilder.Create();
         try
         {
+            var control = GetLifecycleControl(client);
+            control.ConfigureChildBuilder(builder);
             configure(builder);
             var slotOptions = new SharpLinkMultiClusterSlotOptions();
             configureSlot?.Invoke(slotOptions);
-            var control = GetLifecycleControl(client);
             await control.AddClusterAsync(
                 cluster,
                 builder,
@@ -107,8 +108,9 @@ public static class SharpLinkMultiClusterClientExtensions
         var builder = SharpClientBuilder.Create();
         try
         {
-            configure(builder);
             var control = GetLifecycleControl(client);
+            control.ConfigureChildBuilder(builder);
+            configure(builder);
             await control.ReplaceClusterAsync(
                 cluster,
                 builder,
@@ -165,6 +167,8 @@ public static class SharpLinkMultiClusterClientExtensions
 
 internal interface ISharpLinkMultiClusterLifecycleControl
 {
+    void ConfigureChildBuilder(SharpClientBuilder builder);
+
     ValueTask AddClusterAsync(
         SharpLinkClusterKey cluster,
         SharpClientBuilder builder,

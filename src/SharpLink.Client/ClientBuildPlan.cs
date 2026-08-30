@@ -177,6 +177,7 @@ internal sealed class ClientBuildPlan
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
         TimeSpan? requestTimeout,
+        ClientRequestTimeoutSource requestTimeoutSource,
         RpcSessionFlushOptions? rpcSessionFlushOptions,
         ClientConnectionPoolPlan connectionPool,
         ClientClusterPlan? cluster,
@@ -200,10 +201,17 @@ internal sealed class ClientBuildPlan
             throw new ArgumentException("Heartbeat timeout must be greater than interval.");
         if (requestTimeout is { } timeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        if (requestTimeout.HasValue != (requestTimeoutSource != ClientRequestTimeoutSource.None))
+        {
+            throw new ArgumentException(
+                "Request timeout source must be present exactly when a client request timeout is enabled.",
+                nameof(requestTimeoutSource));
+        }
 
         HeartbeatInterval = heartbeatInterval;
         HeartbeatTimeout = heartbeatTimeout;
         RequestTimeout = requestTimeout;
+        RequestTimeoutSource = requestTimeoutSource;
         RpcSessionFlushOptions = rpcSessionFlushOptions;
         ConnectionPool = connectionPool;
         Cluster = cluster;
@@ -225,6 +233,7 @@ internal sealed class ClientBuildPlan
     internal TimeSpan HeartbeatInterval { get; }
     internal TimeSpan HeartbeatTimeout { get; }
     internal TimeSpan? RequestTimeout { get; }
+    internal ClientRequestTimeoutSource RequestTimeoutSource { get; }
     internal RpcSessionFlushOptions? RpcSessionFlushOptions { get; }
     internal ClientConnectionPoolPlan ConnectionPool { get; }
     internal ClientClusterPlan? Cluster { get; }

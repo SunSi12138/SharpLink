@@ -79,8 +79,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Client/SharpLinkClient.Invokers.cs",
-      "maxLoc": 1099,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1100,
+      "reason": "Issue #282 adds the reviewed terminal call-control telemetry invocation seam; existing invoker decomposition debt remains tracked by issue #350."
     },
     {
       "domain": "source",
@@ -91,8 +91,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Client/SharpClientBuilder.cs",
-      "maxLoc": 1044,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1060,
+      "reason": "Issue #282 adds the explicit request-timeout policy API and the reviewed order-independent MultiCluster inheritance helper; existing builder decomposition debt remains tracked by issue #350."
     },
     {
       "domain": "source",
@@ -169,8 +169,8 @@
     {
       "domain": "test",
       "path": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterClientTests.cs",
-      "maxLoc": 2154,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 2164,
+      "reason": "Issue #282 adds explicit request-timeout policy coverage to existing MultiCluster tests; existing test decomposition debt remains tracked by issue #350."
     },
     {
       "domain": "test",

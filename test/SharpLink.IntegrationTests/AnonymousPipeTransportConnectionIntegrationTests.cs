@@ -96,7 +96,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             var allocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
             var (inHandle, outHandle) = await allocator.AllocateAsync(cts.Token);
 
-            var client = SharpClientBuilder.Create()
+            var client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseAnonymousPipe(inHandle, outHandle)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))

@@ -504,7 +504,8 @@ public sealed class BuildPlanBuilderTests
 
     private static SharpClientBuilder CreateClientBuilder()
         => SharpClientBuilder.Create()
-            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout();
 
     private static SharpLinkServerBuilder CreateServerBuilder()
         => SharpLinkServerBuilder.Create()

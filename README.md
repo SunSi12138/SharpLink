@@ -38,7 +38,7 @@
 - `Streaming`：客户端流、服务端流、双向流、多流参数
 - `HostApplication`：Host 模式完整示例
 - `Cancel`：协议级取消示例
-- `Timeout`：默认超时与显式超时示例
+- `Timeout`：Client fallback 与方法超时示例
 - `Oneway`：单向调用示例
 - `Log`：日志配置示例
 - `Security`：TLS 身份、认证、授权和调用上下文
@@ -118,6 +118,7 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 
 ```csharp
 var client = SharpLinkMultiClusterClientBuilder.Create()
+    .UseRequestTimeout()
     .AddCluster("orders", child => child.UseTcp("127.0.0.1", 5101))
     .AddCluster("payments", child => child.UseTcp("127.0.0.1", 5102))
     .Build();
@@ -126,6 +127,8 @@ await client.ConnectAsync();
 var orders = client.Get<IOrderService>();
 var payments = client.Get<IPaymentService>();
 ```
+
+Coordinator 必须显式选择 child Client 的 request-timeout policy。`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 fallback；slot 配置仍可覆盖 coordinator policy。
 
 默认情况下，每个槽位都必须具有契约。专门预留给插件的槽位必须显式启用动态契约：
 
@@ -335,6 +338,7 @@ var server = SharpLinkServerBuilder.Create()
 
 var client = SharpClientBuilder.Create()
     .UseSharedMemory("orders")
+    .UseRequestTimeout()
     .Build();
 ```
 
@@ -391,7 +395,8 @@ var serverAuthenticator = SharpLinkAuthenticator.CreateServer(async (request, ca
 });
 
 var client = SharpClientBuilder.Create()
-    .UseAuthenticator(clientAuthenticator);
+    .UseAuthenticator(clientAuthenticator)
+    .UseRequestTimeout();
 
 var server = SharpLinkServerBuilder.Create()
     .UseAuthenticator(serverAuthenticator)
@@ -436,6 +441,7 @@ var client = SharpClientBuilder.Create()
         TargetHost = "rpc.example.internal",
         ClientCertificates = new X509CertificateCollection { clientCertificate }
     })
+    .UseRequestTimeout()
     .Build();
 ```
 
@@ -443,7 +449,7 @@ UDS、NamedPipe、AnonymousPipe 与 SharedMemory 默认依赖操作系统权限�
 
 RPC 业务契约只声明业务 payload、流参数以及用于协作取消的 `CancellationToken`；通用调用控制不进入方法签名。Metadata 等 envelope state 可由 Client interceptor 的 `SharpLinkClientInvocationContext.Metadata` 提供，Server 从 `SharpLinkCallContext` 读取。
 
-请求 lifetime 使用分层语义：Client 默认 `Timeout` 是 fallback，方法 `[Timeout]` 可覆盖它；Runtime 把选中的 policy 解析为本地 monotonic `RpcDeadline`，并在真正发送 Request 前写入剩余 `TimeBudget`。Server 根据该 duration 创建自己的本地 deadline，跨机器不比较绝对墙钟。已有父 RPC 的剩余 `TimeBudget` 会限制下游调用，避免中间 hop 重启 lifetime。`DisableRequestTimeout()` 只关闭 Client 默认 fallback；方法 `[Timeout]` 和继承的父 lifetime 仍然生效。
+请求 lifetime 使用分层语义：Client 在 Build 前必须显式选择 fallback policy；`UseRequestTimeout()` 选择推荐 30 秒，`UseRequestTimeout(timeout)` 选择自定义值，`DisableRequestTimeout()` 明确关闭 Client-wide fallback。方法 `[Timeout]` 可覆盖 Client fallback；Runtime 把选中的 policy 解析为本地 monotonic `RpcDeadline`，并在真正发送 Request 前写入剩余 `TimeBudget`。Server 根据该 duration 创建自己的本地 deadline，跨机器不比较绝对墙钟。已有父 RPC 的剩余 `TimeBudget` 会限制下游调用，避免中间 hop 重启 lifetime。方法 `[Timeout]` 和继承的父 lifetime 不因 `DisableRequestTimeout()` 而失效。
 
 建议所有可能等待、访问 I/O 或占用昂贵资源的契约方法都把 `CancellationToken` 放在参数末尾。Unary 没有 token 时产生 `SHARPLINK004` Warning；Streaming 没有 token 时产生 `SHARPLINK014` Error。确认业务工作不可取消时可用 `[NonCancellable]` 显式说明，但不能同时声明该特性和 `CancellationToken`，否则产生 `SHARPLINK015` Error。此时客户端仍会按 deadline 停止等待，服务端会把调用标记为 abandoned、丢弃迟到响应并继续观察业务任务，直到任务结束后才释放该调用的 admission 与 DI scope。Streaming 的框架流泵、dispatcher 和窗口等待仍会被终止，不会因为 `[NonCancellable]` 保留连接资源。团队可以在 `.editorconfig` 中将 `dotnet_diagnostic.SHARPLINK004.severity = error` 提升为编译错误。
 
@@ -466,6 +472,7 @@ Client/Server interceptor 按注册顺序冻结到实例。没有注册 intercep
 ```csharp
 var client = SharpClientBuilder.Create()
     .UseTcp("rpc.example.internal", 5000)
+    .UseRequestTimeout()
     .AddInterceptor(clientInterceptor)
     .Build();
 
@@ -576,7 +583,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 运行时插件：Client/Server `RegisterAssembly(...)` 与 `UnregisterAssemblyAsync(...)`
 - 健康检查：`CheckHealthAsync()`、`ISharpLinkServer.HealthStatus` 与 Hosting health checks
 - Client 拓扑就绪：`GetReadinessSnapshot()` 与 `WaitForReadinessAsync(...)`
-- 请求超时：`UseRequestTimeout(...)`；需要真正无默认超时时使用 `DisableRequestTimeout()`
+- 请求超时：Build 前必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - 实例级 Buffer Writer Pool：`UseBufferWriterPool(...)`
 - 运行时并发容器：`UseStateStoreConcurrency(...)`
