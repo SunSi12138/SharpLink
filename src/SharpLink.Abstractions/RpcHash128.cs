@@ -28,7 +28,8 @@ public readonly struct RpcHash128 : IEquatable<RpcHash128>
     public override bool Equals(object? obj) => obj is RpcHash128 other && Equals(other);
 
     /// <inheritdoc />
-    public override int GetHashCode() => HashCode.Combine(High, Low);
+    public override int GetHashCode()
+        => unchecked((int)(High ^ (High >> 32) ^ Low ^ (Low >> 32)));
 
     /// <inheritdoc />
     public override string ToString()
