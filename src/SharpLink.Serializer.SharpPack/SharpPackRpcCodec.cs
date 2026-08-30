@@ -30,6 +30,7 @@ public static class SharpPackRpcCodec
 
 /// <summary>SharpPack integration selected by generated Manifest metadata.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
+[RpcCodecSemanticIdentity(0x3fd7540d55dfa977UL, 0xbb67b4932c1a5249UL)]
 public sealed class SharpPackRpcCodecAdapter : IRpcCodecAdapter
 {
     /// <summary>The stable Adapter implementation identity.</summary>
