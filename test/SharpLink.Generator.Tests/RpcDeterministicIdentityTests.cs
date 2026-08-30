@@ -7,6 +7,57 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
+    public Task DeterministicIdentityShouldBeStableAcrossRepeatedGeneration()
+    {
+        var first = GenerateDtoIdentityManifest(includeExtraMember: false, idempotent: false);
+        var second = GenerateDtoIdentityManifest(includeExtraMember: false, idempotent: false);
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(first, "DeterministicPayload") ==
+            ExtractGeneratedCodecIdentity(second, "DeterministicPayload"),
+            "unchanged RPC semantics must produce the same CodecHash across repeated generation");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(first) == ExtractGeneratedRpcAssemblyHash(second),
+            "unchanged RPC semantics must produce the same RpcAssemblyHash across repeated generation");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DtoWireShapeChangeShouldChangeFinalRpcIdentity()
+    {
+        var first = GenerateDtoIdentityManifest(includeExtraMember: false, idempotent: false);
+        var second = GenerateDtoIdentityManifest(includeExtraMember: true, idempotent: false);
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(first, "DeterministicPayload") !=
+            ExtractGeneratedCodecIdentity(second, "DeterministicPayload"),
+            "changing generated DTO wire shape must change CodecHash");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(first) != ExtractGeneratedRpcAssemblyHash(second),
+            "changing a reachable DTO CodecHash must change RpcAssemblyHash");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task MethodSemanticChangeShouldNotReuseRouteIdentityAsCompatibilityIdentity()
+    {
+        var first = GenerateDtoIdentityManifest(includeExtraMember: false, idempotent: false);
+        var second = GenerateDtoIdentityManifest(includeExtraMember: false, idempotent: true);
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(first, "DeterministicPayload") ==
+            ExtractGeneratedCodecIdentity(second, "DeterministicPayload"),
+            "method-only semantics must not perturb payload CodecHash");
+        Ensure(
+            ExtractGeneratedMethodId(first, "Echo") == ExtractGeneratedMethodId(second, "Echo"),
+            "a method semantic flag must not be encoded by changing the dispatch MethodId");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(first) != ExtractGeneratedRpcAssemblyHash(second),
+            "method semantic changes must flow through MethodHash/ContractHash into RpcAssemblyHash");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task OpaqueSemanticIdentityShouldIgnoreUnrelatedImplementationChanges()
     {
         var first = GenerateOpaqueIdentityManifest(
@@ -19,7 +70,8 @@ public partial class RpcAnalyzerTests
             semanticLow: 0x1112131415161718UL);
 
         Ensure(
-            ExtractGeneratedCodecIdentity(first) == ExtractGeneratedCodecIdentity(second),
+            ExtractGeneratedCodecIdentity(first, "OpaquePayload") ==
+            ExtractGeneratedCodecIdentity(second, "OpaquePayload"),
             "opaque CodecHash must be controlled by its fixed semantic identity rather than unrelated implementation details");
         Ensure(
             ExtractGeneratedRpcAssemblyHash(first) == ExtractGeneratedRpcAssemblyHash(second),
@@ -40,12 +92,44 @@ public partial class RpcAnalyzerTests
             semanticLow: 0x2112131415161718UL);
 
         Ensure(
-            ExtractGeneratedCodecIdentity(first) != ExtractGeneratedCodecIdentity(second),
+            ExtractGeneratedCodecIdentity(first, "OpaquePayload") !=
+            ExtractGeneratedCodecIdentity(second, "OpaquePayload"),
             "changing opaque serializer semantics must change CodecHash");
         Ensure(
             ExtractGeneratedRpcAssemblyHash(first) != ExtractGeneratedRpcAssemblyHash(second),
             "changing a payload CodecHash must flow through MethodHash/ContractHash into RpcAssemblyHash");
         return Task.CompletedTask;
+    }
+
+    private static string GenerateDtoIdentityManifest(bool includeExtraMember, bool idempotent)
+    {
+        var extraMember = includeExtraMember
+            ? "public long Extra { get; set; }"
+            : string.Empty;
+        var methodAttribute = idempotent ? "[Idempotent]" : string.Empty;
+        var source = $$"""
+using System.Threading;
+using System.Threading.Tasks;
+using SharpLink.Sdk;
+
+[RpcSerializable]
+public sealed class DeterministicPayload
+{
+    public int Value { get; set; }
+    {{extraMember}}
+}
+
+[RpcContract]
+public interface IDeterministicIdentityContract : IService
+{
+    {{methodAttribute}}
+    ValueTask<DeterministicPayload> Echo(DeterministicPayload value, CancellationToken cancellationToken);
+}
+""";
+
+        return RunGeneratorAndGetSources(source)
+            .Single(static generated =>
+                generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
     }
 
     private static string GenerateOpaqueIdentityManifest(
@@ -89,13 +173,28 @@ public interface IOpaqueIdentityContract : IService
                 generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
     }
 
-    private static string ExtractGeneratedCodecIdentity(string manifest)
+    private static string ExtractGeneratedCodecIdentity(string manifest, string typeName)
         => manifest.Split('\n')
-            .Single(static line =>
+            .Single(line =>
                 line.Contains(
-                    "SharpLinkGeneratedCodecIdentityAttribute(typeof(global::OpaquePayload)",
+                    $"SharpLinkGeneratedCodecIdentityAttribute(typeof(global::{typeName})",
                     StringComparison.Ordinal))
             .Trim();
+
+    private static string ExtractGeneratedMethodId(string manifest, string methodName)
+    {
+        var lines = manifest.Split('\n');
+        for (var index = 0; index + 2 < lines.Length; index++)
+        {
+            if (lines[index].Contains("new SharpLinkGeneratedMethodDescriptor(", StringComparison.Ordinal) &&
+                lines[index + 1].Contains($"\"{methodName}\"", StringComparison.Ordinal))
+            {
+                return lines[index + 2].Trim();
+            }
+        }
+
+        throw new InvalidOperationException($"Generated method descriptor '{methodName}' was not found.");
+    }
 
     private static string ExtractGeneratedRpcAssemblyHash(string manifest)
         => manifest.Split('\n')
