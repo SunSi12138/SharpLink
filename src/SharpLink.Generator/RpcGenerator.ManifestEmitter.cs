@@ -7,7 +7,8 @@ public partial class RpcGenerator
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
-        ImmutableArray<GeneratedCodecModel> contractCodecs)
+        ImmutableArray<GeneratedCodecModel> contractCodecs,
+        ImmutableArray<GeneratedCodecHashModel> codecHashes)
     {
         var contracts = GetContractModels(interfaces);
         var serviceModels = GetServiceModels(services);
@@ -15,6 +16,7 @@ public partial class RpcGenerator
             return string.Empty;
 
         var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs, contractCodecs);
+        var rpcIdentity = BuildRpcAssemblyIdentity(contracts, codecHashes);
         // Module dependencies come from generated artifacts and the finalized Codec graph. Contract
         // signature CLR references alone are not evidence that the referenced assembly publishes a
         // SharpLink generated manifest and therefore must not become dynamic-module dependencies.
@@ -58,6 +60,7 @@ public partial class RpcGenerator
         sb.AppendLine("    public int ProtocolVersion => 2;");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");
+        sb.AppendLine($"    public RpcHash128 RpcAssemblyHash => new RpcHash128({rpcIdentity.AssemblyHash.High.ToString(InvariantCulture)}UL, {rpcIdentity.AssemblyHash.Low.ToString(InvariantCulture)}UL);");
         sb.AppendLine("    string ISharpLinkGeneratedAssemblyManifest.CompileTimeDescriptor => CompileTimeDescriptor;");
         sb.AppendLine();
         AppendContractArtifactFactories(sb, contracts);
