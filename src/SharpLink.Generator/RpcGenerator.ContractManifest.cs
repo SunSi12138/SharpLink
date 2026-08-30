@@ -7,7 +7,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const int ContractManifestFormatVersion = 2;
+    private const int ContractManifestFormatVersion = 3;
     private const string ContractManifestFormat = "SharpLink.Contracts";
 
     private static RpcUnionModel? GetUnionModelOrNull(
@@ -149,13 +149,13 @@ public partial class RpcGenerator
                             $"format version {baseline.Version} is not supported by version {ContractManifestFormatVersion}",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
-                    else if (!HasRequiredWireFormatIds(baseline))
+                    else if (!HasRequiredContractIdentities(baseline))
                     {
                         diagnostics.Add(new ContractCompatibilityDiagnostic(
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more payload, DTO member, or Codec identity entries are missing a required non-empty identity value",
+                            "one or more payload, DTO member, or Codec entries are missing required wire framing or semantic identity",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -207,11 +207,21 @@ public partial class RpcGenerator
         ImmutableArray<RpcUnionModel?> unions)
     {
         var document = new ContractManifestDocument();
-        var wireFormats = codecs
+        var codecsByType = codecs
             .GroupBy(static codec => RemoveGlobalPrefix(codec.TypeName), StringComparer.Ordinal)
             .ToDictionary(
                 static group => group.Key,
-                static group => group.First().WireFormatId,
+                static group => group.First(),
+                StringComparer.Ordinal);
+        var wireFormats = codecsByType.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value.WireFormatId,
+            StringComparer.Ordinal);
+        var opaqueCodecHashes = codecsByType
+            .Where(static pair => pair.Value.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+            .ToDictionary(
+                static pair => pair.Key,
+                static pair => GetCodecHash(pair.Value),
                 StringComparer.Ordinal);
         foreach (var contract in interfaces
                      .Where(static item => item is not null)
@@ -252,6 +262,7 @@ public partial class RpcGenerator
                             ? parameter.StreamItemEnumUnderlyingType
                             : parameter.EnumUnderlyingType),
                         WireFormatId = GetWireFormatId(typeName, wireFormats),
+                        CodecHash = GetOpaqueCodecHash(typeName, opaqueCodecHashes),
                         Nullable = parameter.PayloadNullable,
                         Stream = parameter.IsStream,
                         SourceLocation = parameter.Location
@@ -272,6 +283,7 @@ public partial class RpcGenerator
                             ? method.StreamItemEnumUnderlyingType
                             : method.ResponseEnumUnderlyingType),
                     WireFormatId = GetWireFormatId(responseType, wireFormats),
+                    CodecHash = GetOpaqueCodecHash(responseType, opaqueCodecHashes),
                     Nullable = method.ResponseNullable,
                     Stream = method.IsStreamReturn,
                     SourceLocation = method.Location
@@ -300,6 +312,7 @@ public partial class RpcGenerator
                     Type = RemoveGlobalPrefix(member.TypeName),
                     WireType = GetMemberWireType(member),
                     WireFormatId = GetWireFormatId(member.TypeName, wireFormats),
+                    CodecHash = GetOpaqueCodecHash(member.TypeName, opaqueCodecHashes),
                     Nullable = member.Nullable,
                     Required = member.Required,
                     ExplicitId = member.HasExplicitId,
@@ -315,8 +328,7 @@ public partial class RpcGenerator
             {
                 Type = RemoveGlobalPrefix(codec.TypeName),
                 Kind = codec.Kind.ToString(),
-                SchemaId = codec.SchemaId,
-                WireFormatId = codec.WireFormatId,
+                CodecHash = GetCodecHash(codec),
                 SourceLocation = codec.Location
             });
         }
@@ -589,14 +601,15 @@ public partial class RpcGenerator
                     matchedNewIds.Add(newMember.Id);
                     if (!string.Equals(oldMember.Type, newMember.Type, StringComparison.Ordinal) ||
                         !string.Equals(oldMember.WireType, newMember.WireType, StringComparison.Ordinal) ||
-                        !string.Equals(oldMember.WireFormatId, newMember.WireFormatId, StringComparison.Ordinal))
+                        !string.Equals(oldMember.WireFormatId, newMember.WireFormatId, StringComparison.Ordinal) ||
+                        !string.Equals(oldMember.CodecHash, newMember.CodecHash, StringComparison.Ordinal))
                     {
                         diagnostics.Add(Change(
                             ContractCompatibilityKind.WireType,
                             newMember.SourceLocation,
                             $"{newDto.Name}.{newMember.Name}",
-                            $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType}/{oldMember.WireFormatId} to {newMember.Type}/{newMember.WireType}/{newMember.WireFormatId}",
-                            "restore the old wire type or add a new optional member ID"));
+                            $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType}/{oldMember.WireFormatId}/{oldMember.CodecHash} to {newMember.Type}/{newMember.WireType}/{newMember.WireFormatId}/{newMember.CodecHash}",
+                            "restore the old wire type or semantic Codec identity, or add a new optional member ID"));
                     }
                     if (!oldMember.Required && newMember.Required)
                     {
@@ -673,33 +686,24 @@ public partial class RpcGenerator
         foreach (var oldCodec in baseline.Codecs)
         {
             if (!currentCodecs.TryGetValue(oldCodec.Type, out var newCodec))
-            {
-                continue;
-            }
-
-            var wireChanged = !string.Equals(oldCodec.WireFormatId, newCodec.WireFormatId, StringComparison.Ordinal);
-            var schemaChanged =
-                (string.Equals(oldCodec.Kind, "Custom", StringComparison.Ordinal) ||
-                 string.Equals(newCodec.Kind, "Custom", StringComparison.Ordinal)) &&
-                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
-            if (!wireChanged && !schemaChanged)
                 continue;
 
-            if (!schemaChanged && directlyDescribedCodecTypes.Contains(oldCodec.Type))
+            var opaque =
+                string.Equals(oldCodec.Kind, "Custom", StringComparison.Ordinal) ||
+                string.Equals(oldCodec.Kind, "Adapter", StringComparison.Ordinal) ||
+                string.Equals(newCodec.Kind, "Custom", StringComparison.Ordinal) ||
+                string.Equals(newCodec.Kind, "Adapter", StringComparison.Ordinal);
+            if (!opaque || string.Equals(oldCodec.CodecHash, newCodec.CodecHash, StringComparison.Ordinal))
                 continue;
-
-            var changedParts = new List<string>(2);
-            if (wireChanged)
-                changedParts.Add($"wire '{oldCodec.WireFormatId}' -> '{newCodec.WireFormatId}'");
-            if (schemaChanged)
-                changedParts.Add($"schema '{oldCodec.SchemaId}' -> '{newCodec.SchemaId}'");
+            if (directlyDescribedCodecTypes.Contains(oldCodec.Type))
+                continue;
 
             diagnostics.Add(Change(
                 ContractCompatibilityKind.WireType,
                 newCodec.SourceLocation,
                 oldCodec.Type,
-                $"nested Codec identity changed: {string.Join(", ", changedParts)}",
-                "restore the previous nested wire/schema identity or add a new RPC payload type"));
+                $"nested CodecHash changed from '{oldCodec.CodecHash}' to '{newCodec.CodecHash}'",
+                "restore the previous semantic Codec identity or add a new RPC payload type"));
         }
 
         var currentEnums = current.Enums.ToDictionary(static item => item.Name, StringComparer.Ordinal);
@@ -782,6 +786,7 @@ public partial class RpcGenerator
             if (!string.Equals(oldValue.Type, newValue.Type, StringComparison.Ordinal) ||
                 !string.Equals(oldValue.WireType, newValue.WireType, StringComparison.Ordinal) ||
                 !string.Equals(oldValue.WireFormatId, newValue.WireFormatId, StringComparison.Ordinal) ||
+                !string.Equals(oldValue.CodecHash, newValue.CodecHash, StringComparison.Ordinal) ||
                 oldValue.Stream != newValue.Stream ||
                 oldValue.Nullable != newValue.Nullable)
             {
@@ -789,51 +794,97 @@ public partial class RpcGenerator
                     ContractCompatibilityKind.WireType,
                     newValue.SourceLocation ?? fallbackLocation,
                     item,
-                    $"element {index} changed from {oldValue.Type}/{oldValue.WireType}/{oldValue.WireFormatId}/nullable={oldValue.Nullable} to {newValue.Type}/{newValue.WireType}/{newValue.WireFormatId}/nullable={newValue.Nullable}",
-                    "restore the previous type or add a new method route"));
+                    $"element {index} changed from {oldValue.Type}/{oldValue.WireType}/{oldValue.WireFormatId}/{oldValue.CodecHash}/nullable={oldValue.Nullable} to {newValue.Type}/{newValue.WireType}/{newValue.WireFormatId}/{newValue.CodecHash}/nullable={newValue.Nullable}",
+                    "restore the previous type, wire framing, or semantic Codec identity, or add a new method route"));
             }
         }
     }
 
-    private static bool HasRequiredWireFormatIds(ContractManifestDocument manifest)
-        => manifest.Contracts is not null &&
-           manifest.Dtos is not null &&
-           manifest.Codecs is not null &&
-           manifest.Enums is not null &&
-           manifest.Unions is not null &&
-           manifest.Services is not null &&
-           manifest.Contracts.All(static contract =>
-               contract is not null &&
-               contract.Methods is not null &&
-               contract.Methods.All(static method =>
-                   method is not null &&
-                   method.Request is not null &&
-                   method.Response is not null &&
-                   method.Request.All(static value =>
-                       value is not null && !string.IsNullOrWhiteSpace(value.WireFormatId)) &&
-                   !string.IsNullOrWhiteSpace(method.Response.WireFormatId))) &&
-           manifest.Dtos.All(static dto =>
-               dto is not null &&
-               dto.Members is not null &&
-               dto.Members.All(static member =>
-                   member is not null && !string.IsNullOrWhiteSpace(member.WireFormatId))) &&
-           manifest.Codecs.All(static codec =>
-               codec is not null &&
-               !string.IsNullOrWhiteSpace(codec.Type) &&
-               !string.IsNullOrWhiteSpace(codec.Kind) &&
-               !string.IsNullOrWhiteSpace(codec.SchemaId) &&
-               !string.IsNullOrWhiteSpace(codec.WireFormatId)) &&
-           manifest.Enums.All(static item => item is not null) &&
-           manifest.Unions.All(static union =>
-               union is not null && union.Cases is not null && union.Cases.All(static item => item is not null)) &&
-           manifest.Services.All(static service => service is not null);
+    private static bool HasRequiredContractIdentities(ContractManifestDocument manifest)
+    {
+        if (manifest.Contracts is null ||
+            manifest.Dtos is null ||
+            manifest.Codecs is null ||
+            manifest.Enums is null ||
+            manifest.Unions is null ||
+            manifest.Services is null)
+        {
+            return false;
+        }
 
-    private static string GetWireFormatId(
+        var opaqueCodecTypes = new HashSet<string>(
+            manifest.Codecs
+                .Where(static codec => codec is not null &&
+                    (string.Equals(codec.Kind, "Custom", StringComparison.Ordinal) ||
+                     string.Equals(codec.Kind, "Adapter", StringComparison.Ordinal)) &&
+                    IsValidCodecHash(codec.CodecHash))
+                .Select(static codec => codec.Type),
+            StringComparer.Ordinal);
+
+        bool HasValueIdentity(string type, string? wireFormatId, string? codecHash)
+            => !string.IsNullOrWhiteSpace(wireFormatId) ||
+               (opaqueCodecTypes.Contains(type) && IsValidCodecHash(codecHash));
+
+        return manifest.Contracts.All(contract =>
+                   contract is not null &&
+                   contract.Methods is not null &&
+                   contract.Methods.All(method =>
+                       method is not null &&
+                       method.Request is not null &&
+                       method.Response is not null &&
+                       method.Request.All(value =>
+                           value is not null && HasValueIdentity(value.Type, value.WireFormatId, value.CodecHash)) &&
+                       HasValueIdentity(method.Response.Type, method.Response.WireFormatId, method.Response.CodecHash))) &&
+               manifest.Dtos.All(dto =>
+                   dto is not null &&
+                   dto.Members is not null &&
+                   dto.Members.All(member =>
+                       member is not null && HasValueIdentity(member.Type, member.WireFormatId, member.CodecHash))) &&
+               manifest.Codecs.All(static codec =>
+                   codec is not null &&
+                   !string.IsNullOrWhiteSpace(codec.Type) &&
+                   !string.IsNullOrWhiteSpace(codec.Kind) &&
+                   IsValidCodecHash(codec.CodecHash)) &&
+               manifest.Enums.All(static item => item is not null) &&
+               manifest.Unions.All(static union =>
+                   union is not null && union.Cases is not null && union.Cases.All(static item => item is not null)) &&
+               manifest.Services.All(static service => service is not null);
+    }
+
+    private static bool IsValidCodecHash(string? value)
+    {
+        if (value is null || value.Length != 32)
+            return false;
+        foreach (var character in value)
+        {
+            if (!((character >= '0' && character <= '9') ||
+                  (character >= 'a' && character <= 'f') ||
+                  (character >= 'A' && character <= 'F')))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static string GetCodecHash(GeneratedCodecModel codec)
+        => new RpcHashValue(codec.CodecHashHigh, codec.CodecHashLow).ToHex();
+
+    private static string? GetOpaqueCodecHash(
+        string typeName,
+        IReadOnlyDictionary<string, string> opaqueCodecHashes)
+        => opaqueCodecHashes.TryGetValue(RemoveGlobalPrefix(typeName), out var codecHash)
+            ? codecHash
+            : null;
+
+    private static string? GetWireFormatId(
         string typeName,
         IReadOnlyDictionary<string, string> wireFormats)
-        => wireFormats.TryGetValue(RemoveGlobalPrefix(typeName), out var wireFormatId)
-            ? wireFormatId
-            : "sharplink-native/v1";
+    {
+        if (!wireFormats.TryGetValue(RemoveGlobalPrefix(typeName), out var wireFormatId))
+            return "sharplink-native/v1";
+        return string.IsNullOrWhiteSpace(wireFormatId) ? null : wireFormatId;
+    }
 
     private static ContractCompatibilityDiagnostic Change(
         ContractCompatibilityKind kind,
@@ -1029,7 +1080,8 @@ internal static class __SharpLinkContractManifest
         public string Name { get; set; } = string.Empty;
         public string Type { get; set; } = string.Empty;
         public string WireType { get; set; } = string.Empty;
-        public string WireFormatId { get; set; } = string.Empty;
+        public string? WireFormatId { get; set; }
+        public string? CodecHash { get; set; }
         public bool Nullable { get; set; }
         public bool Stream { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
@@ -1047,8 +1099,7 @@ internal static class __SharpLinkContractManifest
     {
         public string Type { get; set; } = string.Empty;
         public string Kind { get; set; } = string.Empty;
-        public string SchemaId { get; set; } = string.Empty;
-        public string WireFormatId { get; set; } = string.Empty;
+        public string CodecHash { get; set; } = string.Empty;
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
 
@@ -1058,7 +1109,8 @@ internal static class __SharpLinkContractManifest
         public uint Id { get; set; }
         public string Type { get; set; } = string.Empty;
         public string WireType { get; set; } = string.Empty;
-        public string WireFormatId { get; set; } = string.Empty;
+        public string? WireFormatId { get; set; }
+        public string? CodecHash { get; set; }
         public bool Nullable { get; set; }
         public bool Required { get; set; }
         public bool ExplicitId { get; set; }
