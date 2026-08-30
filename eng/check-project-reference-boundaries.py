@@ -630,7 +630,6 @@ def _audit_declarations(project_id: str, project: Path, root: Path, policy: Poli
             update = _attribute(ref, "Update")
             if update is not None:
                 update_label = f"{source_name}: ProjectReference Update {update!r}"
-                _audit_mode_filters(ref, update_label, violations)
                 if mode_names:
                     violations.append(f"{source_name}: ProjectReference Update must not supply/override mode metadata {', '.join(mode_names)} for {update!r}")
                 continue
