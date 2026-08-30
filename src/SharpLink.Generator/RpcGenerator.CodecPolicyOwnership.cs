@@ -42,8 +42,16 @@ public partial class RpcGenerator
         var standaloneTypes = new HashSet<string>(
             standalone.Codecs.Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
+        var defaultByType = currentContractDefaultCodecs
+            .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+        var policyByType = currentContractPolicyCodecs
+            .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         var globalExcludedTypes = new HashSet<string>(
-            contractOwnedPolicyRoots.Where(type => !standaloneTypes.Contains(type)),
+            contractOwnedPolicyRoots.Where(type =>
+                !standaloneTypes.Contains(type) &&
+                policyByType.TryGetValue(type, out var policyCodec) &&
+                (!defaultByType.TryGetValue(type, out var defaultCodec) ||
+                 !HasSameFinalCodecBinding(defaultCodec, policyCodec))),
             StringComparer.Ordinal);
         ExpandReverseCodecDependencyClosure(currentContractDefaultCodecs, globalExcludedTypes);
         var globalByType = currentContractDefaultCodecs
