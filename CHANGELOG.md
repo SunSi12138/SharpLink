@@ -47,6 +47,7 @@
 
 ### Breaking
 
+- Client builders no longer receive an implicit 30-second request-timeout fallback. Every `SharpClientBuilder` and `SharpLinkMultiClusterClientBuilder` must explicitly select `UseRequestTimeout()`, `UseRequestTimeout(timeout)`, or `DisableRequestTimeout()` before `Build()`; applications that omit the choice now fail during Build/host startup. MultiCluster children inherit the coordinator's frozen policy unless they explicitly override it. See [`doc/migration.md`](doc/migration.md#client-request-timeout-policy).
 - `SharpLinkCallOptions` is removed from generated/service business signatures and from the generated `IRpcChannel` ABI. Per-call timeout now comes from method `[Timeout]` or the Client timeout policy, caller cancellation remains the method `CancellationToken`, and caller-selected metadata uses the narrow `GetWithMetadata<TContract>(SharpLinkMetadata)` proxy capability. No generic compatibility options bag is retained; regenerate all contracts/proxies/stubs and see [`doc/migration.md`](doc/migration.md).
 - Protocol v2 minor 4 is the SharpLink 2.0 wire baseline for RPC lifetime propagation. Request frames carry remaining `TimeBudget` instead of an absolute Unix-millisecond deadline, and 2.0 rejects peers below minor 4 during handshake so legacy bytes cannot be misinterpreted. Pre-2.0 process interoperability is not a 2.0 compatibility requirement.
 - `IRpcSession`, `IStreamManager`, raw stream dispatcher interfaces, public
@@ -461,7 +462,7 @@
 
 ### Compatibility and validation
 
-- Protocol v2, route hashes, and valid payloads are unchanged. `LogEvents.Client.ResolverUpdateFailed` is an additive event ID; `ChaosReport.ServerErrors` is an additive diagnostic field.
+- Protocol v2, route hashes, and valid payloads are unchanged. `LogEvents.Client.ResolverUpdateFailed` is an additive public event ID; `ChaosReport.ServerErrors` is an additive diagnostic field.
 - Non-incremental Release build, Generator, Unit, Integration, shared-memory/TCP Chaos, NativeAOT, seven-package pack, and fresh-cache package smoke passed.
 - Client Build allocation improved from 6,536 to 6,168 B/op (−368 B, −5.6%); all three candidate latency medians were below the three exact-baseline medians.
 
@@ -1145,7 +1146,7 @@
 ### 新增
 
 - Client 新增不可变的 `SharpLinkEndpoint`、显式传输地址和 transport factory 注册模型；`UseEndpoint`、`UseEndpoints`、`UseCluster` 及四种内置负载均衡策略可在不影响旧单端点用法的前提下构建静态端点集群。
-- 静态集群支持 TCP（hostname/IPv4/IPv6）、Unix Domain Socket、Named Pipe、Shared Memory 和既有 Anonymous Pipe；端点属性可传给自定义选择器。
+- 静态集群支持 TCP（hostname/IPv4/IPv6）、Unix Domain Socket、Named Pipe、SharedMemory 和既有 Anonymous Pipe；端点属性可传给自定义选择器。
 - 集群按端点独立维护连接、重连和健康状态，初始连接受 `MaxConnections` 与并行度上限约束；支持最少就绪端点、LeastPending、P2C、Random、RoundRobin 与自定义选择器。
 
 ### 变更
