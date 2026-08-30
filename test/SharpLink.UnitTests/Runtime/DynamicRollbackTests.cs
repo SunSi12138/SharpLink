@@ -18,7 +18,9 @@ public class DynamicRollbackTests
     {
         await RollbackState.TestIsolation.WaitAsync();
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopClientTransport()).Build();
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
+            .UseTransport(new NoopClientTransport()).Build();
         SharpLinkDynamicModuleLease lease = default;
         var leaseReleased = false;
         try
@@ -73,6 +75,7 @@ public class DynamicRollbackTests
         var ownerProvider = new ManualTimeProvider();
         var unrelatedProvider = new ManualTimeProvider();
         var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
             .UseTimeProvider(ownerProvider)
             .UseTransport(new NoopClientTransport())
             .Build();
@@ -203,7 +206,9 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopClientTransport()).Build();
+            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .DisableRequestTimeout()
+                .UseTransport(new NoopClientTransport()).Build();
             using var loaded = LoadPlugin("client-registration");
             try
             {
@@ -265,7 +270,9 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopClientTransport()).Build();
+            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .DisableRequestTimeout()
+                .UseTransport(new NoopClientTransport()).Build();
             using var oldPlugin = LoadPlugin("client-old");
             using var newPlugin = LoadPlugin("client-new");
             try
