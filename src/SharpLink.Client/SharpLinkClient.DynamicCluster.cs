@@ -171,7 +171,7 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
-                if (!_connections.TryMarkDraining(_current.States, connection, out endpoint, out disposeNow))
+                if (!_connections.TryMarkDraining(connection, out endpoint, out disposeNow))
                     return;
                 PublishReadySnapshotLocked();
                 if (disposeNow)
@@ -233,7 +233,7 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
-                if (!_connections.TryRetireDrainingIfIdle(_current.States, connection, out endpoint))
+                if (!_connections.TryRetireDrainingIfIdle(connection, out endpoint))
                     return;
                 PublishReadySnapshotLocked();
                 _client.TrackFrameworkTask(
@@ -1006,7 +1006,7 @@ internal sealed partial class SharpLinkClient
         }
 
         private DynamicEndpointState? FindEndpointLocked(ClientConnection connection)
-            => _connections.FindEndpoint(_current.States, connection);
+            => _connections.FindEndpoint(connection);
 
         private bool IsCurrentLocked(DynamicEndpointState endpoint)
             => _current.IsCurrent(endpoint);
@@ -1097,7 +1097,7 @@ internal sealed partial class SharpLinkClient
             lock (_gate)
             {
                 var states = _current.States;
-                connections = _connections.DetachAll(states);
+                connections = _connections.DetachAll();
                 _stoppedFactories = [.. states
                     .Where(static state => !state.FactoryReleased)
                     .Select(static state =>
