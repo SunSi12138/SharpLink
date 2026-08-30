@@ -18,7 +18,7 @@ public sealed class DynamicClusterConnectionStateTests
         Ensure(endpoint.ReadyConnections.Length == 1,
             "an owned ready connection must be published before retirement");
 
-        Ensure(state.TryMarkDraining([endpoint], connection, out var owner, out var disposeNow),
+        Ensure(state.TryMarkDraining(connection, out var owner, out var disposeNow),
             "the owner must accept retirement for its connection");
         state.PublishReadyConnections([endpoint]);
 
@@ -48,7 +48,7 @@ public sealed class DynamicClusterConnectionStateTests
             state.Add(endpoint, connection);
             state.PublishReadyConnections([endpoint]);
 
-            Ensure(state.TryMarkDraining([endpoint], connection, out var owner, out var disposeNow),
+            Ensure(state.TryMarkDraining(connection, out var owner, out var disposeNow),
                 "the owner must find the active connection during drain");
             state.PublishReadyConnections([endpoint]);
 
@@ -63,7 +63,7 @@ public sealed class DynamicClusterConnectionStateTests
 
             connection.EndUntrackedCall();
             callReleased = true;
-            Ensure(state.TryRetireDrainingIfIdle([endpoint], connection, out owner),
+            Ensure(state.TryRetireDrainingIfIdle(connection, out owner),
                 "the draining connection must detach once its accepted work becomes idle");
             Ensure(ReferenceEquals(owner, endpoint), "idle retirement must preserve the endpoint owner");
             Ensure(state.RetiringConnectionCount == 0,
@@ -115,7 +115,7 @@ public sealed class DynamicClusterConnectionStateTests
 
             active.EndUntrackedCall();
             callReleased = true;
-            Ensure(state.TryRetireDrainingIfIdle([endpoint], active, out var owner),
+            Ensure(state.TryRetireDrainingIfIdle(active, out var owner),
                 "the active connection must detach after its accepted call completes");
             Ensure(ReferenceEquals(owner, endpoint), "drain completion must keep generation ownership stable");
             Ensure(state.CanRelease(endpoint),
@@ -132,7 +132,7 @@ public sealed class DynamicClusterConnectionStateTests
     }
 
     [Test]
-    public async Task DetachAllShouldReturnOwnedConnectionsOutsideCallerTopologyView()
+    public async Task FindEndpointShouldUseAuthoritativeConnectionOwnership()
     {
         await using var client = ClientBuilderTestHelper.Build(DynamicClusterTransportPlaceholder.Instance);
         await using var connection = CreateConnection(client, "node", 4);
@@ -141,10 +141,24 @@ public sealed class DynamicClusterConnectionStateTests
 
         state.Add(endpoint, connection);
 
-        var detached = state.DetachAll([]);
+        Ensure(ReferenceEquals(state.FindEndpoint(connection), endpoint),
+            "connection lookup must return the endpoint recorded by the ownership collaborator");
+    }
+
+    [Test]
+    public async Task DetachAllShouldReturnAllOwnedConnections()
+    {
+        await using var client = ClientBuilderTestHelper.Build(DynamicClusterTransportPlaceholder.Instance);
+        await using var connection = CreateConnection(client, "node", 5);
+        var endpoint = CreateEndpointState("node", 5);
+        var state = new SharpLinkClient.DynamicClusterConnectionState();
+
+        state.Add(endpoint, connection);
+
+        var detached = state.DetachAll();
 
         Ensure(detached.Length == 1 && ReferenceEquals(detached[0], connection),
-            "DetachAll must enumerate authoritative connection ownership rather than the caller topology view");
+            "DetachAll must enumerate authoritative connection ownership");
         Ensure(state.CountConnections(static _ => 1) == 0,
             "DetachAll must clear connection ownership after returning every owned connection");
         Ensure(state.RetiringConnectionCount == 0,
