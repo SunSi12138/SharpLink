@@ -128,7 +128,8 @@ internal sealed class ServerCallAdmission
         ArgumentNullException.ThrowIfNull(connection);
         connection.ReleaseCall();
         ReleaseGlobalCall();
-        _server.TrySignalCallsDrainedForCallAdmission(connection);
+        if (!_server.IsRunningForCallAdmission)
+            _server.TrySignalCallsDrainedForCallAdmission(connection);
     }
 
     private bool TryAcquireGlobalCall()
@@ -153,7 +154,7 @@ internal sealed class ServerCallAdmission
         var remaining = Interlocked.Decrement(ref _pendingCallAdmissions);
         if (remaining < 0)
             throw new InvalidOperationException("Server pending call admission count underflowed.");
-        if (remaining == 0)
+        if (remaining == 0 && !_server.IsRunningForCallAdmission)
             _server.TrySignalCallsDrainedForCallAdmission(connection);
     }
 }
