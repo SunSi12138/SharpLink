@@ -1,22 +1,26 @@
-name: PR Quick
+name: PR Extended
 
 permissions:
   contents: read
 
 on:
+  pull_request:
+    types: [ready_for_review]
   workflow_dispatch:
 
 concurrency:
-  group: pr-quick-${{ github.event.pull_request.number || github.ref }}
+  group: pr-extended-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   codec-compatibility:
     uses: ./.github/workflows/codec-compatibility.yml
+    with:
+      browser_evidence: false
 
-  quick:
+  extended:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -32,32 +36,11 @@ jobs:
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
-      - name: Verify Formatting
-        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
-
-      - name: Maintainability Debt Gate Tests
-        run: python3 eng/test-verify-maintainability.py
-
-      - name: Maintainability Debt Gate
-        run: bash eng/check-maintainability.sh
-
       - name: Build Debug
         run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
 
-      - name: Build Release
+      - name: Build Release prerequisite
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-
-      - name: Verify Generated Assemblies Do Not Reference Runtime
-        run: ./eng/verify-generated-assembly-dependencies.sh
-
-      - name: Unit Tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-
-      - name: Generator Tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
-
-      - name: Load Test Tests
-        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
 
       - name: Integration Tests
         run: >-
@@ -103,24 +86,27 @@ jobs:
       - name: Load Smoke
         run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
 
-      - name: Chaos Smoke
-        run: >-
-          dotnet run -c Release --no-build
-          --project test/SharpLink.ChaosTests
-          --
-          --duration-seconds 120
-          --transport sharedmemory
-          --concurrency 16
-          --restart-interval-seconds 10
-          --json-output artifacts/chaos/pr-smoke.json
+  extended-summary:
+    needs: [extended, codec-compatibility]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report Extended confidence
+        shell: bash
+        env:
+          EXTENDED_RESULT: ${{ needs.extended.result }}
+          CODEC_RESULT: ${{ needs.codec-compatibility.result }}
+        run: |
+          {
+            echo "### PR Extended confidence"
+            echo
+            echo "- Integration/AOT/package/demo/load: $EXTENDED_RESULT"
+            echo "- Desktop codec compatibility: $CODEC_RESULT"
+            echo "- Browser/WASM codec evidence is owned by Nightly/merge-to-dev."
+            echo "- This tier is advisory by default; PR Fast / fast remains the normal required gate."
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload Chaos Report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: chaos-pr-smoke
-          path: |
-            artifacts/chaos/pr-smoke.json
-            artifacts/chaos/pr-smoke.dmp
-            artifacts/chaos/pr-smoke.dmp.crashreport.json
-          if-no-files-found: warn
+          if [[ "$EXTENDED_RESULT" != "success" || "$CODEC_RESULT" != "success" ]]; then
+            exit 1
+          fi

@@ -1,0 +1,117 @@
+schema_version: 1
+
+# Canonical machine-readable policy for production ProjectReference boundaries.
+# Any production ProjectReference not listed under allowed_references or
+# temporary_exceptions is forbidden.
+scope:
+  production_root: src
+  production_project_glob: "**/*.csproj"
+  reference_kind: ProjectReference
+  default: deny
+  package_references: out_of_scope
+
+evaluation:
+  active_items:
+    source: msbuild_evaluated_items
+    include_imports: true
+    respect_conditions: true
+  declaration_audit:
+    source: project_and_repository_import_closure
+    ignore_project_reference_conditions_for_authorization: true
+    ignore_repository_import_conditions_for_traversal: true
+    repository_imports_must_be_statically_traversable: true
+    project_reference_include_must_be_literal_path: true
+    unresolved_or_dynamic_project_reference_include: deny
+    conditions_may_gate_presence_only: true
+    mode_metadata_must_be_context_invariant: true
+    mode_metadata_values_must_be_literal_on_reference:
+      - ReferenceOutputAssembly
+      - OutputItemType
+    mode_metadata_from_item_definitions_or_updates: deny
+
+mode_semantics:
+  assembly:
+    effective_metadata_defaults:
+      ReferenceOutputAssembly: "true"
+    required_effective_metadata:
+      ReferenceOutputAssembly: "true"
+    forbidden_effective_metadata:
+      OutputItemType:
+        - Analyzer
+  analyzer:
+    required_effective_metadata:
+      OutputItemType: Analyzer
+      ReferenceOutputAssembly: "false"
+
+projects:
+  abstractions: src/SharpLink.Abstractions/SharpLink.Abstractions.csproj
+  runtime: src/SharpLink.Runtime/SharpLink.Runtime.csproj
+  client: src/SharpLink.Client/SharpLink.Client.csproj
+  server: src/SharpLink.Server/SharpLink.Server.csproj
+  hosting: src/SharpLink.Hosting/SharpLink.Hosting.csproj
+  sdk: src/SharpLink.Sdk/SharpLink.Sdk.csproj
+  generator: src/SharpLink.Generator/SharpLink.Generator.csproj
+  serializer_sharppack: src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj
+
+allowed_references:
+  - from: runtime
+    to: abstractions
+    mode: assembly
+
+  - from: client
+    to: runtime
+    mode: assembly
+  - from: client
+    to: abstractions
+    mode: assembly
+
+  - from: server
+    to: runtime
+    mode: assembly
+  - from: server
+    to: abstractions
+    mode: assembly
+
+  - from: hosting
+    to: runtime
+    mode: assembly
+  - from: hosting
+    to: abstractions
+    mode: assembly
+
+  - from: sdk
+    to: abstractions
+    mode: assembly
+  - from: sdk
+    to: generator
+    mode: analyzer
+
+  - from: serializer_sharppack
+    to: abstractions
+    mode: assembly
+
+temporary_exceptions:
+  - from: hosting
+    to: client
+    mode: assembly
+    provenance_issue: 337
+    provenance_role: umbrella_roadmap
+    reason: Existing Hosting-to-Client edge retained on dev as debt; no new Hosting-to-Client dependency is permitted by this exception.
+
+  - from: hosting
+    to: server
+    mode: assembly
+    provenance_issue: 337
+    provenance_role: umbrella_roadmap
+    reason: Existing Hosting-to-Server edge retained on dev as debt; no new Hosting-to-Server dependency is permitted by this exception.
+
+mechanical_rules:
+  canonical_projects_are_exact: true
+  discovered_production_projects_must_equal_registered_projects: true
+  evaluated_project_references_include_imports: true
+  conditional_references_cannot_hide_edges: true
+  project_reference_conditions_do_not_affect_authorization: true
+  project_reference_mode_is_condition_invariant: true
+  unlisted_production_project_references: deny
+  production_references_to_test_or_sample_projects: deny
+  temporary_exceptions_are_not_precedent: true

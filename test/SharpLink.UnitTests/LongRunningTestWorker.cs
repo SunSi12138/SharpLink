@@ -14,11 +14,21 @@ internal static class LongRunningTestWorker
     internal static Task Run(Action action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        return Task.Factory.StartNew(
-            action,
+        using var started = new ManualResetEventSlim();
+        var task = Task.Factory.StartNew(
+            () =>
+            {
+                started.Set();
+                action();
+            },
             CancellationToken.None,
             Options,
             TaskScheduler.Default);
+        // Do not charge a test's semantic phase timeout with scheduler delay before the dedicated
+        // LongRunning worker has actually begun executing. Tests that coordinate blocking
+        // cancellation/lifecycle callbacks can start their phase budget after this returns.
+        started.Wait();
+        return task;
     }
 
     internal static Task<TResult> Run<TResult>(Func<TResult> action)
@@ -44,11 +54,18 @@ internal static class LongRunningTestWorker
     internal static Task<TResult> RunAsync<TResult>(Func<Task<TResult>> action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        return Task.Factory.StartNew(
-            action,
+        using var started = new ManualResetEventSlim();
+        var task = Task.Factory.StartNew(
+            () =>
+            {
+                started.Set();
+                return action();
+            },
             CancellationToken.None,
             Options,
             TaskScheduler.Default).Unwrap();
+        started.Wait();
+        return task;
     }
 
     /// <summary>Joins a cleanup owner while preserving any primary test failure.</summary>

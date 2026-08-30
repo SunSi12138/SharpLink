@@ -41,7 +41,7 @@ public class TransportCleanupTests
             "stream disposal must not complete its PipeReader while a consumer owns a ReadResult");
 
         reader.AdvanceTo(result.Buffer.End);
-        await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+        await dispose;
         Ensure(!stream.CanRead,
             "the owned stream should be disposed after the consumer releases its ReadResult");
     }

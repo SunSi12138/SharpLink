@@ -1,6 +1,7 @@
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.Sdk;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -30,26 +31,35 @@ public class SharpLinkClientTimeoutTests
     [Test]
     public async Task InvokeCancellableNoPayloadAsyncTimeoutAndUserCancelShouldSendSingleCancel()
     {
+        var timeProvider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(1)));
+            builder => builder
+                .UseTimeProvider(timeProvider)
+                .UseRequestTimeout(TimeSpan.FromSeconds(1)));
 
         await client.ConnectAsync();
 
-        using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(80));
-
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(80), timeProvider);
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
             client,
             cancellationToken: cts.Token).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+
+        // Drive the caller cancellation from the same deterministic clock as the request deadline.
+        // Advancing only to the caller timer fixes the winner without depending on runner scheduling.
+        timeProvider.Advance(TimeSpan.FromMilliseconds(80));
         await EnsureThrows<Exception>(invokeTask);
 
         var cancelFrame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
         Ensure(cancelFrame.Header.RequestId == callPacket.RequestId, "first cancel should target same request");
         Ensure(cancelFrame.Payload is [(byte)ProtocolV2CancelReason.UserCancellation],
             "user token should win the cancellation race in this test");
+
+        // Cross the original request deadline after the terminal user-cancel path has run. A stale
+        // deadline registration must not enqueue a second Cancel frame.
+        timeProvider.Advance(TimeSpan.FromMilliseconds(920));
         var hasSecondCancel = await transport.Connection.TryWaitForSentPacket(
             ProtocolV2FrameType.Cancel, TimeSpan.FromMilliseconds(200));
         Ensure(!hasSecondCancel, "cancel packet should be sent only once");

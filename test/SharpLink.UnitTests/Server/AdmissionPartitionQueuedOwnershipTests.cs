@@ -48,7 +48,7 @@ public sealed class AdmissionPartitionQueuedOwnershipTests
         Ensure(!pending.IsCompleted, "second request should be queued before the timeout fires");
 
         time.Advance(QueueDelay);
-        var timedOut = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        var timedOut = await pending;
         Ensure(!timedOut.IsAcquired && timedOut.Reason == "concurrency",
             "queue timeout should surface the failed partition concurrency slot");
 

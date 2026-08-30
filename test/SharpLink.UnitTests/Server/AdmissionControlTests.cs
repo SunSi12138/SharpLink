@@ -124,6 +124,7 @@ public sealed class AdmissionControlTests
     [Test]
     public async Task ConcurrencyQueueShouldReleasePermitAndAccountingExactlyOnce()
     {
+        var provider = new ManualTimeProvider();
         var options = new SharpLinkAdmissionControlOptions
         {
             MaxQueuedCalls = 1,
@@ -131,7 +132,7 @@ public sealed class AdmissionControlTests
             MaxQueueDelay = TimeSpan.FromSeconds(2)
         };
         options.Global.UseConcurrency(1);
-        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
         var context = CreateContext();
 
         var first = await controller.AcquireAsync(context, 32, allowQueue: true, CancellationToken.None);
@@ -141,7 +142,7 @@ public sealed class AdmissionControlTests
         Ensure(controller.QueuedCalls == 1 && controller.QueuedBytes == 48, "bounded queue accounting");
 
         first.Lease!.Dispose();
-        var second = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var second = await pending.AsTask();
         Ensure(second.IsAcquired, "queued call acquired");
         Ensure(controller.QueuedCalls == 0 && controller.QueuedBytes == 0, "queue accounting released");
         second.Lease!.Dispose();
@@ -344,6 +345,7 @@ public sealed class AdmissionControlTests
     [Arguments("sliding")]
     public async Task CompositeQueueRetryShouldNotConsumeAnUpstreamRatePermitTwice(string policy)
     {
+        var provider = new ManualTimeProvider();
         var options = new SharpLinkAdmissionControlOptions
         {
             MaxQueuedCalls = 1,
@@ -379,7 +381,7 @@ public sealed class AdmissionControlTests
                 throw new ArgumentOutOfRangeException(nameof(policy));
         }
         options.AddContract(1, rule => rule.UseConcurrency(1));
-        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
         var context = CreateContext();
 
         var first = await controller.AcquireAsync(context, 1, allowQueue: true, CancellationToken.None);
@@ -387,7 +389,7 @@ public sealed class AdmissionControlTests
         Ensure(!pending.IsCompleted, "downstream concurrency should queue the second request");
 
         first.Lease!.Dispose();
-        var second = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var second = await pending.AsTask();
 
         Ensure(second.IsAcquired, "queued request should reuse its previously consumed rate permit");
         second.Lease!.Dispose();
