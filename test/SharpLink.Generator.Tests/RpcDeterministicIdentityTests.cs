@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
@@ -154,69 +153,50 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task SharedPayloadShouldHaveSameCodecHashAcrossContractAssemblies()
     {
-        var sdk = CreateMetadataReference("DeterministicIdentitySdk", BuildSource(string.Empty));
-        const string sharedSource = """
-using SharpLink.Sdk;
-
+        const string sharedPayload = """
 namespace SharedPayloadModels
 {
-    [RpcSerializable]
+    [SharpLink.Sdk.RpcSerializable]
     public sealed class SharedPayload
     {
         public int Value { get; set; }
     }
 }
 """;
-        var firstShared = CreateGeneratedMetadataReference(
-            "SharedPayloadModels",
-            sharedSource,
-            sdk);
-        var secondShared = CreateGeneratedMetadataReference(
-            "SharedPayloadModels",
-            sharedSource,
-            sdk);
-        var firstSource = """
-using System.Threading;
-using System.Threading.Tasks;
-using SharedPayloadModels;
-using SharpLink.Sdk;
+        var firstSource = BuildSource(sharedPayload + """
 
-[RpcContract]
-public interface IFirstSharedPayloadContract : IService
+[SharpLink.Sdk.RpcContract]
+public interface IFirstSharedPayloadContract : SharpLink.Sdk.IService
 {
-    ValueTask<SharedPayload> Echo(SharedPayload value, CancellationToken cancellationToken);
+    ValueTask<SharedPayloadModels.SharedPayload> Echo(
+        SharedPayloadModels.SharedPayload value,
+        CancellationToken cancellationToken);
 }
-""";
-        var secondSource = """
-using System.Threading;
-using System.Threading.Tasks;
-using SharedPayloadModels;
-using SharpLink.Sdk;
+""");
+        var secondSource = BuildSource(sharedPayload + """
 
-[RpcContract]
-public interface ISecondSharedPayloadContract : IService
+[SharpLink.Sdk.RpcContract]
+public interface ISecondSharedPayloadContract : SharpLink.Sdk.IService
 {
-    ValueTask<SharedPayload> Echo(SharedPayload value, CancellationToken cancellationToken);
+    ValueTask<SharedPayloadModels.SharedPayload> Echo(
+        SharedPayloadModels.SharedPayload value,
+        CancellationToken cancellationToken);
 }
-""";
+""");
 
-        _ = GenerateIdentityManifest(
+        var first = GenerateIdentityManifest(
             "FirstSharedPayloadContracts",
             firstSource,
-            Platform.AnyCpu,
-            sdk,
-            firstShared.Reference);
-        _ = GenerateIdentityManifest(
+            Platform.AnyCpu);
+        var second = GenerateIdentityManifest(
             "SecondSharedPayloadContracts",
             secondSource,
-            Platform.AnyCpu,
-            sdk,
-            secondShared.Reference);
+            Platform.AnyCpu);
 
         Ensure(
-            ExtractGeneratedCodecIdentity(firstShared.Manifest, "SharedPayloadModels.SharedPayload") ==
-            ExtractGeneratedCodecIdentity(secondShared.Manifest, "SharedPayloadModels.SharedPayload"),
-            "the same generated shared payload definition must publish one CodecHash when consumed by different contract assemblies");
+            ExtractGeneratedCodecIdentity(first, "SharedPayloadModels.SharedPayload") ==
+            ExtractGeneratedCodecIdentity(second, "SharedPayloadModels.SharedPayload"),
+            "the same payload definition must publish one CodecHash across different Contract assemblies");
         return Task.CompletedTask;
     }
 
@@ -313,40 +293,6 @@ public interface IUnsafeLayoutIdentityContract : SharpLink.Sdk.IService
         return RunGeneratorAndGetSources(source)
             .Single(static generated =>
                 generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
-    }
-
-    private static (MetadataReference Reference, string Manifest) CreateGeneratedMetadataReference(
-        string assemblyName,
-        string source,
-        params MetadataReference[] additionalReferences)
-    {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
-        var compilation = CSharpCompilation.Create(
-            assemblyName,
-            [syntaxTree],
-            GetPlatformReferences().Concat(additionalReferences),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-
-        IIncrementalGenerator generator = new RpcGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
-        driver = driver.RunGeneratorsAndUpdateCompilation(
-            compilation,
-            out var outputCompilation,
-            out var generatorDiagnostics);
-        Ensure(
-            !generatorDiagnostics.Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error),
-            $"Failed to generate metadata fixture '{assemblyName}': {FormatDiagnostics(generatorDiagnostics)}");
-
-        var manifest = driver.GetRunResult().GeneratedTrees
-            .Select(static tree => tree.GetText().ToString())
-            .Single(static generated =>
-                generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
-        using var image = new MemoryStream();
-        var emit = outputCompilation.Emit(image);
-        Ensure(
-            emit.Success,
-            $"Failed to build generated metadata fixture '{assemblyName}': {FormatDiagnostics(emit.Diagnostics)}");
-        return (MetadataReference.CreateFromImage(image.ToArray()), manifest);
     }
 
     private static string GenerateIdentityManifest(
