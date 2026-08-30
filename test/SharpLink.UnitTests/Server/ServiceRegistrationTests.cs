@@ -448,6 +448,7 @@ public class ServiceRegistrationTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly { get; } = ownerAssembly;
+        public RpcHash128 RpcAssemblyHash => new(0x736572766963652dUL, 0x656d7074792d7631UL);
         public string CompileTimeDescriptor => "test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -461,6 +462,7 @@ public class ServiceRegistrationTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(StaticCleanupManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x736572766963652dUL, 0x636c65616e75702dUL);
         public string CompileTimeDescriptor => "service-cleanup";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } =
         [
