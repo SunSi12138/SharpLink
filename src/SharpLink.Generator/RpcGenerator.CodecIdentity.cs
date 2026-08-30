@@ -85,7 +85,7 @@ public partial class RpcGenerator
                     parts.Add(GetFinalCodecHash(valueType, cache, stack).ToHex());
                 result = Hashing.GetSemanticHash(parts.ToArray());
             }
-            else if (type.IsUnmanagedType)
+            else if (type.IsUnmanagedType && !IsRuntimeSizedUnsafeBlitType(type))
             {
                 var layout = new StringBuilder("unsafe-blit/v1");
                 AppendUnsafeBlitPhysicalLayout(
