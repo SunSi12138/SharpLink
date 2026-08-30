@@ -6,8 +6,12 @@
 
 ```csharp
 services.AddSharpLinkServer(builder => builder.UseTcp(19090));
-services.AddSharpLinkClient(builder => builder.UseTcp("127.0.0.1", 19090));
+services.AddSharpLinkClient(builder => builder
+    .UseTcp("127.0.0.1", 19090)
+    .UseRequestTimeout());
 ```
+
+Hosted Client 与直接构建的 Client 一样，必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；未指定会在 Host materialize Client 时失败。
 
 Host 启动 Client/Server，停止时执行有界排空和异步释放。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client；不要在容器构建期间同步阻塞获取连接。Accessor 在 topology-specific `ConnectAsync` connectivity boundary 完成后发布 Client，保持快速启动与 dynamic accepted-empty 语义；若应用要求多 endpoint 收敛，应在取得 Client 后显式调用 `WaitForReadinessAsync`。
 
