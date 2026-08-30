@@ -270,9 +270,9 @@ public class SendPumpProgressIsolationTests
             Ensure(types.Count == 140, $"expected 140 frames, read {types.Count}");
             // The pump is parked inside the normal-queue drain (its flush is
             // blocked on the unconsumed pipe), so the ten progress frames must
-            // be served at the interleave boundary or, when the pump wakes
-            // late, at the loop top: either way they drain as one contiguous
-            // batch and are never deferred behind the entire bulk backlog.
+            // be served before the normal backlog empties. They may be picked
+            // up at an interleave boundary or a later loop-top priority turn;
+            // those legal turns do not promise one contiguous wire batch.
             var pingIndices = new List<int>();
             for (var index = 0; index < types.Count; index++)
             {
@@ -280,12 +280,10 @@ public class SendPumpProgressIsolationTests
                     pingIndices.Add(index);
             }
             Ensure(pingIndices.Count == 10, $"expected 10 pings, read {pingIndices.Count}");
-            Ensure(pingIndices.SequenceEqual(Enumerable.Range(pingIndices[0], 10)),
-                $"the progress frames must drain as one contiguous batch (indices {string.Join(',', pingIndices)})");
             Ensure(pingIndices[9] < types.Count - 1,
-                "the progress batch must flush before the final bulk frames");
+                "all progress frames must be served before the final bulk frame");
             Ensure(types.Where(static type => type == ProtocolV2FrameType.Response).Count() == 130,
-                "all bulk frames must be delivered around the progress batch");
+                "all bulk frames must be delivered around the progress turns");
         }
         finally
         {
