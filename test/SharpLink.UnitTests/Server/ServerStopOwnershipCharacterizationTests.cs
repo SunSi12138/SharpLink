@@ -65,8 +65,9 @@ public class ServerStopOwnershipCharacterizationTests
         Ensure(GetServerStateName(server) == "Draining",
             "the long-grace stop must establish shared cleanup and enter Draining while the active call is owned");
 
-        var sharedStopBeforeCancellation = GetSharedStopTask(server);
-        Ensure(sharedStopBeforeCancellation is not null && !sharedStopBeforeCancellation.IsCompleted,
+        var sharedStopBeforeCancellation = GetSharedStopTask(server)
+            ?? throw new Exception("the first StopAsync caller must establish a shared stop task");
+        Ensure(!sharedStopBeforeCancellation.IsCompleted,
             "the first StopAsync caller must establish an in-flight shared stop task");
 
         callerCancellation.Cancel();
