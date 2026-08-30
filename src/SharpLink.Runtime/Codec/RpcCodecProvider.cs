@@ -346,7 +346,6 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             var scopeByAdapterId = new Dictionary<string, AdapterScopeRegistration>(StringComparer.Ordinal);
             var allFactories = manifest.Codecs.Concat(manifest.ContractCodecs).ToArray();
             foreach (var factory in allFactories.OrderBy(static factory => factory.AdapterId, StringComparer.Ordinal)
-                         .ThenBy(static factory => factory.WireFormatId, StringComparer.Ordinal)
                          .ThenBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
             {
                 ValidateFactory(factory);
@@ -357,11 +356,10 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                 ValidateAdapter(factory, adapter);
                 if (scopeByAdapterId.TryGetValue(factory.AdapterId, out var existing))
                 {
-                    if (existing.Adapter.GetType() != adapter.GetType() ||
-                        !string.Equals(existing.WireFormatId, factory.WireFormatId, StringComparison.Ordinal))
+                    if (existing.Adapter.GetType() != adapter.GetType())
                     {
                         throw new InvalidOperationException(
-                            $"Adapter '{factory.AdapterId}' has inconsistent implementation or wire-format metadata in manifest '{manifest.OwnerAssembly.FullName}'.");
+                            $"Adapter '{factory.AdapterId}' has inconsistent implementations in manifest '{manifest.OwnerAssembly.FullName}'.");
                     }
                     continue;
                 }
@@ -370,7 +368,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                     $"Adapter '{factory.AdapterId}' returned a null scope.");
                 scopes.Add(scope);
                 scopeByAdapterId.Add(factory.AdapterId,
-                    new AdapterScopeRegistration(adapter, factory.WireFormatId, scope));
+                    new AdapterScopeRegistration(adapter, scope));
             }
 
             var ownerBox = new OwnerBox();
@@ -435,8 +433,11 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     {
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(factory.TargetType);
-        ArgumentException.ThrowIfNullOrWhiteSpace(factory.SchemaId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(factory.WireFormatId);
+        if (factory.CodecHash.IsEmpty)
+        {
+            throw new InvalidOperationException(
+                $"Generated Codec factory for '{factory.TargetType.FullName}' has no deterministic CodecHash.");
+        }
 
         var hasAdapterId = factory.AdapterId is not null;
         var hasAdapter = factory.Adapter is not null;
@@ -450,11 +451,10 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     private static void ValidateAdapter(IRpcGeneratedCodecFactory factory, IRpcCodecAdapter adapter)
     {
-        if (!string.Equals(adapter.AdapterId, factory.AdapterId, StringComparison.Ordinal) ||
-            !string.Equals(adapter.WireFormatId, factory.WireFormatId, StringComparison.Ordinal))
+        if (!string.Equals(adapter.AdapterId, factory.AdapterId, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                $"Codec adapter '{adapter.GetType().FullName}' runtime identity does not match its generated registration metadata.");
+                $"Codec adapter '{adapter.GetType().FullName}' lifecycle identity does not match its generated registration metadata.");
         }
     }
 
@@ -489,7 +489,6 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     private sealed record AdapterScopeRegistration(
         IRpcCodecAdapter Adapter,
-        string WireFormatId,
         IRpcCodecAdapterScope Scope);
 
     internal sealed class OwnerBox
