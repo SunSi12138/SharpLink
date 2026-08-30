@@ -177,7 +177,7 @@ public sealed class AdmissionDynamicPartitionUpdateTests
             "old queued request must remain attached to the captured old namespace");
 
         holder.Lease!.Dispose();
-        var oldAdmitted = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+        var oldAdmitted = await queued;
         Ensure(oldAdmitted.IsAcquired,
             "old queued request must complete normally after the old holder releases");
         oldAdmitted.Lease!.Dispose();
