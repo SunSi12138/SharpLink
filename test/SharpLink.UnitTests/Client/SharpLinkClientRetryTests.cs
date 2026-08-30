@@ -156,6 +156,7 @@ public class SharpLinkClientRetryTests
             await using var client = ClientBuilderTestHelper.Build(transport, builder =>
             {
                 builder.UseTimeProvider(provider);
+                builder.DisableRequestTimeout();
                 builder.UseRetry(options =>
                 {
                     options.MaxAttempts = 2;
