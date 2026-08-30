@@ -9,8 +9,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class SharpLinkRuntimeContextTests
 {
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
-    private static readonly RpcHash128 TestAssemblyHash =
-        new(0x72756e74696d652dUL, 0x746573742d763031UL);
+    private static readonly RpcHash128 TestAssemblyHash = new(0x72756e74696d652dUL, 0x746573742d763031UL);
 
     [Test]
     // This is the intentional default-global adapter test; the other RuntimeContext tests use fixed sources.
@@ -1157,7 +1156,6 @@ public class SharpLinkRuntimeContextTests
         internal CountingAdapter(AdapterCounters counters) => _counters = counters;
 
         public string AdapterId => Id;
-        public string WireFormatId => Wire;
 
         public IRpcCodecAdapterScope CreateScope()
         {
@@ -1180,7 +1178,6 @@ public class SharpLinkRuntimeContextTests
         internal AlternateCountingAdapter(AdapterCounters counters) => _counters = counters;
 
         public string AdapterId => Id;
-        public string WireFormatId => Wire;
 
         public IRpcCodecAdapterScope CreateScope()
         {
@@ -1236,7 +1233,6 @@ public class SharpLinkRuntimeContextTests
         internal ThrowingDisposeAdapter(AdapterCounters counters) => _counters = counters;
 
         public string AdapterId => Id;
-        public string WireFormatId => Wire;
 
         public IRpcCodecAdapterScope CreateScope()
         {
@@ -1264,7 +1260,6 @@ public class SharpLinkRuntimeContextTests
         }
 
         public string AdapterId => Id;
-        public string WireFormatId => Wire;
 
         public IRpcCodecAdapterScope CreateScope()
         {
@@ -1433,13 +1428,10 @@ public class SharpLinkRuntimeContextTests
             string adapterId,
             string wireFormatId,
             IRpcCodec? codec = null,
-            string? schemaId = null,
             RpcHash128 codecHash = default)
         {
             Adapter = adapter;
             AdapterId = adapterId;
-            WireFormatId = wireFormatId;
-            SchemaId = schemaId ?? $"adapter:{typeof(T).FullName}";
             CodecHash = codecHash.IsEmpty
                 ? new RpcHash128(0x636f6e6669672d61UL, 0x6461707465722d31UL)
                 : codecHash;
@@ -1448,8 +1440,6 @@ public class SharpLinkRuntimeContextTests
 
         public Type TargetType => typeof(T);
         public RpcHash128 CodecHash { get; }
-        public string SchemaId { get; }
-        public string WireFormatId { get; }
         public string AdapterId { get; }
         public IRpcCodecAdapter Adapter { get; }
 
