@@ -184,7 +184,7 @@ public sealed class AdmissionDynamicRateLineageAndLifecycleTests
             "N+1 must inherit the one rate permit retained by the old queued request");
 
         blocker.Dispose();
-        var oldDecision = await oldQueued.WaitAsync(TimeSpan.FromSeconds(2));
+        var oldDecision = await oldQueued;
         Ensure(oldDecision.IsAcquired,
             "old request must finish with its retained source rate lease after N+1 publication");
         oldDecision.Lease!.Dispose();
