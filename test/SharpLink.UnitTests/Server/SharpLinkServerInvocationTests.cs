@@ -409,7 +409,7 @@ public class SharpLinkServerInvocationTests
 
         var runTask = server.RunAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+        Ensure(server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
             "the active invocation must acquire both capacity slots before Stop");
         Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
             "the admitted invocation must hold one global and one connection slot");
@@ -494,7 +494,7 @@ public class SharpLinkServerInvocationTests
 
             allowGlobalAcquire.Set();
             var admission = await admissionTask.WaitAsync(TimeSpan.FromSeconds(2));
-            Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Unavailable,
+            Ensure(admission == ServerCallAdmissionResult.Unavailable,
                 "an admission that crosses the drain boundary must release instead of publishing a call");
             await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
             await runTask.WaitAsync(TimeSpan.FromSeconds(2));
@@ -518,7 +518,7 @@ public class SharpLinkServerInvocationTests
             allowGlobalAcquire.Set();
             await LongRunningTestWorker.JoinAsync(admissionTask, TimeSpan.FromSeconds(2));
             var admission = await admissionTask;
-            if (admission == SharpLinkServer.ServerCallAdmissionResult.Acquired)
+            if (admission == ServerCallAdmissionResult.Acquired)
                 server.ReleaseCall(connection);
             await connection.CloseAsync();
         }
