@@ -1,0 +1,44 @@
+name: tmp-pr443-apply-cancellable-saturation
+
+on:
+  push:
+    branches:
+      - fix/282-explicit-timeout-policy
+    paths:
+      - .github/workflows/tmp-pr443-apply-cancellable-saturation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/282-explicit-timeout-policy
+      - name: Make saturation requests explicitly cancellable without deadline
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('test/SharpLink.IntegrationTests/CompressionPersistentDecodeFourWorkerCloseTests.cs')
+          s = p.read_text()
+          anchor1 = '        var payloadB = Enumerable.Repeat((byte)0x62, PayloadBytes).ToArray();\n\n'
+          anchor2 = '        var payloadB = Enumerable.Repeat((byte)0x72, PayloadBytes).ToArray();\n\n'
+          assert anchor1 in s and anchor2 in s
+          s = s.replace(anchor1, anchor1 + '        using var callCancellation = new CancellationTokenSource();\n\n', 1)
+          s = s.replace(anchor2, anchor2 + '        using var callCancellation = new CancellationTokenSource();\n\n', 1)
+          s = s.replace('serviceA.MeasureAsync(payloadA, CancellationToken.None)', 'serviceA.MeasureAsync(payloadA, callCancellation.Token)')
+          s = s.replace('serviceB.MeasureAsync(payloadB, CancellationToken.None)', 'serviceB.MeasureAsync(payloadB, callCancellation.Token)')
+          p.write_text(s)
+          PY
+      - name: Commit migration
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add test/SharpLink.IntegrationTests/CompressionPersistentDecodeFourWorkerCloseTests.cs
+          git diff --cached --quiet && exit 0
+          git commit -m 'test: keep saturation control-plane requests cancellable'
+          git push origin HEAD:fix/282-explicit-timeout-policy
