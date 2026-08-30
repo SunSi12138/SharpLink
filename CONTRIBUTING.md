@@ -20,6 +20,9 @@ dotnet restore Sharplink.slnx
 # 构建
 dotnet build Sharplink.slnx -c Debug -v minimal
 
+# 验证生产项目引用架构边界（与 PR Fast 相同）
+python3 eng/check-project-reference-boundaries.py
+
 # 运行示例
 dotnet run --project demo/HelloWorld
 dotnet run --project demo/Streaming

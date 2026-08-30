@@ -25,15 +25,12 @@ jobs:
     timeout-minutes: 45
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
@@ -105,16 +102,12 @@ jobs:
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
 
       - name: Run NativeAOT Transport and Topology Smoke
         shell: bash
@@ -126,16 +119,12 @@ jobs:
   pack:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
@@ -143,17 +132,8 @@ jobs:
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-restore -c Release -o artifacts/nuget -v minimal
 
-      - name: Verify SDK Contains Generator
-        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
-
-      - name: Verify package metadata, XML documentation, and symbols
-        run: ./eng/verify-packages.sh artifacts/nuget
-
-      - name: Verify Hosting direct Runtime dependency
-        run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
-
-      - name: Verify Abstractions has no DI dependency
-        run: ./eng/verify-abstractions-package-dependency.sh artifacts/nuget
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
 
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
@@ -161,15 +141,8 @@ jobs:
       - name: Verify Protocol v2 Cross-version Matrix
         run: ./eng/verify-protocol-v2-cross-version.sh
 
-      - name: Restore Package Smoke
-        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
-        env:
-          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
-
-      - name: Run Package Smoke
-        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
-        env:
-          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
 
       - name: Verify packages exist
         run: |
@@ -191,16 +164,12 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
 
       - name: Run Release Chaos Smoke
         run: >-
@@ -246,10 +215,8 @@ jobs:
       - name: Checkout exact tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
 
       - name: Download release-gated packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
