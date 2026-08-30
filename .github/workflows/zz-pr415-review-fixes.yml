@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply:
-    if: "${{ github.event.head_commit.message == 'chore: run PR 415 review fixer' }}"
+    if: "${{ github.event.head_commit.message == 'chore: rerun PR 415 review fixer' }}"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -24,7 +24,23 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Apply review fixes
-        run: python3 eng/apply-pr415-review-fixes.py
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('eng/apply-pr415-review-fixes.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '        var nativeSource = BuildSource("""\n',
+              '        var nativeSource = BuildSource(\\"\\"\\"\n',
+              1)
+          text = text.replace(
+              '\n""");\n        var fixed64Source',
+              '\n\\"\\"\\");\n        var fixed64Source',
+              1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          python3 eng/apply-pr415-review-fixes.py
 
       - name: Restore and format
         run: |
