@@ -25,6 +25,7 @@ public partial class RpcGenerator
 
             var cache = new Dictionary<string, RpcHashValue>(StringComparer.Ordinal);
             return reachable
+                .Where(pair => !_failed.Contains(pair.Key))
                 .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
                 .Select(pair =>
                 {
