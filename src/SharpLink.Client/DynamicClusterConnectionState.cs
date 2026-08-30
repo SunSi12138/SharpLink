@@ -195,11 +195,8 @@ internal sealed partial class SharpLinkClient
         {
             ArgumentNullException.ThrowIfNull(states);
             var connections = new List<ClientConnection>();
-            for (var index = 0; index < states.Count; index++)
-            {
-                if (_connectionsByEndpoint.TryGetValue(states[index], out var owned))
-                    connections.AddRange(owned);
-            }
+            foreach (var owned in _connectionsByEndpoint.Values)
+                connections.AddRange(owned);
             _connectionsByEndpoint.Clear();
             _retiringConnections.Clear();
             return connections.ToArray();
