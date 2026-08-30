@@ -47,6 +47,8 @@ temporary_exceptions: []
 '''
 EMPTY_PROJECT = '<Project Sdk="Microsoft.NET.Sdk" />\n'
 FORBIDDEN_REF = '<ProjectReference Include="../Server/Server.csproj" Condition="\'$(Never)\' == \'true\'" />'
+EXPLICIT_PROPS = '<Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />'
+EXPLICIT_TARGETS = '<Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />'
 
 
 class GuardTests(unittest.TestCase):
@@ -159,6 +161,52 @@ class GuardTests(unittest.TestCase):
             self.write_forbidden(root / 'eng/custom-packages.props')
             self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
+    def test_directory_build_props_override_explicit_sdk(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'eng/custom.props')
+            self.set_project(root, 'Client', f'''<Project>
+<PropertyGroup><DirectoryBuildPropsPath>../../eng/custom.props</DirectoryBuildPropsPath></PropertyGroup>
+{EXPLICIT_PROPS}
+{EXPLICIT_TARGETS}
+</Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_custom_before_directory_build_props_explicit_sdk(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'eng/before.props')
+            self.set_project(root, 'Client', f'''<Project>
+<PropertyGroup><CustomBeforeDirectoryBuildProps>../../eng/before.props</CustomBeforeDirectoryBuildProps></PropertyGroup>
+{EXPLICIT_PROPS}
+{EXPLICIT_TARGETS}
+</Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_custom_before_props_can_select_directory_build_props(self):
+        temp, root = self.make_repo()
+        with temp:
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/before.props').write_text('<Project><PropertyGroup><DirectoryBuildPropsPath>custom.props</DirectoryBuildPropsPath></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/custom.props')
+            self.set_project(root, 'Client', f'''<Project>
+<PropertyGroup><CustomBeforeDirectoryBuildProps>../../eng/before.props</CustomBeforeDirectoryBuildProps></PropertyGroup>
+{EXPLICIT_PROPS}
+{EXPLICIT_TARGETS}
+</Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_explicit_sdk_early_package_override(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'eng/custom-packages.props')
+            self.set_project(root, 'Client', f'''<Project>
+<PropertyGroup><DirectoryPackagesPropsPath>../../eng/custom-packages.props</DirectoryPackagesPropsPath></PropertyGroup>
+{EXPLICIT_PROPS}
+{EXPLICIT_TARGETS}
+</Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
     def test_directory_build_targets_override(self):
         temp, root = self.make_repo()
         with temp:
@@ -187,11 +235,66 @@ class GuardTests(unittest.TestCase):
 </PropertyGroup></When></Choose></Project>''')
             self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
+    def test_target_time_targets_override_does_not_suppress_default(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'Directory.Build.targets')
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/safe.targets').write_text('<Project />')
+            self.set_project(root, 'Client', '''<Project Sdk="Microsoft.NET.Sdk"><Target Name="X"><PropertyGroup>
+<DirectoryBuildTargetsPath>../../eng/safe.targets</DirectoryBuildTargetsPath>
+</PropertyGroup></Target></Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_target_time_package_override_does_not_suppress_default(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'Directory.Packages.props')
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/safe.props').write_text('<Project />')
+            self.set_project(root, 'Client', '''<Project Sdk="Microsoft.NET.Sdk"><Target Name="X"><PropertyGroup>
+<DirectoryPackagesPropsPath>../../eng/safe.props</DirectoryPackagesPropsPath>
+</PropertyGroup></Target></Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_explicit_sdk_late_targets_override_does_not_suppress_default(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'Directory.Build.targets')
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/safe.targets').write_text('<Project />')
+            self.set_project(root, 'Client', f'''<Project>
+{EXPLICIT_PROPS}
+{EXPLICIT_TARGETS}
+<PropertyGroup><DirectoryBuildTargetsPath>../../eng/safe.targets</DirectoryBuildTargetsPath></PropertyGroup>
+</Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_explicit_sdk_pre_targets_override_is_honored(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.write_forbidden(root / 'eng/custom.targets')
+            self.set_project(root, 'Client', f'''<Project>
+{EXPLICIT_PROPS}
+<PropertyGroup><DirectoryBuildTargetsPath>../../eng/custom.targets</DirectoryBuildTargetsPath></PropertyGroup>
+{EXPLICIT_TARGETS}
+</Project>''')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
     def test_custom_before_directory_build_targets(self):
         temp, root = self.make_repo()
         with temp:
             self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><CustomBeforeDirectoryBuildTargets>../../eng/before.targets</CustomBeforeDirectoryBuildTargets></PropertyGroup></Project>')
             self.write_forbidden(root / 'eng/before.targets')
+            self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
+
+    def test_custom_before_targets_can_select_directory_build_targets(self):
+        temp, root = self.make_repo()
+        with temp:
+            (root / 'eng').mkdir(exist_ok=True)
+            (root / 'eng/before.targets').write_text('<Project><PropertyGroup><DirectoryBuildTargetsPath>custom.targets</DirectoryBuildTargetsPath></PropertyGroup></Project>')
+            self.write_forbidden(root / 'eng/custom.targets')
+            self.set_project(root, 'Client', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><CustomBeforeDirectoryBuildTargets>../../eng/before.targets</CustomBeforeDirectoryBuildTargets></PropertyGroup></Project>')
             self.assert_violation(self.run_guard(root), 'condition-hidden imported forbidden reference client -> server')
 
     def test_custom_after_directory_build_targets_from_project(self):
