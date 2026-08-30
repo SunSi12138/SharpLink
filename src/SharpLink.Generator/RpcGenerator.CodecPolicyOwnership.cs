@@ -13,6 +13,11 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
         var standalone = standaloneState.AnalyzeWithFinalCodecBindings();
+        var standaloneHashes = standaloneState.BuildFinalCodecHashes(
+            includeSerializable: true,
+            includeContracts: false);
+        var standaloneCodecs = AttachCodecHashes(standalone.Codecs, standaloneHashes);
+
         var contractDefaultState = new DtoAnalysisState(
             compilation,
             cancellationToken,
@@ -20,6 +25,11 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: true);
         var contractDefault = contractDefaultState.AnalyzeWithFinalCodecBindings();
+        var contractDefaultHashes = contractDefaultState.BuildFinalCodecHashes(
+            includeSerializable: false,
+            includeContracts: true);
+        var contractDefaultCodecs = AttachCodecHashes(contractDefault.Codecs, contractDefaultHashes);
+
         var contractPolicyState = new DtoAnalysisState(
             compilation,
             cancellationToken,
@@ -30,12 +40,13 @@ public partial class RpcGenerator
         var codecHashes = contractPolicyState.BuildFinalCodecHashes(
             includeSerializable: false,
             includeContracts: true);
+        var contractPolicyCodecs = AttachCodecHashes(contractPolicy.Codecs, codecHashes);
 
         var currentContractTypes = contractPolicyState.GetCurrentContractReachableTypeNames();
-        var currentContractDefaultCodecs = contractDefault.Codecs
+        var currentContractDefaultCodecs = contractDefaultCodecs
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
-        var currentContractPolicyCodecs = contractPolicy.Codecs
+        var currentContractPolicyCodecs = contractPolicyCodecs
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
         var contractOwnedPolicyRoots = new HashSet<string>(
@@ -43,7 +54,7 @@ public partial class RpcGenerator
             StringComparer.Ordinal);
 
         var standaloneTypes = new HashSet<string>(
-            standalone.Codecs.Select(static codec => codec.TypeName),
+            standaloneCodecs.Select(static codec => codec.TypeName),
             StringComparer.Ordinal);
         var defaultByType = currentContractDefaultCodecs
             .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
@@ -60,7 +71,7 @@ public partial class RpcGenerator
         var globalByType = currentContractDefaultCodecs
             .Where(codec => !globalExcludedTypes.Contains(codec.TypeName))
             .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        foreach (var codec in standalone.Codecs)
+        foreach (var codec in standaloneCodecs)
             globalByType[codec.TypeName] = codec;
         var globalCodecs = globalByType.Values
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
@@ -104,6 +115,28 @@ public partial class RpcGenerator
         {
             CodecHashes = codecHashes
         };
+    }
+
+    private static ImmutableArray<GeneratedCodecModel> AttachCodecHashes(
+        ImmutableArray<GeneratedCodecModel> codecs,
+        ImmutableArray<GeneratedCodecHashModel> hashes)
+    {
+        var hashByType = hashes.ToDictionary(static item => item.TypeName, StringComparer.Ordinal);
+        return codecs
+            .Select(codec =>
+            {
+                if (!hashByType.TryGetValue(codec.TypeName, out var hash))
+                {
+                    throw new InvalidOperationException(
+                        $"Final Codec graph is missing deterministic identity for generated Codec '{codec.TypeName}'.");
+                }
+                return codec with
+                {
+                    CodecHashHigh = hash.High,
+                    CodecHashLow = hash.Low
+                };
+            })
+            .ToImmutableArray();
     }
 
     private static bool ContainsRpcContract(INamespaceSymbol namespaceSymbol)
