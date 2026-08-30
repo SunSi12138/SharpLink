@@ -25,9 +25,14 @@ The gate first generates the normal inventory, then checks file LOC against `eng
 - `source`: files at or below 800 LOC pass without an allowance.
 - `test`: files at or below 1000 LOC pass without an allowance. Tests have a looser limit because integration scenarios, fixtures, and evidence runners commonly aggregate more setup and assertions than production units.
 
-A file is oversized only when its LOC is strictly greater than its domain limit. Every oversized file already present in the issue #350 `dev` inventory is listed explicitly in `baseline.json` with a `maxLoc` allowance. The allowance is a hard ceiling, not an extra margin: a baselined file may stay the same size or shrink, but it may not grow beyond its recorded `maxLoc`. A new oversized file has no allowance and fails the gate. If a baselined file disappears, or shrinks to at or below the normal domain threshold, the gate asks for the obsolete allowance to be removed so the checked-in debt list remains accurate.
+A file is oversized only when its LOC is strictly greater than its domain limit. Oversized files already present when issue #351 enforcement is introduced are listed explicitly in `baseline.json` with a `maxLoc` allowance. The allowance is a hard ceiling, not an extra margin: a baselined file may stay the same size or shrink, but it may not grow beyond its recorded `maxLoc`. A new oversized file has no allowance and fails the gate. If a baselined file disappears, or shrinks to at or below the normal domain threshold, the gate asks for the obsolete allowance to be removed so the checked-in debt list remains accurate.
 
-The current baseline records the source snapshot from `00e2f18c6384c785d232bd59902102d3af7ad3da`; PR #391 changed only the maintainability tooling before that inventory was merged into `dev`, so those `src/` and `test/` values are also the initial debt state used by issue #351.
+There are two distinct snapshots involved in the baseline history:
+
+- `00e2f18c6384c785d232bd59902102d3af7ad3da` is the original issue #350 evidence snapshot recorded in `eng/maintainability/dev-baseline.md`.
+- `d23304028cb133ebcede9323e5859cc88bde1901` is the current `dev` snapshot used by this PR for the issue #351 enforcement baseline in `eng/maintainability/baseline.json`.
+
+`src/` and `test/` changed between those commits, so the enforcement baseline does not claim that the issue #350 snapshot remained unchanged until enforcement was added. Hotspots whose recorded ceiling is unchanged from the issue #350 evidence use a reason such as `Existing dev debt captured by issue #350.` Hotspots that grew before issue #351 enforcement was introduced instead record that distinction explicitly with a reason such as `Existing dev debt present when issue #351 enforcement was introduced.` In both cases, the checked-in `maxLoc` is the no-headroom ceiling enforced from the issue #351 baseline onward.
 
 ### Reviewing baseline changes
 
