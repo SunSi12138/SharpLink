@@ -313,6 +313,9 @@ public partial class RpcGenerator : IIncrementalGenerator
         var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
+            if (!value.Right.Diagnostics.IsDefaultOrEmpty)
+                return;
+
             var interfaces = value.Left.Left;
             var services = value.Left.Right;
             var codecs = value.Right.Codecs;
