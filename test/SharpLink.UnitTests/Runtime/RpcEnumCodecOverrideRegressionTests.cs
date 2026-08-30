@@ -53,7 +53,7 @@ public class RpcEnumCodecOverrideRegressionTests
         public TestMode Deserialize(in ReadOnlySequence<byte> buffer) => TestMode.Active;
     }
 
-    private sealed class AssemblyEnumManifest : ISharpLinkGeneratedAssemblyManifest
+    private sealed class AssemblyEnumManifest : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
