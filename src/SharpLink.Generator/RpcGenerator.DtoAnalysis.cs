@@ -879,9 +879,7 @@ public partial class RpcGenerator
                     ? $"selected Adapter '{GetTypeName(candidate.ImplementationType)}' has no valid RpcCodecAdapterRegistration"
                     : $"selected RpcCodecAdapter implementation '{GetTypeName(candidate.ImplementationType)}' must implement IRpcCodecAdapter; use RpcCodec for handwritten IRpcCodec<T> bindings";
                 Report(
-                    ImplementsRpcCodecAdapter(candidate.ImplementationType)
-                        ? DtoDiagnosticKind.AdapterRegistrationInvalid
-                        : DtoDiagnosticKind.AdapterTypeInvalid,
+                    DtoDiagnosticKind.AdapterRegistrationInvalid,
                     target,
                     detail,
                     candidate.Location);
