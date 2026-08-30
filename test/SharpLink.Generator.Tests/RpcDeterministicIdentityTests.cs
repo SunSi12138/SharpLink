@@ -106,26 +106,22 @@ public partial class RpcAnalyzerTests
         var extraMember = includeExtraMember
             ? "public long Extra { get; set; }"
             : string.Empty;
-        var methodAttribute = idempotent ? "[Idempotent]" : string.Empty;
-        var source = $$"""
-using System.Threading;
-using System.Threading.Tasks;
-using SharpLink.Sdk;
-
-[RpcSerializable]
+        var methodAttribute = idempotent ? "[SharpLink.Sdk.Idempotent]" : string.Empty;
+        var source = BuildSource($$"""
+[SharpLink.Sdk.RpcSerializable]
 public sealed class DeterministicPayload
 {
     public int Value { get; set; }
     {{extraMember}}
 }
 
-[RpcContract]
-public interface IDeterministicIdentityContract : IService
+[SharpLink.Sdk.RpcContract]
+public interface IDeterministicIdentityContract : SharpLink.Sdk.IService
 {
     {{methodAttribute}}
     ValueTask<DeterministicPayload> Echo(DeterministicPayload value, CancellationToken cancellationToken);
 }
-""";
+""");
 
         return RunGeneratorAndGetSources(source)
             .Single(static generated =>
@@ -137,36 +133,38 @@ public interface IDeterministicIdentityContract : IService
         ulong semanticHigh,
         ulong semanticLow)
     {
-        var source = $$"""
-using System;
-using System.Buffers;
-using System.Threading;
-using System.Threading.Tasks;
-using SharpLink.Abstractions;
-using SharpLink.Sdk;
+        var source = BuildSource($$"""
+namespace SharpLink.Sdk
+{
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
+    public sealed class RpcCodecSemanticIdentityAttribute : Attribute
+    {
+        public RpcCodecSemanticIdentityAttribute(ulong high, ulong low) { }
+    }
+}
 
-[RpcSerializable]
-[RpcCodec(typeof(OpaquePayloadCodec))]
+[SharpLink.Sdk.RpcSerializable]
+[SharpLink.Sdk.RpcCodec(typeof(OpaquePayloadCodec))]
 public sealed class OpaquePayload
 {
     public int Value { get; set; }
 }
 
-[RpcCodecSemanticIdentity({{semanticHigh}}UL, {{semanticLow}}UL)]
-public sealed class OpaquePayloadCodec : IRpcCodec<OpaquePayload>
+[SharpLink.Sdk.RpcCodecSemanticIdentity({{semanticHigh}}UL, {{semanticLow}}UL)]
+public sealed class OpaquePayloadCodec : SharpLink.Abstractions.IRpcCodec<OpaquePayload>
 {
     private const string ImplementationMarker = "{{implementationMarker}}";
 
-    public void Serialize(in OpaquePayload value, IBufferWriter<byte> buffer) { _ = ImplementationMarker; }
-    public OpaquePayload Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    public void Serialize(in OpaquePayload value, System.Buffers.IBufferWriter<byte> buffer) { _ = ImplementationMarker; }
+    public OpaquePayload Deserialize(in System.Buffers.ReadOnlySequence<byte> buffer) => new();
 }
 
-[RpcContract]
-public interface IOpaqueIdentityContract : IService
+[SharpLink.Sdk.RpcContract]
+public interface IOpaqueIdentityContract : SharpLink.Sdk.IService
 {
     ValueTask<OpaquePayload> Echo(OpaquePayload value, CancellationToken cancellationToken);
 }
-""";
+""");
 
         return RunGeneratorAndGetSources(source)
             .Single(static generated =>
