@@ -53,10 +53,12 @@ EMPTY_PROJECT = '<Project Sdk="Microsoft.NET.Sdk" />\n'
 
 
 class ProjectReferenceBoundaryGuardTests(unittest.TestCase):
-    def make_repo(self):
+    def make_repo(self, relative_root=None):
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)
-        (root / "doc").mkdir()
+        if relative_root is not None:
+            root = root / relative_root
+        (root / "doc").mkdir(parents=True)
         (root / "doc" / "project-reference-boundaries.yml").write_text(POLICY, encoding="utf-8")
         for name in ("Abstractions", "Client", "Server", "Sdk", "Generator"):
             project_dir = root / "src" / name
@@ -126,6 +128,47 @@ class ProjectReferenceBoundaryGuardTests(unittest.TestCase):
 </Project>""")
             result = self.run_guard(root)
             self.assert_violation(result, "condition-hidden imported forbidden reference client -> server")
+
+    def test_repository_assignment_to_external_named_import_property_fails_closed(self):
+        temp, root = self.make_repo()
+        with temp:
+            imported = root / "eng" / "architecture.props"
+            imported.parent.mkdir()
+            imported.write_text("""<Project><ItemGroup>
+<ProjectReference Include="../src/Server/Server.csproj" Condition="'$(Never)' == 'true'" />
+</ItemGroup></Project>""", encoding="utf-8")
+            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><VSToolsPath>../../eng/</VSToolsPath></PropertyGroup>
+<Import Project="$(VSToolsPath)architecture.props" Condition="'$(ImportArchitecture)' == 'true'" />
+</Project>""")
+            result = self.run_guard(root)
+            self.assert_violation(result, "repository import is not statically traversable")
+
+    def test_target_project_reference_mode_mutation_fails(self):
+        temp, root = self.make_repo()
+        with temp:
+            self.set_project(root, "Client", """<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
+<ProjectReference Include="../Abstractions/Abstractions.csproj" />
+</ItemGroup><Target Name="MutateReference"><ItemGroup>
+<ProjectReference ReferenceOutputAssembly="false" />
+</ItemGroup></Target></Project>""")
+            result = self.run_guard(root)
+            self.assert_violation(result, "ProjectReference target mutation must not supply/override mode metadata")
+
+    def test_checkout_path_named_obj_does_not_hide_projects(self):
+        temp, root = self.make_repo(Path("obj") / "SharpLink")
+        with temp:
+            result = self.run_guard(root)
+            self.assertEqual((), result.violations)
+
+    def test_project_under_source_obj_directory_is_still_in_scope(self):
+        temp, root = self.make_repo()
+        with temp:
+            generated = root / "src" / "Client" / "obj"
+            generated.mkdir()
+            (generated / "Shadow.csproj").write_text(EMPTY_PROJECT, encoding="utf-8")
+            result = self.run_guard(root)
+            self.assert_violation(result, "unregistered production project: src/Client/obj/Shadow.csproj")
 
     def test_assembly_reference_output_assembly_false_fails(self):
         temp, root = self.make_repo()
