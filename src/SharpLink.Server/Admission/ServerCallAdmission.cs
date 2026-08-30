@@ -17,14 +17,21 @@ internal sealed class ServerCallAdmission
     private int _pendingCallAdmissions;
 
     internal ServerCallAdmission(
-        SharpLinkServer server,
         int maxConcurrentCallsPerConnection,
-        int maxConcurrentCallsPerServer)
+        int maxConcurrentCallsPerServer,
+        Func<bool> isServerRunning,
+        Action<ServerConnectionState?> trySignalCallsDrained,
+        Func<ServerResourceGovernor> resourceGovernor)
     {
-        ArgumentNullException.ThrowIfNull(server);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerConnection, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerServer, 1);
-        _server = server;
+        ArgumentNullException.ThrowIfNull(isServerRunning);
+        ArgumentNullException.ThrowIfNull(trySignalCallsDrained);
+        ArgumentNullException.ThrowIfNull(resourceGovernor);
+        _server = trySignalCallsDrained.Target as SharpLinkServer
+            ?? throw new ArgumentException(
+                "The call-drain callback must be bound to its SharpLinkServer owner.",
+                nameof(trySignalCallsDrained));
         _maxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection;
         _maxConcurrentCallsPerServer = maxConcurrentCallsPerServer;
     }
@@ -121,7 +128,7 @@ internal sealed class ServerCallAdmission
         ArgumentNullException.ThrowIfNull(connection);
         connection.ReleaseCall();
         ReleaseGlobalCall();
-        _server.TrySignalCallsDrained(connection);
+        _server.TrySignalCallsDrainedForCallAdmission(connection);
     }
 
     private bool TryAcquireGlobalCall()
@@ -147,7 +154,7 @@ internal sealed class ServerCallAdmission
         if (remaining < 0)
             throw new InvalidOperationException("Server pending call admission count underflowed.");
         if (remaining == 0)
-            _server.TrySignalCallsDrained(connection);
+            _server.TrySignalCallsDrainedForCallAdmission(connection);
     }
 }
 
