@@ -14,14 +14,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         Faulted
     }
 
-    internal enum ServerCallAdmissionResult : byte
-    {
-        Acquired,
-        Unavailable,
-        PerConnectionCapacityExhausted,
-        ServerCapacityExhausted
-    }
-
     private readonly IServerTransportListener _transportListener;
     private readonly TimeSpan _heartbeatCheckInterval;
     private readonly TimeSpan _heartbeatTimeout;
