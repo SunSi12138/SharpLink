@@ -57,7 +57,7 @@ public class SharpLinkClientLifetimeTelemetryTests
                 var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
                 return SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
                     "parent",
-                    metadata: null,
+                    null,
                     deadline,
                     provider));
             });
