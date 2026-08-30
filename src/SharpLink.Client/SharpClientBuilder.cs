@@ -132,17 +132,6 @@ public class SharpClientBuilder
         return this;
     }
 
-    /// <summary>Registers an explicit codec only for clients built by this builder.</summary>
-    internal SharpClientBuilder UseCodec<T>(IRpcCodec<T> codec)
-    {
-        Configure(() =>
-        {
-            ArgumentNullException.ThrowIfNull(codec);
-            _runtimeContextBuilder.AddCodec(codec);
-        });
-        return this;
-    }
-
     /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
@@ -776,7 +765,7 @@ public class SharpClientBuilder
             CreateReadinessConfiguration(plan),
             runtimeContext,
             staticManifests,
-            SharpLinkClient.BuildStaticProxySnapshot(staticManifests),
+            SharpLinkClient.BuildStaticProxySnapshot(staticManifests, runtimeContext),
             plan.HeartbeatInterval,
             plan.HeartbeatTimeout,
             requestTimeout.HasValue,

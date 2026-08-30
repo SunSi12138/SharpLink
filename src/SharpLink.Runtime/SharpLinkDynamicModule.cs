@@ -165,6 +165,230 @@ internal static class SharpLinkAssemblyManifestLoader
         return $"{context.Name ?? "Default"} (collectible={context.IsCollectible})";
     }
 
+    private static SharpLinkAssemblyRegistrationError? ValidateManifest(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        Assembly assembly)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.GeneratorVersion) ||
+            string.IsNullOrWhiteSpace(manifest.CompileTimeDescriptor) ||
+            manifest.Contracts is null || manifest.Services is null ||
+            manifest.Codecs is null || manifest.ContractCodecs is null ||
+            manifest.Dependencies is null)
+        {
+            return Error(
+                SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                "The generated manifest contains a null or empty required metadata field.",
+                assembly,
+                "Manifest");
+        }
+
+        try
+        {
+            SharpLinkGeneratedManifestStructureValidator.Validate(manifest);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            return Error(
+                SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                exception.Message,
+                assembly,
+                "Manifest");
+        }
+
+        var contractIds = new HashSet<long>();
+        for (var contractIndex = 0; contractIndex < manifest.Contracts.Count; contractIndex++)
+        {
+            var contract = manifest.Contracts[contractIndex];
+            if (contract is null || contract.ContractType is null ||
+                !ReferenceEquals(contract.ContractType.Assembly, assembly) ||
+                string.IsNullOrWhiteSpace(contract.ContractName) ||
+                !IsFingerprint(contract.Fingerprint) || contract.Methods is null ||
+                contract.ProxyFactory is null || contract.StubFactory is null)
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    $"Contract descriptor at index {contractIndex} is malformed or not owned by the manifest assembly.",
+                    assembly,
+                    "Contract",
+                    contract?.ContractName,
+                    contract?.ContractId,
+                    incomingFingerprint: contract?.Fingerprint);
+            }
+            if (!contractIds.Add(contract.ContractId))
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
+                    $"Manifest contains duplicate contract ID {contract.ContractId} for '{contract.ContractName}'.",
+                    assembly,
+                    "Contract",
+                    contract.ContractName,
+                    contract.ContractId,
+                    incomingFingerprint: contract.Fingerprint);
+            }
+
+            var methodIds = new HashSet<long>();
+            for (var methodIndex = 0; methodIndex < contract.Methods.Count; methodIndex++)
+            {
+                var method = contract.Methods[methodIndex];
+                if (method is null || string.IsNullOrWhiteSpace(method.Name) ||
+                    method.RequestSchema is null || method.ResponseSchema is null ||
+                    !IsFingerprint(method.Fingerprint) ||
+                    method.Kind is < RpcMethodKind.Unary or > RpcMethodKind.DuplexStreaming)
+                {
+                    return Error(
+                        SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                        $"Method descriptor at index {methodIndex} for contract '{contract.ContractName}' is malformed.",
+                        assembly,
+                        "Method",
+                        contract.ContractName,
+                        contract.ContractId,
+                        method?.Name,
+                        method?.MethodId,
+                        incomingFingerprint: method?.Fingerprint);
+                }
+                if (!methodIds.Add(method.MethodId))
+                {
+                    return Error(
+                        SharpLinkAssemblyRegistrationErrorCode.MethodConflict,
+                        $"Contract '{contract.ContractName}' contains duplicate method ID {method.MethodId} for '{method.Name}'.",
+                        assembly,
+                        "Method",
+                        contract.ContractName,
+                        contract.ContractId,
+                        method.Name,
+                        method.MethodId,
+                        incomingFingerprint: method.Fingerprint);
+                }
+            }
+        }
+
+        var serviceContracts = new HashSet<long>();
+        for (var serviceIndex = 0; serviceIndex < manifest.Services.Count; serviceIndex++)
+        {
+            var service = manifest.Services[serviceIndex];
+            if (service is null || service.ContractType is null || service.ImplementationType is null ||
+                !ReferenceEquals(service.ImplementationType.Assembly, assembly) ||
+                string.IsNullOrWhiteSpace(service.ContractName) ||
+                string.IsNullOrWhiteSpace(service.ImplementationName) ||
+                !IsFingerprint(service.Fingerprint) || service.Dependencies is null ||
+                service.Activator is null ||
+                service.Lifetime is not SharpLinkServiceLifetime.Singleton and
+                    not SharpLinkServiceLifetime.Connection and
+                    not SharpLinkServiceLifetime.Call)
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    $"Service descriptor at index {serviceIndex} is malformed or not owned by the manifest assembly.",
+                    assembly,
+                    "Service",
+                    service?.ContractName,
+                    service?.ContractId,
+                    incomingFingerprint: service?.Fingerprint);
+            }
+            if (!serviceContracts.Add(service.ContractId))
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.ServiceConflict,
+                    $"Manifest contains more than one service for contract '{service.ContractName}' ({service.ContractId}).",
+                    assembly,
+                    "Service",
+                    service.ContractName,
+                    service.ContractId,
+                    incomingFingerprint: service.Fingerprint);
+            }
+            for (var dependencyIndex = 0; dependencyIndex < service.Dependencies.Count; dependencyIndex++)
+            {
+                if (service.Dependencies[dependencyIndex] is null)
+                {
+                    return Error(
+                        SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                        $"Service '{service.ImplementationName}' contains a null dependency type.",
+                        assembly,
+                        "Service",
+                        service.ContractName,
+                        service.ContractId,
+                        incomingFingerprint: service.Fingerprint);
+                }
+            }
+        }
+
+        var codecTypes = new HashSet<Type>();
+        for (var codecIndex = 0; codecIndex < manifest.Codecs.Count; codecIndex++)
+        {
+            var codec = manifest.Codecs[codecIndex];
+            if (codec is null || codec.TargetType is null || string.IsNullOrWhiteSpace(codec.SchemaId))
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    $"Codec descriptor at index {codecIndex} is malformed.",
+                    assembly,
+                    "Codec");
+            }
+            if (!codecTypes.Add(codec.TargetType))
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
+                    $"Manifest contains more than one Codec for '{codec.TargetType.FullName}'.",
+                    assembly,
+                    "Codec",
+                    incomingFingerprint: codec.SchemaId);
+            }
+        }
+
+        var dependencies = new HashSet<string>(StringComparer.Ordinal);
+        for (var dependencyIndex = 0; dependencyIndex < manifest.Dependencies.Count; dependencyIndex++)
+        {
+            var dependency = manifest.Dependencies[dependencyIndex];
+            if (string.IsNullOrWhiteSpace(dependency) || !dependencies.Add(dependency))
+            {
+                return Error(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    $"Manifest dependency at index {dependencyIndex} is empty or duplicated.",
+                    assembly,
+                    "Dependency");
+            }
+        }
+        return null;
+    }
+
+    private static bool IsFingerprint(string? value)
+    {
+        if (value?.Length != 64)
+            return false;
+        for (var index = 0; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f') and
+                not (>= 'A' and <= 'F'))
+                return false;
+        }
+        return true;
+    }
+
+    private static SharpLinkAssemblyRegistrationError Error(
+        SharpLinkAssemblyRegistrationErrorCode code,
+        string message,
+        Assembly assembly,
+        string? artifact = null,
+        string? contractName = null,
+        long? contractId = null,
+        string? methodName = null,
+        long? methodId = null,
+        string? existingFingerprint = null,
+        string? incomingFingerprint = null)
+        => new(
+            code,
+            message,
+            GetAssemblyIdentity(assembly),
+            IncomingLoadContext: GetLoadContextIdentity(assembly),
+            Artifact: artifact,
+            ContractName: contractName,
+            ContractId: contractId,
+            MethodName: methodName,
+            MethodId: methodId,
+            ExistingFingerprint: existingFingerprint,
+            IncomingFingerprint: incomingFingerprint);
+
     private static SharpLinkAssemblyRegistrationResult Failure(
         SharpLinkAssemblyRegistrationErrorCode code,
         string message,
@@ -186,13 +410,13 @@ internal sealed class SharpLinkDynamicModule
     private readonly CancellationToken _forcedCancellationToken;
     private Assembly? _assembly;
     private ISharpLinkGeneratedAssemblyManifest? _manifest;
-    private RpcContractCodecSet? _codecRegistration;
+    private RpcGeneratedManifestRegistration? _codecRegistration;
     private int _state;
 
     internal SharpLinkDynamicModule(
         Assembly assembly,
         ISharpLinkGeneratedAssemblyManifest manifest,
-        RpcContractCodecSet codecRegistration)
+        RpcGeneratedManifestRegistration codecRegistration)
     {
         _assembly = assembly;
         _manifest = manifest;
@@ -213,7 +437,7 @@ internal sealed class SharpLinkDynamicModule
     internal ISharpLinkGeneratedAssemblyManifest Manifest => Volatile.Read(ref _manifest) ??
         throw new ObjectDisposedException(nameof(SharpLinkDynamicModule));
 
-    internal RpcContractCodecSet CodecRegistration
+    internal RpcGeneratedManifestRegistration CodecRegistration
         => Volatile.Read(ref _codecRegistration) ??
            throw new ObjectDisposedException(nameof(SharpLinkDynamicModule));
 

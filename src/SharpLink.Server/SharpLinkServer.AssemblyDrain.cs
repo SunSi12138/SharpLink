@@ -114,7 +114,7 @@ internal sealed partial class SharpLinkServer
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
     {
         ServiceRegistration[] removedServices;
-        RpcContractCodecSet codecRegistration;
+        RpcGeneratedManifestRegistration codecRegistration;
         lock (_registryGate)
         {
             if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
@@ -258,7 +258,7 @@ internal sealed partial class SharpLinkServer
         {
             if (ReferenceEquals(candidate, module))
                 continue;
-            if (candidate.Manifest.Dependencies.Contains(identity, StringComparer.Ordinal))
+            if (ManifestDependsOn(candidate.Manifest, identity))
             {
                 throw new InvalidOperationException(
                     $"Assembly '{identity}' cannot be unregistered while '{candidate.Manifest.OwnerAssembly.FullName}' depends on it.");

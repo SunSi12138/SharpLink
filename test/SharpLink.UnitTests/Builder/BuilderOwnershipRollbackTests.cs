@@ -138,26 +138,6 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
-    public void ClientFinalMaterializationFailureMustNotDisposeCallerProvidedCodec()
-    {
-        var transport = new TrackingClientTransport(bindingFailure: null, cleanupFailure: null);
-        var codec = new TrackingCodec();
-        var logger = new ThrowingLoggerFactory("Client codec ownership logger failure");
-
-        var failure = Capture(() => CreateClientBuilder()
-            .UseTransport(transport)
-            .UseCodec(codec)
-            .UseLoggerFactory(logger)
-            .Build());
-
-        Ensure(Contains(failure, "Client codec ownership logger failure"),
-            "Client construction failure must reach the final construction fault");
-        Ensure(transport.DisposeCount == 1, "Client construction failure disposes its framework-owned transport");
-        Ensure(codec.DisposeCount == 0, "Client construction failure must not dispose caller-provided codecs");
-        Ensure(logger.DisposeCount == 0, "Client construction failure must not dispose caller-provided loggers");
-    }
-
-    [Test]
     public void MultiClusterConstructionFailureShouldRollbackCompletedChildren()
     {
         var childTransport = new TrackingClientTransport(
@@ -724,7 +704,7 @@ public class BuilderOwnershipRollbackTests
                 contractId,
                 new string('a', 64),
                 [],
-                static _ => throw new NotSupportedException(),
+                static (_, _) => throw new NotSupportedException(),
                 static _ => RegistrationStub.Instance);
     }
 

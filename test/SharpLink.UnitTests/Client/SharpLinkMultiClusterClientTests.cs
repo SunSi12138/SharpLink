@@ -1687,7 +1687,7 @@ public sealed class SharpLinkMultiClusterClientTests
                 8_101,
                 "0101010101010101010101010101010101010101010101010101010101010101",
                 [],
-                static channel => new OrdersProxy(channel),
+                static (channel, _) => new OrdersProxy(channel),
                 static _ => throw new NotSupportedException())
         ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; } = [];

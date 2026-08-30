@@ -77,18 +77,24 @@ public partial class RpcGenerator
         foreach (var method in model.Methods)
             AppendProxyFields(sb, model, method);
 
-        sb.AppendLine($"    internal __Proxy_{GetContractArtifactIdentity(model)}(IRpcChannel channel)");
+        sb.AppendLine($"    internal __Proxy_{GetContractArtifactIdentity(model)}(IRpcChannel channel, IRpcCodecProvider __codecs)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(channel);");
+        sb.AppendLine("        ArgumentNullException.ThrowIfNull(__codecs);");
         sb.AppendLine("        _channel = channel;");
         foreach (var method in model.Methods)
         {
             var suffix = GetMethodSuffix(method);
             var payloadParameters = GetPayloadParameters(method);
             if (payloadParameters.Length != 0)
-                sb.AppendLine($"        __requestCodec_{suffix} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(channel.RuntimeContext.Codecs);");
+                sb.AppendLine($"        __requestCodec_{suffix} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(__codecs);");
             if (!method.IsOneWay)
-                sb.AppendLine($"        __responseCodec_{suffix} = channel.RuntimeContext.Codecs.GetCodec<{GetResponseType(method)}>();");
+                sb.AppendLine($"        __responseCodec_{suffix} = __codecs.GetCodec<{GetResponseType(method)}>();");
+            var streamParameters = GetStreamParameters(method);
+            for (var index = 0; index < streamParameters.Length; index++)
+            {
+                sb.AppendLine($"        __streamCodec_{suffix}_{index} = __codecs.GetCodec<{streamParameters[index].DisplayStreamItemType}>();");
+            }
         }
         sb.AppendLine("    }");
 
@@ -113,6 +119,9 @@ public partial class RpcGenerator
             sb.AppendLine($"    private readonly IRpcCodec<{GetHelperTypeReference(model, GetRequestType(model, method))}> __requestCodec_{suffix};");
         if (!method.IsOneWay)
             sb.AppendLine($"    private readonly IRpcCodec<{GetResponseType(method)}> __responseCodec_{suffix};");
+        var streamParameters = GetStreamParameters(method);
+        for (var index = 0; index < streamParameters.Length; index++)
+            sb.AppendLine($"    private readonly IRpcCodec<{streamParameters[index].DisplayStreamItemType}> __streamCodec_{suffix}_{index};");
     }
 
     private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
@@ -129,7 +138,7 @@ public partial class RpcGenerator
         var streamsType = streamParameters.Length == 0 ? "RpcNoClientStreams" : GetHelperTypeReference(model, GetStreamsType(model, method));
         var streamsValue = streamParameters.Length == 0
             ? "default(RpcNoClientStreams)"
-            : $"new {streamsType}({string.Join(", ", streamParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
+            : $"new {streamsType}({string.Join(", ", streamParameters.Select((parameter, index) => $"{EscapeIdentifier(parameter.Name)}, __streamCodec_{suffix}_{index}"))})";
         var cancellationParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCancellationToken);
         var cancellationToken = cancellationParameter is null ? "default" : EscapeIdentifier(cancellationParameter.Name);
         var requestLocal = GetUniqueGeneratedLocalName(method, "__request");
@@ -202,7 +211,6 @@ public partial class RpcGenerator
             return;
         }
 
-        // Response-less non-one-way methods use byte as an internal acknowledgement type.
         if (!method.IsOneWay)
             invocation += ".AsVoid()";
         sb.AppendLine(returnsValueTask
@@ -323,27 +331,35 @@ public partial class RpcGenerator
         sb.AppendLine($"internal readonly struct {streamsType} : IRpcClientStreamWriter");
         sb.AppendLine("{");
         foreach (var stream in streams)
+        {
             sb.AppendLine($"    private readonly {stream.DisplayType} _{stream.Name};");
-        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}"))})");
+            sb.AppendLine($"    private readonly IRpcCodec<{stream.DisplayStreamItemType}> __codec_{stream.Name};");
+        }
+        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}, IRpcCodec<{stream.DisplayStreamItemType}> __codec_{stream.Name}"))})");
         sb.AppendLine("    {");
         foreach (var stream in streams)
+        {
             sb.AppendLine($"        _{stream.Name} = {EscapeIdentifier(stream.Name)};");
+            sb.AppendLine($"        this.__codec_{stream.Name} = __codec_{stream.Name};");
+        }
         sb.AppendLine("    }");
 
         if (streams.Length == 1)
         {
             var stream = streams[0];
             sb.AppendLine("    public ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)");
-            sb.AppendLine($"        => new(sink.SendClientStreamAsync(requestId, (ushort)1, _{stream.Name}, cancellationToken));");
+            sb.AppendLine($"        => new(sink.SendClientStreamAsync(requestId, (ushort)1, _{stream.Name}, __codec_{stream.Name}, cancellationToken));");
         }
         else
         {
             sb.AppendLine("    public async ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)");
             sb.AppendLine("    {");
             for (var index = 0; index < streams.Length; index++)
-                sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, _{streams[index].Name}, cancellationToken);");
-            for (var index = 0; index < streams.Length; index++)
-                sb.AppendLine($"        await pending_{index}.ConfigureAwait(false);");
+            {
+                var stream = streams[index];
+                sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, _{stream.Name}, __codec_{stream.Name}, cancellationToken);");
+            }
+            sb.AppendLine($"        await Task.WhenAll({string.Join(", ", Enumerable.Range(0, streams.Length).Select(static index => $"pending_{index}"))}).ConfigureAwait(false);");
             sb.AppendLine("    }");
         }
         sb.AppendLine("}");

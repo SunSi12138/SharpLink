@@ -470,7 +470,7 @@ public class ServiceRegistrationTests
                 91_004,
                 new string('c', 64),
                 [],
-                static _ => throw new NotSupportedException(),
+                static (_, _) => throw new NotSupportedException(),
                 static _ => new StubMarker())
         ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];

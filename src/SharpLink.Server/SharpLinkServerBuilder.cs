@@ -154,20 +154,10 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     }
 
     /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
-    internal SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
+    /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
+    public SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
         Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
-        return this;
-    }
-
-    /// <summary>Registers an explicit codec only for servers built by this builder.</summary>
-    internal SharpLinkServerBuilder UseCodec<T>(IRpcCodec<T> codec)
-    {
-        Configure(() =>
-        {
-            ArgumentNullException.ThrowIfNull(codec);
-            _runtimeContextBuilder.AddCodec(codec);
-        });
         return this;
     }
 
@@ -570,7 +560,9 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 var entry = plan.GetService(index);
                 entry.Registration.ValidateDependencies(serviceProvider);
                 var registration = transaction.Own(
-                    entry.Registration.Materialize(runtimeContext.Codecs).Build(serviceProvider),
+                    entry.Registration.Materialize(
+                        RpcGeneratedCodecResolver.GetProvider(runtimeContext, entry.Registration.ContractType))
+                        .Build(serviceProvider),
                     static value => SharpLinkAsyncCleanup.DisposeSynchronously(value),
                     SynchronousBuildResourceMetadata.FrameworkOwned("Server service registration"));
                 registrationsByContract.Add(entry.ContractId, registration);

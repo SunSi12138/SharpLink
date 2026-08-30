@@ -56,7 +56,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal API 4 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 4, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-2.0-api4-rpcchannel-metadata-v2", StringComparison.Ordinal),
+               manifest.Contains("sharplink-2.0-api4-rpcchannel-codec-provider-v3", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -105,7 +105,7 @@ public interface IPrivateNestedService : SharpLink.Sdk.IService
         Ensure(CountOccurrences(generated, "public sealed class IPrivateNestedService_Proxy") == 0 &&
                CountOccurrences(generated, "public sealed class IPrivateNestedService_Stub") == 0,
             "generated Proxy/Stub must not be public top-level contract types");
-        Ensure(generated.Contains("static channel => __CreateProxy_", StringComparison.Ordinal) &&
+        Ensure(generated.Contains("static (channel, codecs) => __CreateProxy_", StringComparison.Ordinal) &&
                generated.Contains("static codecs => __CreateStub_", StringComparison.Ordinal),
             "the manifest must use private static factories to instantiate nested artifacts");
         return Task.CompletedTask;
@@ -681,7 +681,6 @@ public interface IHelloService : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
-
     [Test]
     public Task MisplacedControlParameterShouldReportSharplink008()
     {
@@ -1046,7 +1045,7 @@ public interface ISemanticService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task CodecOnlyManifestShouldBeOwnedByTheGeneratedAssembly()
+    public Task ManifestlessReferencedContractShouldNotCreateConsumerCodecManifest()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
         var contract = CreateMetadataReference(
@@ -1074,19 +1073,12 @@ namespace ReferencedDtoContract
             "namespace CodecConsumer { public sealed class Marker; }",
             sdk,
             contract);
-        var manifest = generated.FirstOrDefault(static text =>
-            text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal))
-            ?? throw new Exception("Expected a codec-only assembly manifest source.");
-        Ensure(manifest.Contains(
-                "public Assembly OwnerAssembly => typeof(__SharpLinkGeneratedAssemblyManifest_",
-                StringComparison.Ordinal),
-            "Codec-only manifests must identify the assembly containing the generated manifest.");
-        Ensure(!manifest.Contains(
-                "OwnerAssembly => typeof(global::ReferencedDtoContract.Payload).Assembly",
-                StringComparison.Ordinal),
-            "Codec-only manifests must not identify a referenced DTO assembly as their owner.");
-        Ensure(manifest.Contains("ReferencedDtoContract, Version=0.0.0.0", StringComparison.Ordinal),
-            "Codec-only manifests must depend on the assembly that owns referenced DTO types.");
+        Ensure(!generated.Any(static text =>
+                text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal)),
+            "a consumer with no owned generated artifacts must not publish a manifest for a referenced manifest-less Contract.");
+        Ensure(!generated.Any(static text =>
+                text.Contains("IRpcCodec<global::ReferencedDtoContract.Payload>", StringComparison.Ordinal)),
+            "a referenced manifest-less Contract payload must not leak into the consumer Codec graph.");
         return Task.CompletedTask;
     }
 
@@ -2034,8 +2026,10 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(ValueTuple<int, string>), typeof(FakeAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("CreateCodec<(int Index, string Label)>()", StringComparison.Ordinal),
-            "named tuple resolves through its underlying ValueTuple binding");
+        Ensure(generated.Contains("CreateCodec<global::System.ValueTuple", StringComparison.Ordinal),
+            "named tuple resolves through one canonical underlying ValueTuple Codec identity");
+        Ensure(!generated.Contains("CreateCodec<(int Index, string Label)>()", StringComparison.Ordinal),
+            "tuple element names must not participate in the Codec graph identity");
         EnsureDoesNotHaveRule(source, "SHARPLINK009");
         return Task.CompletedTask;
     }
@@ -3058,10 +3052,10 @@ public interface IExternalMoneyService : IService
 """;
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source, sdk, external));
-        Ensure(generated.Contains("new global::ExternalMoneyCodec()", StringComparison.Ordinal),
-            "referenced Contract assembly custom Codec binding must be discovered from the compilation reference closure");
-        Ensure(generated.Contains("\"external-wire/v1\"", StringComparison.Ordinal),
-            "referenced custom Codec wire identity must be emitted into the manifest");
+        Ensure(!generated.Contains("new global::ExternalMoneyCodec()", StringComparison.Ordinal),
+            "assembly-level custom Codec policy from a referenced assembly must not leak into the current Contract owner");
+        Ensure(!generated.Contains("\"external-wire/v1\"", StringComparison.Ordinal),
+            "referenced assembly-level custom Codec wire identity must not be inherited by the current owner");
         return Task.CompletedTask;
     }
 
@@ -3422,7 +3416,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-metadata-v2")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v3")]
 
 namespace SharpLink.Generated
 {
@@ -3571,5 +3565,4 @@ namespace SharpLink.Sdk
         if (!condition)
             throw new Exception(message);
     }
-
 }

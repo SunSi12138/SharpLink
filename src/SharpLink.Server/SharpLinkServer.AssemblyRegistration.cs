@@ -19,7 +19,7 @@ internal sealed partial class SharpLinkServer
                 assembly);
         }
 
-        RpcContractCodecSet? codecRegistration = null;
+        RpcGeneratedManifestRegistration? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
         IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
@@ -172,7 +172,7 @@ internal sealed partial class SharpLinkServer
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
-        RpcContractCodecSet? codecRegistration = null;
+        RpcGeneratedManifestRegistration? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
         IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
@@ -402,10 +402,6 @@ internal sealed partial class SharpLinkServer
             nextFactories.Add(pair.Key, codec);
         }
 
-        var candidateCodecs = new RpcRegistrationCodecProvider(
-            _runtimeContext.Codecs,
-            module.CodecRegistration.Codecs);
-
         var nextServices = currentServices.ToDictionary(static pair => pair.Key, static pair => pair.Value);
         var createdServices = new List<ServiceRegistration>();
         try
@@ -447,9 +443,13 @@ internal sealed partial class SharpLinkServer
                     DisposeCreatedServices(createdServices);
                     return default;
                 }
+                var stubCodecs = ReferenceEquals(contract.Manifest.OwnerAssembly, incoming.OwnerAssembly)
+                    ? RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration, contract.Contract.ContractType)
+                    : RpcGeneratedCodecResolver.GetProvider(_runtimeContext, contract.Contract.ContractType);
+                var stub = contract.Contract.StubFactory(stubCodecs);
                 var definition = new ServiceRegistrationDefinition(
                     service.ContractType,
-                    contract.Contract.StubFactory(candidateCodecs),
+                    stub,
                     service.Lifetime,
                     service.Activator,
                     instance: null,
@@ -511,7 +511,7 @@ internal sealed partial class SharpLinkServer
     private static void DisposeRegistrationCandidate(
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices,
         IReadOnlyDictionary<long, ServiceRegistration>? retainedServices,
-        RpcContractCodecSet? codecRegistration)
+        RpcGeneratedManifestRegistration? codecRegistration)
     {
         List<Exception>? failures = null;
         if (candidateServices is not null && retainedServices is not null)
@@ -570,12 +570,10 @@ internal sealed partial class SharpLinkServer
     {
         var oldIdentity = oldModule.Manifest.OwnerAssembly.FullName;
         var newIdentity = incoming.OwnerAssembly.FullName;
-        if (string.Equals(oldIdentity, newIdentity, StringComparison.Ordinal))
-            return null;
         foreach (var candidate in _dynamicModules.Values)
         {
             if (!ReferenceEquals(candidate, oldModule) &&
-                candidate.Manifest.Dependencies.Contains(oldIdentity, StringComparer.Ordinal))
+                ManifestDependsOn(candidate.Manifest, oldIdentity))
             {
                 return CreateError(
                     SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
@@ -587,6 +585,18 @@ internal sealed partial class SharpLinkServer
         }
         return null;
     }
+
+    private static IEnumerable<string> EnumerateManifestDependencies(ISharpLinkGeneratedAssemblyManifest manifest)
+    {
+        foreach (var dependency in manifest.Dependencies)
+            yield return dependency;
+        foreach (var dependency in manifest.ContractDependencies)
+            yield return dependency;
+    }
+
+    private static bool ManifestDependsOn(ISharpLinkGeneratedAssemblyManifest manifest, string? identity)
+        => identity is not null && EnumerateManifestDependencies(manifest)
+            .Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal));
 
     private SharpLinkAssemblyRegistrationError? ValidateServiceDependencies(
         ISharpLinkGeneratedAssemblyManifest incoming,
@@ -630,7 +640,7 @@ internal sealed partial class SharpLinkServer
                 available.Add(module.Manifest.OwnerAssembly.FullName ?? string.Empty);
         }
         var self = incoming.OwnerAssembly.FullName;
-        foreach (var dependency in incoming.Dependencies)
+        foreach (var dependency in EnumerateManifestDependencies(incoming).Distinct(StringComparer.Ordinal))
         {
             if (string.Equals(dependency, self, StringComparison.Ordinal) || available.Contains(dependency))
                 continue;

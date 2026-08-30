@@ -190,9 +190,7 @@ internal sealed partial class SharpLinkClient :
             catch (Exception exception) { cleanupFailures.Add(exception); }
         }
 
-        Assembly[] dynamicAssemblies;
-        lock (_registryGate)
-            dynamicAssemblies = [.. _dynamicModules.Keys];
+        var dynamicAssemblies = GetDynamicAssembliesForShutdown();
         for (var index = 0; index < dynamicAssemblies.Length; index++)
         {
             try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
@@ -229,9 +227,7 @@ internal sealed partial class SharpLinkClient :
         try { await _cluster.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
-        Assembly[] dynamicAssemblies;
-        lock (_registryGate)
-            dynamicAssemblies = [.. _dynamicModules.Keys];
+        var dynamicAssemblies = GetDynamicAssembliesForShutdown();
         for (var index = 0; index < dynamicAssemblies.Length; index++)
         {
             try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
@@ -251,6 +247,97 @@ internal sealed partial class SharpLinkClient :
         catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
         ThrowStopCleanupFailures(cleanupFailures);
+    }
+
+    private Assembly[] GetDynamicAssembliesForShutdown()
+    {
+        SharpLinkDynamicModule[] modules;
+        lock (_registryGate)
+            modules = [.. _dynamicModules.Values];
+
+        if (modules.Length == 0)
+            return [];
+        if (modules.Length == 1)
+            return [modules[0].Assembly];
+
+        var identities = new string[modules.Length];
+        var dependencies = new string[modules.Length][];
+        for (var index = 0; index < modules.Length; index++)
+        {
+            var manifest = modules[index].Manifest;
+            identities[index] = manifest.OwnerAssembly.FullName ??
+                                manifest.OwnerAssembly.GetName().Name ??
+                                string.Empty;
+            dependencies[index] = EnumerateManifestDependencies(manifest).ToArray();
+        }
+
+        var order = GetShutdownDependencyOrder(identities, dependencies);
+        var assemblies = new Assembly[order.Length];
+        for (var index = 0; index < order.Length; index++)
+            assemblies[index] = modules[order[index]].Assembly;
+        return assemblies;
+    }
+
+    internal static int[] GetShutdownDependencyOrder(
+        string[] identities,
+        string[][] dependencies)
+    {
+        ArgumentNullException.ThrowIfNull(identities);
+        ArgumentNullException.ThrowIfNull(dependencies);
+        if (identities.Length != dependencies.Length)
+            throw new ArgumentException("Dependency rows must match the module identity count.", nameof(dependencies));
+
+        var remaining = new bool[identities.Length];
+        Array.Fill(remaining, true);
+        var order = new int[identities.Length];
+        for (var outputIndex = 0; outputIndex < order.Length; outputIndex++)
+        {
+            var selected = -1;
+            for (var candidate = 0; candidate < identities.Length; candidate++)
+            {
+                if (!remaining[candidate])
+                    continue;
+
+                var hasRemainingDependant = false;
+                for (var dependant = 0; dependant < identities.Length; dependant++)
+                {
+                    if (dependant == candidate || !remaining[dependant])
+                        continue;
+                    if (dependencies[dependant].Any(dependency =>
+                            string.Equals(dependency, identities[candidate], StringComparison.Ordinal)))
+                    {
+                        hasRemainingDependant = true;
+                        break;
+                    }
+                }
+
+                if (!hasRemainingDependant)
+                {
+                    selected = candidate;
+                    break;
+                }
+            }
+
+            // Registration validates dependency closure before publication, so a live cycle is not
+            // expected. Keep teardown deterministic for corrupted/custom manifests; the normal
+            // unregister guard will then surface the invalid graph rather than looping forever.
+            if (selected < 0)
+            {
+                for (var candidate = identities.Length - 1; candidate >= 0; candidate--)
+                {
+                    if (remaining[candidate])
+                    {
+                        selected = candidate;
+                        break;
+                    }
+                }
+            }
+
+            order[outputIndex] = selected;
+            remaining[selected] = false;
+        }
+
+        return order;
     }
 
     private static void ThrowStopCleanupFailures(List<Exception> failures)
