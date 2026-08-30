@@ -638,9 +638,6 @@ public class SharpLinkClientLifecycleStateTests
             builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
             builder.UseCluster(options =>
             {
-                // A one-endpoint target makes the first configured endpoint the
-                // deterministic initial dial owner. The second configuration stays
-                // present to prove its reconnect worker is not spuriously started.
                 options.MinReadyEndpoints = 1;
                 options.MaxConnections = 2;
                 options.MaxConnectionsPerEndpoint = 1;
@@ -1134,19 +1131,8 @@ public class SharpLinkClientLifecycleStateTests
         SharpLinkClient client,
         string endpointId)
     {
-        var clusterField = typeof(SharpLinkClient).GetField(
-            "_cluster",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find endpoint cluster field");
-        var cluster = clusterField.GetValue(client)
-            ?? throw new Exception("client does not own an endpoint cluster");
-        var statesField = cluster.GetType().GetField(
-            cluster.GetType().Name.Contains("Dynamic", StringComparison.Ordinal)
-                ? "_current"
-                : "_endpoints",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find endpoint cluster state array");
-        foreach (var state in (System.Collections.IEnumerable)statesField.GetValue(cluster)!)
+        var cluster = GetEndpointCluster(client);
+        foreach (var state in GetClusterStates(cluster))
         {
             var configuration = state.GetType().GetProperty("Configuration")!.GetValue(state)!;
             var endpoint = (SharpLinkEndpoint)configuration.GetType()
@@ -1164,12 +1150,35 @@ public class SharpLinkClientLifecycleStateTests
         throw new Exception($"cannot find ready endpoint {endpointId}");
     }
 
-    private static Task GetStaticReconnectTask(SharpLinkClient client, string endpointId)
-    {
-        var cluster = typeof(SharpLinkClient).GetField(
+    private static object GetEndpointCluster(SharpLinkClient client)
+        => typeof(SharpLinkClient).GetField(
             "_cluster",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(client) ?? throw new Exception("client does not own an endpoint cluster");
+
+    private static System.Collections.IEnumerable GetClusterStates(object cluster)
+    {
+        if (!cluster.GetType().Name.Contains("Dynamic", StringComparison.Ordinal))
+        {
+            return (System.Collections.IEnumerable)(cluster.GetType().GetField(
+                "_endpoints",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(cluster) ?? throw new Exception("cannot find static endpoint states"));
+        }
+
+        var topology = cluster.GetType().GetField(
+            "_topology",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(cluster) ?? throw new Exception("cannot find dynamic topology state");
+        return (System.Collections.IEnumerable)(topology.GetType().GetProperty(
+            "Current",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?.GetValue(topology) ?? throw new Exception("cannot find dynamic endpoint states"));
+    }
+
+    private static Task GetStaticReconnectTask(SharpLinkClient client, string endpointId)
+    {
+        var cluster = GetEndpointCluster(client);
         var states = (System.Collections.IEnumerable)(cluster.GetType().GetField(
             "_endpoints",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -1191,15 +1200,8 @@ public class SharpLinkClientLifecycleStateTests
 
     private static Task GetDynamicReconnectTask(SharpLinkClient client, string endpointId)
     {
-        var cluster = typeof(SharpLinkClient).GetField(
-            "_cluster",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(client) ?? throw new Exception("client does not own an endpoint cluster");
-        var states = (System.Collections.IEnumerable)(cluster.GetType().GetField(
-            "_current",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(cluster) ?? throw new Exception("cannot find dynamic endpoint states"));
-        foreach (var state in states)
+        var cluster = GetEndpointCluster(client);
+        foreach (var state in GetClusterStates(cluster))
         {
             var configuration = state.GetType().GetProperty("Configuration")!.GetValue(state)!;
             var endpoint = (SharpLinkEndpoint)configuration.GetType()
