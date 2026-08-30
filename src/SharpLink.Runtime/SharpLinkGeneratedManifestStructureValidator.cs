@@ -71,33 +71,13 @@ internal static class SharpLinkGeneratedManifestStructureValidator
                     $"Generated manifest '{ownerAssembly.FullName}' contains duplicate Codec target '{targetType.FullName}' in the {scope} graph.");
             }
 
-            switch (factory.Kind)
+            var hasAdapterId = factory.AdapterId is not null;
+            var hasAdapter = factory.Adapter is not null;
+            if (hasAdapterId != hasAdapter ||
+                (hasAdapterId && string.IsNullOrWhiteSpace(factory.AdapterId)))
             {
-                case RpcGeneratedCodecFactoryKind.Native:
-                    if (factory.AdapterId is not null || factory.Adapter is not null ||
-                        !string.Equals(factory.WireFormatId, "sharplink-native/v1", StringComparison.Ordinal))
-                    {
-                        throw new InvalidOperationException(
-                            $"Native Codec factory for '{targetType.FullName}' in the {scope} graph has invalid adapter or wire-format metadata.");
-                    }
-                    break;
-                case RpcGeneratedCodecFactoryKind.Custom:
-                    if (factory.AdapterId is not null || factory.Adapter is not null)
-                    {
-                        throw new InvalidOperationException(
-                            $"Custom Codec factory for '{targetType.FullName}' in the {scope} graph cannot declare adapter metadata.");
-                    }
-                    break;
-                case RpcGeneratedCodecFactoryKind.Adapter:
-                    if (string.IsNullOrWhiteSpace(factory.AdapterId) || factory.Adapter is null)
-                    {
-                        throw new InvalidOperationException(
-                            $"Adapter Codec factory for '{targetType.FullName}' in the {scope} graph has incomplete adapter metadata.");
-                    }
-                    break;
-                default:
-                    throw new InvalidOperationException(
-                        $"Codec factory for '{targetType.FullName}' in the {scope} graph has unknown factory kind '{factory.Kind}'.");
+                throw new InvalidOperationException(
+                    $"Codec factory for '{targetType.FullName}' in the {scope} graph has inconsistent adapter metadata.");
             }
         }
     }
