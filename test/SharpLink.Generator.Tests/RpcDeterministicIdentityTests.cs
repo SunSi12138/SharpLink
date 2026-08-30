@@ -68,7 +68,6 @@ public sealed class OpaquePayload
     public int Value { get; set; }
 }
 
-[RpcCodecImplementation("opaque-test-wire/v1", "opaque-test-schema/v1")]
 [RpcCodecSemanticIdentity({{semanticHigh}}UL, {{semanticLow}}UL)]
 public sealed class OpaquePayloadCodec : IRpcCodec<OpaquePayload>
 {
