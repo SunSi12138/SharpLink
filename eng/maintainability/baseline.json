@@ -169,8 +169,8 @@
     {
       "domain": "test",
       "path": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterClientTests.cs",
-      "maxLoc": 2154,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 2164,
+      "reason": "Issue #282 adds explicit request-timeout policy coverage to existing MultiCluster tests; existing test decomposition debt remains tracked by issue #350."
     },
     {
       "domain": "test",
