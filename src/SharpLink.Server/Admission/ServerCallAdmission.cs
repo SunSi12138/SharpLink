@@ -17,21 +17,14 @@ internal sealed class ServerCallAdmission
     private int _pendingCallAdmissions;
 
     internal ServerCallAdmission(
+        SharpLinkServer server,
         int maxConcurrentCallsPerConnection,
-        int maxConcurrentCallsPerServer,
-        Func<bool> isServerRunning,
-        Action<ServerConnectionState?> trySignalCallsDrained,
-        Func<ServerResourceGovernor> resourceGovernor)
+        int maxConcurrentCallsPerServer)
     {
+        ArgumentNullException.ThrowIfNull(server);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerConnection, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerServer, 1);
-        ArgumentNullException.ThrowIfNull(isServerRunning);
-        ArgumentNullException.ThrowIfNull(trySignalCallsDrained);
-        ArgumentNullException.ThrowIfNull(resourceGovernor);
-        _server = trySignalCallsDrained.Target as SharpLinkServer
-            ?? throw new ArgumentException(
-                "The call-drain callback must be bound to its SharpLinkServer owner.",
-                nameof(trySignalCallsDrained));
+        _server = server;
         _maxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection;
         _maxConcurrentCallsPerServer = maxConcurrentCallsPerServer;
     }
