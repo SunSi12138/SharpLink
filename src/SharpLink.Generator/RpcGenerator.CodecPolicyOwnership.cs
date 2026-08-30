@@ -497,6 +497,7 @@ public partial class RpcGenerator
         {
             _ = Analyze();
             PromoteSelectedFixedMembersToCodecBindings();
+            RejectRuntimeSizedUnsafeBlitTypes();
             NormalizeGeneratedModuleDependencies();
             var finalizedCodecs = FilterFailedCodecClosure(
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray());
@@ -504,6 +505,46 @@ public partial class RpcGenerator
                 finalizedCodecs,
                 _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
+        }
+
+        private void RejectRuntimeSizedUnsafeBlitTypes()
+        {
+            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            CollectCurrentAssemblyRoots(
+                _compilation.Assembly.GlobalNamespace,
+                roots,
+                includeSerializable: !_contractMode,
+                includeContracts: _contractMode);
+            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+            foreach (var root in roots.Values)
+                CollectFinalBindingTypes(root, reachable, seen, 0);
+
+            foreach (var type in reachable.Values)
+            {
+                var typeName = GetTypeName(type);
+                if (_models.TryGetValue(typeName, out var selected) &&
+                    selected.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+                {
+                    continue;
+                }
+                if (!IsRuntimeSizedUnsafeBlitType(type))
+                    continue;
+
+                Report(
+                    DtoDiagnosticKind.Unsupported,
+                    type,
+                    "runtime-sized intrinsic unmanaged types such as System.Numerics.Vector<T> cannot use UnsafeBlit; register an explicit typed Codec or Codec Adapter");
+                _failed.Add(typeName);
+            }
+        }
+
+        private bool IsRuntimeSizedUnsafeBlitType(ITypeSymbol type)
+        {
+            var vectorDefinition = _compilation.GetTypeByMetadataName("System.Numerics.Vector`1");
+            return vectorDefinition is not null &&
+                   type is INamedTypeSymbol named &&
+                   SymbolEqualityComparer.Default.Equals(named.OriginalDefinition, vectorDefinition);
         }
 
         internal HashSet<string> GetCurrentContractReachableTypeNames()
@@ -669,8 +710,8 @@ public partial class RpcGenerator
                 {
                     AssemblyDependencies = dependencies
                         .OrderBy(static identity => identity, StringComparer.Ordinal)
-                        .ToImmutableArray()
-                };
+                        .ToImmutableArray();
+                }
             }
         }
 
