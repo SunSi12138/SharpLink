@@ -16,9 +16,12 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private const int SpaceWaiterArmedBit = 16;
 
     private readonly PipeStream _stream;
+    private readonly object _outboundStateGate = new();
     private readonly SharedMemoryAsyncPulse _outboundWake = new();
     private readonly SharedMemoryAsyncPulse _dataAvailable = new();
     private readonly SharedMemoryAsyncPulse _spaceAvailable = new();
+    private readonly TaskCompletionSource _closeWriteStarted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _readerTask;
     private readonly Task _writerTask;
     private Action? _peerDataWaiterArmedHandler;
@@ -28,6 +31,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private int _pendingPeerDataWaiterArmed;
     private int _pendingPeerSpaceWaiterArmed;
     private int _waiterHandlersRegistered;
+    private int _writerActive;
     private int _closed;
     private Task? _disposeTask;
 
@@ -177,12 +181,28 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         {
             while (await _outboundWake.WaitAsync().ConfigureAwait(false))
             {
-                var pending = Interlocked.Exchange(ref _pendingOutboundSignals, 0);
-                if (pending == 0)
-                    continue;
-                await WriteSignalsAsync((byte)pending).ConfigureAwait(false);
-                if ((pending & CloseBit) != 0)
-                    return;
+                int pending;
+                lock (_outboundStateGate)
+                {
+                    _writerActive = 1;
+                    pending = _pendingOutboundSignals;
+                    _pendingOutboundSignals = 0;
+                }
+                try
+                {
+                    if (pending == 0)
+                        continue;
+                    if ((pending & CloseBit) != 0)
+                        _closeWriteStarted.TrySetResult();
+                    await WriteSignalsAsync((byte)pending).ConfigureAwait(false);
+                    if ((pending & CloseBit) != 0)
+                        return;
+                }
+                finally
+                {
+                    lock (_outboundStateGate)
+                        _writerActive = 0;
+                }
             }
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
@@ -220,9 +240,23 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private async Task DisposeCoreAsync()
     {
-        if (!IsClosed)
-            QueueSignal(CloseBit, kind: null);
+        var waitForFinalCloseStart = false;
+        var wakeWriter = false;
+        lock (_outboundStateGate)
+        {
+            if (!IsClosed)
+            {
+                waitForFinalCloseStart = _writerActive == 0 && _pendingOutboundSignals == 0;
+                wakeWriter = QueueSignalLocked(CloseBit, kind: null);
+            }
+        }
+        if (wakeWriter)
+            _outboundWake.Pulse();
         _outboundWake.Complete();
+        if (waitForFinalCloseStart)
+        {
+            await Task.WhenAny(_closeWriteStarted.Task, _writerTask).ConfigureAwait(false);
+        }
         try
         {
             await _writerTask.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
@@ -286,17 +320,27 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private bool QueueSignal(int bit, string? kind)
     {
-        if (IsClosed)
-            return false;
-        if (kind is not null)
-            SharpLinkTelemetry.RecordSharedMemoryNotificationRequest(kind);
-        var previous = Interlocked.Or(ref _pendingOutboundSignals, bit);
-        var queued = (previous & bit) == 0;
+        bool queued;
+        lock (_outboundStateGate)
+        {
+            if (IsClosed)
+                return false;
+            queued = QueueSignalLocked(bit, kind);
+        }
         if (queued)
             _outboundWake.Pulse();
         else if (kind is not null)
             SharpLinkTelemetry.RecordSharedMemoryNotificationCoalesced(kind);
         return queued;
+    }
+
+    private bool QueueSignalLocked(int bit, string? kind)
+    {
+        if (kind is not null)
+            SharpLinkTelemetry.RecordSharedMemoryNotificationRequest(kind);
+        var previous = _pendingOutboundSignals;
+        _pendingOutboundSignals |= bit;
+        return (previous & bit) == 0;
     }
 
     private static void DispatchPeerWaiterArmed(
