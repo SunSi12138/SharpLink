@@ -5,8 +5,7 @@ public sealed class StaticEndpointIntegrationTests
     [Test]
     public async Task StaticReadinessCreatedSnapshotsShouldReflectConfiguredEndpointCounts()
     {
-        await using var twoEndpointClient = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var twoEndpointClient = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", 1), Endpoint("second", 2)],
@@ -18,8 +17,7 @@ public sealed class StaticEndpointIntegrationTests
                 options.MaxConnectionsPerEndpoint = 1;
             })
             .Build();
-        await using var threeEndpointClient = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var threeEndpointClient = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", 1), Endpoint("second", 2), Endpoint("third", 3)],
@@ -60,8 +58,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var second = await TcpServerScope.StartAsync("second");
         var sockets = SharpLinkTransportFactories.Sockets();
         var gatedSecond = new GatedConnectFactory(sockets(Endpoint("second", second.Port)));
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -129,8 +126,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var third = await TcpServerScope.StartAsync("third");
         var sockets = SharpLinkTransportFactories.Sockets();
         var gatedThird = new GatedConnectFactory(sockets(Endpoint("third", third.Port)));
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -191,8 +187,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var second = await TcpServerScope.StartAsync("second");
         var surplus = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -231,8 +226,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpoints(
@@ -267,8 +261,7 @@ public sealed class StaticEndpointIntegrationTests
         unavailableListener.Stop();
 
         await using var available = await TcpServerScope.StartAsync("available");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("unavailable", unavailablePort), Endpoint("available", available.Port)],
@@ -294,8 +287,7 @@ public sealed class StaticEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -338,8 +330,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         var firstPort = GetUnusedTcpPort();
         var secondPort = GetUnusedTcpPort();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", firstPort), Endpoint("second", secondPort)],
@@ -356,8 +347,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -418,8 +408,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -443,8 +432,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -465,8 +453,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -518,8 +505,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var east = await TcpServerScope.StartAsync("east");
         await using var west = await TcpServerScope.StartAsync("west");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("east", east.Port, "east"), Endpoint("west", west.Port, "west")],
@@ -552,8 +538,7 @@ public sealed class StaticEndpointIntegrationTests
         var secondName = $"sharplink-static-second-{Guid.NewGuid():N}";
         await using var first = await TcpServerScope.StartNamedPipeAsync(firstName);
         await using var second = await TcpServerScope.StartNamedPipeAsync(secondName);
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -574,8 +559,7 @@ public sealed class StaticEndpointIntegrationTests
         var secondName = $"sharplink-static-second-{Guid.NewGuid():N}";
         await using var first = await TcpServerScope.StartSharedMemoryAsync(firstName);
         await using var second = await TcpServerScope.StartSharedMemoryAsync(secondName);
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -598,8 +582,7 @@ public sealed class StaticEndpointIntegrationTests
         var secondPath = Path.Combine(Path.GetTempPath(), $"sharplink-static-{Guid.NewGuid():N}.sock");
         await using var first = await TcpServerScope.StartUdsAsync(firstPath);
         await using var second = await TcpServerScope.StartUdsAsync(secondPath);
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -639,8 +622,7 @@ public sealed class StaticEndpointIntegrationTests
             });
         }
 
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
@@ -670,8 +652,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -707,8 +688,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         var blocking = new BlockingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("blocked", GetUnusedTcpPort())],
@@ -745,8 +725,7 @@ public sealed class StaticEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var surplus = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("blocked", 1), Endpoint("surplus", 2)],
@@ -789,8 +768,7 @@ public sealed class StaticEndpointIntegrationTests
         var sockets = SharpLinkTransportFactories.Sockets();
         var blocking = new BlockAfterFirstConnectFactory(sockets(Endpoint("first", first.Port)));
         var unavailable = new FailingConnectFactory();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("unavailable", 1)],
@@ -822,8 +800,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var recovered = await TcpServerScope.StartAsync("recovered");
         var sockets = SharpLinkTransportFactories.Sockets();
         var delayedFailure = new DeferredFailOnceFactory(sockets(Endpoint("recovered", recovered.Port)));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("recovered", recovered.Port)],
@@ -858,8 +835,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var second = await TcpServerScope.StartAsync("second");
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("bad", 1), Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -889,8 +865,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var third = await TcpServerScope.StartAsync("third");
         await using var fourth = await TcpServerScope.StartAsync("fourth");
         await using var fifth = await TcpServerScope.StartAsync("fifth");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -927,8 +902,7 @@ public sealed class StaticEndpointIntegrationTests
             Endpoint("second", second.Port, "west")
         };
 
-        await using (var roundRobin = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using (var roundRobin = SharpClientBuilder.Create().DisableRequestTimeout()
 
                          .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
                          .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
@@ -948,8 +922,7 @@ public sealed class StaticEndpointIntegrationTests
             Ensure(ids[0] != ids[1] && ids[0] == ids[2] && ids[1] == ids[3], "round robin endpoint order");
         }
 
-        await using var custom = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var custom = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(new AttributeSelector("west"))
@@ -965,8 +938,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -997,8 +969,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -1032,8 +1003,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],

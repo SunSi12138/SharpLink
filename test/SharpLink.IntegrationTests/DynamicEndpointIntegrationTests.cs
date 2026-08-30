@@ -16,8 +16,7 @@ public sealed class DynamicEndpointIntegrationTests
         var selector = new ZoneSelector("blue");
         var factoryCreates = 0;
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(
@@ -89,8 +88,7 @@ public sealed class DynamicEndpointIntegrationTests
             Endpoint("first", first.Port, "blue"),
             Endpoint("second", second.Port, "green")
         ]));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(new IdSelector("third"))
@@ -230,8 +228,7 @@ public sealed class DynamicEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, []));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
             {
@@ -288,8 +285,7 @@ public sealed class DynamicEndpointIntegrationTests
             Endpoint("first", first.Port, "blue"),
             Endpoint("second", second.Port, "green")
         ]));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
@@ -346,8 +342,7 @@ public sealed class DynamicEndpointIntegrationTests
             new SharpLinkEndpointSnapshot(1, [Endpoint("retiring", server.Port, "blue")]));
         using var selector = new PausingSelector();
         var admission = new TrackingLifecycleAdmissionPolicy();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(selector)
             .UseEndpointAdmission(admission)
@@ -388,8 +383,7 @@ public sealed class DynamicEndpointIntegrationTests
             Endpoint("east", east.Port, "east"),
             Endpoint("west", west.Port, "west")
         ]));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(new ZoneSelector("west"))
@@ -422,8 +416,7 @@ public sealed class DynamicEndpointIntegrationTests
         var sockets = SharpLinkTransportFactories.Sockets();
         TrackingTransportFactory? factory = null;
         var factoryCreates = 0;
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(
                 resolver,
@@ -463,8 +456,7 @@ public sealed class DynamicEndpointIntegrationTests
     {
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("failed", 1, "red")]));
         var factory = new FailingConnectFactory();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => factory)
             .Build();
 
@@ -499,8 +491,7 @@ public sealed class DynamicEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id switch
             {
@@ -537,8 +528,7 @@ public sealed class DynamicEndpointIntegrationTests
     public async Task DynamicRecoveryToAnEmptyTopologyShouldReleaseConnectWaiters()
     {
         var resolver = new FailingThenEmptyResolver();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => new FailingConnectFactory())
             .Build();
 
@@ -563,8 +553,7 @@ public sealed class DynamicEndpointIntegrationTests
         await using var server = await TcpServerScope.StartAsync("recovered");
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("recovered", server.Port, "green")]));
         var factory = new FailOnceConnectFactory(SharpLinkTransportFactories.Sockets()(Endpoint("recovered", server.Port, "green")));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, _ => factory)
             .Build();
@@ -593,8 +582,7 @@ public sealed class DynamicEndpointIntegrationTests
         var throwingFactory = new ThrowingDisposeFactory();
         var remainingFactory = new FailingConnectFactory();
         var factoryCreates = 0;
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(
                 resolver,
@@ -650,8 +638,7 @@ public sealed class DynamicEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("first", first.Port, "blue")]));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
@@ -697,8 +684,7 @@ public sealed class DynamicEndpointIntegrationTests
         ]));
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "bad" ? failing : sockets(endpoint))
             .UseCluster(options =>
@@ -723,8 +709,7 @@ public sealed class DynamicEndpointIntegrationTests
     {
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("blocked", 1, "red")]));
         var blocking = new BlockingConnectFactory();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => blocking)
             .Build();
 
@@ -762,8 +747,7 @@ public sealed class DynamicEndpointIntegrationTests
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("blocked", 1, "red")]));
         var blocking = new BlockingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "blocked" ? blocking : sockets(endpoint))
             .UseCluster(options =>
@@ -800,8 +784,7 @@ public sealed class DynamicEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
         var replacementFactory = new CountingConnectFactory(sockets(Endpoint("replacement", replacement.Port, "green")));
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "blocked" ? blocking : replacementFactory)
             .UseCluster(options =>
@@ -849,8 +832,7 @@ public sealed class DynamicEndpointIntegrationTests
         var sockets = SharpLinkTransportFactories.Sockets();
         var blocking = new BlockAfterFirstConnectFactory(sockets(Endpoint("first", first.Port, "blue")));
         var unavailable = new FailingConnectFactory();
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "first" ? blocking : unavailable)
             .UseCluster(options =>
@@ -886,8 +868,7 @@ public sealed class DynamicEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var surplus = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id switch
             {
@@ -929,8 +910,7 @@ public sealed class DynamicEndpointIntegrationTests
         var resolver = new RestartingResolver(
             new SharpLinkEndpointSnapshot(1, [Endpoint("first", first.Port, "blue")]),
             new SharpLinkEndpointSnapshot(2, [Endpoint("recovered", recovered.Port, "green")]));
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .Build();
@@ -947,8 +927,7 @@ public sealed class DynamicEndpointIntegrationTests
     public async Task DnsEndpointHelperShouldResolveLocalhostAndPreserveHostnameAuthority()
     {
         await using var server = await TcpServerScope.StartAsync("dns");
-        await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseDnsEndpoints(
                 "localhost",
