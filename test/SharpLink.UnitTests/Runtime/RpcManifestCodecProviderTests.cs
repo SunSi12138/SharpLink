@@ -83,6 +83,28 @@ public class RpcManifestCodecProviderTests
     }
 
     [Test]
+    public void ManifestScopedProviderShouldApplyUnsafeBlitPlatformGuard()
+    {
+        var ownerAssembly = typeof(IContractA).Assembly;
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(
+            new ContractCodecManifest(ownerAssembly, new NamedContractCodec("guard"), "unsafe-blit-guard"));
+        context.AdoptGeneratedManifest(registration);
+        var ownerProvider = RpcGeneratedCodecResolver.GetProvider(context, ownerAssembly);
+
+        try
+        {
+            _ = ownerProvider.GetCodec<System.Numerics.Vector<int>>();
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        throw new Exception("Contract-scoped Codec resolution must apply the UnsafeBlit platform guard.");
+    }
+
+    [Test]
     public void CustomRuntimeMustExposeContractCodecResolution()
     {
         try
