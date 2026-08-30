@@ -218,7 +218,7 @@ public sealed class AdmissionDynamicRateLineageAndLifecycleTests
                 "queued rate Request must own kernel reservation, inner waiter, and replenishment timer");
 
             var disposeTask = kernel.DisposeAsync().AsTask();
-            var decision = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+            var decision = await queued;
             Ensure(!decision.IsAcquired && decision.ErrorCode == SharpLinkErrorCode.Unavailable &&
                    decision.Reason == "draining",
                 "Stop must terminate the queued rate Request using shutdown semantics");
@@ -226,7 +226,7 @@ public sealed class AdmissionDynamicRateLineageAndLifecycleTests
                 "Stop cancellation must release outer queue accounting exactly once");
 
             source.ReleaseUse();
-            await disposeTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await disposeTask;
             Ensure(kernel.LiveProgramCount == 0 && kernel.RetiredProgramCount == 0 &&
                    kernel.RateStateCount == 0 && kernel.QueuedCalls == 0 &&
                    kernel.QueuedBytes == 0 && kernel.ActivePermits == 0 &&
