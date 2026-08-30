@@ -848,6 +848,8 @@ public partial class RpcGenerator
                         }
                         return false;
                     }
+                    if (_contractMode && !_selectorOnlyContractDefaults)
+                        _contractOwnedPolicyRoots.Add(GetCanonicalPolicyTargetIdentity(type));
                     candidates.Add(new ExplicitBindingCandidate(adapter, location));
                 }
                 if (attribute.AttributeClass is { } attributeClass &&
@@ -875,13 +877,10 @@ public partial class RpcGenerator
 
             if (reportInvalid)
             {
-                var detail = ImplementsRpcCodecAdapter(candidate.ImplementationType)
-                    ? $"selected Adapter '{GetTypeName(candidate.ImplementationType)}' has no valid RpcCodecAdapterRegistration"
-                    : $"selected RpcCodecAdapter implementation '{GetTypeName(candidate.ImplementationType)}' must implement IRpcCodecAdapter; use RpcCodec for handwritten IRpcCodec<T> bindings";
                 Report(
                     DtoDiagnosticKind.AdapterRegistrationInvalid,
                     target,
-                    detail,
+                    $"selected Adapter '{GetTypeName(candidate.ImplementationType)}' has no valid RpcCodecAdapterRegistration",
                     candidate.Location);
             }
             selected = null;
