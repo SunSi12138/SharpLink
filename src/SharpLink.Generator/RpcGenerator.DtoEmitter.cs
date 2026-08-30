@@ -62,7 +62,6 @@ public partial class RpcGenerator
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
         sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
         sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
-        sb.AppendLine("        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Custom;");
         sb.AppendLine("        public string? AdapterId => null;");
         sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
         sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
@@ -88,7 +87,8 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
         sb.AppendLine("    {");
-        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));");
+        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));
+");
         sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(length, checked((uint)byteCount));");
         sb.AppendLine("        writer.Advance(sizeof(uint));");
         sb.AppendLine("        if (byteCount == 0)");
@@ -370,7 +370,7 @@ public partial class RpcGenerator
             var complexIndex = complexIndexes[member.Name];
             sb.AppendLine($"            var __nestedSize_{complexIndex} = 0;");
             sb.AppendLine(
-                $"            if (__codec_{complexIndex} is IRpcSizedCodec<{member.TypeName}> __sized_{complexIndex} && __sizedCodec_{complexIndex}.CanExactSize");
+                $"            if (__codec_{complexIndex} is IRpcSizedCodec<{member.TypeName}> __sized_{complexIndex} && __sized_{complexIndex}.CanExactSize");
             sb.AppendLine("            {");
             sb.AppendLine(
                 $"                if (!__sized_{complexIndex}.TryGetEncodedSize(__complex_{memberIndex}, out __nestedSize_{complexIndex}))");
