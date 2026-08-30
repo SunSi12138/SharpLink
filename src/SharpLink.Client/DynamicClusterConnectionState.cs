@@ -158,6 +158,8 @@ internal sealed partial class SharpLinkClient
         public void ReleaseEndpoint(DynamicEndpointState endpoint)
         {
             ArgumentNullException.ThrowIfNull(endpoint);
+            if (endpoint.ConnectingCount != 0)
+                throw new InvalidOperationException("A dynamic endpoint cannot be released while a connection attempt is in flight.");
             if (_connectionsByEndpoint.TryGetValue(endpoint, out var connections) && connections.Count != 0)
                 throw new InvalidOperationException("A dynamic endpoint cannot be released while it still owns connections.");
             _connectionsByEndpoint.Remove(endpoint);
