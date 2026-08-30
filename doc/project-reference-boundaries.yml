@@ -54,7 +54,6 @@ allowed_references:
     required_metadata:
       OutputItemType: Analyzer
       ReferenceOutputAssembly: "false"
-      PrivateAssets: all
 
   - from: serializer_sharppack
     to: abstractions
