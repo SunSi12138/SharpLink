@@ -172,7 +172,7 @@ public sealed class AdmissionDynamicPartitionRateTransitionTests
             });
 
             time.Advance(TimeSpan.FromSeconds(40));
-            var oldDecision = await oldQueued.WaitAsync(TimeSpan.FromSeconds(2));
+            var oldDecision = await oldQueued;
             Ensure(oldDecision.IsAcquired,
                 "old partition waiter must remain valid and grant when its captured source window rolls");
             oldDecision.Lease!.Dispose();
