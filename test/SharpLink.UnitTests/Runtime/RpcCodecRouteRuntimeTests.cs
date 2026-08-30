@@ -20,7 +20,7 @@ public class RpcCodecRouteRuntimeTests
         using var context = new SharpLinkRuntimeContextBuilder()
             .Build(includeGeneratedAssemblyCatalog: false);
         var registrationA = context.PrepareGeneratedManifest(
-            new RoutedManifest(ownerA, routeA, "route-a/v1", "wire-a/v1"));
+            new RoutedManifest(ownerA, routeA, "route-a/v1"));
         var registrationB = context.PrepareGeneratedManifest(new DefaultManifest(ownerB));
 
         Ensure(registrationA.Codecs.Count == 0,
@@ -62,11 +62,9 @@ public class RpcCodecRouteRuntimeTests
 
     private sealed class RouteAdapter(
         RoutedInt32Codec codec,
-        string adapterId,
-        string wireFormatId) : IRpcCodecAdapter
+        string adapterId) : IRpcCodecAdapter
     {
         public string AdapterId { get; } = adapterId;
-        public string WireFormatId { get; } = wireFormatId;
         public IRpcCodecAdapterScope CreateScope() => new RouteScope(codec);
     }
 
@@ -82,11 +80,9 @@ public class RpcCodecRouteRuntimeTests
         }
     }
 
-    private sealed class RoutedInt32Factory(RouteAdapter adapter) : IRpcGeneratedCodecFactory
+    private sealed class RoutedInt32Factory(RouteAdapter adapter) : ITestGeneratedCodecFactory
     {
         public Type TargetType => typeof(int);
-        public string SchemaId => $"route-native-int32-{adapter.AdapterId}";
-        public string WireFormatId => adapter.WireFormatId;
         public string? AdapterId => adapter.AdapterId;
         public IRpcCodecAdapter? Adapter => adapter;
 
@@ -97,16 +93,15 @@ public class RpcCodecRouteRuntimeTests
         public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<int>;
     }
 
-    private sealed class RoutedManifest : ISharpLinkGeneratedAssemblyManifest
+    private sealed class RoutedManifest : ITestGeneratedManifest
     {
         public RoutedManifest(
             Assembly ownerAssembly,
             RoutedInt32Codec codec,
-            string adapterId,
-            string wireFormatId)
+            string adapterId)
         {
             OwnerAssembly = ownerAssembly;
-            ContractCodecs = [new RoutedInt32Factory(new RouteAdapter(codec, adapterId, wireFormatId))];
+            ContractCodecs = [new RoutedInt32Factory(new RouteAdapter(codec, adapterId))];
         }
 
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
@@ -121,7 +116,7 @@ public class RpcCodecRouteRuntimeTests
         public IReadOnlyList<string> Dependencies => [];
     }
 
-    private sealed class DefaultManifest : ISharpLinkGeneratedAssemblyManifest
+    private sealed class DefaultManifest : ITestGeneratedManifest
     {
         public DefaultManifest(Assembly ownerAssembly)
         {
