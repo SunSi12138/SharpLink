@@ -11,7 +11,7 @@ namespace SharpLink.UnitTests.Runtime;
 public sealed class RpcCodecPolicyRegressionTests
 {
     [Test]
-    public void CustomFactoryWithCustomWireFormatShouldPrepareAndResolve()
+    public void CustomFactoryWithSemanticIdentityShouldPrepareAndResolve()
     {
         var manifest = new TestManifest(
             typeof(IContractA).Assembly,
@@ -69,11 +69,9 @@ public sealed class RpcCodecPolicyRegressionTests
         public CustomPayload Deserialize(in ReadOnlySequence<byte> buffer) => new();
     }
 
-    private sealed class CustomPayloadFactory : IRpcGeneratedCodecFactory
+    private sealed class CustomPayloadFactory : ITestGeneratedCodecFactory
     {
         public Type TargetType => typeof(CustomPayload);
-        public string SchemaId => "custom-payload-schema/v1";
-        public string WireFormatId => "custom-payload-wire/v1";
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -85,7 +83,7 @@ public sealed class RpcCodecPolicyRegressionTests
 
     private sealed class TestManifest(
         Assembly ownerAssembly,
-        IReadOnlyList<IRpcGeneratedCodecFactory> contractCodecs) : ISharpLinkGeneratedAssemblyManifest
+        IReadOnlyList<IRpcGeneratedCodecFactory> contractCodecs) : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
