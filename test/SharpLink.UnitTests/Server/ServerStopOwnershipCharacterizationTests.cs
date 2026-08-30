@@ -48,6 +48,64 @@ public class ServerStopOwnershipCharacterizationTests
 
     [Test]
     [NotInParallel]
+    public async Task StopCallerCancellationShouldOnlyCancelThatCallerWait()
+    {
+        var listener = new BlockingListener();
+        await using var server = CreateServer(listener);
+        var runTask = server.RunAsync().AsTask();
+        await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var connection = CreateState();
+        Ensure(connection.MarkReady(null), "connection ready");
+        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+            "the synthetic invocation must own server and connection call capacity");
+
+        using var callerCancellation = new CancellationTokenSource();
+        var cancelledCallerWait = server.StopAsync(TimeSpan.FromSeconds(30), callerCancellation.Token).AsTask();
+        Ensure(GetServerStateName(server) == "Draining",
+            "the long-grace stop must establish shared cleanup and enter Draining while the active call is owned");
+
+        var sharedStopBeforeCancellation = GetSharedStopTask(server);
+        Ensure(sharedStopBeforeCancellation is not null && !sharedStopBeforeCancellation.IsCompleted,
+            "the first StopAsync caller must establish an in-flight shared stop task");
+
+        callerCancellation.Cancel();
+        var callerObservedCancellation = false;
+        try
+        {
+            await cancelledCallerWait.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (OperationCanceledException) when (callerCancellation.IsCancellationRequested)
+        {
+            callerObservedCancellation = true;
+        }
+
+        Ensure(callerObservedCancellation,
+            "cancelling the StopAsync caller token must cancel that caller's wait");
+        Ensure(ReferenceEquals(sharedStopBeforeCancellation, GetSharedStopTask(server)),
+            "caller cancellation must not replace or cancel the shared stop cleanup task");
+        Ensure(!sharedStopBeforeCancellation.IsCompleted && GetServerStateName(server) == "Draining",
+            "shared cleanup must remain alive in Draining after the first caller cancels its wait");
+        Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
+            "caller cancellation must not release or bypass active-call ownership");
+
+        var laterStop = server.StopAsync(TimeSpan.FromSeconds(30)).AsTask();
+        Ensure(ReferenceEquals(sharedStopBeforeCancellation, laterStop),
+            "an uncancelled later StopAsync caller must join the original shared cleanup");
+        Ensure(!laterStop.IsCompleted,
+            "the surviving shared cleanup must continue waiting for the active call under the original grace period");
+
+        server.ReleaseCall(connection);
+        await laterStop.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(GetServerStateName(server) == "Stopped",
+            "the original shared cleanup must complete normally after the active call releases ownership");
+        await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await connection.CloseAsync();
+        await connection.ServiceCleanupTask;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FirstStopOwnerShouldOwnSharedGraceTimeout()
     {
         var longFirstListener = new BlockingListener();
@@ -136,6 +194,15 @@ public class ServerStopOwnershipCharacterizationTests
             new StripedLongMap<ServerCallCancellationState>(RpcSessionTestFixture.RuntimeContext.Concurrency),
             CancellationToken.None,
             RpcSessionTestFixture.RuntimeContext.TimeProvider);
+    }
+
+    private static Task? GetSharedStopTask(SharpLinkServer server)
+    {
+        var stopTaskField = typeof(SharpLinkServer).GetField(
+            "_stopTask",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find shared stop task");
+        return (Task?)stopTaskField.GetValue(server);
     }
 
     private static string GetServerStateName(SharpLinkServer server)
