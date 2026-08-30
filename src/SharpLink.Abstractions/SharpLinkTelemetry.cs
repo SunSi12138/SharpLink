@@ -499,7 +499,10 @@ public static class SharpLinkTelemetry
         internal readonly bool IsEnabled => _side is not null;
 
         internal readonly void SetTag(string key, object? value)
-            => _activity?.SetTag(key, value);
+        {
+            if (_activity?.IsAllDataRequested == true)
+                _activity.SetTag(key, value);
+        }
 
         internal void Complete(Exception? exception = null)
         {
