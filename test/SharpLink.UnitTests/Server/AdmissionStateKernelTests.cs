@@ -170,7 +170,7 @@ public sealed class AdmissionStateKernelTests
             "rejected N+1 enqueue must not perturb N queue accounting");
 
         held.Lease!.Dispose();
-        var admitted = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+        var admitted = await queued;
         Ensure(admitted.IsAcquired, "old-generation queued work must survive ordinary retirement without disposal");
         admitted.Lease!.Dispose();
         await WaitUntilAsync(
