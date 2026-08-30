@@ -35,13 +35,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                 foreach (var pair in owner.Codecs)
                 {
                     if (generatedRegistrations.TryGetValue(pair.Key, out var existing) &&
-                        (!string.Equals(existing.Factory.SchemaId, pair.Value.Factory.SchemaId, StringComparison.Ordinal) ||
-                         !string.Equals(existing.Factory.WireFormatId, pair.Value.Factory.WireFormatId, StringComparison.Ordinal)))
+                        !HasSameGeneratedCodecIdentity(existing.Factory, pair.Value.Factory))
                     {
                         throw new InvalidOperationException(
                             $"Generated Codec conflict for '{pair.Key.FullName}': " +
-                            $"schema/wire '{existing.Factory.SchemaId}'/'{existing.Factory.WireFormatId}' and " +
-                            $"'{pair.Value.Factory.SchemaId}'/'{pair.Value.Factory.WireFormatId}'.");
+                            $"identity '{DescribeGeneratedCodecIdentity(existing.Factory)}' and " +
+                            $"'{DescribeGeneratedCodecIdentity(pair.Value.Factory)}'.");
                     }
                     generatedRegistrations[pair.Key] = pair.Value;
                 }
@@ -56,6 +55,21 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         }
         Buffers = new SharpLinkBufferWriterPool(bufferPool);
     }
+
+    private static bool HasSameGeneratedCodecIdentity(
+        IRpcGeneratedCodecFactory left,
+        IRpcGeneratedCodecFactory right)
+    {
+        if (!left.CodecHash.IsEmpty || !right.CodecHash.IsEmpty)
+            return left.CodecHash == right.CodecHash;
+        return string.Equals(left.SchemaId, right.SchemaId, StringComparison.Ordinal) &&
+               string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal);
+    }
+
+    private static string DescribeGeneratedCodecIdentity(IRpcGeneratedCodecFactory factory)
+        => factory.CodecHash.IsEmpty
+            ? $"legacy:{factory.SchemaId}/{factory.WireFormatId}"
+            : $"codec:{factory.CodecHash}";
 
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     [MethodImpl(MethodImplOptions.NoInlining)]
