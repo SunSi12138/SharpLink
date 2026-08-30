@@ -9,6 +9,8 @@ namespace SharpLink.UnitTests.Runtime;
 public class SharpLinkRuntimeContextTests
 {
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
+    private static readonly RpcHash128 TestAssemblyHash =
+        new(0x72756e74696d652dUL, 0x746573742d763031UL);
 
     [Test]
     // This is the intentional default-global adapter test; the other RuntimeContext tests use fixed sources.
@@ -551,7 +553,7 @@ public class SharpLinkRuntimeContextTests
         }
         catch (InvalidOperationException exception)
         {
-            Ensure(exception.Message.Contains("runtime identity", StringComparison.Ordinal),
+            Ensure(exception.Message.Contains("lifecycle identity", StringComparison.Ordinal),
                 "identity mismatch is reported before publication");
         }
 
@@ -590,8 +592,8 @@ public class SharpLinkRuntimeContextTests
         }
         catch (InvalidOperationException exception)
         {
-            Ensure(exception.Message.Contains("runtime identity", StringComparison.Ordinal),
-                "a later same-type Adapter instance cannot bypass runtime identity validation");
+            Ensure(exception.Message.Contains("lifecycle identity", StringComparison.Ordinal),
+                "a later same-type Adapter instance cannot bypass generated AdapterId validation");
         }
 
         Ensure(preparedCounters.ScopeCreateCount == 1, "the first valid Adapter Scope was prepared");
@@ -660,14 +662,16 @@ public class SharpLinkRuntimeContextTests
                         new AlternateCountingAdapter(secondCounters),
                         AlternateCountingAdapter.Id,
                         AlternateCountingAdapter.Wire,
-                        schemaId: "incompatible-schema"))
+                        codecHash: new RpcHash128(
+                            0x636f6e666c696374UL,
+                            0x2d636f6465632d32UL)))
             ]);
             throw new Exception("expected generated Codec conflict");
         }
         catch (InvalidOperationException exception)
         {
-            Ensure(exception.Message.Contains("schema/wire", StringComparison.Ordinal),
-                "same-target schema/wire conflict is rejected");
+            Ensure(exception.Message.Contains("Generated Codec conflict", StringComparison.Ordinal),
+                "same-target CodecHash conflict is rejected");
         }
 
         Ensure(firstCounters.ScopeDisposeCount == 1, "first Manifest Scope is rolled back");
@@ -1073,7 +1077,7 @@ public class SharpLinkRuntimeContextTests
         context.PublishGeneratedCodecs(registration.Codecs);
 
         Ensure(context.Codecs.GetCodec<ThirdAdapterValue>() is TaggedThirdAdapterValueCodec { Tag: 7 },
-            "an adapter-free Codec with a custom wire-format identity must resolve through the generated registration");
+            "an adapter-free Codec with a custom deterministic identity must resolve through the generated registration");
     }
 
     private sealed class TaggedValue;
@@ -1115,8 +1119,7 @@ public class SharpLinkRuntimeContextTests
     private sealed class CatalogCodecFactory : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(CatalogValue);
-        public string SchemaId => "catalog-test-v1";
-        public string WireFormatId => "sharplink-native/v1";
+        public RpcHash128 CodecHash => new(0x636174616c6f672dUL, 0x636f6465632d7631UL);
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -1132,6 +1135,7 @@ public class SharpLinkRuntimeContextTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(CatalogManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => TestAssemblyHash;
         public string CompileTimeDescriptor => "catalog-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -1362,8 +1366,7 @@ public class SharpLinkRuntimeContextTests
     private sealed class FixedNativeFactory<T>(IRpcCodec<T> codec) : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId => $"native:{typeof(T).FullName}";
-        public string WireFormatId => "sharplink-native/v1";
+        public RpcHash128 CodecHash => new(0x66697865642d6e61UL, 0x746976652d763031UL);
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -1376,7 +1379,7 @@ public class SharpLinkRuntimeContextTests
     private sealed class CustomWireFactory<T>(IRpcCodec<T> codec, string wireFormatId) : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId => $"custom:{typeof(T).FullName}";
+        public RpcHash128 CodecHash => new(0x637573746f6d2d63UL, 0x6f6465632d763031UL);
         public string WireFormatId => wireFormatId;
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
@@ -1393,8 +1396,7 @@ public class SharpLinkRuntimeContextTests
         TaskCompletionSource release) : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId => $"blocking-native:{typeof(T).FullName}";
-        public string WireFormatId => "sharplink-native/v1";
+        public RpcHash128 CodecHash => new(0x626c6f636b696e67UL, 0x2d636f6465632d31UL);
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
 
@@ -1413,8 +1415,7 @@ public class SharpLinkRuntimeContextTests
     private sealed class AdapterFactory<T>(AdapterCounters counters) : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId => $"adapter:{typeof(T).FullName}";
-        public string WireFormatId => "test-wire/v1";
+        public RpcHash128 CodecHash => new(0x616461707465722dUL, 0x636f6465632d7631UL);
         public string? AdapterId => "test.adapter/v1";
         public IRpcCodecAdapter Adapter { get; } = new CountingAdapter(counters);
 
@@ -1432,16 +1433,21 @@ public class SharpLinkRuntimeContextTests
             string adapterId,
             string wireFormatId,
             IRpcCodec? codec = null,
-            string? schemaId = null)
+            string? schemaId = null,
+            RpcHash128 codecHash = default)
         {
             Adapter = adapter;
             AdapterId = adapterId;
             WireFormatId = wireFormatId;
             SchemaId = schemaId ?? $"adapter:{typeof(T).FullName}";
+            CodecHash = codecHash.IsEmpty
+                ? new RpcHash128(0x636f6e6669672d61UL, 0x6461707465722d31UL)
+                : codecHash;
             _codec = codec;
         }
 
         public Type TargetType => typeof(T);
+        public RpcHash128 CodecHash { get; }
         public string SchemaId { get; }
         public string WireFormatId { get; }
         public string AdapterId { get; }
@@ -1459,6 +1465,7 @@ public class SharpLinkRuntimeContextTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(AdapterManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => TestAssemblyHash;
         public string CompileTimeDescriptor => "adapter-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -1475,6 +1482,7 @@ public class SharpLinkRuntimeContextTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(TestManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => TestAssemblyHash;
         public string CompileTimeDescriptor => descriptor;
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
