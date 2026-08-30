@@ -2,7 +2,7 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    private ResolvedCallControl ResolveCallControlForInvocation(
+    internal ResolvedCallControl ResolveCallControlForInvocation(
         RpcMethodDescriptor method,
         SharpLinkMetadata? metadata,
         bool includeClientDefault)
