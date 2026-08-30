@@ -679,7 +679,13 @@ public partial class RpcGenerator
         {
             if (depth > MaximumDepth || !seen.Add(type))
                 return;
-            reachable[GetTypeName(type)] = type;
+            var typeName = GetTypeName(type);
+            reachable[typeName] = type;
+            if (_models.TryGetValue(typeName, out var finalModel) &&
+                finalModel.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+            {
+                return;
+            }
 
             if (type is IArrayTypeSymbol array)
             {
