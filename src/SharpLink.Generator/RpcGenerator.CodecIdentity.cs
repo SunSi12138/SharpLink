@@ -4,6 +4,9 @@ public partial class RpcGenerator
 {
     private sealed partial class DtoAnalysisState
     {
+        private readonly Dictionary<string, RpcHashValue?> _opaqueSemanticIdentityCache =
+            new(StringComparer.Ordinal);
+
         internal ImmutableArray<GeneratedCodecHashModel> BuildFinalCodecHashes(
             bool includeSerializable,
             bool includeContracts)
@@ -143,15 +146,29 @@ public partial class RpcGenerator
             switch (model.Kind)
             {
                 case GeneratedCodecKind.Custom:
+                    if (TryGetOpaqueSemanticIdentity(model.CustomCodecType, out var customIdentity))
+                    {
+                        return Hashing.GetSemanticHash(
+                            "codec/v1",
+                            "custom-opaque",
+                            customIdentity.ToHex());
+                    }
                     return Hashing.GetSemanticHash(
                         "codec/v1",
-                        "custom-opaque",
+                        "custom-opaque-legacy",
                         model.WireFormatId,
                         model.SchemaId);
                 case GeneratedCodecKind.Adapter:
+                    if (TryGetOpaqueSemanticIdentity(model.AdapterType, out var adapterIdentity))
+                    {
+                        return Hashing.GetSemanticHash(
+                            "codec/v1",
+                            "adapter-opaque",
+                            adapterIdentity.ToHex());
+                    }
                     return Hashing.GetSemanticHash(
                         "codec/v1",
-                        "adapter-opaque",
+                        "adapter-opaque-legacy",
                         model.AdapterId ?? string.Empty,
                         model.WireFormatId);
                 case GeneratedCodecKind.Dto:
@@ -212,6 +229,97 @@ public partial class RpcGenerator
                         }
                     }
             }
+        }
+
+        private bool TryGetOpaqueSemanticIdentity(string? implementationTypeName, out RpcHashValue hash)
+        {
+            if (implementationTypeName is null)
+            {
+                hash = default;
+                return false;
+            }
+
+            if (_opaqueSemanticIdentityCache.TryGetValue(implementationTypeName, out var cached))
+            {
+                hash = cached ?? default;
+                return cached.HasValue;
+            }
+
+            var assemblies = new Dictionary<string, IAssemblySymbol>(StringComparer.Ordinal)
+            {
+                [_compilation.Assembly.Identity.ToString()] = _compilation.Assembly
+            };
+            var pending = new Queue<IAssemblySymbol>();
+            pending.Enqueue(_compilation.Assembly);
+            while (pending.Count != 0)
+            {
+                var assembly = pending.Dequeue();
+                if (TryFindNamedType(assembly.GlobalNamespace, implementationTypeName, out var implementationType))
+                {
+                    var attribute = implementationType.GetAttributes().FirstOrDefault(static item =>
+                        IsAttribute(item, "SharpLink.Sdk", "RpcCodecSemanticIdentityAttribute"));
+                    if (attribute is not null &&
+                        attribute.ConstructorArguments.Length == 2 &&
+                        attribute.ConstructorArguments[0].Value is ulong high &&
+                        attribute.ConstructorArguments[1].Value is ulong low)
+                    {
+                        hash = new RpcHashValue(high, low);
+                        _opaqueSemanticIdentityCache[implementationTypeName] = hash;
+                        return true;
+                    }
+                }
+
+                foreach (var referenced in assembly.Modules.SelectMany(static module => module.ReferencedAssemblySymbols))
+                {
+                    var identity = referenced.Identity.ToString();
+                    if (assemblies.ContainsKey(identity))
+                        continue;
+                    assemblies.Add(identity, referenced);
+                    pending.Enqueue(referenced);
+                }
+            }
+
+            _opaqueSemanticIdentityCache[implementationTypeName] = null;
+            hash = default;
+            return false;
+        }
+
+        private static bool TryFindNamedType(
+            INamespaceSymbol namespaceSymbol,
+            string typeName,
+            out INamedTypeSymbol type)
+        {
+            foreach (var candidate in namespaceSymbol.GetTypeMembers())
+            {
+                if (TryFindNamedType(candidate, typeName, out type))
+                    return true;
+            }
+            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+            {
+                if (TryFindNamedType(nestedNamespace, typeName, out type))
+                    return true;
+            }
+            type = null!;
+            return false;
+        }
+
+        private static bool TryFindNamedType(
+            INamedTypeSymbol candidate,
+            string typeName,
+            out INamedTypeSymbol type)
+        {
+            if (string.Equals(GetTypeName(candidate), typeName, StringComparison.Ordinal))
+            {
+                type = candidate;
+                return true;
+            }
+            foreach (var nested in candidate.GetTypeMembers())
+            {
+                if (TryFindNamedType(nested, typeName, out type))
+                    return true;
+            }
+            type = null!;
+            return false;
         }
 
         private bool TryResolveReachableType(string typeName, out ITypeSymbol type)
