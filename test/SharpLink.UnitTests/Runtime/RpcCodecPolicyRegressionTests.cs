@@ -74,7 +74,6 @@ public sealed class RpcCodecPolicyRegressionTests
         public Type TargetType => typeof(CustomPayload);
         public string SchemaId => "custom-payload-schema/v1";
         public string WireFormatId => "custom-payload-wire/v1";
-        public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Custom;
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
