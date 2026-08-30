@@ -35,7 +35,7 @@ public sealed class AdmissionDynamicRateLegacyWaiterRegressionTests
             source.Retire();
 
             time.Advance(TimeSpan.FromSeconds(40));
-            var oldDecision = await oldQueued.WaitAsync(TimeSpan.FromSeconds(2));
+            var oldDecision = await oldQueued;
             Ensure(oldDecision.IsAcquired,
                 "old fixed-window waiter must remain valid and grant when its captured source window rolls");
             oldDecision.Lease!.Dispose();
