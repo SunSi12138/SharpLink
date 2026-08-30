@@ -11,11 +11,11 @@ internal sealed partial class SharpLinkClient
     {
         private readonly SharpLinkLoadBalancingStrategy _strategy;
         private readonly ISharpLinkEndpointSelector? _selector;
-        private readonly Dictionary<string, EndpointState> _currentById = new(StringComparer.Ordinal);
-        private readonly List<EndpointState> _allStates = [];
-        private EndpointState[] _current = [];
-        private EndpointState[] _readyEndpoints = [];
-        private EndpointSelectionSnapshot _selectionSnapshot = EndpointSelectionSnapshot.Empty;
+        private readonly Dictionary<string, DynamicEndpointState> _currentById = new(StringComparer.Ordinal);
+        private readonly List<DynamicEndpointState> _allStates = [];
+        private DynamicEndpointState[] _current = [];
+        private DynamicEndpointState[] _readyEndpoints = [];
+        private DynamicEndpointSelectionSnapshot _selectionSnapshot = DynamicEndpointSelectionSnapshot.Empty;
         private long _lastAcceptedVersion = -1;
         private long _nextGeneration;
         private int _roundRobinCursor;
@@ -29,11 +29,11 @@ internal sealed partial class SharpLinkClient
             _selector = selector;
         }
 
-        public EndpointState[] Current => _current;
-        public IReadOnlyList<EndpointState> States => _allStates;
+        public DynamicEndpointState[] Current => _current;
+        public IReadOnlyList<DynamicEndpointState> States => _allStates;
         public long LastAcceptedVersion => _lastAcceptedVersion;
         public int ReadyEndpointCount => Volatile.Read(ref _readyEndpoints).Length;
-        public EndpointSelectionSnapshot SelectionSnapshot => Volatile.Read(ref _selectionSnapshot);
+        public DynamicEndpointSelectionSnapshot SelectionSnapshot => Volatile.Read(ref _selectionSnapshot);
         public bool HasAcceptedEmptyTopology => _lastAcceptedVersion >= 0 && _current.Length == 0;
         public bool HasCustomSelector => _selector is not null;
 
@@ -49,19 +49,19 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        public Dictionary<string, EndpointState> SnapshotCurrentById()
+        public Dictionary<string, DynamicEndpointState> SnapshotCurrentById()
             => new(_currentById, StringComparer.Ordinal);
 
-        public EndpointState CreateState(StaticEndpointConfiguration configuration)
+        public DynamicEndpointState CreateState(StaticEndpointConfiguration configuration)
             => new(configuration, Interlocked.Increment(ref _nextGeneration));
 
-        public void AddState(EndpointState state) => _allStates.Add(state);
+        public void AddState(DynamicEndpointState state) => _allStates.Add(state);
 
-        public void RemoveState(EndpointState state) => _allStates.Remove(state);
+        public void RemoveState(DynamicEndpointState state) => _allStates.Remove(state);
 
         public void CommitCurrent(
-            Dictionary<string, EndpointState> nextById,
-            EndpointState[] current,
+            Dictionary<string, DynamicEndpointState> nextById,
+            DynamicEndpointState[] current,
             long version)
         {
             _currentById.Clear();
@@ -71,7 +71,7 @@ internal sealed partial class SharpLinkClient
             _lastAcceptedVersion = version;
         }
 
-        public EndpointState? FindEndpoint(ClientConnection connection)
+        public DynamicEndpointState? FindEndpoint(ClientConnection connection)
         {
             for (var index = 0; index < _allStates.Count; index++)
                 if (_allStates[index].Connections.Contains(connection))
@@ -79,7 +79,7 @@ internal sealed partial class SharpLinkClient
             return null;
         }
 
-        public bool IsCurrent(EndpointState endpoint)
+        public bool IsCurrent(DynamicEndpointState endpoint)
             => _currentById.TryGetValue(endpoint.Configuration.Endpoint.Id, out var current) &&
                ReferenceEquals(current, endpoint);
 
@@ -116,7 +116,7 @@ internal sealed partial class SharpLinkClient
             return factories;
         }
 
-        public bool HasUniqueFactoryOwnership(IEnumerable<EndpointState> created)
+        public bool HasUniqueFactoryOwnership(IEnumerable<DynamicEndpointState> created)
         {
             var factories = GetOwnedFactories();
             foreach (var state in created)
@@ -129,7 +129,7 @@ internal sealed partial class SharpLinkClient
 
         public DynamicClusterReadinessSnapshot PublishReadySnapshot(bool force = false)
         {
-            var ready = new List<EndpointState>(_current.Length);
+            var ready = new List<DynamicEndpointState>(_current.Length);
             var readyConnections = 0;
             for (var index = 0; index < _current.Length; index++)
             {
@@ -159,7 +159,7 @@ internal sealed partial class SharpLinkClient
                         endpoint.Generation);
                 }
                 Volatile.Write(ref _readyEndpoints, endpoints);
-                Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
+                Volatile.Write(ref _selectionSnapshot, new DynamicEndpointSelectionSnapshot(endpoints, candidates));
             }
 
             return new DynamicClusterReadinessSnapshot(
@@ -169,7 +169,7 @@ internal sealed partial class SharpLinkClient
                 changed);
         }
 
-        public int SelectEndpoint(EndpointSelectionSnapshot snapshot, ulong excluded)
+        public int SelectEndpoint(DynamicEndpointSelectionSnapshot snapshot, ulong excluded)
         {
             var endpoints = snapshot.Endpoints;
             var availableCount = 0;
@@ -195,7 +195,7 @@ internal sealed partial class SharpLinkClient
             };
         }
 
-        public static ClientConnection? SelectConnection(EndpointState endpoint)
+        public static ClientConnection? SelectConnection(DynamicEndpointState endpoint)
             => EndpointSelectionKernel.SelectConnection(endpoint.ReadyConnections);
 
         public void Clear()
@@ -204,10 +204,10 @@ internal sealed partial class SharpLinkClient
             _currentById.Clear();
             _current = [];
             Volatile.Write(ref _readyEndpoints, []);
-            Volatile.Write(ref _selectionSnapshot, EndpointSelectionSnapshot.Empty);
+            Volatile.Write(ref _selectionSnapshot, DynamicEndpointSelectionSnapshot.Empty);
         }
 
-        private int SelectPowerOfTwo(EndpointState[] endpoints, ulong excluded, int availableCount)
+        private int SelectPowerOfTwo(DynamicEndpointState[] endpoints, ulong excluded, int availableCount)
         {
             var first = SelectRandom(endpoints.Length, excluded, availableCount);
             var second = SelectRandom(endpoints.Length, excluded | (1UL << first), availableCount - 1);
@@ -224,7 +224,7 @@ internal sealed partial class SharpLinkClient
             => availableCount <= 0 ? -1 : EndpointSelectionKernel.SelectRandomIndex(
                 length, excluded, availableCount, Random.Shared.Next(availableCount));
 
-        private int SelectLeastPending(EndpointState[] endpoints, ulong excluded)
+        private int SelectLeastPending(DynamicEndpointState[] endpoints, ulong excluded)
         {
             var start = unchecked((uint)Interlocked.Increment(ref _leastPendingCursor));
             var selected = -1;
@@ -239,7 +239,7 @@ internal sealed partial class SharpLinkClient
             return selected;
         }
 
-        private static bool HasSameMembership(EndpointState[] left, EndpointState[] right)
+        private static bool HasSameMembership(DynamicEndpointState[] left, DynamicEndpointState[] right)
         {
             if (left.Length != right.Length)
                 return false;
@@ -256,13 +256,13 @@ internal sealed partial class SharpLinkClient
         int ReadyConnections,
         bool MembershipChanged);
 
-    private sealed class EndpointState
+    private sealed class DynamicEndpointState
     {
         private readonly Func<int> _readyConnectionCountProvider;
         private readonly Func<int> _activeCallCountProvider;
         private ClientConnection[] _readyConnections = [];
 
-        public EndpointState(StaticEndpointConfiguration configuration, long generation)
+        public DynamicEndpointState(StaticEndpointConfiguration configuration, long generation)
         {
             Configuration = configuration;
             Generation = generation;
@@ -319,12 +319,12 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private sealed class EndpointSelectionSnapshot(
-        EndpointState[] endpoints,
+    private sealed class DynamicEndpointSelectionSnapshot(
+        DynamicEndpointState[] endpoints,
         SharpLinkEndpointCandidate[] candidates)
     {
-        public static readonly EndpointSelectionSnapshot Empty = new([], []);
-        public EndpointState[] Endpoints { get; } = endpoints;
+        public static readonly DynamicEndpointSelectionSnapshot Empty = new([], []);
+        public DynamicEndpointState[] Endpoints { get; } = endpoints;
         public SharpLinkEndpointCandidate[] Candidates { get; } = candidates;
     }
 }
