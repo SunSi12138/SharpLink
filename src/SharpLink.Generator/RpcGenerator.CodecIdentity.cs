@@ -442,13 +442,13 @@ public partial class RpcGenerator
 
             if (type is IPointerTypeSymbol pointer)
             {
-                builder.Append("|pointer|");
+                builder.Append("|native-pointer-width/64|pointer|");
                 AppendUnsafeBlitPhysicalLayout(pointer.PointedAtType, builder, stack);
                 return;
             }
             if (type is IFunctionPointerTypeSymbol)
             {
-                builder.Append("|function-pointer");
+                builder.Append("|native-pointer-width/64|function-pointer");
                 return;
             }
             if (type is not INamedTypeSymbol named)
@@ -509,6 +509,8 @@ public partial class RpcGenerator
                 SpecialType.System_Single => "f32",
                 SpecialType.System_Int64 => "i64",
                 SpecialType.System_UInt64 => "u64",
+                SpecialType.System_IntPtr => "native-pointer-width/64:intptr",
+                SpecialType.System_UIntPtr => "native-pointer-width/64:uintptr",
                 SpecialType.System_Double => "f64",
                 SpecialType.System_Decimal => "decimal128",
                 _ => null

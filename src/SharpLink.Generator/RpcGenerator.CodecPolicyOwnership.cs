@@ -113,7 +113,8 @@ public partial class RpcGenerator
             diagnostics,
             enums)
         {
-            CodecHashes = codecHashes
+            CodecHashes = codecHashes,
+            AssemblyLogicalIdentity = compilation.Assembly.Identity.Name
         };
     }
 

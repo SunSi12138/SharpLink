@@ -258,6 +258,7 @@ internal sealed record DtoGenerationResult(
 {
     public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =
         ImmutableArray<GeneratedCodecHashModel>.Empty;
+    public string AssemblyLogicalIdentity { get; init; } = string.Empty;
 }
 
 internal sealed record GeneratedEnumModel(
@@ -277,7 +278,8 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             x.ContractCodecs.Length != y.ContractCodecs.Length ||
             x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||
             x.CodecHashes.Length != y.CodecHashes.Length ||
-            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
+            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length ||
+            !string.Equals(x.AssemblyLogicalIdentity, y.AssemblyLogicalIdentity, StringComparison.Ordinal))
         {
             return false;
         }
@@ -325,6 +327,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
     public int GetHashCode(DtoGenerationResult obj)
     {
         var hash = 17;
+        hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(obj.AssemblyLogicalIdentity));
         foreach (var codec in obj.Codecs)
         {
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));

@@ -166,7 +166,10 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
             if (targetType.IsEnum)
                 return EnumCodec<T>.Instance;
             if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            {
+                RpcUnsafeBlitPlatform.EnsureSupported(targetType);
                 return UnsafeBlitCodec<T>.Instance;
+            }
 
             throw new NotSupportedException(
                 $"Codec for '{targetType.FullName}' was not registered in this SharpLink runtime context.");

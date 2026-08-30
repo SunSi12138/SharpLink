@@ -16,6 +16,7 @@ public partial class RpcGenerator
         RpcHashValue MethodHash);
 
     private static RpcAssemblyIdentityModel BuildRpcAssemblyIdentity(
+        string assemblyLogicalIdentity,
         RpcInterfaceModel[] contracts,
         ImmutableArray<GeneratedCodecHashModel> codecHashes)
     {
@@ -30,6 +31,7 @@ public partial class RpcGenerator
         var assemblyParts = new List<string>
         {
             "rpc-assembly/v1",
+            assemblyLogicalIdentity,
             contractIdentities.Length.ToString(InvariantCulture)
         };
         foreach (var contract in contractIdentities)

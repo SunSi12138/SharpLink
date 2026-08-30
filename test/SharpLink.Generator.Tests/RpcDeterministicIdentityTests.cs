@@ -48,6 +48,29 @@ public partial class RpcAnalyzerTests
     }
 
     [Test]
+    public Task SameApparentAbiInDifferentAssembliesShouldHaveDifferentAssemblyIdentity()
+    {
+        var source = BuildDtoIdentitySource(includeExtraMember: false, idempotent: false);
+        var first = GenerateIdentityManifest(
+            "DeterministicIdentityAssemblyA",
+            source,
+            Platform.AnyCpu);
+        var second = GenerateIdentityManifest(
+            "DeterministicIdentityAssemblyB",
+            source,
+            Platform.AnyCpu);
+
+        Ensure(
+            ExtractGeneratedCodecIdentity(first, "DeterministicPayload") ==
+            ExtractGeneratedCodecIdentity(second, "DeterministicPayload"),
+            "the same payload definition must retain the same CodecHash across Contract assemblies");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(first) != ExtractGeneratedRpcAssemblyHash(second),
+            "different Contract assembly logical identities must not collapse to one RpcAssemblyHash");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task DtoWireShapeChangeShouldChangeFinalRpcIdentity()
     {
         var first = GenerateDtoIdentityManifest(includeExtraMember: false, idempotent: false);
@@ -147,6 +170,48 @@ public partial class RpcAnalyzerTests
         Ensure(
             ExtractGeneratedRpcAssemblyHash(first) != ExtractGeneratedRpcAssemblyHash(changed),
             "changing UnsafeBlit physical layout must change the CodecHash-derived RpcAssemblyHash");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NativeSizedUnsafeBlitShouldUseStable64BitOnlyIdentity()
+    {
+        var nativeSource = BuildSource("""
+public struct NativeSizedUnsafeLayoutPayload
+{
+    public int Prefix;
+    public nint Handle;
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface INativeSizedUnsafeLayoutContract : SharpLink.Sdk.IService
+{
+    ValueTask<NativeSizedUnsafeLayoutPayload> Echo(
+        NativeSizedUnsafeLayoutPayload value,
+        CancellationToken cancellationToken);
+}
+""");
+        var fixed64Source = nativeSource.Replace("public nint Handle;", "public long Handle;", StringComparison.Ordinal);
+
+        var x64 = GenerateIdentityManifest(
+            "NativeSizedUnsafeLayoutIdentity",
+            nativeSource,
+            Platform.X64);
+        var x86 = GenerateIdentityManifest(
+            "NativeSizedUnsafeLayoutIdentity",
+            nativeSource,
+            Platform.X86);
+        var fixed64 = GenerateIdentityManifest(
+            "NativeSizedUnsafeLayoutIdentity",
+            fixed64Source,
+            Platform.X64);
+
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(x64) == ExtractGeneratedRpcAssemblyHash(x86),
+            "native-sized UnsafeBlit identity must describe the supported 64-bit wire layout independently of compiler platform");
+        Ensure(
+            ExtractGeneratedRpcAssemblyHash(x64) != ExtractGeneratedRpcAssemblyHash(fixed64),
+            "native-sized UnsafeBlit identity must remain distinct from a fixed-width Int64 field");
         return Task.CompletedTask;
     }
 

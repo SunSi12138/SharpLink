@@ -324,7 +324,13 @@ public partial class RpcGenerator : IIncrementalGenerator
             var contracts = GetContractModels(interfaces);
             var serviceModels = GetServiceModels(services);
 
-            var code = GenerateAssemblyManifest(interfaces, services, codecs, contractCodecs, codecHashes);
+            var code = GenerateAssemblyManifest(
+                interfaces,
+                services,
+                codecs,
+                contractCodecs,
+                codecHashes,
+                value.Right.AssemblyLogicalIdentity);
             if (!string.IsNullOrEmpty(code))
             {
                 var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs, contractCodecs);
