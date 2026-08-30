@@ -399,12 +399,15 @@ internal sealed partial class SharpLinkClient
             var codec = pair.Value;
             if (nextFactories.TryGetValue(pair.Key, out var existingCodec))
             {
-                if (!string.Equals(existingCodec.Factory.SchemaId, codec.Factory.SchemaId, StringComparison.Ordinal) ||
-                    !string.Equals(existingCodec.Factory.WireFormatId, codec.Factory.WireFormatId, StringComparison.Ordinal))
+                if (existingCodec.Factory.CodecHash != codec.Factory.CodecHash)
                 {
-                    error = CreateError(SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
-                        $"Codec conflict for '{pair.Key.FullName}': existing schema/wire '{existingCodec.Factory.SchemaId}'/'{existingCodec.Factory.WireFormatId}', incoming schema/wire '{codec.Factory.SchemaId}'/'{codec.Factory.WireFormatId}'.",
-                        incoming.OwnerAssembly, "Codec", existingCodec.Factory.SchemaId, codec.Factory.SchemaId);
+                    error = CreateError(
+                        SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
+                        $"Codec conflict for '{pair.Key.FullName}': existing CodecHash '{existingCodec.Factory.CodecHash}', incoming CodecHash '{codec.Factory.CodecHash}'.",
+                        incoming.OwnerAssembly,
+                        "Codec",
+                        existingCodec.Factory.CodecHash.ToString(),
+                        codec.Factory.CodecHash.ToString());
                     return default;
                 }
                 continue;
