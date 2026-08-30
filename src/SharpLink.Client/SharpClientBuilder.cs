@@ -4,6 +4,7 @@ namespace SharpLink.Client;
 public class SharpClientBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
+    private static readonly TimeSpan RecommendedRequestTimeout = TimeSpan.FromSeconds(30);
 
     private readonly object _configurationGate = new();
     private readonly SharpLinkRuntimeContextBuilder _runtimeContextBuilder = new();
@@ -20,7 +21,7 @@ public class SharpClientBuilder
     private ISharpLinkClientAuthenticator? _authenticator;
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
-    private TimeSpan? _requestTimeout = TimeSpan.FromSeconds(30);
+    private ClientRequestTimeoutPolicy _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Unspecified;
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private bool _connectionPoolConfigured;
     private bool _clusterConfigured;
@@ -33,7 +34,7 @@ public class SharpClientBuilder
     private bool _circuitBreakerConfigured;
     private ISharpLinkReconnectJitter _reconnectJitter = RandomSharpLinkReconnectJitter.Instance;
 
-    /// <summary>Creates a client builder with safe default runtime, heartbeat, timeout, and resilience settings.</summary>
+    /// <summary>Creates a client builder. A request-timeout policy must be selected before Build.</summary>
     public static SharpClientBuilder Create() => new();
 
     /// <summary>Uses an outbound transport factory owned by the built client.</summary>
@@ -216,21 +217,24 @@ public class SharpClientBuilder
         return this;
     }
 
-    /// <summary>Configures the default timeout applied to unary calls without an earlier deadline.</summary>
-    public SharpClientBuilder UseRequestTimeout(TimeSpan timeout)
+    /// <summary>Uses the recommended 30-second client-wide request-timeout fallback.</summary>
+    public SharpClientBuilder UseRequestTimeout()
     {
-        Configure(() =>
-        {
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-            _requestTimeout = timeout;
-        });
+        Configure(() => _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Recommended(RecommendedRequestTimeout));
         return this;
     }
 
-    /// <summary>Disables the client default request timeout.</summary>
+    /// <summary>Uses a custom client-wide request-timeout fallback.</summary>
+    public SharpClientBuilder UseRequestTimeout(TimeSpan timeout)
+    {
+        Configure(() => _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Custom(timeout));
+        return this;
+    }
+
+    /// <summary>Explicitly disables the client-wide request-timeout fallback.</summary>
     public SharpClientBuilder DisableRequestTimeout()
     {
-        Configure(() => _requestTimeout = null);
+        Configure(() => _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Disabled);
         return this;
     }
 
@@ -509,6 +513,15 @@ public class SharpClientBuilder
     private ClientBuildPlan CompilePlan(
         Func<SharpLinkRuntimeContextBuildPlan> compileRuntimeContext)
     {
+        var requestTimeoutPolicy = _requestTimeoutPolicy;
+        if (!requestTimeoutPolicy.IsSpecified)
+        {
+            throw new InvalidOperationException(
+                "A request-timeout policy must be selected before building the client. " +
+                "Call UseRequestTimeout() for the recommended 30-second fallback, " +
+                "UseRequestTimeout(timeout) for a custom fallback, or DisableRequestTimeout() to explicitly allow no client-wide fallback.");
+        }
+
         var draft = _topology ?? throw new InvalidOperationException(
             "Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
         var runtimeContext = compileRuntimeContext();
@@ -523,7 +536,8 @@ public class SharpClientBuilder
             runtimeContext,
             _heartbeatInterval,
             _heartbeatTimeout,
-            _requestTimeout,
+            requestTimeoutPolicy.TimeoutOrNull,
+            requestTimeoutPolicy.Source,
             _rpcSessionFlushOptions,
             connectionPool,
             cluster,
@@ -781,6 +795,7 @@ public class SharpClientBuilder
             plan.ReconnectJitter,
             logger,
             SharpLinkClient.CreateFrameworkTaskSupervisor(logger));
+        ClientRequestTimeoutRuntimeSource.Bind(runtimeContext, plan.RequestTimeoutSource);
         return new SharpLinkClient(composition);
     }
 
