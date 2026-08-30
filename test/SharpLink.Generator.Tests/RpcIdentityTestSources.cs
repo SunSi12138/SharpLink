@@ -48,8 +48,17 @@ public partial class RpcAnalyzerTests
                 match.Groups["wire"].Value))
             .ToArray();
         source = LegacyAdapterRegistrationPattern.Replace(source, static match =>
-            $"RpcCodecAdapterRegistration(typeof({match.Groups["type"].Value}), " +
-            $"\"{match.Groups["id"].Value}\"{match.Groups["tail"].Value})");
+        {
+            var adapterId = match.Groups["id"].Value;
+            var legacyWireFormatId = match.Groups["wire"].Value;
+            if (string.IsNullOrEmpty(legacyWireFormatId))
+                adapterId = string.Empty;
+            else if (legacyWireFormatId.Any(static value => value < ' ' || value > '~'))
+                adapterId = legacyWireFormatId;
+
+            return $"RpcCodecAdapterRegistration(typeof({match.Groups["type"].Value}), " +
+                   $"\"{adapterId}\"{match.Groups["tail"].Value})";
+        });
 
         source = LegacyCodecIdentityPattern.Replace(source, static match =>
         {
@@ -73,17 +82,27 @@ public partial class RpcAnalyzerTests
     {
         var simpleName = adapterType.Split('.').Last().Trim();
         var typePattern = new Regex(
-            $"(?m)^(?<indent>\\s*)(?<declaration>(?:public|internal|protected|private)\\s+(?:(?:static|abstract|sealed|partial)\\s+)*class\\s+{Regex.Escape(simpleName)}\\b)",
+            $"(?m)^(?<indent>[ \\t]*)(?<declaration>(?:public|internal|protected|private)\\s+(?:(?:static|abstract|sealed|partial)\\s+)*class\\s+{Regex.Escape(simpleName)}\\b)",
             RegexOptions.CultureInvariant);
         var match = typePattern.Match(source);
         if (!match.Success)
             return source;
 
-        var previousBlockStart = source.LastIndexOf("\n\n", Math.Max(0, match.Index - 1), StringComparison.Ordinal);
-        var previousBlockLength = match.Index - (previousBlockStart < 0 ? 0 : previousBlockStart + 2);
-        var previousBlock = source.Substring(previousBlockStart < 0 ? 0 : previousBlockStart + 2, previousBlockLength);
-        if (previousBlock.Contains("RpcCodecSemanticIdentity", StringComparison.Ordinal))
-            return source;
+        if (match.Index > 0)
+        {
+            var previousLineEnd = match.Index - 1;
+            if (source[previousLineEnd] == '\n')
+                previousLineEnd--;
+            if (previousLineEnd >= 0)
+            {
+                var previousLineStart = source.LastIndexOf('\n', previousLineEnd) + 1;
+                var previousLine = source.Substring(
+                    previousLineStart,
+                    previousLineEnd - previousLineStart + 1);
+                if (previousLine.Contains("RpcCodecSemanticIdentity", StringComparison.Ordinal))
+                    return source;
+            }
+        }
 
         var indentation = match.Groups["indent"].Value;
         var attribute =
