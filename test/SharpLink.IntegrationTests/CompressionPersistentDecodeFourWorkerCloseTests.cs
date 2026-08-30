@@ -20,16 +20,18 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         var payloadA = Enumerable.Repeat((byte)0x61, PayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x62, PayloadBytes).ToArray();
 
+        using var callCancellation = new CancellationTokenSource();
+
         var runningA = Enumerable.Range(0, workerCount)
-            .Select(_ => serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask())
+            .Select(_ => serviceA.MeasureAsync(payloadA, callCancellation.Token).AsTask())
             .ToArray();
         await coordinator.WaitForStartsAsync(workerCount);
         await WaitUntilAsync(
             () => harness.ActiveDecodes == workerCount && harness.QueueDepth == 0,
             $"all {workerCount} A providers occupied the available workers");
 
-        var queuedA = serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask();
-        var queuedB = serviceB.MeasureAsync(payloadB, CancellationToken.None).AsTask();
+        var queuedA = serviceA.MeasureAsync(payloadA, callCancellation.Token).AsTask();
+        var queuedB = serviceB.MeasureAsync(payloadB, callCancellation.Token).AsTask();
         await WaitUntilAsync(
             () => harness.QueueDepth == 2 && harness.QueueReservations == 2 &&
                   harness.ScheduledConnections == 2 && harness.ActiveDecodes == workerCount,
@@ -69,8 +71,10 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         var payloadA = Enumerable.Repeat((byte)0x71, PayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x72, PayloadBytes).ToArray();
 
+        using var callCancellation = new CancellationTokenSource();
+
         var runningA = Enumerable.Range(0, workerCount)
-            .Select(_ => serviceA.MeasureAsync(payloadA, CancellationToken.None).AsTask())
+            .Select(_ => serviceA.MeasureAsync(payloadA, callCancellation.Token).AsTask())
             .ToArray();
         await coordinator.WaitForStartsAsync(workerCount);
         await WaitUntilAsync(
@@ -79,7 +83,7 @@ public class CompressionPersistentDecodeWorkerSaturationTests
 
         using var queuedCancellation = new CancellationTokenSource();
         var queuedA = serviceA.MeasureAsync(payloadA, queuedCancellation.Token).AsTask();
-        var queuedB = serviceB.MeasureAsync(payloadB, CancellationToken.None).AsTask();
+        var queuedB = serviceB.MeasureAsync(payloadB, callCancellation.Token).AsTask();
         await WaitUntilAsync(
             () => harness.QueueDepth == 2 && harness.QueueReservations == 2 &&
                   harness.ScheduledConnections == 2 && harness.ActiveDecodes == workerCount,
