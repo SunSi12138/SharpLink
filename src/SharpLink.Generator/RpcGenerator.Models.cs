@@ -204,6 +204,8 @@ internal sealed record GeneratedCodecModel(
     Location? Location)
 {
     public bool ElementIsString { get; init; }
+    public ulong CodecHashHigh { get; init; }
+    public ulong CodecHashLow { get; init; }
 }
 
 internal readonly record struct GeneratedCodecHashModel(
@@ -327,11 +329,15 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         {
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
+            hash = unchecked(hash * 31 + codec.CodecHashHigh.GetHashCode());
+            hash = unchecked(hash * 31 + codec.CodecHashLow.GetHashCode());
         }
         foreach (var codec in obj.ContractCodecs)
         {
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
+            hash = unchecked(hash * 31 + codec.CodecHashHigh.GetHashCode());
+            hash = unchecked(hash * 31 + codec.CodecHashLow.GetHashCode());
         }
         foreach (var type in obj.FinalCodecBoundTypes)
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(type));
@@ -356,6 +362,8 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
             !string.Equals(left.CodecName, right.CodecName, StringComparison.Ordinal) ||
             !string.Equals(left.SchemaId, right.SchemaId, StringComparison.Ordinal) ||
+            left.CodecHashHigh != right.CodecHashHigh ||
+            left.CodecHashLow != right.CodecHashLow ||
             left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
             !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
             !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
