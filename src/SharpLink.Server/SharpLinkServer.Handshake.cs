@@ -46,8 +46,13 @@ internal sealed partial class SharpLinkServer
                             negotiation = ProtocolV2Negotiator.NegotiateServer(
                                 request,
                                 negotiationPolicy);
-                            authResult = await AuthenticateAsync(session, request.AuthenticationPayload, ct)
-                                .ConfigureAwait(false);
+                            authResult = await _authentication.AuthenticateAsync(
+                                new SharpLinkAuthenticationRequest(
+                                    session.Id,
+                                    request.AuthenticationPayload,
+                                    runtimeSession.LocalEndPoint,
+                                    runtimeSession.RemoteEndPoint),
+                                ct).ConfigureAwait(false);
                         }
                         catch (SharpLinkException exception)
                         {
@@ -129,84 +134,5 @@ internal sealed partial class SharpLinkServer
         return SharpLinkAuthenticationResult.Reject(
             SharpLinkErrorCode.ConnectionClosed,
             "Client disconnected during handshake.");
-    }
-
-    private async ValueTask<SharpLinkAuthenticationResult> AuthenticateAsync(
-        RpcSession session,
-        ReadOnlyMemory<byte> payload,
-        CancellationToken cancellationToken)
-    {
-        if (_authenticator is null)
-        {
-            return _authenticationRequired
-                ? SharpLinkAuthenticationResult.Reject()
-                : SharpLinkAuthenticationResult.Success;
-        }
-
-        try
-        {
-            var rpcSession = session;
-            var result = await _authenticator.AuthenticateAsync(
-                new SharpLinkAuthenticationRequest(
-                    session.Id,
-                    payload,
-                    rpcSession.LocalEndPoint,
-                    rpcSession.RemoteEndPoint),
-                cancellationToken).ConfigureAwait(false);
-            if (result.IsAuthenticated && result.ErrorCode != SharpLinkErrorCode.Unknown)
-            {
-                return SharpLinkAuthenticationResult.Reject(
-                    SharpLinkErrorCode.AuthenticationRejected,
-                    "Authentication provider returned a contradictory result.");
-            }
-            if (result.IsAuthenticated && result.Context?.IsExpired() == true)
-            {
-                return SharpLinkAuthenticationResult.Reject(
-                    SharpLinkErrorCode.AuthenticationExpired,
-                    "Authentication token has expired.");
-            }
-            if (!result.IsAuthenticated && result.ErrorCode == SharpLinkErrorCode.Unknown)
-            {
-                return SharpLinkAuthenticationResult.Reject(
-                    SharpLinkErrorCode.AuthenticationRejected,
-                    result.ErrorMessage);
-            }
-            if (!result.IsAuthenticated &&
-                !ProtocolV2PayloadCodec.IsDefinedErrorCode(result.ErrorCode))
-            {
-                return SharpLinkAuthenticationResult.Reject(
-                    SharpLinkErrorCode.AuthenticationRejected,
-                    "Authentication provider returned an undefined error code.");
-            }
-            return result;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            // Security: extension-provider exceptions may contain tokens, credentials, or
-            // provider SDK details. Only a stable CLR type identity and an internal,
-            // server-generated correlation ID may enter the production log; the full
-            // exception is retained in-process (debugger / DEBUG builds) but never
-            // persisted by the default logger. The warning is also rate-limited so a
-            // client that reliably makes the provider throw cannot grow the log per
-            // connection attempt.
-            var failureId = Interlocked.Increment(ref _authenticationFailureSequence);
-            if (_authenticationFailureLogThrottle.ShouldLog(
-                    _runtimeContext.TimeProvider.GetTimestamp(),
-                    out _))
-            {
-                LogAuthenticationProviderFailed(
-                    _logger,
-                    failureId,
-                    exception.GetType().FullName ?? exception.GetType().Name);
-            }
-            DebugTraceAuthenticationProviderException(exception);
-            return SharpLinkAuthenticationResult.Reject(
-                SharpLinkErrorCode.AuthenticationRejected,
-                "Authentication failed.");
-        }
     }
 }

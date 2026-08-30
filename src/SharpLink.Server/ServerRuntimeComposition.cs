@@ -55,8 +55,11 @@ internal sealed class ServerRuntimeComposition
         _staticManifests = staticManifests;
         HeartbeatCheckInterval = heartbeatCheckInterval;
         HeartbeatTimeout = heartbeatTimeout;
-        Authenticator = authenticator;
-        AuthenticationRequired = authenticationRequired;
+        Authentication = new ServerAuthenticationCoordinator(
+            authenticator,
+            authenticationRequired,
+            logger,
+            runtimeContext.TimeProvider);
         RpcSessionFlushOptions = rpcSessionFlushOptions;
         AdmissionProgram = admissionController.IsEnabled ? new AdmissionProgram(admissionController) : null;
         ConnectionAdmission = connectionAdmission ?? throw new ArgumentNullException(nameof(connectionAdmission));
@@ -74,9 +77,7 @@ internal sealed class ServerRuntimeComposition
 
     internal SharpLinkRuntimeContext RuntimeContext { get; }
 
-    internal ISharpLinkServerAuthenticator? Authenticator { get; }
-
-    internal bool AuthenticationRequired { get; }
+    internal ServerAuthenticationCoordinator Authentication { get; }
 
     internal SharpLinkProtocolOptions ProtocolOptions { get; }
 

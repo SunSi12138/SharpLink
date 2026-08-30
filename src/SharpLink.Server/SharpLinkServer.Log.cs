@@ -35,21 +35,6 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Transport.TlsEstablished, Level = LogLevel.Information, Message = "TLS established using {Protocol} and {CipherSuite}.")]
     private static partial void LogTlsEstablished(ILogger logger, SslProtocols protocol, TlsCipherSuite cipherSuite);
 
-    [LoggerMessage(EventId = LogEvents.Connection.AuthenticationProviderFailed, Level = LogLevel.Warning, Message = "Authentication provider failed. FailureId={FailureId}, ExceptionType={ExceptionType}.")]
-    private static partial void LogAuthenticationProviderFailed(
-        ILogger logger,
-        long failureId,
-        string exceptionType);
-
-    /// <summary>
-    /// Debug-build-only sink for the full authentication provider exception. Production
-    /// builds never persist provider exception payloads; this exists solely for in-process
-    /// debugging when the DEBUG symbol is defined.
-    /// </summary>
-    [Conditional(CompileSymbols.Debug)]
-    private static void DebugTraceAuthenticationProviderException(Exception exception)
-        => Debug.WriteLine(exception);
-
     [LoggerMessage(EventId = LogEvents.Connection.ProtocolViolation, Level = LogLevel.Warning, Message = "Client connection was closed because of a protocol violation ({Reason}).")]
     private static partial void LogProtocolViolation(ILogger logger, string reason);
 
