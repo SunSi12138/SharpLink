@@ -131,6 +131,26 @@ public sealed class DynamicClusterConnectionStateTests
         }
     }
 
+    [Test]
+    public async Task DetachAllShouldReturnOwnedConnectionsOutsideCallerTopologyView()
+    {
+        await using var client = ClientBuilderTestHelper.Build(DynamicClusterTransportPlaceholder.Instance);
+        await using var connection = CreateConnection(client, "node", 4);
+        var endpoint = CreateEndpointState("node", 4);
+        var state = new SharpLinkClient.DynamicClusterConnectionState();
+
+        state.Add(endpoint, connection);
+
+        var detached = state.DetachAll([]);
+
+        Ensure(detached.Length == 1 && ReferenceEquals(detached[0], connection),
+            "DetachAll must enumerate authoritative connection ownership rather than the caller topology view");
+        Ensure(state.CountConnections(static _ => 1) == 0,
+            "DetachAll must clear connection ownership after returning every owned connection");
+        Ensure(state.RetiringConnectionCount == 0,
+            "DetachAll must clear retiring ownership together with the active connection sets");
+    }
+
     private static SharpLinkClient.DynamicEndpointState CreateEndpointState(string id, long generation)
         => new(
             new StaticEndpointConfiguration(
