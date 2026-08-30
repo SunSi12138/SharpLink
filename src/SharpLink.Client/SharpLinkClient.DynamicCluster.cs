@@ -4,7 +4,7 @@ internal sealed partial class SharpLinkClient
 {
     /// <summary>
     /// Owns resolver and connection lifecycle orchestration for a dynamic endpoint cluster. Endpoint
-    /// topology and selection state are delegated to <see cref="DynamicClusterTopologyState"/>.
+    /// topology/selection and connection-set/retirement state are delegated to focused collaborators.
     /// </summary>
     private sealed class DynamicClusterRuntime : IEndpointClusterRuntime
     {
@@ -13,8 +13,8 @@ internal sealed partial class SharpLinkClient
         private readonly SharpLinkEndpointTransportFactory _transportFactory;
         private readonly SharpLinkClusterOptions _options;
         private readonly DynamicClusterTopologyState _current;
+        private readonly DynamicClusterConnectionState _connections = new();
         private readonly Lock _gate = new();
-        private readonly HashSet<ClientConnection> _retiringConnections = [];
         private TaskCompletionSource _topologyChanged = CreateTopologyChangedSignal();
         private Task? _connectTask;
         private Task? _resolverTask;
@@ -171,20 +171,8 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
-                endpoint = FindEndpointLocked(connection);
-                if (endpoint is null)
+                if (!_connections.TryMarkDraining(_current.States, connection, out endpoint, out disposeNow))
                     return;
-                connection.MarkDraining();
-                if (connection.ActiveCallCount == 0)
-                {
-                    endpoint.Connections.Remove(connection);
-                    _retiringConnections.Remove(connection);
-                    disposeNow = true;
-                }
-                else
-                {
-                    _retiringConnections.Add(connection);
-                }
                 PublishReadySnapshotLocked();
                 if (disposeNow)
                 {
@@ -193,7 +181,7 @@ internal sealed partial class SharpLinkClient
                         "DynamicClusterForcedRetirementCleanup");
                 }
             }
-            if (endpoint.Retiring)
+            if (endpoint!.Retiring)
                 ScheduleRetiredStateRelease(endpoint);
             else
                 EnsureReconnect(endpoint);
@@ -245,16 +233,14 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
-                endpoint = FindEndpointLocked(connection);
-                if (endpoint is null || !endpoint.Connections.Remove(connection))
+                if (!_connections.TryRetireDrainingIfIdle(_current.States, connection, out endpoint))
                     return;
-                _retiringConnections.Remove(connection);
                 PublishReadySnapshotLocked();
                 _client.TrackFrameworkTask(
                     DisposeConnectionAsync(connection),
                     "DynamicClusterIdleConnectionCleanup");
             }
-            if (endpoint.Retiring)
+            if (endpoint!.Retiring)
                 ScheduleRetiredStateRelease(endpoint);
             else
                 EnsureReconnect(endpoint);
@@ -581,28 +567,11 @@ internal sealed partial class SharpLinkClient
             List<ClientConnection> connectionsToDispose,
             List<DynamicEndpointState> statesToRelease)
         {
-            if (endpoint.Retiring)
+            if (!_connections.BeginEndpointRetirement(endpoint, connectionsToDispose))
                 return;
-            endpoint.Retiring = true;
             SharpLinkTelemetry.AddClientDrainingEndpoints(1);
             _telemetryDrainingEndpointCount++;
-            var connections = endpoint.Connections.ToArray();
-            for (var index = 0; index < connections.Length; index++)
-            {
-                var connection = connections[index];
-                connection.MarkDraining();
-                if (connection.ActiveCallCount == 0)
-                {
-                    endpoint.Connections.Remove(connection);
-                    _retiringConnections.Remove(connection);
-                    connectionsToDispose.Add(connection);
-                }
-                else
-                {
-                    _retiringConnections.Add(connection);
-                }
-            }
-            if (endpoint.Connections.Count == 0 && endpoint.ConnectingCount == 0)
+            if (_connections.CanRelease(endpoint))
                 statesToRelease.Add(endpoint);
         }
 
@@ -767,7 +736,7 @@ internal sealed partial class SharpLinkClient
                     endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                     IsRetiringBudgetExceededLocked() ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
-                    endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
+                    _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
                     return;
                 }
@@ -815,7 +784,7 @@ internal sealed partial class SharpLinkClient
                     if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                         IsRetiringBudgetExceededLocked())
                         throw CreateConnectionClosedException("Endpoint generation retired while connecting.");
-                    endpoint.Connections.Add(createdConnection);
+                    _connections.Add(endpoint, createdConnection);
                     PublishReadySnapshotLocked();
                     session.NotifyConnected();
                     _client.TrackFrameworkTask(
@@ -839,7 +808,7 @@ internal sealed partial class SharpLinkClient
                 lock (_gate)
                 {
                     endpoint.ConnectingCount--;
-                    if (endpoint.Retiring && endpoint.Connections.Count == 0 && endpoint.ConnectingCount == 0)
+                    if (endpoint.Retiring && _connections.CanRelease(endpoint))
                         ScheduleRetiredStateReleaseLocked(endpoint);
                 }
             }
@@ -855,9 +824,8 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
-                if (!endpoint.Connections.Remove(connection))
+                if (!_connections.Remove(endpoint, connection))
                     return;
-                _retiringConnections.Remove(connection);
                 retired = endpoint.Retiring;
                 PublishReadySnapshotLocked();
                 connection.Fail(exception);
@@ -897,7 +865,7 @@ internal sealed partial class SharpLinkClient
                     var index = (int)((start + (uint)offset) % (uint)current.Length);
                     var endpoint = current[index];
                     if (endpoint.ReadyConnections.Length != 0 ||
-                        endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0 ||
+                        _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount != 0 ||
                         endpoint.ReconnectTask is { IsCompleted: false })
                         continue;
                     (missing ??= []).Add(endpoint);
@@ -935,7 +903,7 @@ internal sealed partial class SharpLinkClient
                     endpoint.ExpansionTask is { IsCompleted: false } ||
                     IsRetiringBudgetExceededLocked() ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
-                    endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
+                    _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
                     return;
                 }
@@ -1020,6 +988,7 @@ internal sealed partial class SharpLinkClient
 
         private void PublishReadySnapshotLocked(bool force = false)
         {
+            _connections.PublishReadyConnections(_current.Current);
             var readiness = _current.PublishReadySnapshot(force);
             if (readiness.MembershipChanged)
             {
@@ -1037,7 +1006,7 @@ internal sealed partial class SharpLinkClient
         }
 
         private DynamicEndpointState? FindEndpointLocked(ClientConnection connection)
-            => _current.FindEndpoint(connection);
+            => _connections.FindEndpoint(_current.States, connection);
 
         private bool IsCurrentLocked(DynamicEndpointState endpoint)
             => _current.IsCurrent(endpoint);
@@ -1048,18 +1017,18 @@ internal sealed partial class SharpLinkClient
                !IsRetiringBudgetExceededLocked() &&
                _current.ReadyEndpointCount < Math.Min(_options.MinReadyEndpoints, _current.Current.Length) &&
                TotalActiveConnectionsLocked() < _options.MaxConnections &&
-               endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount == 0;
+               _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount == 0;
 
         private bool IsRetiringBudgetExceededLocked()
-            => _retiringConnections.Count > _options.MaxRetiringConnections;
+            => _connections.IsRetiringBudgetExceeded(_options.MaxRetiringConnections);
 
         private int TotalActiveConnectionsLocked()
-            => _current.TotalActiveConnections();
+            => _connections.TotalActiveConnections(_current.States);
 
         private int CountConnections(Func<ClientConnection, int> count)
         {
             lock (_gate)
-                return _current.CountConnections(count);
+                return _connections.CountConnections(count);
         }
 
         private void ScheduleRetiredStateRelease(DynamicEndpointState endpoint)
@@ -1100,9 +1069,10 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                if (!endpoint.Retiring || endpoint.FactoryReleased || endpoint.Connections.Count != 0 || endpoint.ConnectingCount != 0)
+                if (!endpoint.Retiring || endpoint.FactoryReleased || !_connections.CanRelease(endpoint))
                     return;
                 endpoint.FactoryReleased = true;
+                _connections.ReleaseEndpoint(endpoint);
                 _current.RemoveState(endpoint);
                 SharpLinkTelemetry.AddClientDrainingEndpoints(-1);
                 _telemetryDrainingEndpointCount--;
@@ -1127,7 +1097,7 @@ internal sealed partial class SharpLinkClient
             lock (_gate)
             {
                 var states = _current.States;
-                connections = [.. states.SelectMany(static state => state.Connections)];
+                connections = _connections.DetachAll(states);
                 _stoppedFactories = [.. states
                     .Where(static state => !state.FactoryReleased)
                     .Select(static state =>
@@ -1135,10 +1105,7 @@ internal sealed partial class SharpLinkClient
                         state.FactoryReleased = true;
                         return state.Configuration.TransportFactory;
                     })];
-                for (var index = 0; index < states.Count; index++)
-                    states[index].Connections.Clear();
                 _current.Clear();
-                _retiringConnections.Clear();
                 SharpLinkTelemetry.AddClientActiveEndpoints(-_telemetryActiveEndpointCount);
                 SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
                 SharpLinkTelemetry.AddClientDrainingEndpoints(-_telemetryDrainingEndpointCount);
