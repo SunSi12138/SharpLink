@@ -83,6 +83,50 @@ internal sealed partial class SharpLinkClient
             => _currentById.TryGetValue(endpoint.Configuration.Endpoint.Id, out var current) &&
                ReferenceEquals(current, endpoint);
 
+        public int TotalActiveConnections()
+        {
+            var count = 0;
+            for (var index = 0; index < _allStates.Count; index++)
+                count += _allStates[index].NonRetiringConnectionCount + _allStates[index].ConnectingCount;
+            return count;
+        }
+
+        public int CountConnections(Func<ClientConnection, int> count)
+        {
+            var result = 0;
+            for (var index = 0; index < _allStates.Count; index++)
+                foreach (var connection in _allStates[index].Connections)
+                    result += count(connection);
+            return result;
+        }
+
+        public int CountActiveCurrentInitialDials()
+        {
+            var count = 0;
+            for (var index = 0; index < _current.Length; index++)
+                count += _current[index].InitialDialReservations;
+            return count;
+        }
+
+        public HashSet<IClientTransportFactory> GetOwnedFactories()
+        {
+            var factories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
+            for (var index = 0; index < _allStates.Count; index++)
+                factories.Add(_allStates[index].Configuration.TransportFactory);
+            return factories;
+        }
+
+        public bool HasUniqueFactoryOwnership(IEnumerable<EndpointState> created)
+        {
+            var factories = GetOwnedFactories();
+            foreach (var state in created)
+            {
+                if (!factories.Add(state.Configuration.TransportFactory))
+                    return false;
+            }
+            return true;
+        }
+
         public DynamicClusterReadinessSnapshot PublishReadySnapshot(bool force = false)
         {
             var ready = new List<EndpointState>(_current.Length);
