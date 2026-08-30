@@ -27,9 +27,8 @@ public partial class RpcGenerator
                 .Select(static codec => codec.Type),
             StringComparer.Ordinal);
 
-        bool HasValueIdentity(string type, string? wireFormatId, string? codecHash)
-            => !string.IsNullOrWhiteSpace(wireFormatId) ||
-               (opaqueCodecTypes.Contains(type) && IsValidCodecHash(codecHash));
+        bool HasValueIdentity(string type, string? codecHash)
+            => !opaqueCodecTypes.Contains(type) || IsValidCodecHash(codecHash);
 
         return manifest.Contracts.All(contract =>
                    contract is not null &&
@@ -39,13 +38,13 @@ public partial class RpcGenerator
                        method.Request is not null &&
                        method.Response is not null &&
                        method.Request.All(value =>
-                           value is not null && HasValueIdentity(value.Type, value.WireFormatId, value.CodecHash)) &&
-                       HasValueIdentity(method.Response.Type, method.Response.WireFormatId, method.Response.CodecHash))) &&
+                           value is not null && HasValueIdentity(value.Type, value.CodecHash)) &&
+                       HasValueIdentity(method.Response.Type, method.Response.CodecHash))) &&
                manifest.Dtos.All(dto =>
                    dto is not null &&
                    dto.Members is not null &&
                    dto.Members.All(member =>
-                       member is not null && HasValueIdentity(member.Type, member.WireFormatId, member.CodecHash))) &&
+                       member is not null && HasValueIdentity(member.Type, member.CodecHash))) &&
                manifest.Codecs.All(static codec =>
                    codec is not null &&
                    !string.IsNullOrWhiteSpace(codec.Type) &&
@@ -82,15 +81,6 @@ public partial class RpcGenerator
         => opaqueCodecHashes.TryGetValue(RemoveGlobalPrefix(typeName), out var codecHash)
             ? codecHash
             : null;
-
-    private static string? GetWireFormatId(
-        string typeName,
-        IReadOnlyDictionary<string, string> wireFormats)
-    {
-        if (!wireFormats.TryGetValue(RemoveGlobalPrefix(typeName), out var wireFormatId))
-            return "sharplink-native/v1";
-        return string.IsNullOrWhiteSpace(wireFormatId) ? null : wireFormatId;
-    }
 
     private static ContractCompatibilityDiagnostic Change(
         ContractCompatibilityKind kind,
@@ -286,7 +276,6 @@ internal static class __SharpLinkContractManifest
         public string Name { get; set; } = string.Empty;
         public string Type { get; set; } = string.Empty;
         public string WireType { get; set; } = string.Empty;
-        public string? WireFormatId { get; set; }
         public string? CodecHash { get; set; }
         public bool Nullable { get; set; }
         public bool Stream { get; set; }
@@ -315,7 +304,6 @@ internal static class __SharpLinkContractManifest
         public uint Id { get; set; }
         public string Type { get; set; } = string.Empty;
         public string WireType { get; set; } = string.Empty;
-        public string? WireFormatId { get; set; }
         public string? CodecHash { get; set; }
         public bool Nullable { get; set; }
         public bool Required { get; set; }
