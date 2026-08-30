@@ -5,7 +5,19 @@ permissions:
 
 on:
   workflow_call:
+    inputs:
+      browser_evidence:
+        description: Run Browser/WASM and Browser-to-desktop compatibility evidence
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      browser_evidence:
+        description: Run Browser/WASM and Browser-to-desktop compatibility evidence
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   produce:
@@ -59,6 +71,7 @@ jobs:
           retention-days: 30
 
   browser-produce:
+    if: inputs.browser_evidence
     continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -168,6 +181,7 @@ jobs:
           retention-days: 30
 
   browser-verify:
+    if: inputs.browser_evidence
     continue-on-error: true
     needs: [produce, browser-produce]
     runs-on: ubuntu-24.04
@@ -248,6 +262,7 @@ jobs:
           retention-days: 30
 
   browser-desktop-verify:
+    if: inputs.browser_evidence
     continue-on-error: true
     needs: [produce, browser-produce]
     strategy:
@@ -346,7 +361,7 @@ jobs:
   browser-evidence:
     continue-on-error: true
     needs: [browser-verify, browser-desktop-verify]
-    if: always()
+    if: ${{ inputs.browser_evidence && always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
