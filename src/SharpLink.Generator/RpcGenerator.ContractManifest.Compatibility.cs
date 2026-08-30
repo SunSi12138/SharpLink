@@ -188,14 +188,13 @@ public partial class RpcGenerator
                     matchedNewIds.Add(newMember.Id);
                     if (!string.Equals(oldMember.Type, newMember.Type, StringComparison.Ordinal) ||
                         !string.Equals(oldMember.WireType, newMember.WireType, StringComparison.Ordinal) ||
-                        !string.Equals(oldMember.WireFormatId, newMember.WireFormatId, StringComparison.Ordinal) ||
                         !string.Equals(oldMember.CodecHash, newMember.CodecHash, StringComparison.Ordinal))
                     {
                         diagnostics.Add(Change(
                             ContractCompatibilityKind.WireType,
                             newMember.SourceLocation,
                             $"{newDto.Name}.{newMember.Name}",
-                            $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType}/{oldMember.WireFormatId}/{oldMember.CodecHash} to {newMember.Type}/{newMember.WireType}/{newMember.WireFormatId}/{newMember.CodecHash}",
+                            $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType}/{oldMember.CodecHash} to {newMember.Type}/{newMember.WireType}/{newMember.CodecHash}",
                             "restore the old wire type or semantic Codec identity, or add a new optional member ID"));
                     }
                     if (!oldMember.Required && newMember.Required)
@@ -372,7 +371,6 @@ public partial class RpcGenerator
             var newValue = current[index];
             if (!string.Equals(oldValue.Type, newValue.Type, StringComparison.Ordinal) ||
                 !string.Equals(oldValue.WireType, newValue.WireType, StringComparison.Ordinal) ||
-                !string.Equals(oldValue.WireFormatId, newValue.WireFormatId, StringComparison.Ordinal) ||
                 !string.Equals(oldValue.CodecHash, newValue.CodecHash, StringComparison.Ordinal) ||
                 oldValue.Stream != newValue.Stream ||
                 oldValue.Nullable != newValue.Nullable)
@@ -381,7 +379,7 @@ public partial class RpcGenerator
                     ContractCompatibilityKind.WireType,
                     newValue.SourceLocation ?? fallbackLocation,
                     item,
-                    $"element {index} changed from {oldValue.Type}/{oldValue.WireType}/{oldValue.WireFormatId}/{oldValue.CodecHash}/nullable={oldValue.Nullable} to {newValue.Type}/{newValue.WireType}/{newValue.WireFormatId}/{newValue.CodecHash}/nullable={newValue.Nullable}",
+                    $"element {index} changed from {oldValue.Type}/{oldValue.WireType}/{oldValue.CodecHash}/nullable={oldValue.Nullable} to {newValue.Type}/{newValue.WireType}/{newValue.CodecHash}/nullable={newValue.Nullable}",
                     "restore the previous type, wire framing, or semantic Codec identity, or add a new method route"));
             }
         }
