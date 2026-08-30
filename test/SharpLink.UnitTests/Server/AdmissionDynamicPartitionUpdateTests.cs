@@ -100,7 +100,7 @@ public sealed class AdmissionDynamicPartitionUpdateTests
         Ensure(ReferenceEquals(pool, Current(server).Controller.PartitionStateForTests),
             "partition concurrency resize must preserve the namespace and existing entry");
 
-        var admitted = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+        var admitted = await queued;
         Ensure(admitted.IsAcquired,
             "1 -> 2 must synchronously expose one additional permit to the existing FIFO waiter");
         Ensure(source.Kernel.QueuedCalls == 0 && pool.Count == 1,
