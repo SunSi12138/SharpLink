@@ -38,6 +38,46 @@ public sealed class DynamicClusterConnectionOwnershipInvariantTests
             "authoritative detach must return a uniquely-owned connection exactly once");
     }
 
+    [Test]
+    public async Task AddShouldRejectConnectionWithMismatchedEndpointIdentity()
+    {
+        await using var client = ClientBuilderTestHelper.Build(DynamicClusterTransportPlaceholder.Instance);
+        await using var wrongId = CreateConnection(client, "node-b", 7);
+        await using var wrongGeneration = CreateConnection(client, "node-a", 8);
+        var endpoint = CreateEndpointState("node-a", 7);
+        var state = new SharpLinkClient.DynamicClusterConnectionState();
+
+        var wrongIdRejected = false;
+        try
+        {
+            state.Add(endpoint, wrongId);
+        }
+        catch (InvalidOperationException)
+        {
+            wrongIdRejected = true;
+        }
+
+        var wrongGenerationRejected = false;
+        try
+        {
+            state.Add(endpoint, wrongGeneration);
+        }
+        catch (InvalidOperationException)
+        {
+            wrongGenerationRejected = true;
+        }
+
+        Ensure(wrongIdRejected, "endpoint ownership must reject a connection with a different endpoint id");
+        Ensure(wrongGenerationRejected,
+            "endpoint ownership must reject a connection from a different endpoint generation");
+        Ensure(state.FindEndpoint(wrongId) is null,
+            "a rejected endpoint-id mismatch must not create ownership");
+        Ensure(state.FindEndpoint(wrongGeneration) is null,
+            "a rejected generation mismatch must not create ownership");
+        Ensure(state.CountConnections(static _ => 1) == 0,
+            "identity mismatches must leave authoritative ownership unchanged");
+    }
+
     private static SharpLinkClient.DynamicEndpointState CreateEndpointState(string id, long generation)
         => new(
             new StaticEndpointConfiguration(
