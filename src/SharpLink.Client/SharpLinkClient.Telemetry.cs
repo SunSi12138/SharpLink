@@ -273,10 +273,7 @@ internal sealed partial class SharpLinkClient
         ClientCallLifetimeSource lifetimeSource)
     {
         var value = lifetimeSource.ToTelemetryValue();
-        if (value is not null &&
-            System.Diagnostics.Activity.Current?.IsAllDataRequested == true)
-        {
+        if (value is not null)
             scope.SetTag("rpc.sharplink.lifetime_source", value);
-        }
     }
 }
