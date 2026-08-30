@@ -126,26 +126,28 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
 
         var delivery = Task.Run(async () =>
             await enumerator.MoveNextAsync().ConfigureAwait(false));
-        await deliveryEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await deliveryEntered.Task;
 
         var terminal = new SharpLinkException(
             SharpLinkErrorCode.DeadlineExceeded,
             "test deadline");
         var localAbort = (IStreamLocalAbortDispatcher)dispatcher;
-        var abortStarted = new TaskCompletionSource(
+        var abortEnteringDispatcher = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var abort = Task.Run(() =>
-        {
-            abortStarted.TrySetResult();
-            localAbort.CompleteLocalAbort(terminal);
-        });
-        await abortStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await Task.Delay(TimeSpan.FromMilliseconds(50));
+        dispatcher.SetBeforeProducerOperationAcquireForTests(
+            () => abortEnteringDispatcher.TrySetResult());
+        var abort = Task.Run(() => localAbort.CompleteLocalAbort(terminal));
+
+        // Wait for CompleteLocalAbort to enter the dispatch-acquire path while the delivery
+        // callback still owns publication. This replaces a wall-clock sleep that only guessed
+        // that the competing worker had been scheduled.
+        await abortEnteringDispatcher.Task;
         var abortWaitedForPublication = !abort.IsCompleted;
+        dispatcher.SetBeforeProducerOperationAcquireForTests(null);
 
         releaseDelivery.Set();
-        var delivered = await delivery.WaitAsync(TimeSpan.FromSeconds(2));
-        await abort.WaitAsync(TimeSpan.FromSeconds(2));
+        var delivered = await delivery;
+        await abort;
 
         Ensure(abortWaitedForPublication,
             "a local terminal must not complete while an owned item is still publishing Current or receive credit");
