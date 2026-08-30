@@ -131,7 +131,6 @@ public class StaticContractCodecProviderRegressionTests
             public Type TargetType => typeof(SharedPayload);
             public string SchemaId => schemaId;
             public string WireFormatId => "test/shared-payload/v1";
-            public RpcGeneratedCodecFactoryKind Kind => RpcGeneratedCodecFactoryKind.Custom;
             public string? AdapterId => null;
             public IRpcCodecAdapter? Adapter => null;
 
