@@ -1,0 +1,88 @@
+name: PR415 Timeout Migration
+
+on:
+  push:
+    branches:
+      - feature/issue-396-deterministic-rpc-identity
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feature/issue-396-deterministic-rpc-identity
+          fetch-depth: 0
+
+      - name: Select explicit timeout policies
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          roots = [
+              Path('test/SharpLink.IntegrationTests'),
+              Path('test/SharpLink.PackageSmoke'),
+              Path('test/SharpLink.ReferenceRooting.PackageClient'),
+              Path('test/SharpLink.AotSmoke'),
+              Path('test/SharpLink.PreCreditAotSmoke'),
+          ]
+          builders = (
+              'SharpClientBuilder.Create()',
+              'SharpLinkMultiClusterClientBuilder.Create()',
+          )
+
+          def has_policy_in_direct_chain(text: str, end: int) -> bool:
+              window = text[end:end + 3000]
+              build = window.find('.Build()')
+              semicolon = window.find(';')
+              boundary_candidates = [value for value in (build, semicolon) if value >= 0]
+              boundary = min(boundary_candidates) if boundary_candidates else len(window)
+              chain = window[:boundary]
+              return '.DisableRequestTimeout()' in chain or '.UseRequestTimeout(' in chain or '.UseRequestTimeout()' in chain
+
+          changed = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in sorted(root.rglob('*.cs')):
+                  original = path.read_text(encoding='utf-8')
+                  text = original
+                  for builder in builders:
+                      cursor = 0
+                      while True:
+                          index = text.find(builder, cursor)
+                          if index < 0:
+                              break
+                          end = index + len(builder)
+                          if has_policy_in_direct_chain(text, end):
+                              cursor = end
+                              continue
+                          line_start = text.rfind('\n', 0, index) + 1
+                          indent = re.match(r'[ \t]*', text[line_start:index]).group(0)
+                          insertion = f"\n{indent}    .DisableRequestTimeout()"
+                          text = text[:end] + insertion + text[end:]
+                          cursor = end + len(insertion)
+                  if text != original:
+                      path.write_text(text, encoding='utf-8')
+                      changed.append(str(path))
+
+          if not changed:
+              raise SystemExit('No timeout-policy migrations were needed.')
+          print('\n'.join(changed))
+
+      - name: Verify changed text
+        run: git diff --check
+
+      - name: Commit migration
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add test/SharpLink.IntegrationTests test/SharpLink.PackageSmoke test/SharpLink.ReferenceRooting.PackageClient test/SharpLink.AotSmoke test/SharpLink.PreCreditAotSmoke
+          git commit -m "test: select explicit request timeout policies"
+          git push origin HEAD:feature/issue-396-deterministic-rpc-identity
