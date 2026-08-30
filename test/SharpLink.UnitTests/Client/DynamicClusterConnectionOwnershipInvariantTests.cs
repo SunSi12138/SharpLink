@@ -11,7 +11,7 @@ public sealed class DynamicClusterConnectionOwnershipInvariantTests
         await using var client = ClientBuilderTestHelper.Build(DynamicClusterTransportPlaceholder.Instance);
         await using var connection = CreateConnection(client, "node-a", 7);
         var first = CreateEndpointState("node-a", 7);
-        var second = CreateEndpointState("node-b", 8);
+        var second = CreateEndpointState("node-a", 7);
         var state = new SharpLinkClient.DynamicClusterConnectionState();
 
         state.Add(first, connection);
