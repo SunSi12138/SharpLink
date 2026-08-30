@@ -164,5 +164,5 @@ internal sealed partial class SharpLinkClient
         RpcDeadline Deadline,
         SharpLinkMetadata? Metadata,
         ClientLogicalCallState? LogicalCall,
-        ClientCallLifetimeSource LifetimeSource);
+        ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None);
 }
