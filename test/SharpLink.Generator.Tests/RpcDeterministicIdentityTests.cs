@@ -108,6 +108,12 @@ public partial class RpcAnalyzerTests
             : string.Empty;
         var methodAttribute = idempotent ? "[SharpLink.Sdk.Idempotent]" : string.Empty;
         var source = BuildSource($$"""
+namespace SharpLink.Sdk
+{
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class IdempotentAttribute : Attribute { }
+}
+
 [SharpLink.Sdk.RpcSerializable]
 public sealed class DeterministicPayload
 {
