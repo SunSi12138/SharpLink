@@ -240,7 +240,6 @@ public class RuntimeInterceptorOverlapStressIntegrationTests
             var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
 
             var client = SharpClientBuilder.Create()
-                .DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                 .Build();

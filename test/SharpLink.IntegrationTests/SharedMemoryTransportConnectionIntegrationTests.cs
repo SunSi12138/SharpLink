@@ -1131,7 +1131,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
     private static ISharpLinkClient CreateAuthenticatedSharedMemoryClient(string name, string token)
     {
         var payload = Encoding.UTF8.GetBytes(token);
-        return SharpClientBuilder.Create().DisableRequestTimeout()
+        return SharpClientBuilder.Create()
             .UseSharedMemory(name)
 
             .UseAuthenticator(SharpLinkAuthenticator.CreateClient(
@@ -1256,7 +1256,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
                 .Build();
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            var client = SharpClientBuilder.Create()
                 .UseSharedMemory(name, options =>
                 {
                     options.CapacityPerDirectionBytes = 64 * 1024;

@@ -676,7 +676,6 @@ public class DynamicAdmissionGenerationTests
             Action<SharpLinkRuntimeOptions>? runtimeConfigure)
         {
             var builder = SharpClientBuilder.Create()
-                .DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (runtimeConfigure is not null)
                 builder.UseRuntime(runtimeConfigure);

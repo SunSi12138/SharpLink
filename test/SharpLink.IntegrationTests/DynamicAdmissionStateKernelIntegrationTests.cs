@@ -415,7 +415,6 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
             var server = (SharpLinkServer)serverBuilder.Build();
             var serverTask = RunServerAsync(server, serverCancellation.Token);
             var client = SharpClientBuilder.Create()
-                .DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();

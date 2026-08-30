@@ -12,7 +12,6 @@ public static class Program
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
             .UseSharedMemory(args[0])
             .Build();
         await client.ConnectAsync(timeout.Token);

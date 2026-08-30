@@ -26,7 +26,7 @@ public class InterceptorIntegrationTests
     [Test]
     public async Task ClientInterceptorShouldShortCircuitWithoutAConnection()
     {
-        var client = SharpClientBuilder.Create().DisableRequestTimeout()
+        var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), GetFreePort())
             .AddInterceptor(new ShortCircuitClientInterceptor(777))
             .Build();
@@ -664,7 +664,7 @@ public class InterceptorIntegrationTests
     }
 
     private static ISharpLinkClient CreateDisconnectedClient(ISharpLinkClientInterceptor interceptor)
-        => SharpClientBuilder.Create().DisableRequestTimeout()
+        => SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), GetFreePort())
             .AddInterceptor(interceptor)
             .Build();
@@ -1083,7 +1083,7 @@ public class InterceptorIntegrationTests
             var server = serverBuilder.Build();
             var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
 
-            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
+            var clientBuilder = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));

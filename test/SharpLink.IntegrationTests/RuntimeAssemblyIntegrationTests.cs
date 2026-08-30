@@ -12,7 +12,6 @@ public sealed class RuntimeAssemblyIntegrationTests
     public async Task MultiClusterDynamicRegistrationShouldRouteToOneExplicitSlot()
     {
         await using var client = SharpLinkMultiClusterClientBuilder.Create()
-            .DisableRequestTimeout()
             .AddCluster("plugins", child => child.UseTcp(IPAddress.Loopback.ToString(), 1),
                 slot => slot.AllowDynamicContracts = true)
             .AddCluster("other", child => child.UseTcp(IPAddress.Loopback.ToString(), 2),
@@ -152,7 +151,6 @@ public sealed class RuntimeAssemblyIntegrationTests
     {
         using var plugin = PluginBundle.Load("multi-cluster-deferred-unregister", loadService: false);
         await using var registrationSource = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
@@ -187,7 +185,6 @@ public sealed class RuntimeAssemblyIntegrationTests
     {
         using var plugin = PluginBundle.Load("multi-cluster-rejected-unregister", loadService: false);
         await using var registrationSource = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
@@ -228,7 +225,6 @@ public sealed class RuntimeAssemblyIntegrationTests
         using var originalPlugin = PluginBundle.Load("multi-cluster-rejected-unregister-original", loadService: false);
         using var reloadedPlugin = PluginBundle.Load("multi-cluster-rejected-unregister-reloaded", loadService: false);
         await using var registrationSource = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(originalPlugin.ContractAssembly);
@@ -280,7 +276,6 @@ public sealed class RuntimeAssemblyIntegrationTests
         using var newPlugin = PluginBundle.Load(
             "multi-cluster-replacement-cleanup-failure-new", loadService: false);
         await using var registrationSource = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(oldPlugin.ContractAssembly);
@@ -1570,7 +1565,6 @@ public sealed class RuntimeAssemblyIntegrationTests
     {
         var plugin = PluginBundle.Load("multi-cluster-runtime-remove", loadService: false);
         await using var client = SharpLinkMultiClusterClientBuilder.Create()
-            .DisableRequestTimeout()
             .AddCluster(
                 "plugins",
                 child => child.UseTcp(IPAddress.Loopback.ToString(), 1),
@@ -1796,7 +1790,6 @@ public sealed class RuntimeAssemblyIntegrationTests
     private static async Task<ISharpLinkMultiClusterClient> CreateDynamicMultiClusterClientAsync(int port)
     {
         var client = SharpLinkMultiClusterClientBuilder.Create()
-            .DisableRequestTimeout()
             .AddCluster("plugins", child => child.UseTcp(IPAddress.Loopback.ToString(), port),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -2278,7 +2271,6 @@ public sealed class RuntimeAssemblyIntegrationTests
             var server = serverBuilder.Build();
             var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
             var client = SharpClientBuilder.Create()
-                .DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .Build();

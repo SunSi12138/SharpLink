@@ -337,7 +337,6 @@ public class CompressionPersistentDecodeReviewTests
             var serverTask = RunServerAsync(server, serverCts.Token);
 
             var clientBuilder = SharpClientBuilder.Create()
-                .DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(

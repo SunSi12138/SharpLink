@@ -2068,7 +2068,6 @@ public class IntegrationBehaviorTests
             }, CancellationToken.None);
 
             var clientBuilder = SharpClientBuilder.Create()
-                .DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (codecResolver is not null)
                 clientBuilder.UseSerializer(codecResolver);
