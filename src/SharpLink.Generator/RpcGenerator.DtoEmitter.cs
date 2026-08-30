@@ -86,7 +86,7 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
         sb.AppendLine("    {");
-        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));");
+        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));
         sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(length, checked((uint)byteCount));");
         sb.AppendLine("        writer.Advance(sizeof(uint));");
         sb.AppendLine("        if (byteCount == 0)");
@@ -121,9 +121,7 @@ public partial class RpcGenerator
         sb.AppendLine();
     }
 
-    private static void AppendFactoryCodecHash(StringBuilder sb, GeneratedCodecModel model)
-        => sb.AppendLine(
-            $"        public RpcHash128 CodecHash => new(0x{model.CodecHashHigh.ToString("x16", InvariantCulture)}UL, 0x{model.CodecHashLow.ToString("x16", InvariantCulture)}UL);");
+    private static void AppendFactoryCodecHash(StringBuilder sb, GeneratedCodecModel model) => sb.AppendLine($"        public RpcHash128 CodecHash => new(0x{model.CodecHashHigh.ToString("x16", InvariantCulture)}UL, 0x{model.CodecHashLow.ToString("x16", InvariantCulture)}UL);");
 
     private static string GetAdapterHolderName(string adapterId)
         => "__SharpLinkGeneratedAdapter_" + ComputeEmitterHash(adapterId).ToString("X16", InvariantCulture);
@@ -1232,7 +1230,7 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine($"        var items = new {GetArrayCreationType(model.ElementType!, "count")};");
-        sb.AppendLine("        for (var index = 0; index < count; index++)");
+        sb.AppendLine("        for (var index = 0; index < count; index++)
         sb.AppendLine("            items[index] = __elementCodec.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader))!;");
         sb.AppendLine("        RpcGeneratedCodecWire.EnsureFullyConsumed(reader);");
         var returnExpression = model.Kind switch
