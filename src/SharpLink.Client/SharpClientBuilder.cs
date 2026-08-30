@@ -238,6 +238,18 @@ public class SharpClientBuilder
         return this;
     }
 
+    internal void ApplyRequestTimeoutPolicyIfUnspecified(ClientRequestTimeoutPolicy policy)
+    {
+        if (!policy.IsSpecified)
+            return;
+
+        Configure(() =>
+        {
+            if (!_requestTimeoutPolicy.IsSpecified)
+                _requestTimeoutPolicy = policy;
+        });
+    }
+
     /// <summary>Enables bounded send coalescing by byte threshold and maximum latency.</summary>
     public SharpClientBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
     {
