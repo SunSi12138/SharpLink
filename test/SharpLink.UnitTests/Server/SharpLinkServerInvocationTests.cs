@@ -186,10 +186,15 @@ public class SharpLinkServerInvocationTests
                 BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server call admission path"));
         var setState = CreateInterlockedInt32Setter<SharpLinkServer>("_state");
-        var globalActiveCalls = typeof(SharpLinkServer).GetField(
+        var callAdmission = typeof(SharpLinkServer).GetField(
+            "_callAdmission",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(server)
+            ?? throw new Exception("cannot find Server call-admission owner");
+        var globalActiveCalls = typeof(ServerCallAdmission).GetField(
             "_globalActiveCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find global active-call counter");
+            ?? throw new Exception("cannot find admission active-call counter");
         var connectionActiveCalls = typeof(ServerConnectionState).GetField(
             "_activeCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -226,13 +231,13 @@ public class SharpLinkServerInvocationTests
             for (var iteration = 0; iteration < iterationsPerDelay; iteration++)
             {
                 setState(server, running);
-                globalActiveCalls.SetValue(server, 0);
+                globalActiveCalls.SetValue(callAdmission, 0);
                 connectionActiveCalls.SetValue(connection, 0);
                 admissionResult = -1;
                 phase.SignalAndWait();
                 Thread.SpinWait(delay);
                 setState(server, draining);
-                var drainObservedZeroCalls = (int)globalActiveCalls.GetValue(server)! == 0;
+                var drainObservedZeroCalls = (int)globalActiveCalls.GetValue(callAdmission)! == 0;
                 phase.SignalAndWait();
                 if (drainObservedZeroCalls && admissionResult == acquired)
                     witnessedLateAdmission = true;
@@ -240,12 +245,12 @@ public class SharpLinkServerInvocationTests
         }
         worker.Join();
 
-        globalActiveCalls.SetValue(server, 0);
+        globalActiveCalls.SetValue(callAdmission, 0);
         connectionActiveCalls.SetValue(connection, 0);
         setState(server, draining);
         Ensure(!witnessedLateAdmission,
             "Stop observed zero active calls but a racing request was still admitted after the drain boundary");
-        Ensure((int)globalActiveCalls.GetValue(server)! == 0, "global active-call counter rollback");
+        Ensure((int)globalActiveCalls.GetValue(callAdmission)! == 0, "global active-call counter rollback");
         Ensure(connection.ActiveCalls == 0, "connection active-call counter rollback");
         await connection.CloseAsync();
     }
@@ -412,9 +417,6 @@ public class SharpLinkServerInvocationTests
         Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
             "the admitted invocation must hold one global and one connection slot");
 
-        // This direct ServerConnectionState is not registered through a transport
-        // handshake. MarkDraining models GoAway publication while the real
-        // RunAsync/StopAsync path waits for the paired invocation release.
         connection.MarkDraining();
         var stopTask = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
         await YieldUntilAsync(
@@ -472,10 +474,6 @@ public class SharpLinkServerInvocationTests
                 allowGlobalAcquire.Wait();
             });
         Ensure(connection.MarkReady(null), "connection ready");
-
-        // The direct connection is deliberately outside the transport registry;
-        // the test drives the real admission and StopAsync state machines while
-        // the Debug-only instance probe controls only the local-to-global gap.
 
         var runTask = server.RunAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -1276,10 +1274,14 @@ public class SharpLinkServerInvocationTests
             "DispatchRpcAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server RPC dispatch path");
-        private static readonly FieldInfo GlobalActiveCallsField = typeof(SharpLinkServer).GetField(
+        private static readonly FieldInfo CallAdmissionField = typeof(SharpLinkServer).GetField(
+            "_callAdmission",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server call-admission owner");
+        private static readonly FieldInfo GlobalActiveCallsField = typeof(ServerCallAdmission).GetField(
             "_globalActiveCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find global active-call counter");
+            ?? throw new Exception("cannot find admission active-call counter");
         private static readonly FieldInfo ConnectionActiveCallsField = typeof(ServerConnectionState).GetField(
             "_activeCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -1336,7 +1338,8 @@ public class SharpLinkServerInvocationTests
         internal SharpLinkServer Server { get; }
         internal RpcSession Session { get; }
         internal ServerConnectionState Connection { get; }
-        internal int GlobalActiveCalls => (int)GlobalActiveCallsField.GetValue(Server)!;
+        internal int GlobalActiveCalls
+            => (int)GlobalActiveCallsField.GetValue(CallAdmissionField.GetValue(Server))!;
 
         internal ValueTask Dispatch(long requestId, ProtocolV2FrameFlags flags)
         {
@@ -1360,7 +1363,7 @@ public class SharpLinkServerInvocationTests
 
         public async ValueTask DisposeAsync()
         {
-            GlobalActiveCallsField.SetValue(Server, 0);
+            GlobalActiveCallsField.SetValue(CallAdmissionField.GetValue(Server), 0);
             ConnectionActiveCallsField.SetValue(Connection, 0);
             if (_output is BlockingFlushPipeWriter blocking)
                 blocking.ReleaseFlush();
