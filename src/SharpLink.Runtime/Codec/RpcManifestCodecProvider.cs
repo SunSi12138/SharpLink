@@ -100,7 +100,10 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
         if (targetType.IsEnum)
             return EnumCodec<T>.Instance;
         if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+        {
+            RpcUnsafeBlitPlatform.EnsureSupported(targetType);
             return UnsafeBlitCodec<T>.Instance;
+        }
 
         throw new NotSupportedException(
             $"Codec for '{targetType.FullName}' is not part of the compile-time Codec graph owned by Contract assembly '{_owner.Manifest.OwnerAssembly.FullName}'.");
