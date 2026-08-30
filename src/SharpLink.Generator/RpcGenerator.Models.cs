@@ -206,6 +206,17 @@ internal sealed record GeneratedCodecModel(
     public bool ElementIsString { get; init; }
 }
 
+internal readonly record struct GeneratedCodecHashModel(
+    string TypeName,
+    ulong High,
+    ulong Low);
+
+internal readonly record struct RpcHashValue(ulong High, ulong Low)
+{
+    public string ToHex()
+        => High.ToString("x16", InvariantCulture) + Low.ToString("x16", InvariantCulture);
+}
+
 internal enum DtoDiagnosticKind
 {
     Unsupported,
@@ -240,7 +251,11 @@ internal sealed record DtoGenerationResult(
     ImmutableArray<GeneratedCodecModel> ContractCodecs,
     ImmutableArray<string> FinalCodecBoundTypes,
     ImmutableArray<DtoDiagnosticModel> Diagnostics,
-    ImmutableArray<GeneratedEnumModel> Enums);
+    ImmutableArray<GeneratedEnumModel> Enums)
+{
+    public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =
+        ImmutableArray<GeneratedCodecHashModel>.Empty;
+}
 
 internal sealed record GeneratedEnumModel(
     string TypeName,
@@ -258,6 +273,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
             x.ContractCodecs.Length != y.ContractCodecs.Length ||
             x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||
+            x.CodecHashes.Length != y.CodecHashes.Length ||
             x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
         {
             return false;
@@ -274,6 +290,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         }
         if (!x.FinalCodecBoundTypes.SequenceEqual(y.FinalCodecBoundTypes, StringComparer.Ordinal))
             return false;
+        for (var index = 0; index < x.CodecHashes.Length; index++)
+        {
+            if (x.CodecHashes[index] != y.CodecHashes[index])
+                return false;
+        }
         for (var index = 0; index < x.Diagnostics.Length; index++)
         {
             var left = x.Diagnostics[index];
@@ -313,6 +334,12 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         }
         foreach (var type in obj.FinalCodecBoundTypes)
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(type));
+        foreach (var codecHash in obj.CodecHashes)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codecHash.TypeName));
+            hash = unchecked(hash * 31 + codecHash.High.GetHashCode());
+            hash = unchecked(hash * 31 + codecHash.Low.GetHashCode());
+        }
         foreach (var diagnostic in obj.Diagnostics)
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.Detail));
         foreach (var item in obj.Enums)
@@ -371,6 +398,23 @@ internal static class Hashing
 
     public static string GetIdentifierHash(string value)
         => Hash(value).ToString("x16", CultureInfo.InvariantCulture);
+
+    public static RpcHashValue GetSemanticHash(params string[] parts)
+    {
+        var canonical = new StringBuilder();
+        foreach (var part in parts)
+        {
+            var value = part ?? string.Empty;
+            canonical.Append(value.Length.ToString(CultureInfo.InvariantCulture))
+                .Append(':')
+                .Append(value);
+        }
+
+        var hex = GetSha256(canonical.ToString());
+        return new RpcHashValue(
+            ulong.Parse(hex.Substring(0, 16), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
+            ulong.Parse(hex.Substring(16, 16), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+    }
 
     public static string GetSha256(string value)
     {
