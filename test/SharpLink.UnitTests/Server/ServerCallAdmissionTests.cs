@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Reflection;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 
@@ -9,13 +10,9 @@ public class ServerCallAdmissionTests
     [Test]
     public async Task ServerCapacityFailureShouldRollbackLocalAndProvisionalGlobalOwnership()
     {
-        var resourceGovernor = new ServerResourceGovernor(1, 1024, 1024);
-        var admission = new ServerCallAdmission(
+        await using var server = CreateServer(
             maxConcurrentCallsPerConnection: 1,
-            maxConcurrentCallsPerServer: 1,
-            isServerRunning: static () => true,
-            trySignalCallsDrained: static _ => { },
-            resourceGovernor: () => resourceGovernor);
+            maxConcurrentCallsPerServer: 1);
         await using var firstSession = CreateSession("admission-first");
         await using var secondSession = CreateSession("admission-second");
         var firstConnection = CreateConnection(firstSession);
@@ -23,52 +20,74 @@ public class ServerCallAdmissionTests
         Ensure(firstConnection.MarkReady(null), "first connection ready");
         Ensure(secondConnection.MarkReady(null), "second connection ready");
 
-        var first = admission.TryAcquireCall(firstConnection);
+        var first = server.TryAcquireCall(firstConnection);
         Ensure(first == SharpLinkServer.ServerCallAdmissionResult.Acquired,
             "first call must acquire the only server slot");
 
-        var rejected = admission.TryAcquireCall(secondConnection);
+        var rejected = server.TryAcquireCall(secondConnection);
         Ensure(rejected == SharpLinkServer.ServerCallAdmissionResult.ServerCapacityExhausted,
             "second connection must fail at the server-wide capacity boundary");
-        Ensure(admission.ActiveCallCount == 1 && admission.PendingCallAdmissions == 0,
+        Ensure(server.ActiveCallCountForDiagnostics == 1 &&
+               server.PendingCallAdmissionsForDiagnostics == 0,
             "failed global admission must retain only the first owned server slot");
         Ensure(firstConnection.ActiveCalls == 1 && secondConnection.ActiveCalls == 0,
             "failed global admission must roll back the second connection's local slot");
 
-        admission.ReleaseCall(firstConnection);
-        Ensure(admission.ActiveCallCount == 0 && firstConnection.ActiveCalls == 0,
+        server.ReleaseCall(firstConnection);
+        Ensure(server.ActiveCallCountForDiagnostics == 0 && firstConnection.ActiveCalls == 0,
             "releasing the surviving owner must make all capacity reusable");
     }
 
+#if DEBUG
     [Test]
     public async Task LifecycleChangeAfterCapacityAcquisitionShouldRollbackBothScopes()
     {
-        var runningChecks = 0;
-        var drainSignals = 0;
-        var resourceGovernor = new ServerResourceGovernor(1, 1024, 1024);
-        var admission = new ServerCallAdmission(
+        await using var server = CreateServer(
             maxConcurrentCallsPerConnection: 1,
-            maxConcurrentCallsPerServer: 1,
-            isServerRunning: () => Interlocked.Increment(ref runningChecks) < 3,
-            trySignalCallsDrained: _ => Interlocked.Increment(ref drainSignals),
-            resourceGovernor: () => resourceGovernor);
+            maxConcurrentCallsPerServer: 1);
         await using var session = CreateSession("admission-stop-race");
-        var connection = CreateConnection(session);
+        var connection = CreateConnection(
+            session,
+            afterLocalCallAdmission: () => SetServerState(server, draining: true));
         Ensure(connection.MarkReady(null), "connection ready");
 
-        var result = admission.TryAcquireCall(connection);
+        var result = server.TryAcquireCall(connection);
 
         Ensure(result == SharpLinkServer.ServerCallAdmissionResult.Unavailable,
-            "a lifecycle change after capacity acquisition must reject the call");
-        Ensure(runningChecks == 3,
-            "the test must cross the final lifecycle recheck after local/global acquisition");
-        Ensure(admission.ActiveCallCount == 0 && admission.PendingCallAdmissions == 0,
+            "a lifecycle change after local capacity acquisition must reject the call");
+        Ensure(server.ActiveCallCountForDiagnostics == 0 &&
+               server.PendingCallAdmissionsForDiagnostics == 0,
             "rejected admission must fully roll back global and pending ownership");
         Ensure(connection.ActiveCalls == 0,
             "rejected admission must roll back the connection-local slot before returning");
-        Ensure(drainSignals >= 1,
+        Ensure(server.CallsDrainedForDiagnostics.IsCompletedSuccessfully,
             "rollback completion must notify the server-owned drain coordinator");
     }
+#endif
+
+    private static SharpLinkServer CreateServer(
+        int maxConcurrentCallsPerConnection,
+        int maxConcurrentCallsPerServer)
+    {
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableAutomaticServiceRegistration()
+            .UseRuntime(options =>
+            {
+                options.FlowControl.MaxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection;
+                options.FlowControl.MaxConcurrentCallsPerServer = maxConcurrentCallsPerServer;
+            })
+            .UseTransport(new IdleListener())
+            .Build();
+        SetServerState(server, draining: false);
+        return server;
+    }
+
+    private static void SetServerState(SharpLinkServer server, bool draining)
+        => typeof(SharpLinkServer).GetField(
+                "_state",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(server, draining ? 3 : 2);
 
     private static RpcSession CreateSession(string id)
     {
@@ -90,9 +109,33 @@ public class ServerCallAdmissionTests
             TimeProvider.System,
             maxConcurrentCalls: 1);
 
+#if DEBUG
+    private static ServerConnectionState CreateConnection(
+        RpcSession session,
+        Action afterLocalCallAdmission)
+        => new(
+            session,
+            new RpcSessionGeneratedServerBridge(session),
+            new StripedLongMap<ServerCallCancellationState>(),
+            CancellationToken.None,
+            TimeProvider.System,
+            maxConcurrentCalls: 1,
+            afterLocalCallAdmission: afterLocalCallAdmission);
+#endif
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class IdleListener : IServerTransportListener
+    {
+        public System.Net.EndPoint? LocalEndPoint => null;
+
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
