@@ -91,8 +91,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Client/SharpClientBuilder.cs",
-      "maxLoc": 1044,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1048,
+      "reason": "Issue #282 adds the required explicit request-timeout policy API surface; existing builder decomposition debt remains tracked by issue #350."
     },
     {
       "domain": "source",
