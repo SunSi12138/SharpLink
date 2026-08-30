@@ -132,11 +132,38 @@ public sealed class DynamicClusterConnectionStateTests
     }
 
     [Test]
+    public void ReleaseEndpointShouldRejectInFlightConnectionAttempt()
+    {
+        var endpoint = CreateEndpointState("node", 4);
+        var state = new SharpLinkClient.DynamicClusterConnectionState();
+        endpoint.ConnectingCount = 1;
+
+        var threw = false;
+        try
+        {
+            state.ReleaseEndpoint(endpoint);
+        }
+        catch (InvalidOperationException)
+        {
+            threw = true;
+        }
+
+        Ensure(threw, "endpoint release must reject an in-flight connection attempt");
+        Ensure(!state.CanRelease(endpoint),
+            "release eligibility must remain false while a connection attempt is in flight");
+
+        endpoint.ConnectingCount = 0;
+        Ensure(state.CanRelease(endpoint),
+            "endpoint release should become eligible after the in-flight connection attempt completes");
+        state.ReleaseEndpoint(endpoint);
+    }
+
+    [Test]
     public async Task FindEndpointShouldUseAuthoritativeConnectionOwnership()
     {
         await using var client = ClientBuilderTestHelper.Build(DynamicClusterTransportPlaceholder.Instance);
-        await using var connection = CreateConnection(client, "node", 4);
-        var endpoint = CreateEndpointState("node", 4);
+        await using var connection = CreateConnection(client, "node", 5);
+        var endpoint = CreateEndpointState("node", 5);
         var state = new SharpLinkClient.DynamicClusterConnectionState();
 
         state.Add(endpoint, connection);
@@ -149,8 +176,8 @@ public sealed class DynamicClusterConnectionStateTests
     public async Task DetachAllShouldReturnAllOwnedConnections()
     {
         await using var client = ClientBuilderTestHelper.Build(DynamicClusterTransportPlaceholder.Instance);
-        await using var connection = CreateConnection(client, "node", 5);
-        var endpoint = CreateEndpointState("node", 5);
+        await using var connection = CreateConnection(client, "node", 6);
+        var endpoint = CreateEndpointState("node", 6);
         var state = new SharpLinkClient.DynamicClusterConnectionState();
 
         state.Add(endpoint, connection);
