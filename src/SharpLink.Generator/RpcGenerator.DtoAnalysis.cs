@@ -20,14 +20,13 @@ public partial class RpcGenerator
     private static bool HasSameCodecDefinition(GeneratedCodecModel left, GeneratedCodecModel right)
     {
         if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-            !string.Equals(left.SchemaId, right.SchemaId, StringComparison.Ordinal) ||
             left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
             !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
             !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
             !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
+            !string.Equals(left.CustomCodecType, right.CustomCodecType, StringComparison.Ordinal) ||
             !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
             !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
-            !string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal) ||
             !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
             !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
             left.Members.Length != right.Members.Length)
@@ -235,14 +234,13 @@ public partial class RpcGenerator
                              .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
                 {
                     var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
-                    if (attribute.ConstructorArguments.Length != 3 ||
+                    if (attribute.ConstructorArguments.Length != 2 ||
                         attribute.ConstructorArguments[0].Value is not INamedTypeSymbol adapterType ||
                         attribute.ConstructorArguments[1].Value is not string adapterId ||
-                        attribute.ConstructorArguments[2].Value is not string wireFormatId ||
-                        !IsStableIdentity(adapterId) || !IsStableIdentity(wireFormatId))
+                        !IsStableIdentity(adapterId))
                     {
                         Report(DtoDiagnosticKind.AdapterRegistrationInvalid, assembly,
-                            "registration requires a concrete Adapter type and non-empty stable ASCII Adapter/Wire Format IDs", location);
+                            "registration requires a concrete Adapter type and non-empty stable ASCII AdapterId", location);
                         continue;
                     }
 
@@ -258,6 +256,12 @@ public partial class RpcGenerator
                             "Adapter must implement IRpcCodecAdapter, be public sealed, and expose a public parameterless constructor", location);
                         continue;
                     }
+                    if (!HasValidOpaqueSemanticIdentity(adapterType))
+                    {
+                        Report(DtoDiagnosticKind.AdapterRegistrationInvalid, adapterType,
+                            "Adapter must declare a non-zero fixed semantic identity via [RpcCodecSemanticIdentity(high, low)]", location);
+                        continue;
+                    }
                     if (selector is not null && !InheritsFromAttribute(selector))
                     {
                         Report(DtoDiagnosticKind.AdapterRegistrationInvalid, selector,
@@ -268,23 +272,20 @@ public partial class RpcGenerator
                     var registration = new AdapterRegistration(
                         adapterType,
                         adapterId,
-                        wireFormatId,
                         selector,
                         location);
                     if (_adaptersByType.TryGetValue(adapterType, out var existingType) &&
-                        (!string.Equals(existingType.AdapterId, adapterId, StringComparison.Ordinal) ||
-                         !string.Equals(existingType.WireFormatId, wireFormatId, StringComparison.Ordinal)))
+                        !string.Equals(existingType.AdapterId, adapterId, StringComparison.Ordinal))
                     {
                         Report(DtoDiagnosticKind.AdapterIdentityConflict, adapterType,
-                            "the same Adapter type has inconsistent Adapter or Wire Format IDs", location);
+                            "the same Adapter type has inconsistent Adapter IDs", location);
                         continue;
                     }
                     if (adapterIds.TryGetValue(adapterId, out var existingId) &&
-                        (!SymbolEqualityComparer.Default.Equals(existingId.AdapterType, adapterType) ||
-                         !string.Equals(existingId.WireFormatId, wireFormatId, StringComparison.Ordinal)))
+                        !SymbolEqualityComparer.Default.Equals(existingId.AdapterType, adapterType))
                     {
                         Report(DtoDiagnosticKind.AdapterIdentityConflict, adapterType,
-                            $"Adapter ID '{adapterId}' is declared by inconsistent types or Wire Format IDs", location);
+                            $"Adapter ID '{adapterId}' is declared by inconsistent implementation types", location);
                         continue;
                     }
                     if (selector is not null && _adaptersBySelector.TryGetValue(selector, out var existingSelector) &&
@@ -341,7 +342,7 @@ public partial class RpcGenerator
                     _models[typeName] = new GeneratedCodecModel(
                         typeName,
                         GetCodecName(typeName, _contractMode),
-                        GetSchemaId(typeName, customCodec.SchemaId),
+                        GetSchemaId(typeName, "custom|" + GetTypeName(customCodec.CodecType)),
                         GeneratedCodecKind.Custom,
                         type.IsReferenceType,
                         ImmutableArray<GeneratedMemberModel>.Empty,
@@ -352,7 +353,7 @@ public partial class RpcGenerator
                         GetTypeName(customCodec.CodecType),
                         null,
                         null,
-                        customCodec.WireFormatId,
+                        string.Empty,
                         GetAssemblyDependencies([type]),
                         type.Locations.FirstOrDefault());
                 }
@@ -889,8 +890,7 @@ public partial class RpcGenerator
 
         private static bool AdapterRegistrationsEqual(AdapterRegistration left, AdapterRegistration right)
             => SymbolEqualityComparer.Default.Equals(left.AdapterType, right.AdapterType) &&
-               string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) &&
-               string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal);
+               string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal);
 
         private static bool ImplementsRpcCodecAdapter(INamedTypeSymbol type)
             => type.AllInterfaces.Any(static item =>
@@ -963,14 +963,7 @@ public partial class RpcGenerator
                 return false;
             }
 
-            var identity = named.GetAttributes().FirstOrDefault(static attribute =>
-                IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecImplementationAttribute"));
-            return identity is not null &&
-                   identity.ConstructorArguments.Length == 2 &&
-                   identity.ConstructorArguments[0].Value is string wireFormatId &&
-                   identity.ConstructorArguments[1].Value is string schemaId &&
-                   IsStableIdentity(wireFormatId) &&
-                   IsStableIdentity(schemaId);
+            return HasValidOpaqueSemanticIdentity(named);
         }
 
         private CustomCodecRegistration? ValidateCustomCodec(
@@ -1010,21 +1003,14 @@ public partial class RpcGenerator
                 return null;
             }
 
-            var identity = named.GetAttributes().FirstOrDefault(static attribute =>
-                IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecImplementationAttribute"));
-            if (identity is null ||
-                identity.ConstructorArguments.Length != 2 ||
-                identity.ConstructorArguments[0].Value is not string wireFormatId ||
-                identity.ConstructorArguments[1].Value is not string schemaId ||
-                !IsStableIdentity(wireFormatId) ||
-                !IsStableIdentity(schemaId))
+            if (!HasValidOpaqueSemanticIdentity(named))
             {
                 Report(DtoDiagnosticKind.CustomCodecIdentityInvalid, codecType,
-                    "custom Codec must declare stable ASCII WireFormatId and SchemaId via [RpcCodecImplementation]", location);
+                    "custom Codec must declare a non-zero fixed semantic identity via [RpcCodecSemanticIdentity(high, low)]", location);
                 return null;
             }
 
-            return new CustomCodecRegistration(named, wireFormatId, schemaId, location);
+            return new CustomCodecRegistration(named, location);
         }
 
         private bool TrySelectCustomCodec(ITypeSymbol type, out CustomCodecRegistration? selected)
@@ -1096,6 +1082,17 @@ public partial class RpcGenerator
                     return true;
             }
             return false;
+        }
+
+        private static bool HasValidOpaqueSemanticIdentity(INamedTypeSymbol type)
+        {
+            var identity = type.GetAttributes().FirstOrDefault(static attribute =>
+                IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecSemanticIdentityAttribute"));
+            return identity is not null &&
+                   identity.ConstructorArguments.Length == 2 &&
+                   identity.ConstructorArguments[0].Value is ulong high &&
+                   identity.ConstructorArguments[1].Value is ulong low &&
+                   (high | low) != 0;
         }
 
         private static bool IsStableIdentity(string value)
@@ -1435,14 +1432,11 @@ public partial class RpcGenerator
         private sealed record AdapterRegistration(
             INamedTypeSymbol AdapterType,
             string AdapterId,
-            string WireFormatId,
             ITypeSymbol? SelectorType,
             Location Location);
 
         private sealed record CustomCodecRegistration(
             INamedTypeSymbol CodecType,
-            string WireFormatId,
-            string SchemaId,
             Location Location);
     }
 }
