@@ -43,6 +43,13 @@ public partial class RpcGenerator
         sb.AppendLine("using SharpLink.Abstractions;");
         sb.AppendLine("using SharpLink.Sdk;");
         sb.AppendLine();
+        foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
+        {
+            sb.AppendLine(
+                $"[assembly: SharpLinkGeneratedCodecIdentityAttribute(typeof({codec.TypeName}), {codec.CodecHashHigh.ToString(InvariantCulture)}UL, {codec.CodecHashLow.ToString(InvariantCulture)}UL)]");
+        }
+        if (!codecs.IsDefaultOrEmpty)
+            sb.AppendLine();
         sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 4, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
