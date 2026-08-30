@@ -137,8 +137,6 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("        public Type TargetType => __inner.TargetType;");
         sb.AppendLine("        public RpcHash128 CodecHash { get; }");
-        sb.AppendLine("        public string SchemaId => __inner.SchemaId;");
-        sb.AppendLine("        public string WireFormatId => __inner.WireFormatId;");
         sb.AppendLine("        public string? AdapterId => __inner.AdapterId;");
         sb.AppendLine("        public IRpcCodecAdapter? Adapter => __inner.Adapter;");
         sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
@@ -241,9 +239,9 @@ public partial class RpcGenerator
         foreach (var service in services)
             sb.Append("S:").Append(service.Interface.Hash).Append(':').Append(service.ServiceFullName).Append(':').Append(service.Lifetime).Append(';');
         foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.Append("D:").Append(codec.TypeName).Append(':').Append(codec.SchemaId).Append(';');
+            sb.Append("D:").Append(codec.TypeName).Append(':').Append(new RpcHashValue(codec.CodecHashHigh, codec.CodecHashLow).ToHex()).Append(';');
         foreach (var codec in contractCodecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.Append("K:").Append(codec.TypeName).Append(':').Append(codec.SchemaId).Append(';');
+            sb.Append("K:").Append(codec.TypeName).Append(':').Append(new RpcHashValue(codec.CodecHashHigh, codec.CodecHashLow).ToHex()).Append(';');
         return sb.ToString();
     }
 
