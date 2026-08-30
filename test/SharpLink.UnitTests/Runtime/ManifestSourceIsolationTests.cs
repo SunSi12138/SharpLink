@@ -624,6 +624,7 @@ public sealed class ManifestSourceIsolationTests
                 : throw new ArgumentException("Native Codec does not accept an adapter scope.", nameof(adapterScope));
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<T>;
     }
+
     private sealed class TestCodec<T> : IRpcCodec<T>
     {
         public void Serialize(in T value, IBufferWriter<byte> buffer)
@@ -657,7 +658,6 @@ public sealed class ManifestSourceIsolationTests
             return new DisposableScope(counters);
         }
     }
-
     private sealed class DisposableScope(DisposableScopeCounters counters) : IRpcCodecAdapterScope
     {
         private int _disposed;
