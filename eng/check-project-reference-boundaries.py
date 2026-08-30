@@ -222,6 +222,32 @@ def _mode_names(element: ET.Element) -> list[str]:
     return [name for name in MODE_METADATA if _metadata(element, name)[0]]
 
 
+def _audit_mode_filters(element: ET.Element, label: str, violations: list[str]) -> None:
+    remove = _attribute(element, "RemoveMetadata")
+    if remove is not None:
+        if any(marker in remove for marker in DYNAMIC_MARKERS):
+            violations.append(f"{label}: dynamic RemoveMetadata is denied because it may remove ProjectReference mode metadata")
+        else:
+            removed = {part.strip().lower() for part in remove.split(";") if part.strip()}
+            affected = [name for name in MODE_METADATA if name.lower() in removed]
+            if affected:
+                violations.append(
+                    f"{label}: RemoveMetadata must not remove ProjectReference mode metadata {', '.join(affected)}"
+                )
+
+    keep = _attribute(element, "KeepMetadata")
+    if keep is not None:
+        if any(marker in keep for marker in DYNAMIC_MARKERS):
+            violations.append(f"{label}: dynamic KeepMetadata is denied because it cannot prove ProjectReference mode metadata is preserved")
+        else:
+            kept = {part.strip().lower() for part in keep.split(";") if part.strip()}
+            missing = [name for name in MODE_METADATA if name.lower() not in kept]
+            if missing:
+                violations.append(
+                    f"{label}: KeepMetadata must preserve ProjectReference mode metadata {', '.join(missing)}"
+                )
+
+
 def _validate_mode(edge: Edge, element: ET.Element, label: str, violations: list[str]) -> None:
     values: dict[str, str | None] = {}
     for name in MODE_METADATA:
@@ -603,13 +629,17 @@ def _audit_declarations(project_id: str, project: Path, root: Path, policy: Poli
                 continue
             update = _attribute(ref, "Update")
             if update is not None:
+                update_label = f"{source_name}: ProjectReference Update {update!r}"
+                _audit_mode_filters(ref, update_label, violations)
                 if mode_names:
                     violations.append(f"{source_name}: ProjectReference Update must not supply/override mode metadata {', '.join(mode_names)} for {update!r}")
                 continue
             include = _attribute(ref, "Include")
             if include is None:
-                if in_target and _attribute(ref, "Remove") is None and mode_names:
-                    violations.append(f"{source_name}: ProjectReference target mutation must not supply/override mode metadata {', '.join(mode_names)}")
+                if in_target and _attribute(ref, "Remove") is None:
+                    _audit_mode_filters(ref, f"{source_name}: ProjectReference target mutation", violations)
+                    if mode_names:
+                        violations.append(f"{source_name}: ProjectReference target mutation must not supply/override mode metadata {', '.join(mode_names)}")
                 continue
 
             count += 1
