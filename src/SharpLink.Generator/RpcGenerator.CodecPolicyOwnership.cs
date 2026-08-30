@@ -27,6 +27,9 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
         var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
+        var codecHashes = contractPolicyState.BuildFinalCodecHashes(
+            includeSerializable: false,
+            includeContracts: true);
 
         var currentContractTypes = contractPolicyState.GetCurrentContractReachableTypeNames();
         var currentContractDefaultCodecs = contractDefault.Codecs
@@ -97,7 +100,10 @@ public partial class RpcGenerator
             contractCodecs,
             finalCodecBoundTypes,
             diagnostics,
-            enums);
+            enums)
+        {
+            CodecHashes = codecHashes
+        };
     }
 
     private static bool ContainsRpcContract(INamespaceSymbol namespaceSymbol)
