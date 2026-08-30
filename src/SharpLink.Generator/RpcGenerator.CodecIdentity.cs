@@ -95,10 +95,8 @@ public partial class RpcGenerator
             }
             else
             {
-                // Compatibility only for referenced assemblies produced before deterministic CodecHash
-                // metadata existed. Current SharpLink-generated dependencies take the exact published
-                // hash path above; this fallback is removed with the remaining legacy identity surface.
-                result = Hashing.GetSemanticHash("codec/v1", "legacy-external-generated", typeName);
+                throw new InvalidOperationException(
+                    $"Final RPC Codec graph cannot resolve deterministic CodecHash metadata for referenced payload '{typeName}'. Rebuild the referenced SharpLink assembly with deterministic identity generation enabled.");
             }
 
             stack.Remove(typeName);
@@ -146,31 +144,15 @@ public partial class RpcGenerator
             switch (model.Kind)
             {
                 case GeneratedCodecKind.Custom:
-                    if (TryGetOpaqueSemanticIdentity(model.CustomCodecType, out var customIdentity))
-                    {
-                        return Hashing.GetSemanticHash(
-                            "codec/v1",
-                            "custom-opaque",
-                            customIdentity.ToHex());
-                    }
                     return Hashing.GetSemanticHash(
                         "codec/v1",
-                        "custom-opaque-legacy",
-                        model.WireFormatId,
-                        model.SchemaId);
+                        "custom-opaque",
+                        GetRequiredOpaqueSemanticIdentity(model.CustomCodecType, "custom Codec").ToHex());
                 case GeneratedCodecKind.Adapter:
-                    if (TryGetOpaqueSemanticIdentity(model.AdapterType, out var adapterIdentity))
-                    {
-                        return Hashing.GetSemanticHash(
-                            "codec/v1",
-                            "adapter-opaque",
-                            adapterIdentity.ToHex());
-                    }
                     return Hashing.GetSemanticHash(
                         "codec/v1",
-                        "adapter-opaque-legacy",
-                        model.AdapterId ?? string.Empty,
-                        model.WireFormatId);
+                        "adapter-opaque",
+                        GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter").ToHex());
                 case GeneratedCodecKind.Dto:
                     {
                         var parts = new List<string>
@@ -197,9 +179,11 @@ public partial class RpcGenerator
                                     break;
                                 case GeneratedMemberKind.Complex:
                                     if (!TryResolveReachableType(member.TypeName, out var memberType))
-                                        parts.Add(Hashing.GetSemanticHash("codec/v1", "legacy-external-generated", member.TypeName).ToHex());
-                                    else
-                                        parts.Add(GetFinalCodecHash(memberType, cache, stack).ToHex());
+                                    {
+                                        throw new InvalidOperationException(
+                                            $"Final RPC Codec graph cannot resolve child payload '{member.TypeName}' while hashing '{model.TypeName}'.");
+                                    }
+                                    parts.Add(GetFinalCodecHash(memberType, cache, stack).ToHex());
                                     break;
                             }
                         }
@@ -222,13 +206,26 @@ public partial class RpcGenerator
                         {
                             if (childTypeName is null)
                                 return;
-                            if (TryResolveReachableType(childTypeName, out var childType))
-                                parts.Add(GetFinalCodecHash(childType, cache, stack).ToHex());
-                            else
-                                parts.Add(Hashing.GetSemanticHash("codec/v1", "legacy-external-generated", childTypeName).ToHex());
+                            if (!TryResolveReachableType(childTypeName, out var childType))
+                            {
+                                throw new InvalidOperationException(
+                                    $"Final RPC Codec graph cannot resolve child payload '{childTypeName}' while hashing '{model.TypeName}'.");
+                            }
+                            parts.Add(GetFinalCodecHash(childType, cache, stack).ToHex());
                         }
                     }
             }
+        }
+
+        private RpcHashValue GetRequiredOpaqueSemanticIdentity(
+            string? implementationTypeName,
+            string implementationKind)
+        {
+            if (TryGetOpaqueSemanticIdentity(implementationTypeName, out var hash))
+                return hash;
+
+            throw new InvalidOperationException(
+                $"Opaque {implementationKind} '{implementationTypeName ?? "<unknown>"}' must declare [RpcCodecSemanticIdentity(high, low)].");
         }
 
         private bool TryGetOpaqueSemanticIdentity(string? implementationTypeName, out RpcHashValue hash)
