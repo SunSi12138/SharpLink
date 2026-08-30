@@ -18,6 +18,14 @@ internal sealed partial class SharpLinkClient
         {
             ArgumentNullException.ThrowIfNull(endpoint);
             ArgumentNullException.ThrowIfNull(connection);
+            foreach (var pair in _connectionsByEndpoint)
+            {
+                if (!ReferenceEquals(pair.Key, endpoint) && pair.Value.Contains(connection))
+                {
+                    throw new InvalidOperationException(
+                        "A dynamic connection cannot be owned by more than one endpoint generation.");
+                }
+            }
             if (!_connectionsByEndpoint.TryGetValue(endpoint, out var connections))
             {
                 connections = [];
