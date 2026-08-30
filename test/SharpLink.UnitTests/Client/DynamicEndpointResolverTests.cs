@@ -289,6 +289,7 @@ public sealed class DynamicEndpointResolverTests
     {
         var resolver = new TrackingResolver();
         await using (var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                         .DisableRequestTimeout()
                          .UseEndpointResolver(resolver, _ => new TrackingFactory())
                          .Build())
         {
@@ -298,6 +299,7 @@ public sealed class DynamicEndpointResolverTests
         await EnsureThrows<InvalidOperationException>(() =>
         {
             _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .DisableRequestTimeout()
                 .UseTransport(new TrackingFactory())
                 .UseEndpointResolver(new TrackingResolver(), _ => new TrackingFactory())
                 .Build();
@@ -310,6 +312,7 @@ public sealed class DynamicEndpointResolverTests
     {
         var resolver = new TrackingResolver();
         await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => new TrackingFactory())
             .UseCluster(options =>
             {
@@ -333,6 +336,7 @@ public sealed class DynamicEndpointResolverTests
             }
         ]));
         await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
             .Build();
 
@@ -356,6 +360,7 @@ public sealed class DynamicEndpointResolverTests
     {
         var loggerFactory = new CaptureLoggerFactory();
         await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
             .UseLoggerFactory(loggerFactory)
             .UseEndpointResolver(new FailingWatchResolver(), _ => new TrackingFactory())
             .Build();
