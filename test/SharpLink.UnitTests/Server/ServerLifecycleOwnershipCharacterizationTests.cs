@@ -310,7 +310,6 @@ public class ServerLifecycleOwnershipCharacterizationTests
             input.Reader,
             output.Writer,
             RpcSessionTestFixture.ServerOptions());
-        RpcSessionTestFixture.CompleteHandshake(session);
         return new ServerConnectionState(
             session,
             new RpcSessionGeneratedServerBridge(session),
