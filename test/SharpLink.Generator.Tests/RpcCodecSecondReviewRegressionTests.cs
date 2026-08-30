@@ -61,7 +61,7 @@ public class Child
 {
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("child-wire/v1", "child-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3100000000000001UL, 0x4100000000000001UL)]
 public sealed class ChildCodec : SharpLink.Abstractions.IRpcCodec<Child>
 {
 }
@@ -72,13 +72,13 @@ public interface INestedCustomRouteContract : SharpLink.Sdk.IService
     ValueTask<Envelope> Echo(Envelope value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3100000000000002UL, 0x4100000000000002UL)]
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "route.nested-custom/v1";
-    public override string WireFormatId => "route-nested-custom-wire/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.nested-custom/v1\", \"route-nested-custom-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.nested-custom/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.Managed, typeof(RouteAdapter))]");
 
         var diagnostics = RunGenerator(source);
@@ -87,8 +87,8 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::Envelope>()", StringComparison.Ordinal),
             "the Managed route must select the configurable parent whose child is resolved by a custom Codec");
-        Ensure(generated.Contains("route-nested-custom-wire/v1", StringComparison.Ordinal),
-            "the selected Managed route identity must be emitted for the parent graph");
+        Ensure(generated.Contains("public string? AdapterId => \"route.nested-custom/v1\";", StringComparison.Ordinal),
+            "the selected Managed route must use the registered Adapter");
         return Task.CompletedTask;
     }
 
@@ -111,7 +111,7 @@ namespace PolicyA
         public int Value { get; set; }
     }
 
-    [RpcCodecImplementation("policy-a-wire/v1", "policy-a-schema/v1")]
+    [RpcCodecSemanticIdentity(0x3100000000000003UL, 0x4100000000000003UL)]
     public sealed class CodecA : IRpcCodec<SharedPayload>
     {
     }
@@ -127,7 +127,7 @@ using SharpLink.Sdk;
 
 [assembly: RpcCodec(typeof(SharedPayload), typeof(CodecB))]
 
-[RpcCodecImplementation("policy-b-wire/v1", "policy-b-schema/v1")]
+[RpcCodecSemanticIdentity(0x3100000000000004UL, 0x4100000000000004UL)]
 public sealed class CodecB : IRpcCodec<SharedPayload>
 {
 }
@@ -160,20 +160,20 @@ public interface IFixedIntContract : SharpLink.Sdk.IService
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3100000000000005UL, 0x4100000000000005UL)]
 public sealed class ExplicitAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "explicit.int/v1";
-    public override string WireFormatId => "explicit-int-wire/v1";
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3100000000000006UL, 0x4100000000000006UL)]
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "route.all/v1";
-    public override string WireFormatId => "route-all-wire/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), \"explicit.int/v1\", \"explicit-int-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.all/v1\", \"route-all-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(ExplicitAdapter), \"explicit.int/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.all/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(ExplicitAdapter))]",
             "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(RouteAdapter))]");
 
@@ -181,7 +181,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
         Ensure(diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK049"),
             "framework primitive int must reject explicit Adapter/direct rebinding regardless of lower-precedence routes");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(!generated.Contains("explicit-int-wire/v1\";", StringComparison.Ordinal),
+        Ensure(!generated.Contains("public string? AdapterId => \"explicit.int/v1\";", StringComparison.Ordinal),
             "a rejected framework primitive binding must not enter the final Codec graph");
         Ensure(!generated.Contains("CreateCodec<int>()", StringComparison.Ordinal),
             "All route must not capture framework primitive int");
@@ -198,18 +198,18 @@ public interface IFixedIntCustomContract : SharpLink.Sdk.IService
     ValueTask<int> Echo(int value, CancellationToken cancellationToken);
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("custom-int-wire/v1", "custom-int-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3100000000000007UL, 0x4100000000000007UL)]
 public sealed class IntCodec : SharpLink.Abstractions.IRpcCodec<int>
 {
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3100000000000008UL, 0x4100000000000008UL)]
 public sealed class RouteAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "route.all/v1";
-    public override string WireFormatId => "route-all-wire/v1";
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.all/v1\", \"route-all-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RouteAdapter), \"route.all/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(int), typeof(IntCodec))]",
             "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(RouteAdapter))]");
 
