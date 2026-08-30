@@ -516,10 +516,5 @@ public class SharpLinkClientAccessorTests
             TimeSpan gracefulTimeout,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
-        public ValueTask DisposeAsync()
-        {
-            Interlocked.Increment(ref _disposeCount);
-            return ValueTask.CompletedTask;
-        }
     }
 }
