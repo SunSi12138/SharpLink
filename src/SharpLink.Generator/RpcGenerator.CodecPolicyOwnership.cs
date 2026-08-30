@@ -394,21 +394,14 @@ public partial class RpcGenerator
                 return null;
             }
 
-            var codecIdentity = named.GetAttributes().FirstOrDefault(static attribute =>
-                IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecImplementationAttribute"));
-            if (codecIdentity is null ||
-                codecIdentity.ConstructorArguments.Length != 2 ||
-                codecIdentity.ConstructorArguments[0].Value is not string wireFormatId ||
-                codecIdentity.ConstructorArguments[1].Value is not string schemaId ||
-                !IsStableIdentity(wireFormatId) ||
-                !IsStableIdentity(schemaId))
+            if (!HasValidOpaqueSemanticIdentity(named))
             {
                 Report(DtoDiagnosticKind.CustomCodecIdentityInvalid, codecType,
-                    "custom Codec must declare stable ASCII WireFormatId and SchemaId via [RpcCodecImplementation]", location);
+                    "custom Codec must declare a non-zero fixed semantic identity via [RpcCodecSemanticIdentity(high, low)]", location);
                 return null;
             }
 
-            return new CustomCodecRegistration(named, wireFormatId, schemaId, location);
+            return new CustomCodecRegistration(named, location);
         }
 
         private void CollectCanonicalAssemblyBindings()
