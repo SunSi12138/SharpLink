@@ -140,15 +140,6 @@ public interface IDeterministicIdentityContract : SharpLink.Sdk.IService
         ulong semanticLow)
     {
         var source = BuildSource($$"""
-namespace SharpLink.Sdk
-{
-    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
-    public sealed class RpcCodecSemanticIdentityAttribute : Attribute
-    {
-        public RpcCodecSemanticIdentityAttribute(ulong high, ulong low) { }
-    }
-}
-
 [SharpLink.Sdk.RpcSerializable]
 [SharpLink.Sdk.RpcCodec(typeof(OpaquePayloadCodec))]
 public sealed class OpaquePayload
