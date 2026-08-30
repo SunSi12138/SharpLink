@@ -462,7 +462,7 @@
 
 ### Compatibility and validation
 
-- Protocol v2, route hashes, and valid payloads are unchanged. `LogEvents.Client.ResolverUpdateFailed` is an additive public event ID; `ChaosReport.ServerErrors` is an additive diagnostic field.
+- Protocol v2, route hashes, and valid payloads are unchanged. `LogEvents.Client.ResolverUpdateFailed` is an additive event ID; `ChaosReport.ServerErrors` is an additive diagnostic field.
 - Non-incremental Release build, Generator, Unit, Integration, shared-memory/TCP Chaos, NativeAOT, seven-package pack, and fresh-cache package smoke passed.
 - Client Build allocation improved from 6,536 to 6,168 B/op (−368 B, −5.6%); all three candidate latency medians were below the three exact-baseline medians.
 
@@ -1146,7 +1146,7 @@
 ### 新增
 
 - Client 新增不可变的 `SharpLinkEndpoint`、显式传输地址和 transport factory 注册模型；`UseEndpoint`、`UseEndpoints`、`UseCluster` 及四种内置负载均衡策略可在不影响旧单端点用法的前提下构建静态端点集群。
-- 静态集群支持 TCP（hostname/IPv4/IPv6）、Unix Domain Socket、Named Pipe、SharedMemory 和既有 Anonymous Pipe；端点属性可传给自定义选择器。
+- 静态集群支持 TCP（hostname/IPv4/IPv6）、Unix Domain Socket、Named Pipe、Shared Memory 和既有 Anonymous Pipe；端点属性可传给自定义选择器。
 - 集群按端点独立维护连接、重连和健康状态，初始连接受 `MaxConnections` 与并行度上限约束；支持最少就绪端点、LeastPending、P2C、Random、RoundRobin 与自定义选择器。
 
 ### 变更
