@@ -87,8 +87,7 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
         sb.AppendLine("    {");
-        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));
-");
+        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));");
         sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(length, checked((uint)byteCount));");
         sb.AppendLine("        writer.Advance(sizeof(uint));");
         sb.AppendLine("        if (byteCount == 0)");
