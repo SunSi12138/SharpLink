@@ -52,6 +52,12 @@ jobs:
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
+      - name: Debug Admission Rollback Test
+        run: >-
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Debug --no-restore
+          --treenode-filter "/*/*/ServerCallAdmissionTests/LifecycleChangeAfterCapacityAcquisitionShouldRollbackBothScopes"
+
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
 
