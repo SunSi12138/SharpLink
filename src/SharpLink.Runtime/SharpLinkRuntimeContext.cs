@@ -59,17 +59,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private static bool HasSameGeneratedCodecIdentity(
         IRpcGeneratedCodecFactory left,
         IRpcGeneratedCodecFactory right)
-    {
-        if (!left.CodecHash.IsEmpty || !right.CodecHash.IsEmpty)
-            return left.CodecHash == right.CodecHash;
-        return string.Equals(left.SchemaId, right.SchemaId, StringComparison.Ordinal) &&
-               string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal);
-    }
+        => left.CodecHash == right.CodecHash;
 
     private static string DescribeGeneratedCodecIdentity(IRpcGeneratedCodecFactory factory)
-        => factory.CodecHash.IsEmpty
-            ? $"legacy:{factory.SchemaId}/{factory.WireFormatId}"
-            : $"codec:{factory.CodecHash}";
+        => $"codec:{factory.CodecHash}";
 
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     [MethodImpl(MethodImplOptions.NoInlining)]
