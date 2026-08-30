@@ -18,6 +18,12 @@ internal sealed partial class SharpLinkClient
         {
             ArgumentNullException.ThrowIfNull(endpoint);
             ArgumentNullException.ThrowIfNull(connection);
+            if (!string.Equals(connection.EndpointId, endpoint.Configuration.Endpoint.Id, StringComparison.Ordinal) ||
+                connection.EndpointGeneration != endpoint.Generation)
+            {
+                throw new InvalidOperationException(
+                    "A dynamic connection can only be owned by the endpoint generation matching its cluster identity.");
+            }
             foreach (var pair in _connectionsByEndpoint)
             {
                 if (!ReferenceEquals(pair.Key, endpoint) && pair.Value.Contains(connection))
