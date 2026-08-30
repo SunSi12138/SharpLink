@@ -39,8 +39,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
     private readonly ConcurrentDictionary<ServerConnectionState, byte> _retiredConnections = [];
     private readonly ILogger _logger;
-    private readonly ISharpLinkServerAuthenticator? _authenticator;
-    private readonly bool _authenticationRequired;
+    private readonly ServerAuthenticationCoordinator _authentication;
     private readonly CancellationTokenSource _acceptCts = new();
     private readonly CancellationTokenSource _forceStopCts = new();
     private readonly Lock _stateGate = new();
@@ -75,8 +74,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private FixedWindowLogThrottle _connectionAdmissionLogThrottle;
     private FixedWindowLogThrottle _oneWayAdmissionLogThrottle;
     private FixedWindowLogThrottle _protocolViolationLogThrottle;
-    private FixedWindowLogThrottle _authenticationFailureLogThrottle;
-    private long _authenticationFailureSequence;
 
     /// <summary>
     /// Initializes a Server from the explicit composition materialized by
@@ -92,8 +89,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _heartbeatTimeout = composition.HeartbeatTimeout;
         _logger = composition.Logger;
         _runtimeContext = composition.RuntimeContext;
-        _authenticator = composition.Authenticator;
-        _authenticationRequired = composition.AuthenticationRequired;
+        _authentication = composition.Authentication;
         _protocolOptions = composition.ProtocolOptions;
         _rpcSessionFlushOptions = composition.RpcSessionFlushOptions;
         _serverInterceptors = composition.Interceptors;
@@ -112,7 +108,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _connectionAdmissionLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
         _oneWayAdmissionLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
         _protocolViolationLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
-        _authenticationFailureLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
     }
 
     public SharpLinkHealthStatus HealthStatus => CurrentState switch
@@ -937,5 +932,4 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         return new FrameworkTaskSupervisor((operation, exception) =>
             LogServerBackgroundLoopUnhandledException(logger, operation, exception));
     }
-
 }
