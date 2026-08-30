@@ -21,11 +21,11 @@ public class ServerCallAdmissionTests
         Ensure(secondConnection.MarkReady(null), "second connection ready");
 
         var first = server.TryAcquireCall(firstConnection);
-        Ensure(first == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+        Ensure(first == ServerCallAdmissionResult.Acquired,
             "first call must acquire the only server slot");
 
         var rejected = server.TryAcquireCall(secondConnection);
-        Ensure(rejected == SharpLinkServer.ServerCallAdmissionResult.ServerCapacityExhausted,
+        Ensure(rejected == ServerCallAdmissionResult.ServerCapacityExhausted,
             "second connection must fail at the server-wide capacity boundary");
         Ensure(server.ActiveCallCountForDiagnostics == 1 &&
                server.PendingCallAdmissionsForDiagnostics == 0,
@@ -53,7 +53,7 @@ public class ServerCallAdmissionTests
 
         var result = server.TryAcquireCall(connection);
 
-        Ensure(result == SharpLinkServer.ServerCallAdmissionResult.Unavailable,
+        Ensure(result == ServerCallAdmissionResult.Unavailable,
             "a lifecycle change after local capacity acquisition must reject the call");
         Ensure(server.ActiveCallCountForDiagnostics == 0 &&
                server.PendingCallAdmissionsForDiagnostics == 0,
