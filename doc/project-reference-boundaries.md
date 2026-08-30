@@ -45,7 +45,7 @@ graph LR
 
 ## Reference mode semantics
 
-`mode` is part of the architecture policy, not descriptive metadata. A guard must classify each evaluated `ProjectReference` from its effective MSBuild metadata and require that classification to match the mode on the policy edge.
+`mode` is part of the architecture policy, not descriptive metadata. A guard must classify each production `ProjectReference` from its policy-relevant MSBuild metadata and require that classification to match the mode on the policy edge.
 
 ### `mode: assembly`
 
@@ -64,15 +64,26 @@ An analyzer-only reference must satisfy all of the following effective metadata 
 - `OutputItemType="Analyzer"`;
 - `ReferenceOutputAssembly="false"`.
 
-Additional metadata is allowed unless the YAML explicitly constrains it. For example, the current `Sdk -> Generator` reference also has `Condition` and `GlobalPropertiesToRemove`; those are build/publishing details and are intentionally not frozen by this boundary.
+Additional non-architectural metadata is allowed unless the YAML explicitly constrains it. For example, the current `Sdk -> Generator` reference also has `Condition` and `GlobalPropertiesToRemove`; those are build/publishing details and are intentionally not frozen by this boundary.
 
 For the boolean `ReferenceOutputAssembly` metadata, the guard must normalize MSBuild boolean values before comparison; a missing value uses the documented `true` default. For the `Analyzer` item-type token, the guard should compare after normalizing case so an equivalent casing cannot bypass the mode check. Missing, malformed, or conflicting metadata that prevents the required mode from being established must fail closed.
 
-## ProjectReference discovery semantics
+Policy-critical mode metadata must be context-invariant. `ReferenceOutputAssembly` and `OutputItemType`, when present for a production `ProjectReference`, must be literal values on that reference declaration. Conditions or property expansion must not be used to vary them, and repository-owned `ItemDefinitionGroup` or `ProjectReference Update` constructs must not supply or override those two metadata fields for production references. Conditions may gate whether an allowed edge is active, but may not change the edge's architectural mode.
 
-A `.csproj` is not the complete MSBuild project. `Directory.Build.props`, `Directory.Build.targets`, SDK imports, and explicit imports can contribute evaluated items. The guard must therefore use MSBuild project evaluation, or an equivalent mechanism that returns the evaluated `ProjectReference` item set, rather than enumerating only raw `<ProjectReference>` XML nodes in the `.csproj` file.
+## ProjectReference discovery and condition semantics
 
-The evaluated set must include statically declared `ProjectReference` items contributed by imports and must respect MSBuild conditions in the guard's defined evaluation context. A forbidden reference introduced through an imported `.props` or `.targets` file is the same architecture violation as one written directly in the `.csproj`.
+A `.csproj` is not the complete MSBuild project. `Directory.Build.props`, `Directory.Build.targets`, SDK imports, and explicit imports can contribute items. The guard therefore has two complementary responsibilities:
+
+1. **Potential-edge authorization is condition-insensitive.** The guard must inspect `ProjectReference` declarations in the production project plus its repository-owned import closure. Repository import conditions and `ProjectReference` conditions are ignored for the purpose of deciding whether an edge is architecturally allowed. Any declared production edge must match `allowed_references` or `temporary_exceptions`, even if its condition is false in the guard's normal execution environment.
+2. **Active-item validation uses MSBuild evaluation.** The guard must also evaluate projects with MSBuild semantics so active references, imported metadata, and normal MSBuild behavior can be checked. Evaluation is not allowed to make an otherwise forbidden declared edge disappear from authorization checking.
+
+This means there is no single property/evaluation context that grants architectural permission. Conditions are allowed to control presence only. They cannot be used to hide a forbidden edge.
+
+For example, the current `Sdk -> Generator` declaration has `Condition="'$(PublishAot)' != 'true'"`. The condition may make that allowed analyzer edge absent when `PublishAot=true`, but the declaration remains part of the potential graph and must remain explicitly authorized by the YAML. Conversely, a future `Client -> Server` declaration with `Condition="'$(SomeProperty)' == 'true'"` is forbidden immediately even if `SomeProperty` is unset during the guard run.
+
+To keep this audit deterministic, a production `ProjectReference Include` must be a literal project path. Property-expanded, wildcard, transformed, or otherwise dynamically unresolved project-reference targets are denied rather than requiring the guard to guess property values. Repository-owned import paths needed to inspect potential `ProjectReference` declarations must likewise be statically traversable; the guard follows that repository import closure regardless of import conditions. Automatic `Directory.Build.props`/`Directory.Build.targets` inputs are part of that closure. External SDK/import behavior remains covered by active MSBuild evaluation, but repository-owned conditions cannot hide architecture declarations.
+
+A forbidden reference introduced through an imported `.props` or `.targets` file is the same architecture violation as one written directly in the `.csproj`.
 
 ## Exact allowed edges
 
@@ -87,7 +98,7 @@ The evaluated set must include statically declared `ProjectReference` items cont
 | `SharpLink.Hosting` | `SharpLink.Abstractions` | assembly | assembly mode semantics |
 | `SharpLink.Serializer.SharpPack` | `SharpLink.Abstractions` | assembly | assembly mode semantics |
 | `SharpLink.Sdk` | `SharpLink.Abstractions` | assembly | assembly mode semantics |
-| `SharpLink.Sdk` | `SharpLink.Generator` | analyzer | `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"` |
+| `SharpLink.Sdk` | `SharpLink.Generator` | analyzer | `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"`; presence may remain conditioned |
 
 The table is explanatory. The YAML is normative and is the input a future guard should consume.
 
@@ -100,9 +111,11 @@ Because the policy is default-deny, an edge does not need a separate blacklist e
 - `Serializer.* -> Runtime/Client/Server/Hosting/Sdk/Generator`.
 - production assembly references from or into `SharpLink.Generator`; the only permitted generator edge is `Sdk -> Generator` in analyzer-only mode.
 - production references to projects under `test/`, `samples/`, demo roots, or any project not named in the policy.
-- any newly-added production `ProjectReference` that is not an exact match for an `allowed_references` entry or an explicit `temporary_exceptions` entry.
-- any allowed `from`/`to` pair whose evaluated MSBuild metadata does not satisfy the edge's declared `mode`.
-- any forbidden edge introduced through an imported `.props`, `.targets`, SDK import, or other evaluated MSBuild input.
+- any newly-added production `ProjectReference` declaration that is not an exact match for an `allowed_references` entry or an explicit `temporary_exceptions` entry, regardless of its `Condition`.
+- any allowed `from`/`to` pair whose MSBuild metadata does not satisfy the edge's declared `mode`.
+- any use of conditional/property-driven `ReferenceOutputAssembly` or `OutputItemType`, or repository-owned item definitions/updates that can vary those mode-bearing metadata values.
+- any forbidden edge introduced through an imported `.props`, `.targets`, or other repository-owned MSBuild input, even when the import or item declaration is conditioned off in the default environment.
+- any dynamically unresolved production `ProjectReference Include`.
 - any newly-added `.csproj` under the production root that is not registered in `projects`.
 
 Direct references that skip a layer are not automatically forbidden. For example, `Client -> Abstractions` and `Server -> Abstractions` are intentional and therefore listed explicitly. Mechanical enforcement must compare exact edges and modes, not infer a generic layering rule.
@@ -130,29 +143,28 @@ The policy was checked against the production project files on `dev` while defin
 | `SharpLink.Server` | `SharpLink.Runtime`, `SharpLink.Abstractions` |
 | `SharpLink.Hosting` | `SharpLink.Client`, `SharpLink.Server`, `SharpLink.Runtime`, `SharpLink.Abstractions` |
 | `SharpLink.Generator` | none |
-| `SharpLink.Sdk` | `SharpLink.Abstractions`, `SharpLink.Generator` (analyzer-only) |
+| `SharpLink.Sdk` | `SharpLink.Abstractions`, `SharpLink.Generator` (analyzer-only; conditioned on `PublishAot != true`) |
 | `SharpLink.Serializer.SharpPack` | `SharpLink.Abstractions` |
 
-Every current production edge is therefore either an allowed edge or one of the two explicit Hosting exceptions. The current set of production `.csproj` files under `src/` also matches the eight paths registered in the YAML. The repository currently has no imported production `ProjectReference` that changes this inventory, but imports remain in scope for future enforcement.
+Every current production edge is therefore either an allowed edge or one of the two explicit Hosting exceptions. The current set of production `.csproj` files under `src/` also matches the eight paths registered in the YAML. The repository currently has no repository-imported production `ProjectReference` that changes this inventory, but imported declarations and conditions remain in scope for future enforcement.
 
 ## Mechanical interpretation
 
-A future guard can enforce this file without inferring architectural intent:
+A future guard can enforce this file without inferring architectural intent or choosing an authorization property matrix:
 
 1. Load `project-reference-boundaries.yml`.
 2. Enumerate every `.csproj` matching `scope.production_project_glob` under `scope.production_root`.
 3. Normalize the discovered repository-relative paths and the paths in `projects`, then require the two sets to be exactly equal. Fail on either an unregistered discovered project or a registered path that does not exist.
-4. Evaluate every discovered/registered production project with MSBuild semantics. Raw parsing of only the `.csproj` XML is not sufficient.
-5. Enumerate the evaluated `ProjectReference` items, including items contributed by `Directory.Build.props`, `Directory.Build.targets`, SDK imports, and explicit imports, with conditions resolved in the guard's defined evaluation context.
-6. Resolve each evaluated target path to a canonical project id. Reject a reference whose target is outside the canonical mapping.
-7. Match each edge against `allowed_references` or `temporary_exceptions`.
-8. Classify each matched reference using `mode_semantics` from the YAML and require the actual mode to equal the policy edge's `mode`:
-   - for `assembly`, effective `ReferenceOutputAssembly` must be `true` (using the MSBuild default when omitted) and `OutputItemType` must not be `Analyzer`;
-   - for `analyzer`, effective `OutputItemType` must be `Analyzer` and effective `ReferenceOutputAssembly` must be `false`.
-9. Reject every unlisted edge or mode mismatch because `scope.default` is `deny`.
-10. Do not inspect or infer rules from `PackageReference`; package dependency enforcement is a separate concern.
+4. Build the repository-owned MSBuild declaration closure for each production project: the project file, automatic `Directory.Build.props`/`Directory.Build.targets`, and statically traversable repository-owned imports. Traverse repository import declarations regardless of their conditions.
+5. Enumerate every declared `ProjectReference` in that closure **without using its `Condition` to suppress authorization checking**. Require its `Include` to be a literal resolvable project path and resolve the target to a canonical project id.
+6. Reject every declared edge that does not match `allowed_references` or `temporary_exceptions`. A false or unevaluated condition does not make a forbidden edge legal.
+7. Validate that policy-critical mode metadata is context-invariant: `ReferenceOutputAssembly`/`OutputItemType` must be literal on the reference when present and must not be supplied or overridden through repository-owned item definitions/updates.
+8. Classify each declared reference using `mode_semantics` and require its mode to equal the matching policy edge: for `assembly`, `ReferenceOutputAssembly` is `true` using the documented default when omitted and `OutputItemType` is not `Analyzer`; for `analyzer`, `OutputItemType=Analyzer` and `ReferenceOutputAssembly=false`.
+9. Separately evaluate each production project with MSBuild semantics and enumerate active `ProjectReference` items, including imported items. Use this to verify normal evaluated behavior, but never use absence from one evaluation context to skip steps 5-8.
+10. Reject every unlisted edge, dynamic/unresolved target, or mode mismatch because `scope.default` is `deny`.
+11. Do not inspect or infer rules from `PackageReference`; package dependency enforcement is a separate concern.
 
-`mechanical_rules.canonical_projects_are_exact`, `discovered_production_projects_must_equal_registered_projects`, and `evaluated_project_references_include_imports` therefore close the policy over the production root and evaluated project graph, not merely over known `.csproj` XML nodes.
+`mechanical_rules.canonical_projects_are_exact`, `discovered_production_projects_must_equal_registered_projects`, `evaluated_project_references_include_imports`, `conditional_references_cannot_hide_edges`, and `project_reference_mode_is_condition_invariant` therefore close the policy over the production root and the potential declared project graph rather than over one chosen MSBuild property context.
 
 A checker may additionally report stale allowed-edge or exception entries that no longer exist. Missing registered project paths are not optional stale-policy warnings: they violate the exact project-set rule above.
 
@@ -160,8 +172,8 @@ A checker may additionally report stale allowed-edge or exception entries that n
 
 There is currently no test that mechanically enforces this exact production `ProjectReference` graph. Existing package-smoke, generator, compatibility, and runtime tests validate related packaging or behavior, but they are not architecture guards and should not be cited as substitutes for this policy.
 
-For this change, validation is design/document review plus a comparison of the policy against the current `dev` production project graph. Implementing the automated production guard is intentionally out of scope for #371 and tracked by #372. #372 must include negative fixtures for assembly-mode drift and imported forbidden references so these semantics remain executable rather than advisory. Test-project topology is tracked separately by #431.
+For this change, validation is design/document review plus a comparison of the policy against the current `dev` production project graph. Implementing the automated production guard is intentionally out of scope for #371 and tracked by #372. #372 must include negative fixtures for assembly-mode drift, imported forbidden references, and condition-hidden forbidden references such as `Condition="'$(SomeProperty)' == 'true'"` so these semantics remain executable rather than advisory. Test-project topology is tracked separately by #431.
 
 ## Changing the boundary
 
-A production project or reference change is an architecture change. A PR that adds or removes a production `.csproj`, or adds, removes, or changes a production `ProjectReference`, must update the YAML in the same change when the intended policy changes. New projects cannot be omitted from the registry, and new edges must not be justified by the fact that a transitive dependency already exists; the policy records direct evaluated project references only.
+A production project or reference change is an architecture change. A PR that adds or removes a production `.csproj`, or adds, removes, or changes a production `ProjectReference`, must update the YAML in the same change when the intended policy changes. New projects cannot be omitted from the registry, and new edges must not be justified by the fact that a transitive dependency already exists; the policy records direct potential project-reference edges, with conditions allowed to affect presence but never authorization.
