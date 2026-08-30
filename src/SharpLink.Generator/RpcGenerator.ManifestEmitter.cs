@@ -64,6 +64,7 @@ public partial class RpcGenerator
         sb.AppendLine("    string ISharpLinkGeneratedAssemblyManifest.CompileTimeDescriptor => CompileTimeDescriptor;");
         sb.AppendLine();
         AppendContractArtifactFactories(sb, contracts);
+        AppendIdentifiedCodecFactory(sb);
         AppendContractManifestArray(sb, contracts);
         AppendServiceManifestArray(sb, serviceModels);
         AppendCodecManifestArray(sb, codecs);
@@ -113,6 +114,31 @@ public partial class RpcGenerator
             sb.AppendLine($"        => new __Stub_{identity}(codecs);");
             sb.AppendLine();
         }
+    }
+
+    private static void AppendIdentifiedCodecFactory(StringBuilder sb)
+    {
+        sb.AppendLine("    private sealed class __SharpLinkIdentifiedCodecFactory : IRpcGeneratedCodecFactory");
+        sb.AppendLine("    {");
+        sb.AppendLine("        private readonly IRpcGeneratedCodecFactory __inner;");
+        sb.AppendLine();
+        sb.AppendLine("        internal __SharpLinkIdentifiedCodecFactory(IRpcGeneratedCodecFactory inner, ulong hashHigh, ulong hashLow)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            __inner = inner ?? throw new ArgumentNullException(nameof(inner));");
+        sb.AppendLine("            CodecHash = new RpcHash128(hashHigh, hashLow);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        public Type TargetType => __inner.TargetType;");
+        sb.AppendLine("        public RpcHash128 CodecHash { get; }");
+        sb.AppendLine("        public string SchemaId => __inner.SchemaId;");
+        sb.AppendLine("        public string WireFormatId => __inner.WireFormatId;");
+        sb.AppendLine("        public string? AdapterId => __inner.AdapterId;");
+        sb.AppendLine("        public IRpcCodecAdapter? Adapter => __inner.Adapter;");
+        sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
+        sb.AppendLine("            => __inner.Create(provider, adapterScope);");
+        sb.AppendLine("        public bool IsCompatibleCodec(IRpcCodec codec) => __inner.IsCompatibleCodec(codec);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
     }
 
     private static void AppendContractManifestArray(StringBuilder sb, RpcInterfaceModel[] contracts)
@@ -177,7 +203,7 @@ public partial class RpcGenerator
         sb.AppendLine("    private static readonly IRpcGeneratedCodecFactory[] __codecs = new IRpcGeneratedCodecFactory[]");
         sb.AppendLine("    {");
         foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.AppendLine($"        new {codec.CodecName}.Factory(),");
+            AppendIdentifiedCodecFactoryRegistration(sb, codec);
         sb.AppendLine("    };");
     }
 
@@ -188,9 +214,13 @@ public partial class RpcGenerator
         sb.AppendLine("    private static readonly IRpcGeneratedCodecFactory[] __contractCodecs = new IRpcGeneratedCodecFactory[]");
         sb.AppendLine("    {");
         foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.AppendLine($"        new {codec.CodecName}.Factory(),");
+            AppendIdentifiedCodecFactoryRegistration(sb, codec);
         sb.AppendLine("    };");
     }
+
+    private static void AppendIdentifiedCodecFactoryRegistration(StringBuilder sb, GeneratedCodecModel codec)
+        => sb.AppendLine(
+            $"        new __SharpLinkIdentifiedCodecFactory(new {codec.CodecName}.Factory(), {codec.CodecHashHigh.ToString(InvariantCulture)}UL, {codec.CodecHashLow.ToString(InvariantCulture)}UL),");
 
     private static string BuildCompileTimeDescriptor(
         RpcInterfaceModel[] contracts,
