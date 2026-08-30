@@ -168,7 +168,7 @@ public class SendPumpIdleShutdownTests
         using var producersStopped = new CancellationTokenSource();
         using var producersReady = new CountdownEvent(4);
         using var startProducers = new ManualResetEventSlim(initialState: false);
-        using var producersEnteredSend = new CountdownEvent(4);
+        using var producersAtFirstSend = new CountdownEvent(4);
         var producers = new Task[4];
         try
         {
@@ -186,24 +186,23 @@ public class SendPumpIdleShutdownTests
                         try
                         {
                             var frame = CreateFrame(session, 32, requestId++);
+                            if (firstSend)
+                            {
+                                // The phase barrier must precede the operation under test. A
+                                // synchronous send may itself wait on send-pump progress that
+                                // the concurrent shutdown below is intended to race.
+                                producersAtFirstSend.Signal();
+                                firstSend = false;
+                            }
+
                             if (producerIndex == producers.Length - 1)
                             {
                                 var flush = session.SendPacketAndFlushAsync(frame).AsTask();
-                                if (firstSend)
-                                {
-                                    producersEnteredSend.Signal();
-                                    firstSend = false;
-                                }
                                 flush.GetAwaiter().GetResult();
                             }
                             else
                             {
                                 session.SendPacket(frame);
-                                if (firstSend)
-                                {
-                                    producersEnteredSend.Signal();
-                                    firstSend = false;
-                                }
                             }
                         }
                         catch (SharpLinkException)
@@ -221,8 +220,8 @@ public class SendPumpIdleShutdownTests
             Ensure(producersReady.Wait(TimeSpan.FromSeconds(5)),
                 "all dedicated producers must reach the start gate before shutdown begins");
             startProducers.Set();
-            Ensure(producersEnteredSend.Wait(TimeSpan.FromSeconds(5)),
-                "all dedicated producers must enter their send path before shutdown begins");
+            Ensure(producersAtFirstSend.Wait(TimeSpan.FromSeconds(5)),
+                "all dedicated producers must reach their first send attempt before shutdown begins");
 
             await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
             producersStopped.Cancel();
