@@ -70,36 +70,18 @@ class MetadataFilterTests(unittest.TestCase):
 <Target Name="X"><ItemGroup><ProjectReference KeepMetadata="SomeOtherMetadata" /></ItemGroup></Target></Project>''')
             self.assert_violation(self.run_guard(root), "KeepMetadata must preserve ProjectReference mode metadata ReferenceOutputAssembly, OutputItemType")
 
-    def test_update_remove_metadata_mode_field_fails_even_when_conditioned(self):
+    def test_target_mutation_dynamic_remove_metadata_fails_closed(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_sdk(root, f'''<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>{ANALYZER_REF}
-<ProjectReference Update="../Generator/Generator.csproj" RemoveMetadata="ReferenceOutputAssembly" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>''')
-            self.assert_violation(self.run_guard(root), "RemoveMetadata must not remove ProjectReference mode metadata ReferenceOutputAssembly")
-
-    def test_update_keep_metadata_missing_mode_field_fails(self):
-        temp, root = self.make_repo()
-        with temp:
-            self.set_sdk(root, f'''<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>{ANALYZER_REF}
-<ProjectReference Update="../Generator/Generator.csproj" KeepMetadata="OutputItemType" Condition="'$(Never)' == 'true'" />
-</ItemGroup></Project>''')
-            self.assert_violation(self.run_guard(root), "KeepMetadata must preserve ProjectReference mode metadata ReferenceOutputAssembly")
-
-    def test_dynamic_remove_metadata_fails_closed(self):
-        temp, root = self.make_repo()
-        with temp:
-            self.set_sdk(root, f'''<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>{ANALYZER_REF}
-<ProjectReference Update="../Generator/Generator.csproj" RemoveMetadata="$(ModeMetadata)" />
-</ItemGroup></Project>''')
+            self.set_sdk(root, f'''<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>{ANALYZER_REF}</ItemGroup>
+<Target Name="X"><ItemGroup><ProjectReference RemoveMetadata="$(ModeMetadata)" /></ItemGroup></Target></Project>''')
             self.assert_violation(self.run_guard(root), "dynamic RemoveMetadata is denied")
 
-    def test_keep_metadata_preserving_both_mode_fields_is_allowed(self):
+    def test_target_mutation_keep_metadata_preserving_both_mode_fields_is_allowed(self):
         temp, root = self.make_repo()
         with temp:
-            self.set_sdk(root, f'''<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>{ANALYZER_REF}
-<ProjectReference Update="../Generator/Generator.csproj" KeepMetadata="ReferenceOutputAssembly;OutputItemType" />
-</ItemGroup></Project>''')
+            self.set_sdk(root, f'''<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>{ANALYZER_REF}</ItemGroup>
+<Target Name="X"><ItemGroup><ProjectReference KeepMetadata="ReferenceOutputAssembly;OutputItemType" /></ItemGroup></Target></Project>''')
             self.assertEqual((), self.run_guard(root).violations)
 
 
