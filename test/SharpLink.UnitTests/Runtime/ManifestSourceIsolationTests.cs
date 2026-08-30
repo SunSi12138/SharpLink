@@ -14,6 +14,10 @@ namespace SharpLink.UnitTests.Runtime;
 
 public sealed class ManifestSourceIsolationTests
 {
+    private static RpcHash128 SyntheticManifestHash => new(0x6d616e6966657374UL, 0x2d736f757263652dUL);
+    private static RpcHash128 NativeCodecHash => new(0x6d616e6966657374UL, 0x2d6e61746976652dUL);
+    private static RpcHash128 ScopedCodecHash => new(0x6d616e6966657374UL, 0x2d73636f7065642dUL);
+
     [Test]
     public void RuntimeCompileShouldCaptureItsSourceExactlyOnceAndFreezeTheReturnedList()
     {
@@ -464,17 +468,18 @@ public sealed class ManifestSourceIsolationTests
         }
 
         internal static CodecManifest For<T>(string descriptor)
-            => new(descriptor, new TestCodecFactory<T>(descriptor));
+            => new(descriptor, new TestCodecFactory<T>());
 
         internal static CodecManifest ForDisposableScope<T>(
             string descriptor,
             DisposableScopeCounters counters)
-            => new(descriptor, new DisposableScopeCodecFactory<T>(descriptor, counters));
+            => new(descriptor, new DisposableScopeCodecFactory<T>(counters));
 
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase15-test";
         public Assembly OwnerAssembly => typeof(ManifestSourceIsolationTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor { get; }
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -504,6 +509,7 @@ public sealed class ManifestSourceIsolationTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase15-test";
         public Assembly OwnerAssembly => typeof(ManifestSourceIsolationTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "phase15-contract";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; }
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -534,7 +540,7 @@ public sealed class ManifestSourceIsolationTests
                     (channel, _) => proxyFactory(channel),
                     static _ => new TestStub(8_301)),
                 service: null,
-                new TestCodecFactory<TCodec>($"client-composite:{typeof(TCodec).FullName}"));
+                new TestCodecFactory<TCodec>());
 
         internal static CompositeManifest ForServer<TCodec>(
             Type contractType,
@@ -560,7 +566,7 @@ public sealed class ManifestSourceIsolationTests
             return new CompositeManifest(
                 contract,
                 service,
-                new TestCodecFactory<TCodec>($"server-composite:{typeof(TCodec).FullName}"));
+                new TestCodecFactory<TCodec>());
         }
 
         private static SharpLinkGeneratedContractDescriptor CreateContract(
@@ -581,6 +587,7 @@ public sealed class ManifestSourceIsolationTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase15-test";
         public Assembly OwnerAssembly => typeof(ManifestSourceIsolationTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "phase15-composite";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; }
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; }
@@ -594,6 +601,7 @@ public sealed class ManifestSourceIsolationTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase15-global-poison";
         public Assembly OwnerAssembly => typeof(ManifestSourceIsolationTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => throw new InvalidOperationException("poison shape read");
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts =>
             throw new InvalidOperationException("poison shape read");
@@ -604,11 +612,10 @@ public sealed class ManifestSourceIsolationTests
         public IReadOnlyList<string> Dependencies => throw new InvalidOperationException("poison shape read");
     }
 
-    private sealed class TestCodecFactory<T>(string schemaId) : IRpcGeneratedCodecFactory
+    private sealed class TestCodecFactory<T> : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId { get; } = schemaId;
-        public string WireFormatId => "sharplink-native/v1";
+        public RpcHash128 CodecHash => NativeCodecHash;
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -627,13 +634,10 @@ public sealed class ManifestSourceIsolationTests
         public T? Deserialize(in ReadOnlySequence<byte> buffer) => default;
     }
 
-    private sealed class DisposableScopeCodecFactory<T>(
-        string schemaId,
-        DisposableScopeCounters counters) : IRpcGeneratedCodecFactory
+    private sealed class DisposableScopeCodecFactory<T>(DisposableScopeCounters counters) : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId { get; } = schemaId;
-        public string WireFormatId => "phase15-disposable/v1";
+        public RpcHash128 CodecHash => ScopedCodecHash;
         public string AdapterId => "phase15.disposable-scope/v1";
         public IRpcCodecAdapter Adapter { get; } = new DisposableScopeAdapter(counters);
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -644,7 +648,6 @@ public sealed class ManifestSourceIsolationTests
     private sealed class DisposableScopeAdapter(DisposableScopeCounters counters) : IRpcCodecAdapter
     {
         public string AdapterId => "phase15.disposable-scope/v1";
-        public string WireFormatId => "phase15-disposable/v1";
         public IRpcCodecAdapterScope CreateScope()
         {
             Interlocked.Increment(ref counters.ScopeCreateCount);
