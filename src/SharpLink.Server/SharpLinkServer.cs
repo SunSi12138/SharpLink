@@ -58,14 +58,13 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private readonly ServerServiceCleanup _serviceCleanup;
     private readonly SharpLinkAdmissionController? _admissionController;
     private readonly ServerConnectionAdmission _connectionAdmission;
+    private readonly ServerCallAdmission _callAdmission;
     private readonly ServerShutdownPlan _shutdownPlan;
     private Task? _deferredServiceCleanupTask;
     private Task? _shutdownCleanupObserver;
     private Task? _serviceCleanupObserver;
     private int _deferredConnectionCleanups;
     private ServerStopDiagnosticSnapshot? _lastStopDiagnostics;
-    private int _globalActiveCalls;
-    private int _pendingCallAdmissions;
     // 0 = no signal, 1 = single winner recording, 2 = snapshot published before TCS completion.
     private int _callDrainSignalState;
     private int _lastCallDrainSignalGlobalCalls;
@@ -105,6 +104,12 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _shutdownPlan = composition.ShutdownPlan;
         _maxConcurrentCallsPerConnection = _runtimeContext.FlowControl.MaxConcurrentCallsPerConnection;
         _maxConcurrentCallsPerServer = _runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
+        _callAdmission = new ServerCallAdmission(
+            _maxConcurrentCallsPerConnection,
+            _maxConcurrentCallsPerServer,
+            () => CurrentState == ServerState.Running,
+            TrySignalCallsDrained,
+            () => ResourceGovernor);
         _serviceCleanup = composition.ServiceCleanup;
         _frameworkTasks = composition.FrameworkTasks;
         var logWindow = TimeSpan.FromSeconds(5);
@@ -175,7 +180,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             if (callsDrained)
                 flushTask = FlushAllSessionsAsync();
 
-            var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
+            var unfinishedCalls = _callAdmission.ActiveCallCount;
             if (!callsDrained)
             {
                 if (unfinishedCalls > 0)
@@ -305,7 +310,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         var callsDrained = _callsDrained.Task.IsCompletedSuccessfully;
         if (!callsDrained)
         {
-            var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
+            var unfinishedCalls = _callAdmission.ActiveCallCount;
             if (unfinishedCalls > 0)
             {
                 LogForcedCallsRemaining(_logger, unfinishedCalls);
@@ -705,51 +710,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     }
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
-    {
-        if (CurrentState != ServerState.Running)
-            return ServerCallAdmissionResult.Unavailable;
-
-        Interlocked.Increment(ref _pendingCallAdmissions);
-        try
-        {
-            // Stop can begin between the first Running check and the pending
-            // increment. In that case this admission owns no local slot and can
-            // leave immediately. Once this check succeeds, the pending count
-            // covers every local -> global transfer and rollback below.
-            if (CurrentState != ServerState.Running)
-                return ServerCallAdmissionResult.Unavailable;
-
-            if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
-            {
-                return connection.LifecycleState == ServerConnectionLifecycleState.Ready
-                    ? ServerCallAdmissionResult.PerConnectionCapacityExhausted
-                    : ServerCallAdmissionResult.Unavailable;
-            }
-
-#if DEBUG
-            connection.NotifyAfterLocalCallAdmissionForTesting();
-#endif
-
-            if (!TryAcquireGlobalCall())
-            {
-                // The provisional global increment remains owned here until the paired
-                // local slot is released. A draining server must never observe a zero
-                // global count while this connection still publishes an active call.
-                ReleaseCall(connection);
-                return ServerCallAdmissionResult.ServerCapacityExhausted;
-            }
-
-            if (CurrentState == ServerState.Running)
-                return ServerCallAdmissionResult.Acquired;
-
-            ReleaseCall(connection);
-            return ServerCallAdmissionResult.Unavailable;
-        }
-        finally
-        {
-            EndPendingCallAdmission(connection);
-        }
-    }
+        => _callAdmission.TryAcquireCall(connection);
 
     private static string GetCallCapacityExhaustionReason(ServerCallAdmissionResult result)
         => result switch
@@ -772,38 +733,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     }
 
     internal void ReleaseCall(ServerConnectionState connection)
-    {
-        connection.ReleaseCall();
-        ReleaseGlobalCall();
-        TrySignalCallsDrained(connection);
-    }
-
-    private bool TryAcquireGlobalCall()
-    {
-        if (Interlocked.Increment(ref _globalActiveCalls) <= _maxConcurrentCallsPerServer)
-            return true;
-
-        // The caller owns both provisional slots at this point. It must release the
-        // connection slot before it decrements this global slot so server drain
-        // cannot become observable between those two releases.
-        return false;
-    }
-
-    private void ReleaseGlobalCall()
-    {
-        var active = Interlocked.Decrement(ref _globalActiveCalls);
-        if (active < 0)
-            throw new InvalidOperationException("Server global active call count underflowed.");
-    }
-
-    private void EndPendingCallAdmission(ServerConnectionState connection)
-    {
-        var remaining = Interlocked.Decrement(ref _pendingCallAdmissions);
-        if (remaining < 0)
-            throw new InvalidOperationException("Server pending call admission count underflowed.");
-        if (remaining == 0)
-            TrySignalCallsDrained(connection);
-    }
+        => _callAdmission.ReleaseCall(connection);
 
     private void TrySignalCallsDrained(ServerConnectionState? releasingConnection = null)
     {
@@ -814,11 +744,11 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         // global slot or fully released both provisional slots. Reading it first
         // makes a zero global count safe: a post-stop entrant may still increment
         // pending, but its second state check prevents it from taking any slot.
-        var pendingAdmissions = Volatile.Read(ref _pendingCallAdmissions);
+        var pendingAdmissions = _callAdmission.PendingCallAdmissions;
         if (pendingAdmissions != 0)
             return;
 
-        var globalActiveCalls = Volatile.Read(ref _globalActiveCalls);
+        var globalActiveCalls = _callAdmission.ActiveCallCount;
         if (globalActiveCalls != 0)
         {
             return;
@@ -844,9 +774,9 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _callsDrained.TrySetResult(true);
     }
 
-    internal int ActiveCallCountForDiagnostics => Volatile.Read(ref _globalActiveCalls);
+    internal int ActiveCallCountForDiagnostics => _callAdmission.ActiveCallCount;
 
-    internal int PendingCallAdmissionsForDiagnostics => Volatile.Read(ref _pendingCallAdmissions);
+    internal int PendingCallAdmissionsForDiagnostics => _callAdmission.PendingCallAdmissions;
 
     internal Task<bool> CallsDrainedForDiagnostics => _callsDrained.Task;
 

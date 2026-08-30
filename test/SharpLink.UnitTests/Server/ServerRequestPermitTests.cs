@@ -98,7 +98,7 @@ public class ServerRequestPermitTests
         using var secondObservedReleasing = new ManualResetEventSlim();
         Task? firstDispose = null;
         Task? secondDispose = null;
-        SharpLinkServer.ServerRequestPermit? permit = null;
+        ServerRequestPermit? permit = null;
 
         try
         {
