@@ -9,7 +9,7 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task ExplicitBindingMatchingSelectorShouldStillBeContractOwned()
     {
-        var source = AddAssemblyAttributes(BuildRouteSource("""
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildRouteSource("""
 [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Struct)]
 public sealed class SelectorAttribute : System.Attribute { }
 
@@ -26,13 +26,14 @@ public interface ISelectorExplicitContract : SharpLink.Sdk.IService
     ValueTask<SelectorPayload> Echo(SelectorPayload value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x1001UL, 0x2001UL)]
 public sealed class SelectorAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "selector.explicit/v1";
     public override string WireFormatId => "selector-explicit-wire/v1";
 }
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SelectorAdapter), \"selector.explicit/v1\", \"selector-explicit-wire/v1\", SelectorAttributeType = typeof(SelectorAttribute))]");
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SelectorAdapter), \"selector.explicit/v1\", SelectorAttributeType = typeof(SelectorAttribute))]");
 
         var sources = RunGeneratorAndGetSources(source);
         var generated = string.Join("\n", sources);
@@ -57,7 +58,7 @@ public sealed class SelectorAdapter : TestRouteAdapterBase
     [Test]
     public Task AllRouteShouldNotCaptureFrameworkEnum()
     {
-        var source = AddAssemblyAttributes(BuildRouteSource("""
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildRouteSource("""
 public enum RouteEnum : short
 {
     Zero,
@@ -70,13 +71,14 @@ public interface IEnumRouteContract : SharpLink.Sdk.IService
     ValueTask<RouteEnum> Echo(RouteEnum value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x1002UL, 0x2002UL)]
 public sealed class EnumAdapter : TestRouteAdapterBase
 {
     public override string AdapterId => "route.enum/v1";
     public override string WireFormatId => "route-enum-safe/v1";
 }
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.enum/v1\", \"route-enum-safe/v1\")]",
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(EnumAdapter), \"route.enum/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(EnumAdapter))]");
 
         var diagnostics = RunGenerator(source);
