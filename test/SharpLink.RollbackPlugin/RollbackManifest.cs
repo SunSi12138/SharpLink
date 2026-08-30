@@ -29,7 +29,9 @@ public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
 {
     public RollbackManifest()
     {
-        var identity = Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_CODEC_IDENTITY") ?? "default";
+        var identity = Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_CODEC_IDENTITY") ??
+            Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA") ??
+            "default";
         var codecHash = ComputeIdentityHash(identity);
         RpcAssemblyHash = new RpcHash128(0x726f6c6c6261636bUL, codecHash.Low);
         Codecs = string.Equals(
