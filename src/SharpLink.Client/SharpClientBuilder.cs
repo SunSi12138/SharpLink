@@ -796,6 +796,7 @@ public class SharpClientBuilder
             plan.HeartbeatTimeout,
             requestTimeout.HasValue,
             requestTimeout.GetValueOrDefault(),
+            plan.RequestTimeoutSource,
             plan.Authenticator,
             runtimeContext.Protocol.CloneValidated(),
             plan.RpcSessionFlushOptions,
@@ -807,7 +808,6 @@ public class SharpClientBuilder
             plan.ReconnectJitter,
             logger,
             SharpLinkClient.CreateFrameworkTaskSupervisor(logger));
-        ClientRequestTimeoutRuntimeSource.Bind(runtimeContext, plan.RequestTimeoutSource);
         return new SharpLinkClient(composition);
     }
 
