@@ -54,11 +54,18 @@ internal static class LongRunningTestWorker
     internal static Task<TResult> RunAsync<TResult>(Func<Task<TResult>> action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        return Task.Factory.StartNew(
-            action,
+        using var started = new ManualResetEventSlim();
+        var task = Task.Factory.StartNew(
+            () =>
+            {
+                started.Set();
+                return action();
+            },
             CancellationToken.None,
             Options,
             TaskScheduler.Default).Unwrap();
+        started.Wait();
+        return task;
     }
 
     /// <summary>Joins a cleanup owner while preserving any primary test failure.</summary>
