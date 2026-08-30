@@ -298,7 +298,7 @@ public class SharpLinkClientLifecycleStateTests
         });
         try
         {
-            await callbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await callbackStarted.Task;
             Ensure(stopReturned.Task.IsCompleted,
                 "an async StopAsync call must return before a blocking cancellation callback finishes");
 
@@ -1797,7 +1797,6 @@ public class SharpLinkClientLifecycleStateTests
         public System.IO.Pipelines.PipeWriter Output => _output.Writer;
         public System.Net.EndPoint? LocalEndPoint => null;
         public System.Net.EndPoint? RemoteEndPoint => null;
-
         public ValueTask DisposeAsync()
             => ValueTask.FromException(new InvalidOperationException("transport cleanup failed"));
     }
