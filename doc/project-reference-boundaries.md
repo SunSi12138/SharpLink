@@ -37,8 +37,8 @@ graph LR
     Serializer[SharpLink.Serializer.SharpPack] --> Abstractions
     Sdk[SharpLink.Sdk] --> Abstractions
     Sdk -. analyzer-only .-> Generator[SharpLink.Generator]
-    Hosting -. temporary exception; #337 umbrella .-> Client
-    Hosting -. temporary exception; #337 umbrella .-> Server
+    Hosting -. temporary exception #337 umbrella .-> Client
+    Hosting -. temporary exception #337 umbrella .-> Server
 ```
 
 `SharpLink.Abstractions` and `SharpLink.Generator` have no permitted production assembly references. The `Sdk -> Generator` edge is not a runtime/assembly dependency: it must remain an analyzer-only `ProjectReference` with the metadata specified below.
