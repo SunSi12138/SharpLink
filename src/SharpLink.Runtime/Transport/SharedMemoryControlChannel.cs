@@ -16,6 +16,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private const int SpaceWaiterArmedBit = 16;
 
     private readonly PipeStream _stream;
+    private readonly object _outboundStateGate = new();
     private readonly SharedMemoryAsyncPulse _outboundWake = new();
     private readonly SharedMemoryAsyncPulse _dataAvailable = new();
     private readonly SharedMemoryAsyncPulse _spaceAvailable = new();
@@ -180,10 +181,15 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         {
             while (await _outboundWake.WaitAsync().ConfigureAwait(false))
             {
-                Volatile.Write(ref _writerActive, 1);
+                int pending;
+                lock (_outboundStateGate)
+                {
+                    _writerActive = 1;
+                    pending = _pendingOutboundSignals;
+                    _pendingOutboundSignals = 0;
+                }
                 try
                 {
-                    var pending = Interlocked.Exchange(ref _pendingOutboundSignals, 0);
                     if (pending == 0)
                         continue;
                     if ((pending & CloseBit) != 0)
@@ -194,7 +200,8 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
                 }
                 finally
                 {
-                    Volatile.Write(ref _writerActive, 0);
+                    lock (_outboundStateGate)
+                        _writerActive = 0;
                 }
             }
         }
@@ -233,12 +240,18 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private async Task DisposeCoreAsync()
     {
-        var waitForFinalCloseStart =
-            !IsClosed &&
-            Volatile.Read(ref _writerActive) == 0 &&
-            Volatile.Read(ref _pendingOutboundSignals) == 0;
-        if (!IsClosed)
-            QueueSignal(CloseBit, kind: null);
+        var waitForFinalCloseStart = false;
+        var wakeWriter = false;
+        lock (_outboundStateGate)
+        {
+            if (!IsClosed)
+            {
+                waitForFinalCloseStart = _writerActive == 0 && _pendingOutboundSignals == 0;
+                wakeWriter = QueueSignalLocked(CloseBit, kind: null);
+            }
+        }
+        if (wakeWriter)
+            _outboundWake.Pulse();
         _outboundWake.Complete();
         if (waitForFinalCloseStart)
         {
@@ -307,17 +320,27 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private bool QueueSignal(int bit, string? kind)
     {
-        if (IsClosed)
-            return false;
-        if (kind is not null)
-            SharpLinkTelemetry.RecordSharedMemoryNotificationRequest(kind);
-        var previous = Interlocked.Or(ref _pendingOutboundSignals, bit);
-        var queued = (previous & bit) == 0;
+        bool queued;
+        lock (_outboundStateGate)
+        {
+            if (IsClosed)
+                return false;
+            queued = QueueSignalLocked(bit, kind);
+        }
         if (queued)
             _outboundWake.Pulse();
         else if (kind is not null)
             SharpLinkTelemetry.RecordSharedMemoryNotificationCoalesced(kind);
         return queued;
+    }
+
+    private bool QueueSignalLocked(int bit, string? kind)
+    {
+        if (kind is not null)
+            SharpLinkTelemetry.RecordSharedMemoryNotificationRequest(kind);
+        var previous = _pendingOutboundSignals;
+        _pendingOutboundSignals |= bit;
+        return (previous & bit) == 0;
     }
 
     private static void DispatchPeerWaiterArmed(
