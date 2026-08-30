@@ -46,6 +46,13 @@ class GuardResult:
     violations: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PropertyPath:
+    value: str
+    source: Path
+    conditioned: bool
+
+
 def _scalar(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
@@ -147,6 +154,13 @@ def _dynamic(value: str) -> bool:
     return not value.strip() or any(x in value for x in DYNAMIC_MARKERS) or any(x in value for x in "*?[];")
 
 
+def _attribute(element: ET.Element, name: str) -> str | None:
+    for key, value in element.attrib.items():
+        if key.lower() == name.lower():
+            return value
+    return None
+
+
 def _metadata(element: ET.Element, name: str) -> tuple[bool, str | None, bool]:
     values: list[tuple[str, bool]] = []
     for key, value in element.attrib.items():
@@ -154,7 +168,7 @@ def _metadata(element: ET.Element, name: str) -> tuple[bool, str | None, bool]:
             values.append((value.strip(), False))
     for child in element:
         if _local(child.tag).lower() == name.lower():
-            values.append(((child.text or "").strip(), any(k.lower() == "condition" for k in child.attrib)))
+            values.append(((child.text or "").strip(), _attribute(child, "Condition") is not None))
     if not values:
         return False, None, False
     unique = {value for value, _ in values}
@@ -238,28 +252,125 @@ def _expand_import(value: str, source: Path, project: Path, root: Path, violatio
     return [p.resolve() for p in paths if _repo_path(p, root) is not None and p.is_file()]
 
 
-def _closure(project: Path, root: Path, violations: list[str]) -> list[tuple[Path, ET.Element]]:
-    queue = [project.resolve()]
-    for name in ("Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props"):
-        path = _automatic(project, root, name)
-        if path is not None:
-            queue.append(path.resolve())
-    seen: set[Path] = set()
+def _parse_sources(
+    initial: Iterable[Path],
+    project: Path,
+    root: Path,
+    violations: list[str],
+    seen: set[Path] | None = None,
+) -> list[tuple[Path, ET.Element]]:
+    queue = [path.resolve() for path in initial]
+    visited = set() if seen is None else set(seen)
     result: list[tuple[Path, ET.Element]] = []
     while queue:
         path = queue.pop(0).resolve()
-        if path in seen:
+        if path in visited:
             continue
-        seen.add(path)
+        visited.add(path)
         try:
             xml = ET.parse(path).getroot()
         except (OSError, ET.ParseError) as exc:
             raise GuardConfigurationError(f"cannot parse MSBuild XML {_display(path, root)}: {exc}") from exc
         result.append((path, xml))
         for element in xml.iter():
-            if _local(element.tag) == "Import" and element.attrib.get("Project") is not None:
-                queue.extend(_expand_import(element.attrib["Project"], path, project, root, violations))
+            if _local(element.tag).lower() != "import":
+                continue
+            import_path = _attribute(element, "Project")
+            if import_path is not None:
+                queue.extend(_expand_import(import_path, path, project, root, violations))
     return result
+
+
+def _property_paths(sources: Iterable[tuple[Path, ET.Element]], name: str) -> list[PropertyPath]:
+    target = name.lower()
+    values: list[PropertyPath] = []
+    for source, xml in sources:
+        parents = {child: parent for parent in xml.iter() for child in parent}
+        for element in xml.iter():
+            if _local(element.tag).lower() != target:
+                continue
+            parent = parents.get(element)
+            if parent is None or _local(parent.tag).lower() != "propertygroup":
+                continue
+            conditioned = _attribute(element, "Condition") is not None or _attribute(parent, "Condition") is not None
+            value = (element.text or "").strip()
+            if value:
+                values.append(PropertyPath(value, source, conditioned))
+    return values
+
+
+def _expand_property_paths(
+    values: Iterable[PropertyPath],
+    project: Path,
+    root: Path,
+    violations: list[str],
+) -> list[Path]:
+    result: list[Path] = []
+    for item in values:
+        result.extend(_expand_import(item.value, item.source, project, root, violations))
+    return result
+
+
+def _automatic_or_overrides(
+    sources: list[tuple[Path, ET.Element]],
+    property_name: str,
+    default_name: str,
+    project: Path,
+    root: Path,
+    violations: list[str],
+) -> list[Path]:
+    values = _property_paths(sources, property_name)
+    result = _expand_property_paths(values, project, root, violations)
+    if not any(not value.conditioned for value in values):
+        default = _automatic(project, root, default_name)
+        if default is not None:
+            result.append(default.resolve())
+    return result
+
+
+def _closure(project: Path, root: Path, violations: list[str]) -> list[tuple[Path, ET.Element]]:
+    # Phase 1 mirrors inputs available before NuGet central package props and common targets:
+    # the project, the nearest Directory.Build.props, and their explicit repository imports.
+    early_initial = [project.resolve()]
+    build_props = _automatic(project, root, "Directory.Build.props")
+    if build_props is not None:
+        early_initial.append(build_props.resolve())
+    early = _parse_sources(early_initial, project, root, violations)
+
+    # Directory.Packages.props is imported after Directory.Build.props. A repository-owned
+    # DirectoryPackagesPropsPath assignment can override the nearest-file search. Conditions
+    # are ignored for closure purposes, so conditional overrides add another potential path;
+    # an unconditional override suppresses only the default candidate.
+    package_initial = _automatic_or_overrides(
+        early,
+        "DirectoryPackagesPropsPath",
+        "Directory.Packages.props",
+        project,
+        root,
+        violations,
+    )
+    seen = {path for path, _ in early}
+    packages = _parse_sources(package_initial, project, root, violations, seen)
+    pre_targets = early + packages
+
+    # Common targets support both an override for Directory.Build.targets and custom before/
+    # after extension points. Treat every repository-owned literal assignment as a potential
+    # import regardless of its Condition, and fail closed through _expand_import on dynamic paths.
+    target_initial = _automatic_or_overrides(
+        pre_targets,
+        "DirectoryBuildTargetsPath",
+        "Directory.Build.targets",
+        project,
+        root,
+        violations,
+    )
+    for property_name in ("CustomBeforeDirectoryBuildTargets", "CustomAfterDirectoryBuildTargets"):
+        target_initial.extend(
+            _expand_property_paths(_property_paths(pre_targets, property_name), project, root, violations)
+        )
+    seen.update(path for path, _ in packages)
+    targets = _parse_sources(target_initial, project, root, violations, seen)
+    return pre_targets + targets
 
 
 def _references(xml: ET.Element) -> Iterable[tuple[ET.Element, bool, bool]]:
@@ -293,19 +404,19 @@ def _audit_declarations(project_id: str, project: Path, root: Path, policy: Poli
                 if mode_names:
                     violations.append(f"{source_name}: ItemDefinitionGroup must not supply production ProjectReference mode metadata: {', '.join(mode_names)}")
                 continue
-            update = ref.attrib.get("Update")
+            update = _attribute(ref, "Update")
             if update is not None:
                 if mode_names:
                     violations.append(f"{source_name}: ProjectReference Update must not supply/override mode metadata {', '.join(mode_names)} for {update!r}")
                 continue
-            include = ref.attrib.get("Include")
+            include = _attribute(ref, "Include")
             if include is None:
-                if in_target and ref.attrib.get("Remove") is None and mode_names:
+                if in_target and _attribute(ref, "Remove") is None and mode_names:
                     violations.append(f"{source_name}: ProjectReference target mutation must not supply/override mode metadata {', '.join(mode_names)}")
                 continue
 
             count += 1
-            condition = ref.attrib.get("Condition", "").strip()
+            condition = (_attribute(ref, "Condition") or "").strip()
             label = f"{project_id} ProjectReference {include!r} in {source_name}"
             if _dynamic(include):
                 violations.append(f"{label}: dynamic/unresolvable production ProjectReference Include is denied; use a literal project path")
@@ -353,7 +464,7 @@ def _active_meta(item: dict, name: str) -> str | None:
 
 def _validate_active(edge: Edge, item: dict, label: str, violations: list[str]) -> None:
     roa, oit = _active_meta(item, "ReferenceOutputAssembly"), _active_meta(item, "OutputItemType")
-    normalized = "true" if roa is None or not roa.strip() else roa.strip().lower()
+    normalized = "true" if roa is None else roa.strip().lower()
     if normalized not in {"true", "false"}:
         violations.append(f"{label}: active ReferenceOutputAssembly is not boolean: {roa!r}")
     elif edge.mode == "assembly" and (normalized != "true" or (oit and oit.strip().lower() == "analyzer")):
