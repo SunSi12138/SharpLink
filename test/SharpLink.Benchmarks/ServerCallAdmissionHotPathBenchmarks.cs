@@ -52,7 +52,7 @@ public class ServerCallAdmissionHotPathBenchmarks
     public int AcquireAndRelease()
     {
         var result = _server.TryAcquireCall(_connection);
-        if (result != SharpLinkServer.ServerCallAdmissionResult.Acquired)
+        if (result != ServerCallAdmissionResult.Acquired)
             throw new InvalidOperationException($"Unexpected admission result: {result}.");
 
         _server.ReleaseCall(_connection);
