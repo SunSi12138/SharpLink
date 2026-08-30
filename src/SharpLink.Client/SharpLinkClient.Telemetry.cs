@@ -12,7 +12,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
-        TagLifetimeSource(control.LifetimeSource);
+        TagLifetimeSource(scope, control.LifetimeSource);
         try
         {
             ValueTask<TResponse> invocation;
@@ -46,7 +46,7 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
-        TagLifetimeSource(control.LifetimeSource);
+        TagLifetimeSource(scope, control.LifetimeSource);
         try
         {
             ValueTask invocation;
@@ -82,7 +82,7 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
-        TagLifetimeSource(control.LifetimeSource);
+        TagLifetimeSource(scope, control.LifetimeSource);
         try
         {
             ValueTask<TResponse> invocation;
@@ -188,7 +188,7 @@ internal sealed partial class SharpLinkClient
         public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         {
             var scope = SharpLinkTelemetry.StartClientCall(method);
-            TagLifetimeSource(lifetimeSource);
+            TagLifetimeSource(scope, lifetimeSource);
             try
             {
                 return new TelemetryAsyncEnumerator<T>(
@@ -268,10 +268,12 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private static void TagLifetimeSource(ClientCallLifetimeSource lifetimeSource)
+    private static void TagLifetimeSource(
+        SharpLinkTelemetry.CallScope scope,
+        ClientCallLifetimeSource lifetimeSource)
     {
         var value = lifetimeSource.ToTelemetryValue();
         if (value is not null)
-            System.Diagnostics.Activity.Current?.SetTag("rpc.sharplink.lifetime_source", value);
+            scope.SetTag("rpc.sharplink.lifetime_source", value);
     }
 }
