@@ -2026,7 +2026,7 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\")]),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"fake.adapter/v1\", \"fake-wire/v1\")]") ,
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(ValueTuple<int, string>), typeof(FakeAdapter))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
@@ -2218,7 +2218,7 @@ public abstract class TestAdapterBase : SharpLink.Abstractions.IRpcCodecAdapter
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 """),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"first/v1\", \"first-wire/v1\", SelectorAttributeType = typeof(FirstSelectorAttribute))]),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"first/v1\", \"first-wire/v1\", SelectorAttributeType = typeof(FirstSelectorAttribute))]") ,
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SecondAdapter), \"second/v1\", \"second-wire/v1\")]");
         EnsureHasRule(source, "SHARPLINK045");
         return Task.CompletedTask;
