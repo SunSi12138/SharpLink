@@ -7,25 +7,23 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task OpaqueSemanticIdentityShouldIgnoreLegacyStringChanges()
+    public Task OpaqueSemanticIdentityShouldIgnoreUnrelatedImplementationChanges()
     {
         var first = GenerateOpaqueIdentityManifest(
-            wireFormatId: "legacy-wire-a/v1",
-            schemaId: "legacy-schema-a/v1",
+            implementationMarker: "first-build",
             semanticHigh: 0x0102030405060708UL,
             semanticLow: 0x1112131415161718UL);
         var second = GenerateOpaqueIdentityManifest(
-            wireFormatId: "legacy-wire-b/v9",
-            schemaId: "legacy-schema-b/v9",
+            implementationMarker: "second-build",
             semanticHigh: 0x0102030405060708UL,
             semanticLow: 0x1112131415161718UL);
 
         Ensure(
             ExtractGeneratedCodecIdentity(first) == ExtractGeneratedCodecIdentity(second),
-            "fixed opaque semantic identity must replace legacy WireFormatId/SchemaId as the CodecHash input");
+            "opaque CodecHash must be controlled by its fixed semantic identity rather than unrelated implementation details");
         Ensure(
             ExtractGeneratedRpcAssemblyHash(first) == ExtractGeneratedRpcAssemblyHash(second),
-            "legacy custom-codec strings must not perturb RpcAssemblyHash once fixed semantic identity is present");
+            "unrelated implementation changes must not perturb RpcAssemblyHash when RPC semantics are unchanged");
         return Task.CompletedTask;
     }
 
@@ -33,13 +31,11 @@ public partial class RpcAnalyzerTests
     public Task OpaqueSemanticIdentityChangeShouldChangeFinalRpcIdentity()
     {
         var first = GenerateOpaqueIdentityManifest(
-            wireFormatId: "same-wire/v1",
-            schemaId: "same-schema/v1",
+            implementationMarker: "same-implementation",
             semanticHigh: 0x0102030405060708UL,
             semanticLow: 0x1112131415161718UL);
         var second = GenerateOpaqueIdentityManifest(
-            wireFormatId: "same-wire/v1",
-            schemaId: "same-schema/v1",
+            implementationMarker: "same-implementation",
             semanticHigh: 0x0102030405060708UL,
             semanticLow: 0x2112131415161718UL);
 
@@ -53,8 +49,7 @@ public partial class RpcAnalyzerTests
     }
 
     private static string GenerateOpaqueIdentityManifest(
-        string wireFormatId,
-        string schemaId,
+        string implementationMarker,
         ulong semanticHigh,
         ulong semanticLow)
     {
@@ -73,11 +68,13 @@ public sealed class OpaquePayload
     public int Value { get; set; }
 }
 
-[RpcCodecImplementation("{{wireFormatId}}", "{{schemaId}}")]
+[RpcCodecImplementation("opaque-test-wire/v1", "opaque-test-schema/v1")]
 [RpcCodecSemanticIdentity({{semanticHigh}}UL, {{semanticLow}}UL)]
 public sealed class OpaquePayloadCodec : IRpcCodec<OpaquePayload>
 {
-    public void Serialize(in OpaquePayload value, IBufferWriter<byte> buffer) { }
+    private const string ImplementationMarker = "{{implementationMarker}}";
+
+    public void Serialize(in OpaquePayload value, IBufferWriter<byte> buffer) { _ = ImplementationMarker; }
     public OpaquePayload Deserialize(in ReadOnlySequence<byte> buffer) => new();
 }
 
