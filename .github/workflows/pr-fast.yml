@@ -34,6 +34,9 @@ jobs:
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
       - name: Verify Formatting
         run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
 
