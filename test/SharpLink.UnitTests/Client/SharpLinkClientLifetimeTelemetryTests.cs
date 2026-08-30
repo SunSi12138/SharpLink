@@ -115,9 +115,11 @@ public class SharpLinkClientLifetimeTelemetryTests
 
         await InvokeUnaryAsync(client, transport, Method(methodId: 906));
 
-        Ensure(logicalActivity is not null, "propagation-only logical activity should still be created");
-        Ensure(!logicalActivity.IsAllDataRequested, "propagation-only logical activity should not request tag data");
-        Ensure(logicalActivity.GetTagItem(LifetimeSourceTag) is null,
+        var capturedActivity = logicalActivity ??
+            throw new Exception("propagation-only logical activity should still be created");
+        Ensure(!capturedActivity.IsAllDataRequested,
+            "propagation-only logical activity should not request tag data");
+        Ensure(capturedActivity.GetTagItem(LifetimeSourceTag) is null,
             "propagation-only logical activity must not collect the lifetime source tag");
     }
 
