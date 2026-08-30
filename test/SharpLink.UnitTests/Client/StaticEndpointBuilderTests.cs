@@ -60,7 +60,7 @@ public class StaticEndpointBuilderTests
         var attributes = new Dictionary<string, string> { ["zone"] = "a" };
         SharpLinkEndpoint? received = null;
         var factory = new TrackingFactory();
-        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var client = CreateClientBuilder()
             .UseEndpoint(
                 new SharpLinkEndpoint
                 {
@@ -87,7 +87,7 @@ public class StaticEndpointBuilderTests
     public async Task CompileValidationFailureShouldNotAcquireEndpointFactory()
     {
         var factory = new TrackingFactory();
-        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var builder = CreateClientBuilder()
             .UseEndpoint(Endpoint("one", 5001), _ => factory)
             .UseConnectionPool(static options => options.MaxConnections = 0);
         await EnsureThrows<ArgumentOutOfRangeException>(() =>
@@ -105,7 +105,7 @@ public class StaticEndpointBuilderTests
     {
         var factory = new TrackingFactory(throwOnDispose: true);
 
-        var failure = CaptureFailure(() => SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var failure = CaptureFailure(() => CreateClientBuilder()
             .UseEndpoint(Endpoint("one", 5001), _ => factory)
             .UseConnectionPool(static options => options.MaxConnections = 0)
             .Build());
@@ -127,7 +127,7 @@ public class StaticEndpointBuilderTests
             SynchronizationContext.SetSynchronizationContext(new NonPumpingSynchronizationContext());
             try
             {
-                _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                _ = CreateClientBuilder()
                     .UseTransport(factory)
                     .UseProtocol(static options =>
                         options.MaxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1)
@@ -160,7 +160,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoint(
                     new SharpLinkEndpoint
                     {
@@ -179,7 +179,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     [Endpoint("first", 5001), Endpoint("second", 5002)],
                     _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
@@ -194,7 +194,7 @@ public class StaticEndpointBuilderTests
         var factory = new ProfileBindingFailureFactory();
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => factory)
                 .Build();
             return Task.CompletedTask;
@@ -207,7 +207,7 @@ public class StaticEndpointBuilderTests
     {
         var factory = new ProfileBindingFailureFactory(throwOnDispose: true);
 
-        var failure = CaptureFailure(() => SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var failure = CaptureFailure(() => CreateClientBuilder()
             .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => factory)
             .Build());
 
@@ -220,7 +220,7 @@ public class StaticEndpointBuilderTests
     [Test]
     public void ClientMaterializeRollbackShouldPreserveBuildAndRuntimeContextCleanupFailures()
     {
-        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var builder = CreateClientBuilder()
             .UseEndpoint(Endpoint("one", 5001), _ => new ProfileBindingFailureFactory());
         var plan = builder.CompileForMultiCluster([new ThrowingScopeManifest()]);
 
@@ -237,7 +237,7 @@ public class StaticEndpointBuilderTests
     {
         var first = new TrackingFactory();
         var second = new TrackingFactory();
-        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var client = CreateClientBuilder()
             .UseEndpoints(
                 [Endpoint("first", 5001), Endpoint("second", 5002)],
                 endpoint => endpoint.Id == "first" ? first : second)
@@ -263,7 +263,7 @@ public class StaticEndpointBuilderTests
         };
         var source = new SinglePassEndpointEnumerable(endpoints);
         var createdEndpointIds = new List<string>();
-        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var builder = CreateClientBuilder()
             .UseEndpoints(source, endpoint =>
             {
                 createdEndpointIds.Add(endpoint.Id);
@@ -292,7 +292,7 @@ public class StaticEndpointBuilderTests
         var remaining = new TrackingFactory();
         await EnsureThrows<AggregateException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     [Endpoint("first", 5001), Endpoint("second", 5002), Endpoint("duplicate", 5003)],
                     endpoint => endpoint.Id switch
@@ -314,7 +314,7 @@ public class StaticEndpointBuilderTests
     {
         var throwing = new TrackingFactory(throwOnDispose: true);
         var remaining = new TrackingFactory();
-        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        var client = CreateClientBuilder()
             .UseEndpoints(
                 [Endpoint("first", 5001), Endpoint("second", 5002)],
                 endpoint => endpoint.Id == "first" ? throwing : remaining)
@@ -332,7 +332,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseTransport(new TrackingFactory())
                 .UseEndpoints([Endpoint("first", 5001), Endpoint("second", 5002)], _ => new TrackingFactory())
                 .Build();
@@ -341,7 +341,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("first", 5001), Endpoint("second", 5002)], _ => new TrackingFactory())
                 .UseConnectionPool(static options => options.MaxConnections = 2)
                 .Build();
@@ -350,7 +350,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseLoadBalancing(SharpLinkLoadBalancingStrategy.Random)
                 .UseEndpointSelector(new FirstSelector());
             return Task.CompletedTask;
@@ -362,7 +362,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("duplicate", 5001), Endpoint("duplicate", 5002)], _ => new TrackingFactory())
                 .Build();
             return Task.CompletedTask;
@@ -370,7 +370,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => new TrackingFactory())
                 .UseCluster(static options =>
                 {
@@ -384,7 +384,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints([], _ => new TrackingFactory())
                 .Build();
             return Task.CompletedTask;
@@ -392,7 +392,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     Enumerable.Range(0, SharpLinkClusterOptions.MaximumEndpoints + 1)
                         .Select(index => Endpoint($"endpoint-{index}", 5001 + index)),
@@ -403,7 +403,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     [new SharpLinkEndpoint
                     {
@@ -418,7 +418,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentOutOfRangeException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => new TrackingFactory())
                 .UseCluster(static options => options.MaxRetiringConnections = -1)
                 .Build();
@@ -431,7 +431,7 @@ public class StaticEndpointBuilderTests
     {
         var first = new TrackingFactory();
         var second = new TrackingFactory();
-        await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+        await using var client = CreateClientBuilder()
             .UseEndpoints(
                 [Endpoint("one", 5001), Endpoint("two", 5002)],
                 endpoint => endpoint.Id == "one" ? first : second)
@@ -452,13 +452,18 @@ public class StaticEndpointBuilderTests
         var shared = new TrackingFactory();
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => shared)
                 .Build();
             return Task.CompletedTask;
         });
         Ensure(shared.DisposeCount == 1, "rejected shared factory must be disposed exactly once");
     }
+
+    private static SharpClientBuilder CreateClientBuilder()
+        => SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout();
 
     private static SharpLinkEndpoint Endpoint(string id, int port) => new()
     {
