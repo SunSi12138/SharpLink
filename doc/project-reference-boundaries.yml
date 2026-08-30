@@ -11,9 +11,23 @@ scope:
   package_references: out_of_scope
 
 evaluation:
-  project_reference_source: msbuild_evaluated_items
-  include_imports: true
-  respect_conditions: true
+  active_items:
+    source: msbuild_evaluated_items
+    include_imports: true
+    respect_conditions: true
+  declaration_audit:
+    source: project_and_repository_import_closure
+    ignore_project_reference_conditions_for_authorization: true
+    ignore_repository_import_conditions_for_traversal: true
+    repository_imports_must_be_statically_traversable: true
+    project_reference_include_must_be_literal_path: true
+    unresolved_or_dynamic_project_reference_include: deny
+    conditions_may_gate_presence_only: true
+    mode_metadata_must_be_context_invariant: true
+    mode_metadata_values_must_be_literal_on_reference:
+      - ReferenceOutputAssembly
+      - OutputItemType
+    mode_metadata_from_item_definitions_or_updates: deny
 
 mode_semantics:
   assembly:
@@ -95,6 +109,9 @@ mechanical_rules:
   canonical_projects_are_exact: true
   discovered_production_projects_must_equal_registered_projects: true
   evaluated_project_references_include_imports: true
+  conditional_references_cannot_hide_edges: true
+  project_reference_conditions_do_not_affect_authorization: true
+  project_reference_mode_is_condition_invariant: true
   unlisted_production_project_references: deny
   production_references_to_test_or_sample_projects: deny
   temporary_exceptions_are_not_precedent: true
