@@ -397,6 +397,7 @@ public class BuilderOwnershipRollbackTests
 
     private static SharpLinkMultiClusterClientBuilder CreateMultiClusterBuilder()
         => SharpLinkMultiClusterClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseGeneratedDiscoverySources(
                 FixedGeneratedManifestSource.Empty,
                 FixedGeneratedClusterRouteSource.Empty);
