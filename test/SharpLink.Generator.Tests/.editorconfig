@@ -1,0 +1,4 @@
+root = false
+
+[RpcAnalyzerTests.cs]
+generated_code = true
