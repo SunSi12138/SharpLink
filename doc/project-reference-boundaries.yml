@@ -10,6 +10,25 @@ scope:
   default: deny
   package_references: out_of_scope
 
+evaluation:
+  project_reference_source: msbuild_evaluated_items
+  include_imports: true
+  respect_conditions: true
+
+mode_semantics:
+  assembly:
+    effective_metadata_defaults:
+      ReferenceOutputAssembly: "true"
+    required_effective_metadata:
+      ReferenceOutputAssembly: "true"
+    forbidden_effective_metadata:
+      OutputItemType:
+        - Analyzer
+  analyzer:
+    required_effective_metadata:
+      OutputItemType: Analyzer
+      ReferenceOutputAssembly: "false"
+
 projects:
   abstractions: src/SharpLink.Abstractions/SharpLink.Abstractions.csproj
   runtime: src/SharpLink.Runtime/SharpLink.Runtime.csproj
@@ -52,9 +71,6 @@ allowed_references:
   - from: sdk
     to: generator
     mode: analyzer
-    required_metadata:
-      OutputItemType: Analyzer
-      ReferenceOutputAssembly: "false"
 
   - from: serializer_sharppack
     to: abstractions
@@ -78,6 +94,7 @@ temporary_exceptions:
 mechanical_rules:
   canonical_projects_are_exact: true
   discovered_production_projects_must_equal_registered_projects: true
+  evaluated_project_references_include_imports: true
   unlisted_production_project_references: deny
   production_references_to_test_or_sample_projects: deny
   temporary_exceptions_are_not_precedent: true
