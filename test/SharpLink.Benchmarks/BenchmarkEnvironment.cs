@@ -75,6 +75,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var client = createClientBuilder?.Invoke(port) ?? SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port);
+        client.DisableRequestTimeout();
         if (configureClientRuntime is not null)
             client.UseRuntime(configureClientRuntime);
         var builtClient = client.Build();
