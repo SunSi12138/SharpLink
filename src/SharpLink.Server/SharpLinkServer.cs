@@ -105,11 +105,9 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _maxConcurrentCallsPerConnection = _runtimeContext.FlowControl.MaxConcurrentCallsPerConnection;
         _maxConcurrentCallsPerServer = _runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
         _callAdmission = new ServerCallAdmission(
+            this,
             _maxConcurrentCallsPerConnection,
-            _maxConcurrentCallsPerServer,
-            () => CurrentState == ServerState.Running,
-            TrySignalCallsDrained,
-            () => ResourceGovernor);
+            _maxConcurrentCallsPerServer);
         _serviceCleanup = composition.ServiceCleanup;
         _frameworkTasks = composition.FrameworkTasks;
         var logWindow = TimeSpan.FromSeconds(5);
