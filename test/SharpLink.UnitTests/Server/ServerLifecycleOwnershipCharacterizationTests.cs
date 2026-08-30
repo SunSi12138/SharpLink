@@ -3,6 +3,7 @@ using System.IO.Pipelines;
 using System.Reflection;
 using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using SharpLink.Sdk;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 
