@@ -12,7 +12,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
     private IGeneratedManifestSource _manifestSource = GlobalCatalogManifestSource.Instance;
     private IGeneratedClusterRouteSource _routeSource = GlobalCatalogClusterRouteSource.Instance;
     private ILoggerFactory? _loggerFactory;
-    private Action<SharpClientBuilder>? _configureChildTimeoutPolicy;
+    private ClientRequestTimeoutPolicy _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Unspecified;
 
     /// <summary>Creates a multi-cluster client builder.</summary>
     public static SharpLinkMultiClusterClientBuilder Create() => new();
@@ -28,22 +28,21 @@ public sealed class SharpLinkMultiClusterClientBuilder
     /// <summary>Uses the recommended 30-second request-timeout fallback for child clients unless a slot overrides it.</summary>
     public SharpLinkMultiClusterClientBuilder UseRequestTimeout()
     {
-        _configureChildTimeoutPolicy = static child => child.UseRequestTimeout();
+        _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Recommended(TimeSpan.FromSeconds(30));
         return this;
     }
 
     /// <summary>Uses a custom request-timeout fallback for child clients unless a slot overrides it.</summary>
     public SharpLinkMultiClusterClientBuilder UseRequestTimeout(TimeSpan timeout)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        _configureChildTimeoutPolicy = child => child.UseRequestTimeout(timeout);
+        _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Custom(timeout);
         return this;
     }
 
     /// <summary>Explicitly disables the client-wide request-timeout fallback for child clients unless a slot overrides it.</summary>
     public SharpLinkMultiClusterClientBuilder DisableRequestTimeout()
     {
-        _configureChildTimeoutPolicy = static child => child.DisableRequestTimeout();
+        _requestTimeoutPolicy = ClientRequestTimeoutPolicy.Disabled;
         return this;
     }
 
@@ -80,7 +79,6 @@ public sealed class SharpLinkMultiClusterClientBuilder
         var slotOptions = new SharpLinkMultiClusterSlotOptions();
         configureSlot?.Invoke(slotOptions);
         var child = SharpClientBuilder.Create();
-        _configureChildTimeoutPolicy?.Invoke(child);
         configure(child);
         _clusters.Add(cluster, new ClusterConfiguration(cluster, child, slotOptions.AllowDynamicContracts));
         return this;
@@ -90,6 +88,13 @@ public sealed class SharpLinkMultiClusterClientBuilder
     public ISharpLinkMultiClusterClient Build()
     {
         var options = _options.CloneValidated();
+        if (!_requestTimeoutPolicy.IsSpecified)
+        {
+            throw new InvalidOperationException(
+                "A request-timeout policy must be selected before building the multi-cluster client. " +
+                "Call UseRequestTimeout() for the recommended 30-second fallback, " +
+                "UseRequestTimeout(timeout) for a custom fallback, or DisableRequestTimeout() to explicitly allow no client-wide fallback.");
+        }
         if (_clusters.Count == 0)
             throw new InvalidOperationException("At least one cluster slot must be configured.");
         if (_clusters.Count > options.MaxClusters)
@@ -157,6 +162,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 .ToArray();
             try
             {
+                configuration.Builder.ApplyRequestTimeoutPolicyIfUnspecified(_requestTimeoutPolicy);
                 var plan = configuration.Builder.CompileForMultiCluster(staticManifests);
                 configuredConnections = checked(configuredConnections + plan.MaximumConnections);
                 compiledPlans.Add(new CompiledClusterPlan(
@@ -205,7 +211,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 [],
                 configuredConnections,
                 _loggerFactory,
-                _configureChildTimeoutPolicy);
+                _requestTimeoutPolicy);
             transaction.Commit();
             return client;
         }
