@@ -14,7 +14,7 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 ## 原生 Codec
 
-内置 Codec 覆盖常用 primitive、enum、string、时间/标识类型、数组、List、Memory、nullable、tuple、受支持不可变集合和由 `[RpcSerializable]`/`[RpcMember]` 描述的 DTO。编码有明确 null 标记、长度上限和完整消费检查；尾随字节、非法 UTF-8、非规范整数或 required/nullability 违反会作为 `DataLoss`。
+内置 Codec 覆盖常用 primitive、enum、string、时间/标识类型、数组、List、Memory、nullable、tuple、受支持不可变集合和由 `[RpcSerializable]`/`[RpcMember]` 描述的 DTO。编码有明确 null 标记、长度上限和完整消费检查；尾随字节、非法 UTF-16LE 字节长度、非规范整数或 required/nullability 违反会作为 `DataLoss`。
 
 其中一小组类型属于 **Framework wire primitive**：SharpLink 直接定义并拥有其固定 wire semantic，因此它们不是可配置 Codec policy surface。当前包括 primitive numerics、`bool`、`char`、`string`、`Guid`、SharpLink 明确定义固定 wire semantic 的时间/标识 scalar、enum，以及作为 protocol bytes primitive 的 `byte[]`。这些类型不能通过 `RpcCodec`、`RpcCodecAdapter` 或 `RpcCodecRoute` 重绑定。
 
@@ -55,7 +55,11 @@ public sealed class MyTypeCodec : IRpcCodec<MyType>
 
 ## Codec Adapter 与 SharpPack
 
-`IRpcCodecAdapter` 用于由 Generator 生成闭合工厂，再由 Runtime Context 创建隔离 scope。当前 `AdapterId` / `WireFormatId` / `SchemaId` 仍参与既有 registration validation；#396 会把稳定 identity 收敛为 fixed-width hash，而 #386 只负责 Adapter 的最终选择与 lifecycle ownership。
+`IRpcCodecAdapter` 用于由 Generator 生成闭合工厂，再由 Runtime Context 创建隔离 scope。用于 generated RPC 的 Adapter 实现必须声明 `[RpcCodecSemanticIdentity(high, low)]`。对一个闭合目标类型 `T`，最终 Adapter `CodecHash` 把这份显式的 Adapter semantic identity 与 `T` 的 canonical type identity 组合成一个 **opaque compatibility boundary**；Generator 不会遍历 `T` 的字段、属性或 DTO member graph 去猜测第三方 serializer 的 wire schema。
+
+因此，仅修改 Adapter 目标类型的 CLR 成员不会自动改变该 Adapter 的 `CodecHash`。当 Adapter 的实际编码、解码、schema evolution 规则或任何会改变 wire compatibility 的行为发生变化时，Adapter 作者必须显式 bump `[RpcCodecSemanticIdentity]`。反过来，保留同一 semantic identity 就是在声明这些 closed Adapter Codec 仍然 wire-compatible。不同目标类型即使使用同一个 Adapter，也会因为 canonical target type identity 不同而得到不同的 closed `CodecHash`。
+
+`AdapterId` 继续负责 Adapter 注册/选择和 Runtime scope ownership；它不是目标成员图的替代 schema hash。不要通过反射目标类型布局或字段集合来推导 Adapter wire identity，因为 Adapter 可以忽略、重命名、转换或以完全不同的 schema 编码这些成员。
 
 官方复杂对象图扩展是 `SharpLink.Serializer.SharpPack`。用 `[RpcCodecAdapter(typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]` 或项目约定把类型交给 SharpPack；每个 Runtime Context × Manifest × AdapterId 拥有独立 scope，不使用进程级默认 formatter slot。动态模块排空后，Codec、Adapter scope 和 collectible ALC 才能一起释放。
 
