@@ -13,7 +13,7 @@ internal readonly record struct FixturePolicyEntry(
 internal static class CompatibilityPolicy
 {
     internal const int ArtifactSchemaVersion = 1;
-    internal const string BaselineFixturePolicySha256 = "891d85bdbe10db368899e62a7110378aac0e989da181728e81adef3cdab5c7f5";
+    internal const string BaselineFixturePolicySha256 = "9e3c6ed421a21c15ffba4ee7027fa8aab166bf385247cd9e8d65de8a68a62cf5";
 
     private static readonly FixturePolicyEntry[] RequiredFixtures =
     [
