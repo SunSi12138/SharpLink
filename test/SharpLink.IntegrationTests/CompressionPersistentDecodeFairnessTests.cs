@@ -175,7 +175,7 @@ public class CompressionPersistentDecodeFairnessTests
         internal ISharpLinkClient ClientA { get; }
         internal ISharpLinkClient ClientB { get; }
 
-        internal int ActiveCalls => ReadField<int>("_globalActiveCalls");
+        internal int ActiveCalls => ServerCallAdmissionDiagnostics.ActiveCallCount(_server);
         internal int ActiveDecodes => ReadDiagnosticProperty<int>("ActiveDecodeCountForDiagnostics");
         internal long RetainedCompressedBytes =>
             ReadDiagnosticProperty<long>("RetainedCompressedBytesForDiagnostics");
@@ -255,16 +255,6 @@ public class CompressionPersistentDecodeFairnessTests
                         SharpLinkCompressionProviders.CreateBrotli(),
                         coordinator: null)))
                 .Build();
-
-        private T ReadField<T>(string name)
-        {
-            var field = _server.GetType().GetField(
-                name,
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic)
-                ?? throw new Exception($"cannot find server field {name}");
-            return (T)field.GetValue(_server)!;
-        }
 
         private T ReadDiagnosticProperty<T>(string name)
         {
