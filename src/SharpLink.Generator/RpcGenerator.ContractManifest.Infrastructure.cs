@@ -50,7 +50,11 @@ public partial class RpcGenerator
                    !string.IsNullOrWhiteSpace(codec.Type) &&
                    !string.IsNullOrWhiteSpace(codec.Kind) &&
                    IsValidCodecHash(codec.CodecHash)) &&
-               manifest.Enums.All(static item => item is not null) &&
+               manifest.Enums.All(static item =>
+                   item is not null &&
+                   !string.IsNullOrWhiteSpace(item.Name) &&
+                   !string.IsNullOrWhiteSpace(item.UnderlyingType) &&
+                   IsValidCodecHash(item.CodecHash)) &&
                manifest.Unions.All(static union =>
                    union is not null && union.Cases is not null && union.Cases.All(static item => item is not null)) &&
                manifest.Services.All(static service => service is not null);
@@ -207,6 +211,7 @@ internal static class __SharpLinkContractManifest
         ImmutableArray<RpcInterfaceModel?> Interfaces,
         ImmutableArray<RpcServiceModel?> Services,
         ImmutableArray<GeneratedCodecModel> Codecs,
+        ImmutableArray<GeneratedCodecHashModel> CodecHashes,
         ImmutableArray<GeneratedEnumModel> Enums,
         ImmutableArray<RpcUnionModel?> Unions);
 
@@ -315,6 +320,8 @@ internal static class __SharpLinkContractManifest
     {
         public string Name { get; set; } = string.Empty;
         public string UnderlyingType { get; set; } = string.Empty;
+        [JsonRequired]
+        public string CodecHash { get; set; } = string.Empty;
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
 
