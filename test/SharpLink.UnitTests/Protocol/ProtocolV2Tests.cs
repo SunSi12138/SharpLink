@@ -533,34 +533,37 @@ public class ProtocolV2Tests
     }
 
     [Test]
-    public async Task GeneratedDtoStringShouldRejectInvalidUtf8()
+    public void GeneratedDtoStringShouldPreserveUtf16LeAndRejectOddByteLength()
     {
         var payload = new byte[]
         {
             2, 0, 0, 0,
             0xC3, 0x28
         };
+        var contiguousReader = new SequenceReader<byte>(new ReadOnlySequence<byte>(payload));
+        Ensure(RpcGeneratedCodecWire.ReadString(ref contiguousReader) == "\u28C3",
+            "contiguous generated string must decode UTF-16LE code units");
+
+        var segmentedReader = new SequenceReader<byte>(CreateSegmented(payload, 1));
+        Ensure(RpcGeneratedCodecWire.ReadString(ref segmentedReader) == "\u28C3",
+            "segmented generated string must decode UTF-16LE code units");
+
+        var oddPayload = new byte[] { 1, 0, 0, 0, 0x41 };
         var contiguousFailure = CaptureException(() =>
         {
-            var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(payload));
+            var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(oddPayload));
             _ = RpcGeneratedCodecWire.ReadString(ref reader);
         });
         var segmentedFailure = CaptureException(() =>
         {
-            var reader = new SequenceReader<byte>(CreateSegmented(payload, 1));
+            var reader = new SequenceReader<byte>(CreateSegmented(oddPayload, 1));
             _ = RpcGeneratedCodecWire.ReadString(ref reader);
         });
 
         Ensure(contiguousFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
-            "contiguous generated string must reject invalid UTF-8");
+            "contiguous generated UTF-16 string must reject an odd byte length");
         Ensure(segmentedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
-            "segmented generated string must reject invalid UTF-8");
-
-        var validReplacementPayload = new byte[] { 3, 0, 0, 0, 0xEF, 0xBF, 0xBD };
-        var validReader = new SequenceReader<byte>(CreateSegmented(validReplacementPayload, 1));
-        Ensure(RpcGeneratedCodecWire.ReadString(ref validReader) == "\uFFFD",
-            "a canonically encoded replacement character must remain valid");
-        await Task.CompletedTask;
+            "segmented generated UTF-16 string must reject an odd byte length");
     }
 
     [Test]
