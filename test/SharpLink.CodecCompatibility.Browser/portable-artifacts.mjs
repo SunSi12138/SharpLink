@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 const BUILTIN_RAW_CATEGORY = 'builtin-semantic-raw';
 const BROWSER_PLATFORM_TAG = 'browser-wasm-browser-mono-net10';
-const EXPECTED_FIXTURE_POLICY_SHA256 = '19ba9cda6e05e7a023af6ce76649deaf330e67d214f553c6611bab45019987d9';
+const EXPECTED_FIXTURE_POLICY_SHA256 = '9e3c6ed421a21c15ffba4ee7027fa8aab166bf385247cd9e8d65de8a68a62cf5';
 const ONE_BYTE_FIXTURE_ID_SET = new Set(['Byte', 'ByteEnum']);
 const EXPECTED_PADDING_POISON_FIXTURE_IDS = Object.freeze(['ByteInt32', 'Int64Byte']);
 const DESKTOP_PLATFORM_TAGS = Object.freeze([
@@ -554,7 +554,7 @@ export async function appendRawLayoutEvidence(reportFile, producerRoot, localCor
     const report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
     validateVerificationReportSchema(report, reportFile);
     validateResultConsumers(report, reportFile);
-    const reportRegistry = validateFixtureRegistry(report.consumer, `${reportFile} consumer registry`);
+    const reportRegistry = validateFixtureRegistry(report.consumer, `${reportFile} fixture registry`);
     const producers = await loadEnvelopes(producerRoot, { excludeBuiltinRaw: false });
     const localEnvelopes = await loadEnvelopes(localCorpusRoot, { excludeBuiltinRaw: false });
     if (localEnvelopes.length !== 1) {
