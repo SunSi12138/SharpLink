@@ -19,7 +19,7 @@ public sealed class RpcStringCodecTests
 
         Ensure(writer.WrittenCount == sizeof(uint) + expectedPayload.Length,
             "root string wire size must be a UInt32 byte length plus UTF-8 payload bytes");
-        Ensure(BinaryPrimitives.ReadUInt32LittleEndian(writer.WrittenSpan) == expectedPayload.Length,
+        Ensure(BinaryPrimitives.ReadUInt32LittleEndian(writer.WrittenSpan) == (uint)expectedPayload.Length,
             "root string length prefix must contain the UTF-8 byte count");
         Ensure(writer.WrittenSpan[sizeof(uint)..].SequenceEqual(expectedPayload),
             "root string payload must be UTF-8 rather than native UTF-16 memory");
