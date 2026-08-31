@@ -63,7 +63,7 @@ public sealed class RpcStringCodecTests
         {
             _ = StringCodec.Instance.Deserialize(new ReadOnlySequence<byte>(bytes));
         }
-        catch (SharpLinkException exception) when (exception.ErrorCode == SharpLinkErrorCode.DataLoss)
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.DataLoss)
         {
             return;
         }
