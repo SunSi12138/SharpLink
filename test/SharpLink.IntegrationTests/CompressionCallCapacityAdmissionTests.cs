@@ -364,7 +364,7 @@ public class CompressionCallCapacityAdmissionTests
 
         public ISharpLinkClient Client { get; }
         public long RejectedOneWayCalls => ReadField<long>("_rejectedOneWayCalls");
-        public int ActiveCalls => ReadField<int>("_globalActiveCalls");
+        public int ActiveCalls => ServerCallAdmissionDiagnostics.ActiveCallCount(_server);
         public int ActiveDecodes => ReadDiagnosticProperty<int>("ActiveDecodeCountForDiagnostics");
         public long RetainedCompressedBytes =>
             ReadDiagnosticProperty<long>("RetainedCompressedBytesForDiagnostics");
