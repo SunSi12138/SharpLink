@@ -65,15 +65,16 @@ Generator 没有应用运行时生命周期。其生命周期是：
 4. 编译器把生成源码与用户源码一起编译进目标程序集。
 5. 应用运行后只使用这些生成 Artifact；不会创建或保留 Generator 实例。
 
-因此运行时模块注册、替换或卸载不应重新调用 Source Generator。动态模块使用已经编译好的 Manifest/Artifact，并由 Runtime/Server 的实例级生命周期接管。
+因此运行时模块注册、替换或卸载不应重新调用 Source Generator。动态模块使用已经编译好的 Manifest/Artifact；Client/Server 分别拥有其上层 assembly registration、generation、replace/unregister 与 drain 生命周期，Runtime Context 只承接这些生命周期所需的 Codec/Manifest runtime state。
 
 ## 与 Runtime/Client/Server 的接口
 
 Generator 与其他子系统通过生成代码和 Abstractions 契约协作：
 
 - Proxy 是 Client 调用入口，但通过公共调用抽象进入 Client，而不是直接操作 Runtime Session。
+- 动态 Contract/Proxy 的注册、替换、注销和 generation/drain 由 Client 实例管理；动态 Service 的对应上层生命周期由 Server 实例管理。
 - Stub 是 Server 的类型安全调用入口，但协议帧的读取/写入仍由 Runtime 机制负责。
-- Codec/Manifest 为 Runtime 提供静态元数据和工厂入口，Runtime 决定实例级注册、缓存和所有权。
+- Codec/Manifest 为 Runtime 提供静态元数据和工厂入口；Runtime Context 管理与 registration identity 绑定的 Codec/Manifest runtime state，但不取代 Client/Server 的上层动态模块生命周期。
 - Activator 为 Server 提供类型安全的服务构造路径，Server 仍负责 Scope、服务生命周期和排空。
 
 这条边界允许 Client、Server、Runtime 的内部实现独立重构，只要稳定 Abstractions 与 Generated ABI 契约保持兼容。
