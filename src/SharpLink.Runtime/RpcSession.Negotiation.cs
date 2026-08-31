@@ -64,6 +64,12 @@ internal sealed partial class RpcSession
     private StreamFlowController? ValidateAndCreateNegotiatedFlowController(
         NegotiatedSessionOptions options)
     {
+        if (options.ProtocolMinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
+        {
+            throw NegotiationViolation(
+                $"Negotiated protocol minor version {options.ProtocolMinorVersion} is below the local " +
+                $"compatibility floor {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
+        }
         if (options.ProtocolMinorVersion > ProtocolV2Constants.MinorVersion)
         {
             throw NegotiationViolation(
