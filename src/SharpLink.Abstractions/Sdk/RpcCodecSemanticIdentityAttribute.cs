@@ -3,6 +3,9 @@ namespace SharpLink.Sdk;
 /// <summary>
 /// Declares the fixed-width semantic identity of an opaque hand-written Codec or Codec Adapter.
 /// Change this value whenever the implementation's RPC-visible wire semantics change.
+/// For Codec Adapters, SharpLink combines this value with the target type's stable logical identity;
+/// SharpLink does not infer serializer-specific schema evolution inside the same target type, so the
+/// adapter or integration author must change this identity when that closed Codec's wire schema changes.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class RpcCodecSemanticIdentityAttribute : Attribute
