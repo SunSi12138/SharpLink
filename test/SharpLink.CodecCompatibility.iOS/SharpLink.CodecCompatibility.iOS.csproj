@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Compile Include="../SharpLink.CodecCompatibility/AutoLayoutEvidenceFixtures.cs" Link="Shared/AutoLayoutEvidenceFixtures.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/CompatibilityPolicy.cs" Link="Shared/CompatibilityPolicy.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/Fixtures.cs" Link="Shared/Fixtures.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/Models.cs" Link="Shared/Models.cs" />
