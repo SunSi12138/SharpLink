@@ -2,10 +2,6 @@ namespace SharpLink.Runtime;
 
 internal static class RpcWirePlatform
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
-    internal static void Initialize()
-        => EnsureSupported(BitConverter.IsLittleEndian);
-
     internal static bool IsSupported(bool isLittleEndian)
         => isLittleEndian;
 
