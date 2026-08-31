@@ -71,19 +71,41 @@ public partial class RpcGenerator
 
             if (TryGetCollection(type, out var collectionKind, out var elementType, out var keyType, out var valueType))
             {
-                var parts = new List<string>
+                if (collectionKind == GeneratedCodecKind.Nullable &&
+                    elementType is not null &&
+                    type.IsUnmanagedType &&
+                    !HasExactBuiltinNullableCodecElement(elementType))
                 {
-                    "codec/v1",
-                    "collection",
-                    collectionKind.ToString()
-                };
-                if (elementType is not null)
-                    parts.Add(GetFinalCodecHash(elementType, cache, stack).ToHex());
-                if (keyType is not null)
-                    parts.Add(GetFinalCodecHash(keyType, cache, stack).ToHex());
-                if (valueType is not null)
-                    parts.Add(GetFinalCodecHash(valueType, cache, stack).ToHex());
-                result = Hashing.GetSemanticHash(parts.ToArray());
+                    result = GetRuntimeUnsafeBlitNullableCodecHash(type, elementType);
+                }
+                else if (TryGetBuiltinCollectionElementSemanticIdentity(
+                             collectionKind,
+                             elementType,
+                             out var builtinElementIdentity))
+                {
+                    result = Hashing.GetSemanticHash(
+                        "codec/v1",
+                        "collection",
+                        collectionKind.ToString(),
+                        "runtime-builtin-blit/v1",
+                        builtinElementIdentity);
+                }
+                else
+                {
+                    var parts = new List<string>
+                    {
+                        "codec/v1",
+                        "collection",
+                        collectionKind.ToString()
+                    };
+                    if (elementType is not null)
+                        parts.Add(GetFinalCodecHash(elementType, cache, stack).ToHex());
+                    if (keyType is not null)
+                        parts.Add(GetFinalCodecHash(keyType, cache, stack).ToHex());
+                    if (valueType is not null)
+                        parts.Add(GetFinalCodecHash(valueType, cache, stack).ToHex());
+                    result = Hashing.GetSemanticHash(parts.ToArray());
+                }
             }
             else if (type.IsUnmanagedType && !IsRuntimeSizedUnsafeBlitType(type))
             {
@@ -103,6 +125,61 @@ public partial class RpcGenerator
             stack.Remove(typeName);
             cache[typeName] = result;
             return result;
+        }
+
+        private RpcHashValue GetRuntimeUnsafeBlitNullableCodecHash(ITypeSymbol nullableType, ITypeSymbol elementType)
+        {
+            var layout = new StringBuilder("unsafe-blit/v2|abi:little-endian|native-pointer-width/64");
+            AppendUnsafeBlitPhysicalLayout(
+                nullableType,
+                layout,
+                new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
+
+            if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType)
+            {
+                return Hashing.GetSemanticHash(
+                    "codec/v1",
+                    "nullable-runtime-unsafe-blit/v1",
+                    layout.ToString(),
+                    GetEnumDeclarationSemanticIdentity(enumType));
+            }
+
+            return Hashing.GetSemanticHash(
+                "codec/v1",
+                "nullable-runtime-unsafe-blit/v1",
+                layout.ToString());
+        }
+
+        private bool TryGetBuiltinCollectionElementSemanticIdentity(
+            GeneratedCodecKind collectionKind,
+            ITypeSymbol? elementType,
+            out string identity)
+        {
+            if (elementType is null ||
+                collectionKind is not (GeneratedCodecKind.Array or
+                    GeneratedCodecKind.List or
+                    GeneratedCodecKind.Memory or
+                    GeneratedCodecKind.ReadOnlyMemory or
+                    GeneratedCodecKind.ImmutableArray) ||
+                !IsBuiltinBlitElement(elementType))
+            {
+                identity = string.Empty;
+                return false;
+            }
+
+            if (string.Equals(elementType.ToDisplayString(), "System.DateTimeOffset", StringComparison.Ordinal))
+            {
+                identity = "datetime-offset/collection-raw16-padding2-7-zero/release-scoped/v1";
+                return true;
+            }
+
+            var layout = new StringBuilder("builtin-blit-element/v1|abi:little-endian");
+            AppendUnsafeBlitPhysicalLayout(
+                elementType,
+                layout,
+                new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
+            identity = layout.ToString();
+            return true;
         }
 
         private bool TryGetReferencedGeneratedCodecHash(ITypeSymbol type, out RpcHashValue hash)
@@ -382,6 +459,9 @@ public partial class RpcGenerator
             return string.Join("|", parts);
         }
 
+        private static bool HasExactBuiltinNullableCodecElement(ITypeSymbol type)
+            => type.TypeKind != TypeKind.Enum && GetFixedSize(type) != 0;
+
         private bool TryGetFrameworkPrimitiveCodecHash(
             ITypeSymbol type,
             Dictionary<string, RpcHashValue> cache,
@@ -402,7 +482,7 @@ public partial class RpcGenerator
             if (type is INamedTypeSymbol nullable &&
                 nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
                 nullable.TypeArguments.Length == 1 &&
-                IsFrameworkWirePrimitive(nullable.TypeArguments[0]))
+                HasExactBuiltinNullableCodecElement(nullable.TypeArguments[0]))
             {
                 hash = Hashing.GetSemanticHash(
                     "codec/v1",
