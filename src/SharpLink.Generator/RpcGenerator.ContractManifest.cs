@@ -101,6 +101,7 @@ public partial class RpcGenerator
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
+        ImmutableArray<GeneratedCodecHashModel> codecHashes,
         ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions,
         ImmutableArray<AdditionalText> additionalTexts,
@@ -108,7 +109,7 @@ public partial class RpcGenerator
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var document = CreateContractManifest(interfaces, services, codecs, generatedEnums, unions);
+        var document = CreateContractManifest(interfaces, services, codecs, codecHashes, generatedEnums, unions);
         var diagnostics = ValidateCurrentContractManifest(document);
 
         if (!string.IsNullOrWhiteSpace(options.BaselinePath))
@@ -153,7 +154,7 @@ public partial class RpcGenerator
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more Codec entries or opaque payload references are missing required semantic identity",
+                            "one or more Codec entries, enum entries, or opaque payload references are missing required semantic identity",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -201,6 +202,7 @@ public partial class RpcGenerator
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
+        ImmutableArray<GeneratedCodecHashModel> codecHashes,
         ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions)
     {
@@ -210,6 +212,12 @@ public partial class RpcGenerator
             .ToDictionary(
                 static group => group.Key,
                 static group => group.First(),
+                StringComparer.Ordinal);
+        var codecHashesByType = codecHashes
+            .GroupBy(static codec => RemoveGlobalPrefix(codec.TypeName), StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => new RpcHashValue(group.First().High, group.First().Low).ToHex(),
                 StringComparer.Ordinal);
         var opaqueCodecHashes = codecsByType
             .Where(static pair => pair.Value.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
@@ -330,12 +338,18 @@ public partial class RpcGenerator
             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(underlying))
                 return;
             name = RemoveGlobalPrefix(name!);
+            if (!codecHashesByType.TryGetValue(name, out var codecHash))
+            {
+                throw new InvalidOperationException(
+                    $"Final RPC Codec graph is missing enum CodecHash metadata for '{name}'.");
+            }
             if (!enums.ContainsKey(name))
             {
                 enums.Add(name, new ContractManifestEnum
                 {
                     Name = name,
                     UnderlyingType = RemoveGlobalPrefix(underlying!),
+                    CodecHash = codecHash,
                     SourceLocation = location
                 });
             }
