@@ -222,36 +222,39 @@ public static class RpcGeneratedCodecWire
         if (reader.Remaining < size)
             throw DataLoss("Generated DateTimeOffset payload is truncated.");
 
-        Span<byte> temporary = stackalloc byte[size];
-        ReadOnlySpan<byte> payload;
         if (reader.UnreadSpan.Length >= size)
         {
-            payload = reader.UnreadSpan[..size];
-        }
-        else
-        {
-            if (!reader.TryCopyTo(temporary))
-                throw DataLoss("Generated DateTimeOffset payload is truncated.");
-            payload = temporary;
+            var value = DecodeDateTimeOffset(reader.UnreadSpan[..size]);
+            reader.Advance(size);
+            return value;
         }
 
-        var offsetMinutes = BinaryPrimitives.ReadInt16LittleEndian(payload);
-        var utcTicks = BinaryPrimitives.ReadInt64LittleEndian(payload[sizeof(long)..]);
-        if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
-            throw DataLoss("Generated DateTimeOffset payload contains invalid UTC ticks or offset.");
-        if (!payload[sizeof(short)..sizeof(long)].IsEmpty &&
-            payload[sizeof(short)..sizeof(long)].IndexOfAnyExcept((byte)0) >= 0)
-        {
-            throw DataLoss("Generated DateTimeOffset payload contains non-canonical padding.");
-        }
-        var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
-        if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
-            offsetTicks < 0 && utcTicks < -offsetTicks)
-        {
-            throw DataLoss("Generated DateTimeOffset payload is outside the supported clock range.");
-        }
+        Span<byte> temporary = stackalloc byte[size];
+        if (!reader.TryCopyTo(temporary))
+            throw DataLoss("Generated DateTimeOffset payload is truncated.");
+        var decoded = DecodeDateTimeOffset(temporary);
         reader.Advance(size);
-        return new DateTimeOffset(utcTicks + offsetTicks, TimeSpan.FromMinutes(offsetMinutes));
+        return decoded;
+
+        static DateTimeOffset DecodeDateTimeOffset(ReadOnlySpan<byte> payload)
+        {
+            var offsetMinutes = BinaryPrimitives.ReadInt16LittleEndian(payload);
+            var utcTicks = BinaryPrimitives.ReadInt64LittleEndian(payload[sizeof(long)..]);
+            if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
+                throw DataLoss("Generated DateTimeOffset payload contains invalid UTC ticks or offset.");
+            for (var index = sizeof(short); index < sizeof(long); index++)
+            {
+                if (payload[index] != 0)
+                    throw DataLoss("Generated DateTimeOffset payload contains non-canonical padding.");
+            }
+            var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
+            if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
+                offsetTicks < 0 && utcTicks < -offsetTicks)
+            {
+                throw DataLoss("Generated DateTimeOffset payload is outside the supported clock range.");
+            }
+            return new DateTimeOffset(utcTicks + offsetTicks, TimeSpan.FromMinutes(offsetMinutes));
+        }
     }
 
     /// <summary>Returns the fixed wire type for a supported unmanaged size.</summary>
