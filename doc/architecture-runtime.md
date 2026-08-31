@@ -67,7 +67,7 @@ Runtime Context 是运行时共享机制的实例级所有权边界：
 物理 Session 是 Runtime 的核心状态机边界。高层顺序为：
 
 1. 上层选择/接受 transport connection。
-2. Runtime 执行协议握手并建立协商后的 Session 状态。
+2. Client/Server 使用 Runtime 提供的握手 frame、capability negotiation 和 session-phase 机制，分别驱动各自的握手与认证编排，并建立协商后的 Session 状态。
 3. read loop、SendPump、dispatcher 和 flow-control 机制在 Session 生命周期内协同工作。
 4. Client/Server 把调用或服务分发动作挂接到 Session，但不直接接管 frame bookkeeping。
 5. 任一协议违规、transport 失败或显式停止进入单一终止路径，取消等待者并释放 transport、buffer 和 dispatcher 状态。
