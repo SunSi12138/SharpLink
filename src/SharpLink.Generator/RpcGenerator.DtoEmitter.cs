@@ -80,20 +80,18 @@ public partial class RpcGenerator
     {
         sb.AppendLine("internal static class __SharpLinkGeneratedUtf8");
         sb.AppendLine("{");
-        sb.AppendLine("    private static readonly global::System.Text.UTF8Encoding StrictEncoding = new global::System.Text.UTF8Encoding(false, true);");
-        sb.AppendLine();
-        sb.AppendLine("    internal static int GetByteCount(string value) => StrictEncoding.GetByteCount(value);");
+        sb.AppendLine("    internal static int GetByteCount(string value) => checked(value.Length * sizeof(char));");
         sb.AppendLine();
         sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
         sb.AppendLine("    {");
-        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));");
-        sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(length, checked((uint)byteCount));");
-        sb.AppendLine("        writer.Advance(sizeof(uint));");
+        sb.AppendLine("        var length = writer.GetSpan(sizeof(int));");
+        sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(length, byteCount);");
+        sb.AppendLine("        writer.Advance(sizeof(int));");
         sb.AppendLine("        if (byteCount == 0)");
         sb.AppendLine("            return;");
         sb.AppendLine("        var payload = writer.GetSpan(byteCount);");
-        sb.AppendLine("        var written = StrictEncoding.GetBytes(value, payload);");
-        sb.AppendLine("        writer.Advance(written);");
+        sb.AppendLine("        value.AsSpan().CopyTo(global::System.Runtime.InteropServices.MemoryMarshal.Cast<byte, char>(payload));");
+        sb.AppendLine("        writer.Advance(byteCount);");
         sb.AppendLine("    }");
         sb.AppendLine("}");
         sb.AppendLine();
