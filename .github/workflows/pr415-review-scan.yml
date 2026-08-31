@@ -1,0 +1,26 @@
+name: PR415 Review Scan
+on:
+  push:
+    branches: [feature/issue-396-deterministic-rpc-identity]
+    paths: [.github/workflows/pr415-review-scan.yml]
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Scan review surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== protocol literals ==='
+          grep -RInE 'Protocol[[:space:]]*=[[:space:]]*2|MinorVersion|MinimumCompatibleMinorVersion' src test doc --exclude-dir=bin --exclude-dir=obj | head -n 250 || true
+          echo '=== DateTimeOffsetRaw ==='
+          grep -RIn 'DateTimeOffsetRaw' . --exclude-dir=.git --exclude-dir=bin --exclude-dir=obj || true
+          echo '=== enum identity tests ==='
+          grep -RInE 'enum.*(CodecHash|AssemblyHash)|Enum.*Identity|enum Status|enum.*value' test/SharpLink.Generator.Tests --exclude-dir=bin --exclude-dir=obj | head -n 200 || true
+          echo '=== stale docs ==='
+          grep -RInE 'RpcCodecImplementation|SchemaId|WireFormatId' doc --exclude-dir=bin --exclude-dir=obj || true
