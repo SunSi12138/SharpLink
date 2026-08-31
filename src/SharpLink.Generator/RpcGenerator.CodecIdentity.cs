@@ -152,9 +152,9 @@ public partial class RpcGenerator
                 case GeneratedCodecKind.Adapter:
                     return Hashing.GetSemanticHash(
                         "codec/v1",
-                        "adapter-closed/v1",
+                        "adapter-closed/v2",
                         GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter").ToHex(),
-                        GetAdapterClosedCodecSemanticIdentity(model).ToHex());
+                        GetAdapterTargetLogicalIdentity(model).ToHex());
                 case GeneratedCodecKind.Dto:
                     {
                         var parts = new List<string>
@@ -173,7 +173,7 @@ public partial class RpcGenerator
                             switch (member.Kind)
                             {
                                 case GeneratedMemberKind.String:
-                                    parts.Add("string/content/utf8/u32le-byte-length/v1");
+                                    parts.Add("string/content/utf16le/i32le-byte-length/v1");
                                     parts.Add("string/null/dto-wire-null/v1");
                                     break;
                                 case GeneratedMemberKind.Fixed:
@@ -340,6 +340,12 @@ public partial class RpcGenerator
         private static string GetFixedMemberSemanticIdentity(GeneratedMemberModel member)
         {
             var typeName = member.FixedTypeName ?? member.TypeName;
+            if (string.Equals(typeName, "System.DateTimeOffset", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.DateTimeOffset", StringComparison.Ordinal))
+            {
+                return "datetime-offset/dto-offset-minutes-i16le-padding6-utc-ticks-i64le/v1";
+            }
+
             return string.Join(
                 ":",
                 "fixed/v1",
@@ -380,8 +386,8 @@ public partial class RpcGenerator
                 hash = Hashing.GetSemanticHash(
                     "codec/v1",
                     "framework",
-                    "string/content/utf8/u32le-byte-length/v1",
-                    "string/null/u32-max/v1");
+                    "string/content/utf16le/i32le-byte-length/v1",
+                    "string/null/i32-minus-one/v1");
                 return true;
             }
 
@@ -412,7 +418,7 @@ public partial class RpcGenerator
                     "System.Half" => "half/fixed2/v1",
                     "System.Text.Rune" => "rune/fixed4/v1",
                     "System.Guid" => "guid/fixed16/v1",
-                    "System.DateTimeOffset" => "datetime-offset/fixed16/v1",
+                    "System.DateTimeOffset" => "datetime-offset/root-ticks-i64le-offset-minutes-i16le/v1",
                     "System.DateTime" => "datetime/fixed8/v1",
                     "System.DateOnly" => "date-only/fixed4/v1",
                     "System.TimeOnly" => "time-only/fixed8/v1",
