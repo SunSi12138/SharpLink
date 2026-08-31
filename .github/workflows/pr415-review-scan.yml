@@ -11,16 +11,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 3
+          fetch-depth: 4
       - name: Apply and validate review fixes
         shell: bash
         run: |
           set -euo pipefail
-          git show HEAD^^:.github/workflows/pr415-review-scan.yml \
+          git show 6fad4171b2bb0e1d933c0006e54a751677f4d2b5:.github/workflows/pr415-review-scan.yml \
             | awk '/^          python3 <<.PY.$/{capture=1; next} /^          PY$/{capture=0} capture{sub(/^          /, ""); print}' \
             > /tmp/pr415_patch.py
           test -s /tmp/pr415_patch.py
           python3 /tmp/pr415_patch.py
+
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('test/SharpLink.Generator.Tests/RpcCodecEighthReviewRegressionTests.cs')
+          text = p.read_text()
+          old = '''        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "Status") != ExtractGeneratedCodecIdentity(changed, "Status"),\n            "swapping enum name/value mappings must change the direct enum CodecHash even when the underlying byte width is unchanged");\n        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "EnumEnvelope") != ExtractGeneratedCodecIdentity(changed, "EnumEnvelope"),\n            "enum declaration identity must propagate through fixed DTO members");\n        Ensure(\n            !string.Equals(baseline, changed, StringComparison.Ordinal),\n            "the changed enum mapping must propagate into the generated RPC assembly identity source");'''
+          new = '''        Ensure(\n            ExtractGeneratedMethodId(baseline, "EchoStatus") != ExtractGeneratedMethodId(changed, "EchoStatus"),\n            "swapping enum name/value mappings must change a direct-enum method identity even when the underlying byte width is unchanged");\n        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "EnumEnvelope") != ExtractGeneratedCodecIdentity(changed, "EnumEnvelope"),\n            "enum declaration identity must propagate through fixed DTO members");\n        Ensure(\n            ExtractGeneratedRpcAssemblyHash(baseline) != ExtractGeneratedRpcAssemblyHash(changed),\n            "the changed enum mapping must propagate into RpcAssemblyHash");'''
+          if text.count(old) != 1:
+              raise SystemExit('enum regression assertion block did not match exactly once')
+          p.write_text(text.replace(old, new))
+          PY
 
           dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
