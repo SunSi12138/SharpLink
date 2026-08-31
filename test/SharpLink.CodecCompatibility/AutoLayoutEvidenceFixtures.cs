@@ -65,7 +65,7 @@ internal static class AutoLayoutEvidenceFixtures
                 Prefix = 0x61,
                 Value = offset,
                 Tail = 0x5152535455565758
-            }, false, nameof(DateTimeOffsetContainer.Prefix), nameof(DateTimeOffsetContainer.Value), nameof(DateTimeOffsetContainer.Tail)),
+            }),
             new Fixture<AutoDateTimeOffsetContainer>("AutoDateTimeOffsetContainer", "auto-layout-release-scoped", new AutoDateTimeOffsetContainer
             {
                 Prefix = 0x62,
