@@ -295,8 +295,9 @@ public partial class RpcGenerator
         var currentEnums = current.Enums.ToDictionary(static item => item.Name, StringComparer.Ordinal);
         foreach (var oldEnum in baseline.Enums)
         {
-            if (currentEnums.TryGetValue(oldEnum.Name, out var newEnum) &&
-                !string.Equals(oldEnum.UnderlyingType, newEnum.UnderlyingType, StringComparison.Ordinal))
+            if (!currentEnums.TryGetValue(oldEnum.Name, out var newEnum))
+                continue;
+            if (!string.Equals(oldEnum.UnderlyingType, newEnum.UnderlyingType, StringComparison.Ordinal))
             {
                 diagnostics.Add(Change(
                     ContractCompatibilityKind.EnumUnderlyingType,
@@ -304,6 +305,15 @@ public partial class RpcGenerator
                     newEnum.Name,
                     $"enum underlying type changed from {oldEnum.UnderlyingType} to {newEnum.UnderlyingType}",
                     "restore the original enum underlying type"));
+            }
+            else if (!string.Equals(oldEnum.CodecHash, newEnum.CodecHash, StringComparison.Ordinal))
+            {
+                diagnostics.Add(Change(
+                    ContractCompatibilityKind.WireType,
+                    newEnum.SourceLocation,
+                    newEnum.Name,
+                    $"enum semantic CodecHash changed from '{oldEnum.CodecHash}' to '{newEnum.CodecHash}'",
+                    "restore the original enum name/value mapping or publish a new enum payload type"));
             }
         }
 
