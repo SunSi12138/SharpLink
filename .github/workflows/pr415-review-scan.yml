@@ -1,26 +1,124 @@
-name: PR415 Review Scan
+name: PR415 Review Patch
 on:
   push:
     branches: [feature/issue-396-deterministic-rpc-identity]
     paths: [.github/workflows/pr415-review-scan.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  scan:
+  patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Scan review surfaces
+      - name: Apply review fixes
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== protocol literals ==='
-          grep -RInE 'Protocol[[:space:]]*=[[:space:]]*2|MinorVersion|MinimumCompatibleMinorVersion' src test doc --exclude-dir=bin --exclude-dir=obj | head -n 250 || true
-          echo '=== DateTimeOffsetRaw ==='
-          grep -RIn 'DateTimeOffsetRaw' . --exclude-dir=.git --exclude-dir=bin --exclude-dir=obj || true
-          echo '=== enum identity tests ==='
-          grep -RInE 'enum.*(CodecHash|AssemblyHash)|Enum.*Identity|enum Status|enum.*value' test/SharpLink.Generator.Tests --exclude-dir=bin --exclude-dir=obj | head -n 200 || true
-          echo '=== stale docs ==='
-          grep -RInE 'RpcCodecImplementation|SchemaId|WireFormatId' doc --exclude-dir=bin --exclude-dir=obj || true
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f"{path}: expected {count} occurrences, found {actual}: {old[:80]!r}")
+              p.write_text(text.replace(old, new))
+
+          replace('src/SharpLink.Abstractions/ProtocolV2.cs',
+                  'public const ushort MinorVersion = 4;',
+                  'public const ushort MinorVersion = 5;')
+          replace('src/SharpLink.Abstractions/ProtocolV2.cs',
+                  'public const ushort MinimumCompatibleMinorVersion = 4;',
+                  'public const ushort MinimumCompatibleMinorVersion = 5;')
+          replace('src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs',
+                  '/// <summary>The unchanged SharpLink wire protocol version.</summary>\n    public const int Protocol = 2;',
+                  '/// <summary>The SharpLink wire protocol generation used by generated artifacts.</summary>\n    public const int Protocol = 3;')
+
+          replace('src/SharpLink.Runtime/RpcSession.Negotiation.cs',
+                  '''        if (options.ProtocolMinorVersion > ProtocolV2Constants.MinorVersion)\n        {\n            throw NegotiationViolation(\n                $"Negotiated protocol minor version {options.ProtocolMinorVersion} exceeds the local " +\n                $"version {ProtocolV2Constants.MinorVersion}.");\n        }''',
+                  '''        if (options.ProtocolMinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion ||\n            options.ProtocolMinorVersion > ProtocolV2Constants.MinorVersion)\n        {\n            throw NegotiationViolation(\n                $"Negotiated protocol minor version {options.ProtocolMinorVersion} is outside the local supported " +\n                $"range [{ProtocolV2Constants.MinimumCompatibleMinorVersion}, {ProtocolV2Constants.MinorVersion}].");\n        }''')
+
+          codec = Path('src/SharpLink.Generator/RpcGenerator.CodecIdentity.cs')
+          text = codec.read_text()
+          old_fixed = '''        private static string GetFixedMemberSemanticIdentity(GeneratedMemberModel member)\n        {\n            var typeName = member.FixedTypeName ?? member.TypeName;\n            if (string.Equals(typeName, "System.DateTimeOffset", StringComparison.Ordinal) ||\n                string.Equals(typeName, "global::System.DateTimeOffset", StringComparison.Ordinal))\n            {\n                return "datetime-offset/dto-offset-minutes-i16le-padding6-utc-ticks-i64le/v1";\n            }\n\n            return string.Join(\n                ":",\n                "fixed/v1",\n                member.FixedSize.ToString(InvariantCulture),\n                member.EnumUnderlyingType ?? typeName);\n        }\n'''
+          new_fixed = '''        private string GetFixedMemberSemanticIdentity(GeneratedMemberModel member)\n        {\n            var typeName = member.FixedTypeName ?? member.TypeName;\n            if (string.Equals(typeName, "System.DateTimeOffset", StringComparison.Ordinal) ||\n                string.Equals(typeName, "global::System.DateTimeOffset", StringComparison.Ordinal))\n            {\n                return "datetime-offset/dto-offset-minutes-i16le-padding6-utc-ticks-i64le/v1";\n            }\n\n            if (member.EnumUnderlyingType is not null &&\n                TryResolveReachableType(typeName, out var resolvedType) &&\n                resolvedType is INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType)\n            {\n                return string.Join(\n                    ":",\n                    "fixed/v2",\n                    member.FixedSize.ToString(InvariantCulture),\n                    member.EnumUnderlyingType,\n                    GetEnumDeclarationSemanticIdentity(enumType).ToHex());\n            }\n\n            return string.Join(\n                ":",\n                "fixed/v1",\n                member.FixedSize.ToString(InvariantCulture),\n                member.EnumUnderlyingType ?? typeName);\n        }\n\n        private static RpcHashValue GetEnumDeclarationSemanticIdentity(INamedTypeSymbol enumType)\n        {\n            var parts = new List<string>\n            {\n                "enum-declaration/v1",\n                GetTypeName(enumType),\n                enumType.EnumUnderlyingType is null ? "<missing-underlying>" : GetTypeName(enumType.EnumUnderlyingType)\n            };\n            foreach (var field in enumType.GetMembers()\n                         .OfType<IFieldSymbol>()\n                         .Where(static field => field.HasConstantValue)\n                         .OrderBy(static field => field.Name, StringComparer.Ordinal))\n            {\n                parts.Add(field.Name);\n                parts.Add(Convert.ToString(field.ConstantValue, InvariantCulture) ?? "<null>");\n            }\n            return Hashing.GetSemanticHash(parts.ToArray());\n        }\n'''
+          if text.count(old_fixed) != 1:
+              raise SystemExit('CodecIdentity fixed-member block did not match exactly once')
+          text = text.replace(old_fixed, new_fixed)
+          old_enum = '''                hash = Hashing.GetSemanticHash(\n                    "codec/v1",\n                    "enum",\n                    GetFinalCodecHash(enumUnderlying, cache, stack).ToHex());'''
+          new_enum = '''                hash = Hashing.GetSemanticHash(\n                    "codec/v1",\n                    "enum",\n                    GetFinalCodecHash(enumUnderlying, cache, stack).ToHex(),\n                    GetEnumDeclarationSemanticIdentity((INamedTypeSymbol)type).ToHex());'''
+          if text.count(old_enum) != 1:
+              raise SystemExit('CodecIdentity direct-enum block did not match exactly once')
+          codec.write_text(text.replace(old_enum, new_enum))
+
+          fixtures = Path('test/SharpLink.CodecCompatibility/Fixtures.cs')
+          text = fixtures.read_text()
+          marker = '[StructLayout(LayoutKind.Sequential)]\ninternal struct SequentialControl { public byte A; public int B; public long C; }'
+          nested = '''[StructLayout(LayoutKind.Sequential)]\ninternal struct DateTimeOffsetContainer { public byte Prefix; public DateTimeOffset Value; public long Tail; }\n\n'''
+          if text.count(marker) != 1:
+              raise SystemExit('Fixtures struct insertion marker mismatch')
+          text = text.replace(marker, nested + marker)
+          fixture_line = '            new Fixture<DateTimeOffset>("DateTimeOffsetRaw", "builtin-semantic-raw", new DateTimeOffset(2026, 8, 20, 12, 34, 56, TimeSpan.FromHours(8)), static (left, right) => left.Ticks == right.Ticks && left.UtcTicks == right.UtcTicks && left.Offset == right.Offset),'
+          nested_fixture = '''            new Fixture<DateTimeOffsetContainer>("DateTimeOffsetContainerRaw", "builtin-semantic-raw", new DateTimeOffsetContainer { Prefix = 0x5A, Value = new DateTimeOffset(2026, 8, 20, 12, 34, 56, TimeSpan.FromHours(8)), Tail = 0x0102030405060708 }, static (left, right) => left.Prefix == right.Prefix && left.Value.Ticks == right.Value.Ticks && left.Value.UtcTicks == right.Value.UtcTicks && left.Value.Offset == right.Value.Offset && left.Tail == right.Tail, false, nameof(DateTimeOffsetContainer.Prefix), nameof(DateTimeOffsetContainer.Value), nameof(DateTimeOffsetContainer.Tail)),'''
+          if text.count(fixture_line) != 1:
+              raise SystemExit('DateTimeOffset fixture insertion marker mismatch')
+          fixtures.write_text(text.replace(fixture_line, fixture_line + '\n' + nested_fixture))
+
+          replace('test/SharpLink.CodecCompatibility/CompatibilityPolicy.cs',
+                  '        new("DateTimeOffsetRaw", "builtin-semantic-raw", false, true),',
+                  '        new("DateTimeOffsetRaw", "builtin-semantic-raw", false, true),\n        new("DateTimeOffsetContainerRaw", "builtin-semantic-raw", false, true),')
+
+          test_path = Path('test/SharpLink.Generator.Tests/RpcCodecEighthReviewRegressionTests.cs')
+          if test_path.exists():
+              raise SystemExit('unexpected existing eighth review test file')
+          test_path.write_text('''using System;\nusing System.Linq;\nusing System.Threading.Tasks;\n\nnamespace SharpLink.Generator.Tests;\n\npublic partial class RpcAnalyzerTests\n{\n    [Test]\n    public Task EnumValueMappingShouldParticipateInDirectAndDtoCodecIdentity()\n    {\n        static string Source(bool swapped)\n        {\n            var members = swapped ? "Ok = 1, Error = 0" : "Ok = 0, Error = 1";\n            return BuildSource($$"""\npublic enum Status : byte { {{members}} }\n\n[SharpLink.Sdk.RpcSerializable]\npublic sealed class EnumEnvelope\n{\n    public Status Value { get; set; }\n}\n\n[SharpLink.Sdk.RpcContract]\npublic interface IEnumIdentityContract : SharpLink.Sdk.IService\n{\n    ValueTask<Status> EchoStatus(Status value, CancellationToken cancellationToken);\n    ValueTask<EnumEnvelope> EchoEnvelope(EnumEnvelope value, CancellationToken cancellationToken);\n}\n""");\n        }\n\n        var baseline = RunGeneratorAndGetSources(Source(swapped: false))\n            .Single(static generated => generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));\n        var changed = RunGeneratorAndGetSources(Source(swapped: true))\n            .Single(static generated => generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));\n\n        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "Status") != ExtractGeneratedCodecIdentity(changed, "Status"),\n            "swapping enum name/value mappings must change the direct enum CodecHash even when the underlying byte width is unchanged");\n        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "EnumEnvelope") != ExtractGeneratedCodecIdentity(changed, "EnumEnvelope"),\n            "enum declaration identity must propagate through fixed DTO members");\n        Ensure(\n            !string.Equals(baseline, changed, StringComparison.Ordinal),\n            "the changed enum mapping must propagate into the generated RPC assembly identity source");\n        return Task.CompletedTask;\n    }\n}\n''')
+
+          docs = Path('doc/contracts-and-codecs.md')
+          text = docs.read_text()
+          text = text.replace(
+              '- 当前 Generator Manifest 仍沿用 `SchemaId` / `WireFormatId` 作为既有 generated registration 与 baseline infrastructure；#386 只负责确定 assembly-owned final Codec graph，不把这些字符串扩展成新的 per-type compatibility model。后续 #396 会以 fixed-width `CodecHash` / `RpcAssemblyHash` 替换长期 identity 模型并执行 assembly-level exact equality。',
+              '- 当前 Phase 1 identity 模型为 fixed-width `CodecHash` / `RpcAssemblyHash`：DTO、collection、Framework primitive 与最终 Codec graph 的 wire semantic 会递归传播到 RPC identity；远端 bind 时的 assembly-level exact equality 属于后续阶段。')
+          text = text.replace(
+              'Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定。当前 dev 仍要求 Codec 用 `RpcCodecImplementation` 提供 legacy wire/schema registration identity；这不是 #386 新定义的长期 compatibility API，后续由 #396 的 hash identity 模型替换：',
+              'Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定。Opaque custom Codec 必须用 `[RpcCodecSemanticIdentity(high, low)]` 声明其 wire semantic identity；当编码、解码或兼容性语义变化时必须 bump 该 identity：')
+          text = text.replace('[RpcCodecImplementation("my-type/v1", "my-type-schema/v1")]', '[RpcCodecSemanticIdentity(0x0123456789ABCDEFUL, 0xFEDCBA9876543210UL)]')
+          text = text.replace('不存在另一条通过 `RpcCodecAdapter(... WireFormatId = ...)` 绑定手写 `IRpcCodec<T>` 的 Direct API。', '不存在另一条通过 Adapter metadata 绑定手写 `IRpcCodec<T>` 的 Direct API。')
+          if 'RpcCodecImplementation' in text or 'SchemaId' in text or 'WireFormatId' in text:
+              raise SystemExit('contracts-and-codecs.md still contains stale identity API names')
+          docs.write_text(text)
+
+          compat = Path('doc/codec-compatibility.md')
+          text = compat.read_text()
+          anchor = 'This distinction is already useful evidence: Android Mono/CoreCLR and iOS Mono runs observed a `DateTimeOffsetRaw` representation difference relative to another runtime while the logical fixture definition was the same. That representation-only observation is retained as non-blocking evidence rather than converted into an unsafe semantic materialization.'
+          replacement = anchor + ' UnsafeBlit compatibility for framework-owned raw layouts is therefore release-scoped: SharpLink requires stability only within the supported runtime/platform matrix for the same wire protocol/release, and a supported ABI change requires a protocol/release compatibility boundary rather than an AutoLayout runtime guard.'
+          if text.count(anchor) != 1:
+              raise SystemExit('codec compatibility DateTimeOffset paragraph mismatch')
+          compat.write_text(text.replace(anchor, replacement))
+
+          migration = Path('doc/migration.md')
+          text = migration.read_text()
+          text = text.replace('`Protocol = 2`', '`Protocol = 3`')
+          text = text.replace('`protocolVersion: 2`', '`protocolVersion: 3`')
+          text = text.replace('`RpcCodecAttribute`/`RpcCodecImplementationAttribute` 并带 schema identity', '`RpcCodecAttribute` + `[RpcCodecSemanticIdentity(high, low)]` 声明 opaque wire semantic identity')
+          migration.write_text(text)
+
+          vnext = Path('doc/runtime-phase-17-generated-abi-vnext.md')
+          text = vnext.read_text()
+          text = text.replace('（`RpcCodecAttribute` / `RpcCodecImplementationAttribute`）。', '（`RpcCodecAttribute` / `RpcCodecSemanticIdentityAttribute`）。')
+          text = text.replace('`Protocol = 2` 不变', '`Protocol = 3`，对应本 release 的新 wire generation')
+          vnext.write_text(text)
+          PY
+
+          dotnet format SharpLink.slnx --verify-no-changes --no-restore || dotnet format SharpLink.slnx --no-restore
+          dotnet test test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-restore
+          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
+          dotnet build test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj -c Release --no-restore
+
+          git config user.name "SunSi12138"
+          git config user.email "54728594+SunSi12138@users.noreply.github.com"
+          git add src test doc
+          git commit -m "fix: address protocol and enum identity review"
+          git push origin HEAD:feature/issue-396-deterministic-rpc-identity
