@@ -828,22 +828,22 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DirectStringDtosShouldCacheExactUtf8SizesAndPreReserveOnce()
+    public Task DirectStringDtosShouldCacheExactUtf16SizesAndPreReserveOnce()
     {
         var source = BuildDirectStringDtoSource(1, 4, 16, 64);
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
 
-        Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf8") == 1,
-            "one assembly-private UTF-8 helper must be shared by all eligible generated Codecs");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 85,
-            "each direct string must be counted once in the direct reservation path");
-        Ensure(CountOccurrences(generated, "StrictEncoding.GetByteCount(") == 1,
-            "the known-size write helper must never traverse UTF-16 again");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 85,
+        Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf16") == 1,
+            "one assembly-private UTF-16 helper must be shared by all eligible generated Codecs");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__string_") == 85,
+            "each direct string must compute its exact UTF-16 byte count once in the direct reservation path");
+        Ensure(CountOccurrences(generated, "checked(value.Length * sizeof(char))") == 1,
+            "the known-size helper must compute UTF-16 bytes in O(1) without an encoding traversal");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(writer, __string_") == 85,
             "each direct string must reuse its cached value and byte count in the direct write path");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__snapshot.__string_") == 85,
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_") == 85,
             "each direct string must be captured once for the snapshot sizing path");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(buffer, __snapshot.__string_") == 85,
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(buffer, __snapshot.__string_") == 85,
             "each direct string must reuse its snapshot value and byte count in the sized write path");
         Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 4,
             "each eligible DTO must gate whole-payload reservation on the SharpLink packet writer");
@@ -854,12 +854,13 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(CountOccurrences(generated, "var __encodedSize =") == 4,
             "each eligible DTO must compute one checked encoded size");
         Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Field", StringComparison.Ordinal),
-            "eligible DTOs must not call the byte-counting public string primitive after pre-sizing");
-        Ensure(generated.Contains("new global::System.Text.UTF8Encoding(false, true)", StringComparison.Ordinal),
-            "the generated helper must preserve strict UTF-8 encoder semantics");
-        Ensure(generated.Contains("global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian", StringComparison.Ordinal) &&
-               generated.Contains("var payload = writer.GetSpan(byteCount);", StringComparison.Ordinal),
-            "known-size writes must preserve the little-endian prefix and separate payload request");
+            "eligible DTOs must not call the public string primitive after pre-sizing");
+        Ensure(!generated.Contains("UTF8Encoding", StringComparison.Ordinal) &&
+               !generated.Contains("StrictEncoding.GetByteCount", StringComparison.Ordinal),
+            "generated DTO string sizing must not transcode or traverse UTF-8");
+        Ensure(generated.Contains("global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian", StringComparison.Ordinal) &&
+               generated.Contains("value.AsSpan().CopyTo(global::System.Runtime.InteropServices.MemoryMarshal.Cast<byte, char>(payload));", StringComparison.Ordinal),
+            "known-size writes must preserve the Int32 little-endian prefix and raw UTF-16 code-unit payload");
         return Task.CompletedTask;
     }
 
@@ -882,7 +883,7 @@ public sealed class NestedPayload
 """);
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
+        Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf16", StringComparison.Ordinal) &&
                generated.Contains("out var __exactSize", StringComparison.Ordinal) &&
                generated.Contains("IRpcSizedCodec", StringComparison.Ordinal) &&
                generated.Contains("IRpcSizedCodecSnapshot", StringComparison.Ordinal) &&
