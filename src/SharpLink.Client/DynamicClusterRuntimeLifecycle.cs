@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkClient
     /// Owns dynamic-cluster connect/resolver workers, stop state and resource cleanup supervision.
     /// The runtime supplies topology mutation callbacks while this coordinator owns lifecycle races.
     /// </summary>
-    internal sealed class DynamicClusterRuntimeLifecycle
+    private sealed class DynamicClusterRuntimeLifecycle
     {
         private readonly SharpLinkClient _client;
         private readonly ISharpLinkEndpointResolver _resolver;
@@ -271,7 +271,7 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    internal readonly record struct DynamicClusterStopSnapshot(
+    private readonly record struct DynamicClusterStopSnapshot(
         ClientConnection[] Connections,
         IClientTransportFactory[] Factories);
 }
