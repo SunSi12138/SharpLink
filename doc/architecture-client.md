@@ -22,9 +22,8 @@
 规范生产依赖要求：
 
 ```text
-SharpLink.Client
-  -> SharpLink.Runtime
-  -> SharpLink.Abstractions
+SharpLink.Client -> SharpLink.Runtime
+SharpLink.Client -> SharpLink.Abstractions
 
 SharpLink.Client -X-> SharpLink.Server
 SharpLink.Client -X-> SharpLink.Hosting
