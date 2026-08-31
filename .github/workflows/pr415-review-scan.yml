@@ -1,104 +1,26 @@
-name: PR415 Review Patch
+name: PR415 Review Scan
 on:
   push:
     branches: [feature/issue-396-deterministic-rpc-identity]
     paths: [.github/workflows/pr415-review-scan.yml]
 permissions:
-  contents: write
+  contents: read
 jobs:
-  patch:
+  scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 5
-      - name: Apply and validate review fixes
+      - name: Locate review markers
         shell: bash
         run: |
           set -euo pipefail
-          git show 6fad4171b2bb0e1d933c0006e54a751677f4d2b5:.github/workflows/pr415-review-scan.yml \
-            | awk '/^          python3 <<.PY.$/{capture=1; next} /^          PY$/{capture=0} capture{sub(/^          /, ""); print}' \
-            > /tmp/pr415_patch.py
-          test -s /tmp/pr415_patch.py
-          python3 /tmp/pr415_patch.py
-
-          cat > test/SharpLink.Generator.Tests/RpcCodecEighthReviewRegressionTests.cs <<'CS'
-          using System;
-          using System.Linq;
-          using System.Threading.Tasks;
-
-          namespace SharpLink.Generator.Tests;
-
-          public partial class RpcAnalyzerTests
-          {
-              [Test]
-              public Task EnumValueMappingShouldParticipateInDirectAndDtoCodecIdentity()
-              {
-                  static string DirectSource(bool swapped)
-                  {
-                      var members = swapped ? "Ok = 1, Error = 0" : "Ok = 0, Error = 1";
-                      return BuildSource($$"""
-          public enum Status : byte { {{members}} }
-
-          [SharpLink.Sdk.RpcContract]
-          public interface IDirectEnumIdentityContract : SharpLink.Sdk.IService
-          {
-              ValueTask<Status> Echo(Status value, CancellationToken cancellationToken);
-          }
-          """);
-                  }
-
-                  static string DtoSource(bool swapped)
-                  {
-                      var members = swapped ? "Ok = 1, Error = 0" : "Ok = 0, Error = 1";
-                      return BuildSource($$"""
-          public enum Status : byte { {{members}} }
-
-          [SharpLink.Sdk.RpcSerializable]
-          public sealed class EnumEnvelope
-          {
-              public Status Value { get; set; }
-          }
-
-          [SharpLink.Sdk.RpcContract]
-          public interface IDtoEnumIdentityContract : SharpLink.Sdk.IService
-          {
-              ValueTask<EnumEnvelope> Echo(EnumEnvelope value, CancellationToken cancellationToken);
-          }
-          """);
-                  }
-
-                  static string Manifest(string source)
-                      => RunGeneratorAndGetSources(source)
-                          .Single(static generated => generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
-
-                  var directBaseline = Manifest(DirectSource(swapped: false));
-                  var directChanged = Manifest(DirectSource(swapped: true));
-                  Ensure(
-                      ExtractGeneratedRpcAssemblyHash(directBaseline) != ExtractGeneratedRpcAssemblyHash(directChanged),
-                      "swapping enum name/value mappings must change RpcAssemblyHash for a direct enum contract even when the underlying byte width is unchanged");
-
-                  var dtoBaseline = Manifest(DtoSource(swapped: false));
-                  var dtoChanged = Manifest(DtoSource(swapped: true));
-                  Ensure(
-                      ExtractGeneratedCodecIdentity(dtoBaseline, "EnumEnvelope") != ExtractGeneratedCodecIdentity(dtoChanged, "EnumEnvelope"),
-                      "enum declaration identity must propagate through fixed DTO members");
-                  Ensure(
-                      ExtractGeneratedRpcAssemblyHash(dtoBaseline) != ExtractGeneratedRpcAssemblyHash(dtoChanged),
-                      "the DTO enum mapping change must propagate into RpcAssemblyHash");
-                  return Task.CompletedTask;
-              }
-          }
-          CS
-          sed -i 's/^          //' test/SharpLink.Generator.Tests/RpcCodecEighthReviewRegressionTests.cs
-
-          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release
-          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
-          dotnet build test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj -c Release
-
-          git diff --check
-          git config user.name "SunSi12138"
-          git config user.email "54728594+SunSi12138@users.noreply.github.com"
-          git add src test doc
-          git commit -m "fix: address protocol and enum identity review"
-          git push origin HEAD:feature/issue-396-deterministic-rpc-identity
+          echo '=== DateTimeOffsetRaw ==='
+          git grep -n -C 8 'DateTimeOffsetRaw' -- test/SharpLink.CodecCompatibility || true
+          echo '=== stale docs ==='
+          git grep -n -C 5 -E 'RpcCodecImplementationAttribute|SchemaId|WireFormatId' -- doc || true
+          echo '=== DTO string helper ==='
+          git grep -n -C 6 -E '__SharpLinkGeneratedUtf16|AppendGeneratedUtf16Helper|WriteInt32LittleEndian.*byteCount' -- src/SharpLink.Generator || true
+          echo '=== enum resolution helpers ==='
+          git grep -n -C 5 -E 'TryResolveReachableType|GetFixedMemberSemanticIdentity|TypeKind == TypeKind.Enum' -- src/SharpLink.Generator/RpcGenerator.CodecIdentity.cs || true
+          echo '=== generated wire string ==='
+          git grep -n -C 12 'ReadString\|WriteString' -- src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs || true
