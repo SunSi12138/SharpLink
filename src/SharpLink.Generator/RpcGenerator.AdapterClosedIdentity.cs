@@ -86,17 +86,17 @@ public partial class RpcGenerator
                 {
                     var memberType = member switch
                     {
-                        IFieldSymbol memberField => memberField.Type,
-                        IPropertySymbol memberProperty => memberProperty.Type,
+                        IFieldSymbol fieldSymbol => fieldSymbol.Type,
+                        IPropertySymbol propertySymbol => propertySymbol.Type,
                         _ => throw new InvalidOperationException("Unexpected adapter target member kind.")
                     };
                     parts.Add("member:" + member.Kind + ":" + member.Name + ":" + GetTypeName(memberType));
-                    if (member is IFieldSymbol memberField)
-                        parts.Add(memberField.IsReadOnly ? "readonly" : "mutable");
-                    else if (member is IPropertySymbol memberProperty)
+                    if (member is IFieldSymbol fieldMember)
+                        parts.Add(fieldMember.IsReadOnly ? "readonly" : "mutable");
+                    else if (member is IPropertySymbol propertyMember)
                     {
-                        parts.Add(memberProperty.GetMethod?.DeclaredAccessibility == Accessibility.Public ? "get" : "no-get");
-                        parts.Add(memberProperty.SetMethod?.DeclaredAccessibility == Accessibility.Public ? "set" : "no-set");
+                        parts.Add(propertyMember.GetMethod?.DeclaredAccessibility == Accessibility.Public ? "get" : "no-get");
+                        parts.Add(propertyMember.SetMethod?.DeclaredAccessibility == Accessibility.Public ? "set" : "no-set");
                     }
                     AppendAttributes(member, parts, "member-attr:");
                     AppendAdapterClosedTargetShape(memberType, parts, stack, depth + 1);
