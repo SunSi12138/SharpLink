@@ -24,18 +24,25 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs')
           text = path.read_text()
-          old = '''        var serverActiveCalls = (int)(harness.Server.GetType().GetField(
-                  "_globalActiveCalls",
-                  BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(harness.Server) ?? -1);'''
-          new = '''        var serverActiveCalls =
-              ServerCallAdmissionDiagnostics.ActiveCallCount(harness.Server);'''
-          count = text.count(old)
+          pattern = re.compile(
+              r'(?m)^(?P<indent>\s*)var serverActiveCalls = \(int\)\(harness\.Server\.GetType\(\)\.GetField\(\s*\n'
+              r'\s*"_globalActiveCalls",\s*\n'
+              r'\s*BindingFlags\.Instance \| BindingFlags\.NonPublic\)\?\.GetValue\(harness\.Server\) \?\? -1\);')
+          match = pattern.search(text)
+          if match is None:
+              raise SystemExit('RuntimeAssembly stale diagnostic was not found')
+          indent = match.group('indent')
+          replacement = (
+              f'{indent}var serverActiveCalls =\n'
+              f'{indent}    ServerCallAdmissionDiagnostics.ActiveCallCount(harness.Server);')
+          text, count = pattern.subn(replacement, text, count=1)
           if count != 1:
-              raise SystemExit(f'expected exactly one RuntimeAssembly stale diagnostic, found {count}')
-          path.write_text(text.replace(old, new))
+              raise SystemExit(f'expected exactly one RuntimeAssembly stale diagnostic, replaced {count}')
+          path.write_text(text)
           PY
 
           if grep -R -n --include='*.cs' '_globalActiveCalls\|_pendingCallAdmissions' test/SharpLink.IntegrationTests; then
