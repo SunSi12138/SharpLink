@@ -55,12 +55,12 @@ public partial class RpcGenerator
                 if (named.TypeKind == TypeKind.Enum)
                 {
                     parts.Add("enum-underlying:" + GetTypeName(named.EnumUnderlyingType!));
-                    foreach (var field in named.GetMembers().OfType<IFieldSymbol>()
+                    foreach (var enumField in named.GetMembers().OfType<IFieldSymbol>()
                                  .Where(static field => field.HasConstantValue)
                                  .OrderBy(static field => field.Name, StringComparer.Ordinal))
                     {
-                        parts.Add("enum:" + field.Name + "=" +
-                                  (Convert.ToString(field.ConstantValue, InvariantCulture) ?? "null"));
+                        parts.Add("enum:" + enumField.Name + "=" +
+                                  (Convert.ToString(enumField.ConstantValue, InvariantCulture) ?? "null"));
                     }
                     return;
                 }
@@ -86,17 +86,17 @@ public partial class RpcGenerator
                 {
                     var memberType = member switch
                     {
-                        IFieldSymbol field => field.Type,
-                        IPropertySymbol property => property.Type,
+                        IFieldSymbol memberField => memberField.Type,
+                        IPropertySymbol memberProperty => memberProperty.Type,
                         _ => throw new InvalidOperationException("Unexpected adapter target member kind.")
                     };
                     parts.Add("member:" + member.Kind + ":" + member.Name + ":" + GetTypeName(memberType));
-                    if (member is IFieldSymbol field)
-                        parts.Add(field.IsReadOnly ? "readonly" : "mutable");
-                    else if (member is IPropertySymbol property)
+                    if (member is IFieldSymbol memberField)
+                        parts.Add(memberField.IsReadOnly ? "readonly" : "mutable");
+                    else if (member is IPropertySymbol memberProperty)
                     {
-                        parts.Add(property.GetMethod?.DeclaredAccessibility == Accessibility.Public ? "get" : "no-get");
-                        parts.Add(property.SetMethod?.DeclaredAccessibility == Accessibility.Public ? "set" : "no-set");
+                        parts.Add(memberProperty.GetMethod?.DeclaredAccessibility == Accessibility.Public ? "get" : "no-get");
+                        parts.Add(memberProperty.SetMethod?.DeclaredAccessibility == Accessibility.Public ? "set" : "no-set");
                     }
                     AppendAttributes(member, parts, "member-attr:");
                     AppendAdapterClosedTargetShape(memberType, parts, stack, depth + 1);
