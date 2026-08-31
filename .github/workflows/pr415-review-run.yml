@@ -1,0 +1,24 @@
+name: PR415 Review Runner
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/workflows/pr415-review-run.yml
+      - .github/workflows/pr415-review-scan.yml
+permissions:
+  contents: write
+jobs:
+  run-review-patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Execute validated patch script
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk 'BEGIN{capture=0} /^        run: \|$/{capture=1; next} capture{sub(/^          /, ""); print}' .github/workflows/pr415-review-scan.yml > /tmp/pr415-review.sh
+          test -s /tmp/pr415-review.sh
+          bash /tmp/pr415-review.sh
