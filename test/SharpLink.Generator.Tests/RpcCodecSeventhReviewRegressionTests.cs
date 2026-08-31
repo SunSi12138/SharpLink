@@ -79,20 +79,13 @@ public sealed class StableAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     }
 
     [Test]
-    public Task RootStringCodecIdentityShouldNotReuseDtoUtf8LeafIdentity()
+    public Task DtoStringFieldShouldUseUInt32Utf8ContentFramingAndWireNull()
     {
-        var rootStringSource = BuildSource("""
-[SharpLink.Sdk.RpcContract]
-public interface IRootStringContract : SharpLink.Sdk.IService
-{
-    ValueTask<string> Echo(string value, CancellationToken cancellationToken);
-}
-""");
-        var dtoStringSource = BuildSource("""
+        var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
 public sealed class StringEnvelope
 {
-    public string Value { get; set; } = string.Empty;
+    public string? Value { get; set; }
 }
 
 [SharpLink.Sdk.RpcContract]
@@ -102,23 +95,16 @@ public interface IDtoStringContract : SharpLink.Sdk.IService
 }
 """);
 
-        var rootManifest = RunGeneratorAndGetSources(rootStringSource)
-            .Single(static generated => generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
-        var dtoManifest = RunGeneratorAndGetSources(dtoStringSource)
-            .Single(static generated => generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
-
-        var rootStringIdentity = rootManifest.Split('\n')
-            .Single(static line =>
-                line.Contains("SharpLinkGeneratedCodecIdentityAttribute", StringComparison.Ordinal) &&
-                (line.Contains("typeof(string)", StringComparison.Ordinal) ||
-                 line.Contains("typeof(global::System.String)", StringComparison.Ordinal)))
-            .Trim();
-        var dtoIdentity = ExtractGeneratedCodecIdentity(dtoManifest, "StringEnvelope");
-
-        Ensure(!string.IsNullOrWhiteSpace(rootStringIdentity),
-            "root string must publish the framework StringCodec identity");
-        Ensure(rootStringIdentity != dtoIdentity,
-            "root StringCodec identity and generated DTO UTF-8 string-field semantics must remain distinct");
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(
+            generated.Contains("new global::System.Text.UTF8Encoding(false, true)", StringComparison.Ordinal),
+            "generated DTO string fields must use strict UTF-8 content encoding");
+        Ensure(
+            generated.Contains("WriteUInt32LittleEndian", StringComparison.Ordinal),
+            "generated DTO string fields must use a UInt32 little-endian UTF-8 byte length");
+        Ensure(
+            generated.Contains("RpcGeneratedWireType.Null", StringComparison.Ordinal),
+            "generated DTO string nulls must remain represented by the DTO field Null wire type rather than the root string sentinel");
         return Task.CompletedTask;
     }
 }
