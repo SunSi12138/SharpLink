@@ -1,0 +1,66 @@
+name: Temporary PR 415 Artifact Patch
+
+on:
+  push:
+    branches:
+      - tmp/pr415-utf16-test-patch
+
+permissions:
+  contents: read
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply exact UTF-16 test updates
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              ('public Task DirectStringDtosShouldCacheExactUtf8SizesAndPreReserveOnce()',
+               'public Task DirectStringDtosShouldCacheExactUtf16SizesAndPreReserveOnce()'),
+              ('"one assembly-private UTF-8 helper must be shared by all eligible generated Codecs"',
+               '"one assembly-private UTF-16 helper must be shared by all eligible generated Codecs"'),
+              ('"each direct string must be counted once in the direct reservation path"',
+               '"each direct string must compute its exact UTF-16 byte count once in the direct reservation path"'),
+              ('Ensure(CountOccurrences(generated, "StrictEncoding.GetByteCount(") == 1,\n            "the known-size write helper must never traverse UTF-16 again");',
+               'Ensure(CountOccurrences(generated, "checked(value.Length * sizeof(char))") == 1,\n            "the known-size helper must compute UTF-16 bytes in O(1) without an encoding traversal");'),
+              ('"eligible DTOs must not call the byte-counting public string primitive after pre-sizing"',
+               '"eligible DTOs must not call the public string primitive after pre-sizing"'),
+              ('Ensure(generated.Contains("new global::System.Text.UTF8Encoding(false, true)", StringComparison.Ordinal),\n            "the generated helper must preserve strict UTF-8 encoder semantics");',
+               'Ensure(!generated.Contains("UTF8Encoding", StringComparison.Ordinal) &&\n               !generated.Contains("StrictEncoding.GetByteCount", StringComparison.Ordinal),\n            "generated DTO string sizing must not transcode or traverse UTF-8");'),
+              ('Ensure(generated.Contains("global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian", StringComparison.Ordinal) &&\n               generated.Contains("var payload = writer.GetSpan(byteCount);", StringComparison.Ordinal),\n            "known-size writes must preserve the little-endian prefix and separate payload request");',
+               'Ensure(generated.Contains("global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian", StringComparison.Ordinal) &&\n               generated.Contains("value.AsSpan().CopyTo(global::System.Runtime.InteropServices.MemoryMarshal.Cast<byte, char>(payload));", StringComparison.Ordinal),\n            "known-size writes must preserve the Int32 little-endian prefix and raw UTF-16 code-unit payload");'),
+          ]
+
+          for old, new in replacements:
+              actual = text.count(old)
+              if actual != 1:
+                  raise SystemExit(f'expected exactly one occurrence of {old!r}, got {actual}')
+              text = text.replace(old, new)
+
+          old_helper = '__SharpLinkGeneratedUtf8'
+          if old_helper not in text:
+              raise SystemExit('expected old generated UTF-8 helper references')
+          text = text.replace(old_helper, '__SharpLinkGeneratedUtf16')
+          if old_helper in text:
+              raise SystemExit('old generated UTF-8 helper reference remains')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+          test "$(tail -n 1 test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs)" = "}"
+          grep -q 'DirectStringDtosShouldCacheExactUtf16SizesAndPreReserveOnce' test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs
+          grep -q '__SharpLinkGeneratedUtf16' test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs
+          ! grep -q '__SharpLinkGeneratedUtf8' test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr415-rpc-analyzer-tests
+          path: test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs
+          if-no-files-found: error
