@@ -58,7 +58,7 @@ Server 不拥有：
 3. Run/Start 打开 listener，接受物理连接，并为每条连接建立 Runtime Session 与服务端 connection state。
 4. 每次调用根据生成 Descriptor/Stub 与 Registry 建立 invocation state 和 `SharpLinkCallContext`。
 5. Streaming 的服务实例/Scope 和调用状态保持到整条流真正终止，而不是只保持到方法返回一个 enumerable/stream handle。
-6. Stop/Draining 停止接收新工作并等待已接收调用按规则完成；实例终止后释放 listener、Session、服务 Scope 和 Server 自己拥有的资源。
+6. Stop/Draining 停止接收新工作，并按 grace 规则等待已接收调用；listener、Session 和其他 framework/transport teardown 可以在有界停止流程中完成。无法协作终止的 invocation 可以晚于 `StopAsync` 返回，仍被这些调用持有的 service graph、Scope 或旧 generation 必须继续保留，并在最后一个 owner 释放后延迟清理。
 
 Generic Host 的启动/停止包装见 [`hosting-and-services.md`](hosting-and-services.md)，但 Server 的核心状态机不应依赖 Hosting。
 
@@ -89,7 +89,7 @@ Server 是网络输入进入业务代码前的策略边界：
 
 Admission control 决定调用是否进入服务执行，因此属于 Server policy，而不是 Runtime transport policy。permit、queue、partition 等状态必须与 invocation 生命周期一致释放；未启用 admission 时，基础服务调用路径不应承担其对象分配和异步等待成本。
 
-Server draining 同样是服务端可用性语义：它决定是否接受新调用以及何时可以释放服务 generation。Runtime Session 的 transport close 只是底层机制，不能替代 Server 的服务排空规则。
+Server draining 同样是服务端可用性和所有权语义：它决定是否接受新调用、何时开始退役 service generation，以及哪些 owner 仍必须保留对应 service graph/Scope。`StopAsync` 的有界 framework/transport teardown 不等于所有 service ownership 已经排空；仍被 active invocation 持有的资源必须延迟到最后一个 owner 释放后清理。Runtime Session 的 transport close 只是底层机制，不能替代 Server 的服务排空和 deferred cleanup 规则。
 
 完整 admission 设计见 [`admission-control.md`](admission-control.md)。
 
