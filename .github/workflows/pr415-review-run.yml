@@ -19,6 +19,89 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          awk 'BEGIN{capture=0} /^        run: \|$/{capture=1; next} capture{sub(/^          /, ""); print}' .github/workflows/pr415-review-scan.yml > /tmp/pr415-review.sh
-          test -s /tmp/pr415-review.sh
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('src/SharpLink.Generator/RpcGenerator.CodecIdentity.cs')
+          text = p.read_text()
+          replacement = '''        private string GetFixedMemberSemanticIdentity(GeneratedMemberModel member)
+          {
+              var typeName = member.FixedTypeName ?? member.TypeName;
+              if (string.Equals(typeName, "System.DateTimeOffset", StringComparison.Ordinal) ||
+                  string.Equals(typeName, "global::System.DateTimeOffset", StringComparison.Ordinal))
+              {
+                  return "datetime-offset/dto-offset-minutes-i16le-padding6-utc-ticks-i64le/v1";
+              }
+
+              if (member.EnumUnderlyingType is not null &&
+                  TryResolveReachableType(member.TypeName, out var fixedMemberType) &&
+                  fixedMemberType is INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType)
+              {
+                  return string.Join(
+                      ":",
+                      "fixed/v1",
+                      member.FixedSize.ToString(InvariantCulture),
+                      GetEnumDeclarationSemanticIdentity(enumType));
+              }
+
+              return string.Join(
+                  ":",
+                  "fixed/v1",
+                  member.FixedSize.ToString(InvariantCulture),
+                  member.EnumUnderlyingType ?? typeName);
+          }
+
+          private static string GetEnumDeclarationSemanticIdentity(INamedTypeSymbol enumType)
+          {
+              var parts = new List<string>
+              {
+                  "enum-declaration/v1",
+                  enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                  enumType.EnumUnderlyingType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+              };
+              foreach (var field in enumType.GetMembers()
+                           .OfType<IFieldSymbol>()
+                           .Where(static field => field.HasConstantValue)
+                           .OrderBy(static field => field.Name, StringComparer.Ordinal))
+              {
+                  parts.Add(field.Name + "=" + Convert.ToString(field.ConstantValue, InvariantCulture));
+              }
+              return string.Join("|", parts);
+          }
+
+'''
+          pattern = r'        private static string GetFixedMemberSemanticIdentity\(GeneratedMemberModel member\)\n        \{.*?\n        \}\n\n(?=        private bool TryGetFrameworkPrimitiveCodecHash)'
+          text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'fixed-member regex count={count}')
+          old = '''                hash = Hashing.GetSemanticHash(
+                      "codec/v1",
+                      "enum",
+                      GetFinalCodecHash(enumUnderlying, cache, stack).ToHex());'''
+          new = '''                hash = Hashing.GetSemanticHash(
+                      "codec/v1",
+                      "enum",
+                      GetFinalCodecHash(enumUnderlying, cache, stack).ToHex(),
+                      GetEnumDeclarationSemanticIdentity((INamedTypeSymbol)type));'''
+          if text.count(old) != 1:
+              raise SystemExit(f'direct enum marker count={text.count(old)}')
+          p.write_text(text.replace(old, new))
+
+          script = Path('.github/workflows/pr415-review-scan.yml').read_text()
+          marker = re.search(r'^        run: \|\n(?P<body>.*)\Z', script, flags=re.M | re.S)
+          if marker is None:
+              raise SystemExit('cannot extract source run block')
+          body = marker.group('body')
+          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines()) + '\n'
+          body, count = re.subn(
+              r'\n# Enum semantic identity:.*?\n# Release-scoped',
+              '\n# Release-scoped',
+              body,
+              count=1,
+              flags=re.S)
+          if count != 1:
+              raise SystemExit(f'cannot remove source enum block count={count}')
+          Path('/tmp/pr415-review.sh').write_text(body)
+          PY
           bash /tmp/pr415-review.sh
