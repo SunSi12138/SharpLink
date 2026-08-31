@@ -361,6 +361,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 value.Left.Left.Left,
                 value.Left.Left.Right,
                 GetContractManifestCodecs(value.Left.Right),
+                value.Left.Right.CodecHashes,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider
@@ -372,6 +373,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 value.Left.Left.Interfaces,
                 value.Left.Left.Services,
                 value.Left.Left.Codecs,
+                value.Left.Left.CodecHashes,
                 value.Left.Left.Enums,
                 value.Left.Left.Unions,
                 value.Left.Right,
