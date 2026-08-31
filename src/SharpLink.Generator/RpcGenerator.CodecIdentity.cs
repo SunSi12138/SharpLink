@@ -174,7 +174,8 @@ public partial class RpcGenerator
                             switch (member.Kind)
                             {
                                 case GeneratedMemberKind.String:
-                                    parts.Add("string/utf8/v1");
+                                    parts.Add("string/content/utf8/u32le-byte-length/v1");
+                                    parts.Add("string/null/dto-wire-null/v1");
                                     break;
                                 case GeneratedMemberKind.Fixed:
                                 case GeneratedMemberKind.NullableFixed:
@@ -375,9 +376,18 @@ public partial class RpcGenerator
                 return true;
             }
 
+            if (type.SpecialType == SpecialType.System_String)
+            {
+                hash = Hashing.GetSemanticHash(
+                    "codec/v1",
+                    "framework",
+                    "string/content/utf8/u32le-byte-length/v1",
+                    "string/null/u32-max/v1");
+                return true;
+            }
+
             string? token = type.SpecialType switch
             {
-                SpecialType.System_String => "string/utf16le/i32-byte-length-null-minus1/v1",
                 SpecialType.System_Boolean => "bool/fixed1/v1",
                 SpecialType.System_Byte => "u8/fixed1/v1",
                 SpecialType.System_SByte => "i8/fixed1/v1",
