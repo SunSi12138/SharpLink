@@ -1680,9 +1680,8 @@ public sealed class RuntimeAssemblyIntegrationTests
         string name)
     {
         var client = (SharpLinkClient)harness.Client;
-        var serverActiveCalls = (int)(harness.Server.GetType().GetField(
-                "_globalActiveCalls",
-                BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(harness.Server) ?? -1);
+        var serverActiveCalls =
+            ServerCallAdmissionDiagnostics.ActiveCallCount(harness.Server);
         Ensure(client.PendingCallCount == 0 &&
                client.ActiveClientCallCount == 0 &&
                client.ActiveClientStreamCount == 0 &&
