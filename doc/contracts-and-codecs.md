@@ -27,16 +27,16 @@ DTO 演进规则：
 - 字段 id 是 wire identity；发布后不要重用或改变含义。
 - 新增可选字段通常兼容；删除字段前确认所有对端已停止发送。
 - required、nullable、wire type 或嵌套 schema 变化可能不兼容。
-- 当前 Generator Manifest 仍沿用 `SchemaId` / `WireFormatId` 作为既有 generated registration 与 baseline infrastructure；#386 只负责确定 assembly-owned final Codec graph，不把这些字符串扩展成新的 per-type compatibility model。后续 #396 会以 fixed-width `CodecHash` / `RpcAssemblyHash` 替换长期 identity 模型并执行 assembly-level exact equality。
+- 当前 Phase 1 identity 模型由最终 Codec graph 上的 fixed-width `CodecHash`、方法/契约 hash 与 `RpcAssemblyHash` 组成；dispatch route ID 只负责路由，不承担 wire compatibility identity。远端 assembly hash 发布与 bind-time exact equality 仍属于 #396 后续阶段。
 
 ## 自定义 Codec
 
-Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定。当前 dev 仍要求 Codec 用 `RpcCodecImplementation` 提供 legacy wire/schema registration identity；这不是 #386 新定义的长期 compatibility API，后续由 #396 的 hash identity 模型替换：
+Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定。Opaque custom Codec 必须用 `[RpcCodecSemanticIdentity(high, low)]` 声明其 wire semantic identity；最终 `CodecHash` 将这份显式 identity 纳入方法、契约与 `RpcAssemblyHash`。只要编码含义或兼容性发生变化，就必须 bump semantic identity：
 
 ```csharp
 [assembly: RpcCodec(typeof(MyType), typeof(MyTypeCodec))]
 
-[RpcCodecImplementation("my-type/v1", "my-type-schema/v1")]
+[RpcCodecSemanticIdentity(0x0123456789ABCDEF, 0xFEDCBA9876543210)]
 public sealed class MyTypeCodec : IRpcCodec<MyType>
 {
     // ...

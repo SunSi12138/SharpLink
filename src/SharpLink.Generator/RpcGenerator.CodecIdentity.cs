@@ -337,7 +337,7 @@ public partial class RpcGenerator
             return reachable.TryGetValue(typeName, out type!);
         }
 
-        private static string GetFixedMemberSemanticIdentity(GeneratedMemberModel member)
+        private string GetFixedMemberSemanticIdentity(GeneratedMemberModel member)
         {
             var typeName = member.FixedTypeName ?? member.TypeName;
             if (string.Equals(typeName, "System.DateTimeOffset", StringComparison.Ordinal) ||
@@ -346,11 +346,40 @@ public partial class RpcGenerator
                 return "datetime-offset/dto-offset-minutes-i16le-padding6-utc-ticks-i64le/v1";
             }
 
+            if (member.EnumUnderlyingType is not null &&
+                TryResolveReachableType(member.TypeName, out var fixedMemberType) &&
+                fixedMemberType is INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType)
+            {
+                return string.Join(
+                    ":",
+                    "fixed/v1",
+                    member.FixedSize.ToString(InvariantCulture),
+                    GetEnumDeclarationSemanticIdentity(enumType));
+            }
+
             return string.Join(
                 ":",
                 "fixed/v1",
                 member.FixedSize.ToString(InvariantCulture),
                 member.EnumUnderlyingType ?? typeName);
+        }
+
+        private static string GetEnumDeclarationSemanticIdentity(INamedTypeSymbol enumType)
+        {
+            var parts = new List<string>
+            {
+                "enum-declaration/v1",
+                enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                enumType.EnumUnderlyingType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            };
+            foreach (var field in enumType.GetMembers()
+                         .OfType<IFieldSymbol>()
+                         .Where(static field => field.HasConstantValue)
+                         .OrderBy(static field => field.Name, StringComparer.Ordinal))
+            {
+                parts.Add(field.Name + "=" + Convert.ToString(field.ConstantValue, InvariantCulture));
+            }
+            return string.Join("|", parts);
         }
 
         private bool TryGetFrameworkPrimitiveCodecHash(
@@ -365,7 +394,8 @@ public partial class RpcGenerator
                 hash = Hashing.GetSemanticHash(
                     "codec/v1",
                     "enum",
-                    GetFinalCodecHash(enumUnderlying, cache, stack).ToHex());
+                    GetFinalCodecHash(enumUnderlying, cache, stack).ToHex(),
+                    GetEnumDeclarationSemanticIdentity((INamedTypeSymbol)type));
                 return true;
             }
 
