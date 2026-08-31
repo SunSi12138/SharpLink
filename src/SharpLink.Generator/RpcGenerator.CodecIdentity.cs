@@ -153,7 +153,6 @@ public partial class RpcGenerator
                     return Hashing.GetSemanticHash(
                         "codec/v1",
                         "adapter-closed/v1",
-                        model.AdapterId ?? string.Empty,
                         GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter").ToHex(),
                         GetAdapterClosedCodecSemanticIdentity(model).ToHex());
                 case GeneratedCodecKind.Dto:
