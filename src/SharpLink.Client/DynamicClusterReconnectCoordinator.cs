@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkClient
     /// Owns dynamic-endpoint reconnect admission, refill scheduling and per-generation backoff.
     /// Mutations are serialized by DynamicClusterRuntime's gate.
     /// </summary>
-    internal sealed class DynamicClusterReconnectCoordinator
+    private sealed class DynamicClusterReconnectCoordinator
     {
         private const int MaximumReconnectDelayMilliseconds = 5_000;
 
@@ -157,7 +157,7 @@ internal sealed partial class SharpLinkClient
         private int TotalActiveConnectionsLocked()
             => _connections.TotalActiveConnections(_current.States);
 
-        internal static int NextReconnectDelay(int delayMilliseconds)
+        private static int NextReconnectDelay(int delayMilliseconds)
             => Math.Min(delayMilliseconds * 2, MaximumReconnectDelayMilliseconds);
     }
 }
