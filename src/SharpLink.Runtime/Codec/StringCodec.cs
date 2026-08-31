@@ -1,90 +1,70 @@
-using System.Text;
-
 namespace SharpLink.Runtime;
 
 internal sealed class StringCodec : IRpcCodec<string?>
 {
-    private const uint NullLength = uint.MaxValue;
-    private static readonly UTF8Encoding StrictEncoding = new(false, true);
-
     internal static readonly StringCodec Instance = new();
-
+    private const int CharSize = 2;
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in string? value, IBufferWriter<byte> writer)
     {
-        ArgumentNullException.ThrowIfNull(writer);
         if (value is null)
         {
-            var nullHeader = writer.GetSpan(sizeof(uint));
-            BinaryPrimitives.WriteUInt32LittleEndian(nullHeader, NullLength);
-            writer.Advance(sizeof(uint));
+            CodecHelpers.WriteInt32(writer, -1);
             return;
         }
 
-        var byteCount = StrictEncoding.GetByteCount(value);
-        CodecHelpers.EnsureSerializablePayloadLength(byteCount, nameof(value));
+        if (value.Length == 0)
+        {
+            CodecHelpers.WriteInt32(writer, 0);
+            return;
+        }
 
-        var span = writer.GetSpan(checked(sizeof(uint) + byteCount));
-        BinaryPrimitives.WriteUInt32LittleEndian(span, checked((uint)byteCount));
-        if (byteCount != 0)
-            _ = StrictEncoding.GetBytes(value, span[sizeof(uint)..]);
-        writer.Advance(checked(sizeof(uint) + byteCount));
+        var bytesCount = checked(value.Length * CharSize);
+        CodecHelpers.EnsureSerializablePayloadLength(bytesCount, nameof(value));
+
+        var span = writer.GetSpan(bytesCount + 4);
+
+        BinaryPrimitives.WriteInt32LittleEndian(span[..4], bytesCount);
+
+        value.AsSpan().CopyTo(MemoryMarshal.Cast<byte, char>(span[4..]));
+
+        writer.Advance(bytesCount + 4);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public string? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, sizeof(uint));
-
-        uint byteCount;
-        if (buffer.FirstSpan.Length >= sizeof(uint))
+        var bytesCount = CodecHelpers.ReadInt32(buffer);
+        if (bytesCount == -1)
         {
-            byteCount = BinaryPrimitives.ReadUInt32LittleEndian(buffer.FirstSpan);
-        }
-        else
-        {
-            Span<byte> header = stackalloc byte[sizeof(uint)];
-            buffer.Slice(0, sizeof(uint)).CopyTo(header);
-            byteCount = BinaryPrimitives.ReadUInt32LittleEndian(header);
-        }
-
-        if (byteCount == NullLength)
-        {
-            CodecHelpers.EnsureExactSize(buffer, sizeof(uint));
+            CodecHelpers.EnsureExactSize(buffer, sizeof(int));
             return null;
         }
-        if (byteCount > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(uint))
+        if (bytesCount < -1)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Invalid string byte length {bytesCount}.");
+
+        if (bytesCount == 0)
+        {
+            CodecHelpers.EnsureExactSize(buffer, sizeof(int));
+            return string.Empty;
+        }
+        if ((bytesCount & 1) != 0)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "UTF-16 string byte length must be even.");
+        if (bytesCount > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(int))
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "String payload exceeds the protocol maximum.");
 
-        var payloadLength = checked((int)byteCount);
-        CodecHelpers.EnsureExactSize(buffer, (long)sizeof(uint) + payloadLength);
-        if (payloadLength == 0)
-            return string.Empty;
+        CodecHelpers.EnsureExactSize(buffer, (long)sizeof(int) + bytesCount);
+        var payload = buffer.Slice(sizeof(int), bytesCount);
 
-        var payload = buffer.Slice(sizeof(uint), payloadLength);
-        try
+        if (payload.FirstSpan.Length >= bytesCount)
         {
-            if (payload.FirstSpan.Length >= payloadLength)
-                return StrictEncoding.GetString(payload.FirstSpan[..payloadLength]);
+            var charSpan = MemoryMarshal.Cast<byte, char>(payload.FirstSpan[..bytesCount]);
+            return new string(charSpan);
+        }
 
-            var rented = ArrayPool<byte>.Shared.Rent(payloadLength);
-            try
-            {
-                var bytes = rented.AsSpan(0, payloadLength);
-                payload.CopyTo(bytes);
-                return StrictEncoding.GetString(bytes);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(rented);
-            }
-        }
-        catch (DecoderFallbackException exception)
+        return string.Create(bytesCount / CharSize, payload, static (destination, sequence) =>
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.DataLoss,
-                "String payload is not valid UTF-8.",
-                exception);
-        }
+            sequence.CopyTo(MemoryMarshal.AsBytes(destination));
+        });
     }
 }
