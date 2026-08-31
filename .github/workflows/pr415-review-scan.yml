@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 4
+          fetch-depth: 5
       - name: Apply and validate review fixes
         shell: bash
         run: |
@@ -22,16 +22,75 @@ jobs:
           test -s /tmp/pr415_patch.py
           python3 /tmp/pr415_patch.py
 
-          python3 <<'PY'
-          from pathlib import Path
-          p = Path('test/SharpLink.Generator.Tests/RpcCodecEighthReviewRegressionTests.cs')
-          text = p.read_text()
-          old = '''        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "Status") != ExtractGeneratedCodecIdentity(changed, "Status"),\n            "swapping enum name/value mappings must change the direct enum CodecHash even when the underlying byte width is unchanged");\n        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "EnumEnvelope") != ExtractGeneratedCodecIdentity(changed, "EnumEnvelope"),\n            "enum declaration identity must propagate through fixed DTO members");\n        Ensure(\n            !string.Equals(baseline, changed, StringComparison.Ordinal),\n            "the changed enum mapping must propagate into the generated RPC assembly identity source");'''
-          new = '''        Ensure(\n            ExtractGeneratedMethodId(baseline, "EchoStatus") != ExtractGeneratedMethodId(changed, "EchoStatus"),\n            "swapping enum name/value mappings must change a direct-enum method identity even when the underlying byte width is unchanged");\n        Ensure(\n            ExtractGeneratedCodecIdentity(baseline, "EnumEnvelope") != ExtractGeneratedCodecIdentity(changed, "EnumEnvelope"),\n            "enum declaration identity must propagate through fixed DTO members");\n        Ensure(\n            ExtractGeneratedRpcAssemblyHash(baseline) != ExtractGeneratedRpcAssemblyHash(changed),\n            "the changed enum mapping must propagate into RpcAssemblyHash");'''
-          if text.count(old) != 1:
-              raise SystemExit('enum regression assertion block did not match exactly once')
-          p.write_text(text.replace(old, new))
-          PY
+          cat > test/SharpLink.Generator.Tests/RpcCodecEighthReviewRegressionTests.cs <<'CS'
+          using System;
+          using System.Linq;
+          using System.Threading.Tasks;
+
+          namespace SharpLink.Generator.Tests;
+
+          public partial class RpcAnalyzerTests
+          {
+              [Test]
+              public Task EnumValueMappingShouldParticipateInDirectAndDtoCodecIdentity()
+              {
+                  static string DirectSource(bool swapped)
+                  {
+                      var members = swapped ? "Ok = 1, Error = 0" : "Ok = 0, Error = 1";
+                      return BuildSource($$"""
+          public enum Status : byte { {{members}} }
+
+          [SharpLink.Sdk.RpcContract]
+          public interface IDirectEnumIdentityContract : SharpLink.Sdk.IService
+          {
+              ValueTask<Status> Echo(Status value, CancellationToken cancellationToken);
+          }
+          """);
+                  }
+
+                  static string DtoSource(bool swapped)
+                  {
+                      var members = swapped ? "Ok = 1, Error = 0" : "Ok = 0, Error = 1";
+                      return BuildSource($$"""
+          public enum Status : byte { {{members}} }
+
+          [SharpLink.Sdk.RpcSerializable]
+          public sealed class EnumEnvelope
+          {
+              public Status Value { get; set; }
+          }
+
+          [SharpLink.Sdk.RpcContract]
+          public interface IDtoEnumIdentityContract : SharpLink.Sdk.IService
+          {
+              ValueTask<EnumEnvelope> Echo(EnumEnvelope value, CancellationToken cancellationToken);
+          }
+          """);
+                  }
+
+                  static string Manifest(string source)
+                      => RunGeneratorAndGetSources(source)
+                          .Single(static generated => generated.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+
+                  var directBaseline = Manifest(DirectSource(swapped: false));
+                  var directChanged = Manifest(DirectSource(swapped: true));
+                  Ensure(
+                      ExtractGeneratedRpcAssemblyHash(directBaseline) != ExtractGeneratedRpcAssemblyHash(directChanged),
+                      "swapping enum name/value mappings must change RpcAssemblyHash for a direct enum contract even when the underlying byte width is unchanged");
+
+                  var dtoBaseline = Manifest(DtoSource(swapped: false));
+                  var dtoChanged = Manifest(DtoSource(swapped: true));
+                  Ensure(
+                      ExtractGeneratedCodecIdentity(dtoBaseline, "EnumEnvelope") != ExtractGeneratedCodecIdentity(dtoChanged, "EnumEnvelope"),
+                      "enum declaration identity must propagate through fixed DTO members");
+                  Ensure(
+                      ExtractGeneratedRpcAssemblyHash(dtoBaseline) != ExtractGeneratedRpcAssemblyHash(dtoChanged),
+                      "the DTO enum mapping change must propagate into RpcAssemblyHash");
+                  return Task.CompletedTask;
+              }
+          }
+          CS
+          sed -i 's/^          //' test/SharpLink.Generator.Tests/RpcCodecEighthReviewRegressionTests.cs
 
           dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
