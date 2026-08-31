@@ -11,19 +11,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 3
       - name: Apply and validate review fixes
         shell: bash
         run: |
           set -euo pipefail
-          git show HEAD^:.github/workflows/pr415-review-scan.yml \
+          git show HEAD^^:.github/workflows/pr415-review-scan.yml \
             | awk '/^          python3 <<.PY.$/{capture=1; next} /^          PY$/{capture=0} capture{sub(/^          /, ""); print}' \
             > /tmp/pr415_patch.py
           test -s /tmp/pr415_patch.py
           python3 /tmp/pr415_patch.py
 
-          dotnet test test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release
-          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
           dotnet build test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj -c Release
 
           git diff --check
