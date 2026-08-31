@@ -10,8 +10,12 @@ internal static class AutoLayoutEvidenceFixtures
     [ModuleInitializer]
     internal static void Register()
     {
-        if (FixtureRegistry.All is not List<IFixture> fixtures)
-            throw new InvalidOperationException("Compatibility fixture registry must remain mutable during module initialization.");
+        if (FixtureRegistry.All is not List<IFixture> fixtures ||
+            FixtureRegistry.ById is not Dictionary<string, IFixture> byId)
+        {
+            throw new InvalidOperationException(
+                "Compatibility fixture registry must remain mutable during module initialization.");
+        }
 
         var offset = new DateTimeOffset(2026, 8, 31, 13, 45, 12, TimeSpan.FromHours(5.5));
         var guid = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
@@ -26,7 +30,7 @@ internal static class AutoLayoutEvidenceFixtures
             G = offset
         };
 
-        fixtures.AddRange(
+        IFixture[] added =
         [
             new Fixture<AutoMixed>("AutoMixed", "auto-layout-release-scoped", mixed),
             new Fixture<AutoNested>("AutoNested", "auto-layout-release-scoped", new AutoNested
@@ -77,7 +81,13 @@ internal static class AutoLayoutEvidenceFixtures
                 Value = offset,
                 Tail = 0x6162636465666768
             })
-        ]);
+        ];
+
+        foreach (var fixture in added)
+        {
+            fixtures.Add(fixture);
+            byId.Add(fixture.Id, fixture);
+        }
     }
 }
 
