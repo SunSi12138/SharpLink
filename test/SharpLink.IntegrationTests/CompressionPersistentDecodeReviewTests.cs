@@ -258,7 +258,7 @@ public class CompressionPersistentDecodeReviewTests
     {
         protected ISharpLinkServer Server { get; } = server;
 
-        public int ActiveCalls => ReadField<int>("_globalActiveCalls");
+        public int ActiveCalls => ServerCallAdmissionDiagnostics.ActiveCallCount(Server);
         public int ActiveDecodes => ReadDiagnosticProperty<int>("ActiveDecodeCountForDiagnostics");
         public long RetainedCompressedBytes =>
             ReadDiagnosticProperty<long>("RetainedCompressedBytesForDiagnostics");
@@ -270,16 +270,6 @@ public class CompressionPersistentDecodeReviewTests
         internal int DecodeWorkerCount => ReadDiagnosticProperty<int>("DecodeWorkerCountForDiagnostics");
         internal int DecodeStartedWorkCount =>
             ReadDiagnosticProperty<int>("DecodeStartedWorkCountForDiagnostics");
-
-        protected T ReadField<T>(string name)
-        {
-            var field = Server.GetType().GetField(
-                name,
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic)
-                ?? throw new Exception($"cannot find server field {name}");
-            return (T)field.GetValue(Server)!;
-        }
 
         protected T ReadDiagnosticProperty<T>(string name)
         {
