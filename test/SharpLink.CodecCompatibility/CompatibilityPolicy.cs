@@ -13,7 +13,7 @@ internal readonly record struct FixturePolicyEntry(
 internal static class CompatibilityPolicy
 {
     internal const int ArtifactSchemaVersion = 1;
-    internal const string BaselineFixturePolicySha256 = "19ba9cda6e05e7a023af6ce76649deaf330e67d214f553c6611bab45019987d9";
+    internal const string BaselineFixturePolicySha256 = "891d85bdbe10db368899e62a7110378aac0e989da181728e81adef3cdab5c7f5";
 
     private static readonly FixturePolicyEntry[] RequiredFixtures =
     [
@@ -65,7 +65,16 @@ internal static class CompatibilityPolicy
         new("IndexRaw", "builtin-semantic-raw", false, true),
         new("RangeRaw", "builtin-semantic-raw", false, true),
         new("RuneRaw", "builtin-semantic-raw", false, true),
-        new("DecimalRaw", "builtin-semantic-raw", false, true)
+        new("DecimalRaw", "builtin-semantic-raw", false, true),
+        new("AutoMixed", "auto-layout-release-scoped", false, true),
+        new("AutoNested", "auto-layout-release-scoped", false, true),
+        new("AutoGenericByte", "auto-layout-release-scoped", false, true),
+        new("AutoGenericInt64", "auto-layout-release-scoped", false, true),
+        new("AutoGenericGuid", "auto-layout-release-scoped", false, true),
+        new("AutoGenericDateTimeOffset", "auto-layout-release-scoped", false, true),
+        new("AutoPaddingHeavy", "auto-layout-release-scoped", false, true),
+        new("DateTimeOffsetContainer", "auto-layout-release-scoped", false, true),
+        new("AutoDateTimeOffsetContainer", "auto-layout-release-scoped", false, true)
     ];
 
     private static readonly IReadOnlyDictionary<string, FixturePolicyEntry> RequiredById = RequiredFixtures
