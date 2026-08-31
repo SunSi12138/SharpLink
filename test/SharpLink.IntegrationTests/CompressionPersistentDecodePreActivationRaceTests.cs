@@ -179,7 +179,7 @@ public class CompressionPersistentDecodePreActivationRaceTests
         }
 
         internal ISharpLinkClient Client { get; }
-        internal int ActiveCalls => ReadField<int>("_globalActiveCalls");
+        internal int ActiveCalls => ServerCallAdmissionDiagnostics.ActiveCallCount(_server);
         internal int ActiveDecodes => ReadDiagnosticProperty<int>("ActiveDecodeCountForDiagnostics");
         internal long RetainedCompressedBytes =>
             ReadDiagnosticProperty<long>("RetainedCompressedBytesForDiagnostics");
@@ -255,16 +255,6 @@ public class CompressionPersistentDecodePreActivationRaceTests
             await _server.StopAsync(TimeSpan.Zero);
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             _serverCts.Dispose();
-        }
-
-        private T ReadField<T>(string name)
-        {
-            var field = _server.GetType().GetField(
-                name,
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic)
-                ?? throw new Exception($"cannot find server field {name}");
-            return (T)field.GetValue(_server)!;
         }
 
         private T ReadDiagnosticProperty<T>(string name)
