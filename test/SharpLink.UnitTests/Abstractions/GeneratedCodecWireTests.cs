@@ -75,7 +75,7 @@ public class GeneratedCodecWireTests
         Ensure(decoded == source, "segmented canonical DateTimeOffset payload must round-trip");
         Ensure(reader.Remaining == 0, "DateTimeOffset reader must consume exactly 16 bytes");
 
-        var nonCanonical = bytes.ToArray();
+        var nonCanonical = (byte[])bytes.Clone();
         nonCanonical[2] = 1;
         var invalidReader = new SequenceReader<byte>(new ReadOnlySequence<byte>(nonCanonical));
         try
