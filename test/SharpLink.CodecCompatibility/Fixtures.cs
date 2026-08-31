@@ -307,6 +307,8 @@ internal static class FixtureRegistry
             new Fixture<IdentityCounter>("IdentityCounter", "user-like", new IdentityCounter { High = 0x1122334455667788, Low = 0x99AABBCCDDEEFF00, Count = 123456789 }, false, nameof(IdentityCounter.High), nameof(IdentityCounter.Low), nameof(IdentityCounter.Count)),
             new Fixture<GeometryValue>("GeometryValue", "user-like", new GeometryValue { Position = new Vector3Value { X = 10, Y = 20, Z = 30 }, Velocity = new Vector3Value { X = -1, Y = 0.5, Z = 3 }, Timestamp = 1_787_224_683_000_000_000 }, false, nameof(GeometryValue.Position), nameof(GeometryValue.Velocity), nameof(GeometryValue.Timestamp)),
 
+            .. AutoLayoutEvidenceFixtures.Create(),
+
             new Fixture<DateOnly>("DateOnlyRaw", "builtin-semantic-raw", new DateOnly(2026, 8, 20)),
             new Fixture<DateTime>("DateTimeRaw", "builtin-semantic-raw", new DateTime(2026, 8, 20, 12, 34, 56, DateTimeKind.Utc), static (left, right) => left.Ticks == right.Ticks && left.Kind == right.Kind),
             new Fixture<DateTimeOffset>("DateTimeOffsetRaw", "builtin-semantic-raw", new DateTimeOffset(2026, 8, 20, 12, 34, 56, TimeSpan.FromHours(8)), static (left, right) => left.Ticks == right.Ticks && left.UtcTicks == right.UtcTicks && left.Offset == right.Offset),
