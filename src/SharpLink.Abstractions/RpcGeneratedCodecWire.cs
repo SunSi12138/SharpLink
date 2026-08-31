@@ -29,8 +29,6 @@ public readonly record struct RpcGeneratedLengthToken(int Offset);
 /// <summary>Provides allocation-free primitives used only by source-generated Codecs.</summary>
 public static class RpcGeneratedCodecWire
 {
-    private static readonly UTF8Encoding SStrictUtf8 = new(false, true);
-
     /// <summary>The hard maximum number of items allocated by one generated collection Codec.</summary>
     public const int MaximumCollectionItems = 1_048_576;
 
@@ -204,33 +202,55 @@ public static class RpcGeneratedCodecWire
         return value;
     }
 
-    /// <summary>Writes one DateTimeOffset while clearing its native-layout padding.</summary>
+    /// <summary>Writes the canonical 16-byte generated DTO representation of one DateTimeOffset.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void WriteDateTimeOffset(IBufferWriter<byte> writer, DateTimeOffset value)
     {
         ArgumentNullException.ThrowIfNull(writer);
         const int size = 16;
         var span = writer.GetSpan(size);
-        Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(span), value);
+        BinaryPrimitives.WriteInt16LittleEndian(span, checked((short)value.Offset.TotalMinutes));
         span[sizeof(short)..sizeof(long)].Clear();
+        BinaryPrimitives.WriteInt64LittleEndian(span[sizeof(long)..], value.UtcDateTime.Ticks);
         writer.Advance(size);
     }
 
-    /// <summary>Reads and validates one DateTimeOffset native representation.</summary>
+    /// <summary>Reads and validates the canonical 16-byte generated DTO DateTimeOffset representation.</summary>
     public static DateTimeOffset ReadDateTimeOffset(ref SequenceReader<byte> reader)
     {
-        var value = ReadUnmanaged<DateTimeOffset>(ref reader);
-        ref var start = ref Unsafe.As<DateTimeOffset, byte>(ref value);
-        var offsetMinutes = Unsafe.ReadUnaligned<short>(ref start);
-        var utcTicks = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref start, sizeof(long)));
+        const int size = 16;
+        if (reader.Remaining < size)
+            throw DataLoss("Generated DateTimeOffset payload is truncated.");
+
+        Span<byte> temporary = stackalloc byte[size];
+        ReadOnlySpan<byte> payload;
+        if (reader.UnreadSpan.Length >= size)
+        {
+            payload = reader.UnreadSpan[..size];
+        }
+        else
+        {
+            if (!reader.TryCopyTo(temporary))
+                throw DataLoss("Generated DateTimeOffset payload is truncated.");
+            payload = temporary;
+        }
+
+        var offsetMinutes = BinaryPrimitives.ReadInt16LittleEndian(payload);
+        var utcTicks = BinaryPrimitives.ReadInt64LittleEndian(payload[sizeof(long)..]);
         if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
             throw DataLoss("Generated DateTimeOffset payload contains invalid UTC ticks or offset.");
+        if (!payload[sizeof(short)..sizeof(long)].IsEmpty &&
+            payload[sizeof(short)..sizeof(long)].IndexOfAnyExcept((byte)0) >= 0)
+        {
+            throw DataLoss("Generated DateTimeOffset payload contains non-canonical padding.");
+        }
         var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
         if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
             offsetTicks < 0 && utcTicks < -offsetTicks)
         {
             throw DataLoss("Generated DateTimeOffset payload is outside the supported clock range.");
         }
+        reader.Advance(size);
         return new DateTimeOffset(utcTicks + offsetTicks, TimeSpan.FromMinutes(offsetMinutes));
     }
 
@@ -268,46 +288,39 @@ public static class RpcGeneratedCodecWire
         return marker != 0;
     }
 
-    /// <summary>Writes a UTF-8 string payload including its UInt32 byte length.</summary>
+    /// <summary>Writes a UTF-16LE string payload including its signed Int32 byte length.</summary>
     public static void WriteString(IBufferWriter<byte> writer, string value)
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(value);
-        var byteCount = SStrictUtf8.GetByteCount(value);
-        WriteUInt32(writer, checked((uint)byteCount));
+        var byteCount = checked(value.Length * sizeof(char));
+        if (byteCount > MaximumStringPayloadBytes)
+            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Generated string payload exceeds the protocol maximum.");
+        WriteInt32(writer, byteCount);
         if (byteCount == 0)
             return;
         var span = writer.GetSpan(byteCount);
-        var written = SStrictUtf8.GetBytes(value, span);
-        writer.Advance(written);
+        value.AsSpan().CopyTo(MemoryMarshal.Cast<byte, char>(span));
+        writer.Advance(byteCount);
     }
 
-    /// <summary>Reads a bounded UTF-8 string payload.</summary>
+    /// <summary>Reads a bounded UTF-16LE string payload.</summary>
     public static string ReadString(ref SequenceReader<byte> reader)
     {
-        var payload = ReadLengthDelimited(ref reader);
-        if (payload.IsSingleSegment)
-            return DecodeUtf8(payload.FirstSpan);
-        return DecodeUtf8(payload.ToArray());
-    }
+        var byteCount = ReadInt32(ref reader);
+        if (byteCount < 0 || (byteCount & 1) != 0 || byteCount > MaximumStringPayloadBytes || reader.Remaining < byteCount)
+            throw DataLoss("Generated UTF-16 string byte length is invalid, truncated, or too large.");
+        if (byteCount == 0)
+            return string.Empty;
 
-    private static string DecodeUtf8(ReadOnlySpan<byte> payload)
-    {
-        var value = Encoding.UTF8.GetString(payload);
-        if (!value.AsSpan().Contains('\uFFFD'))
-            return value;
-        try
+        var payload = reader.Sequence.Slice(reader.Position, byteCount);
+        reader.Advance(byteCount);
+        if (payload.FirstSpan.Length >= byteCount)
+            return new string(MemoryMarshal.Cast<byte, char>(payload.FirstSpan[..byteCount]));
+        return string.Create(byteCount / sizeof(char), payload, static (destination, sequence) =>
         {
-            _ = SStrictUtf8.GetCharCount(payload);
-            return value;
-        }
-        catch (DecoderFallbackException exception)
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.DataLoss,
-                "Generated string payload is not valid UTF-8.",
-                exception);
-        }
+            sequence.CopyTo(MemoryMarshal.AsBytes(destination));
+        });
     }
 
     /// <summary>Reserves a UInt32 length prefix in a contiguous SharpLink packet writer.</summary>
@@ -405,6 +418,28 @@ public static class RpcGeneratedCodecWire
     /// <summary>Creates the structured error used for invalid generated payloads.</summary>
     public static SharpLinkException DataLoss(string message)
         => new(SharpLinkErrorCode.DataLoss, message);
+
+    private static void WriteInt32(IBufferWriter<byte> writer, int value)
+    {
+        var span = writer.GetSpan(sizeof(int));
+        BinaryPrimitives.WriteInt32LittleEndian(span, value);
+        writer.Advance(sizeof(int));
+    }
+
+    private static int ReadInt32(ref SequenceReader<byte> reader)
+    {
+        if (reader.UnreadSpan.Length >= sizeof(int))
+        {
+            var value = BinaryPrimitives.ReadInt32LittleEndian(reader.UnreadSpan);
+            reader.Advance(sizeof(int));
+            return value;
+        }
+        Span<byte> temporary = stackalloc byte[sizeof(int)];
+        if (!reader.TryCopyTo(temporary))
+            throw DataLoss("Generated Int32 length is truncated.");
+        reader.Advance(sizeof(int));
+        return BinaryPrimitives.ReadInt32LittleEndian(temporary);
+    }
 
     private static void WriteUInt32(IBufferWriter<byte> writer, uint value)
     {
