@@ -236,8 +236,7 @@ public partial class RpcGenerator
     private static bool HasSameFinalCodecBinding(GeneratedCodecModel left, GeneratedCodecModel right)
     {
         if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-            left.Kind != right.Kind ||
-            left.IsReferenceType != right.IsReferenceType ||
+            left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
             !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
             !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
             !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
@@ -297,10 +296,7 @@ public partial class RpcGenerator
             => GetTypeName(type);
 
         private static bool HasSameCanonicalPolicyTarget(ITypeSymbol left, ITypeSymbol right)
-            => string.Equals(
-                GetCanonicalPolicyTargetIdentity(left),
-                GetCanonicalPolicyTargetIdentity(right),
-                StringComparison.Ordinal);
+            => string.Equals(GetCanonicalPolicyTargetIdentity(left), GetCanonicalPolicyTargetIdentity(right), StringComparison.Ordinal);
 
         private void CollectCanonicalAssemblyCustomCodecBindings()
         {
@@ -319,20 +315,16 @@ public partial class RpcGenerator
                 }
                 if (HasTypeParameter(target))
                 {
-                    Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target,
-                        "custom Codec target must be a closed type", location);
+                    Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target, "custom Codec target must be a closed type", location);
                     continue;
                 }
-
                 target = NormalizeAdapterTarget(target);
                 if (IsFrameworkWirePrimitive(target))
                 {
                     Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
-                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required",
-                        location);
+                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required", location);
                     continue;
                 }
-
                 AddCanonicalCustomCodecBinding(target, codec, location);
             }
         }
@@ -347,46 +339,32 @@ public partial class RpcGenerator
                     "the target is explicitly bound to multiple custom Codec implementations", location);
                 return;
             }
-
             var registration = ValidateCustomCodecWithCanonicalTarget(codec, target, location);
             if (registration is null)
                 return;
-
             _customCodecBindings[target] = registration;
             _canonicalCustomCodecBindings[identity] = registration;
             if (_contractMode)
                 _contractOwnedPolicyRoots.Add(identity);
         }
 
-        private CustomCodecRegistration? ValidateCustomCodecWithCanonicalTarget(
-            ITypeSymbol codecType,
-            ITypeSymbol targetType,
-            Location location)
+        private CustomCodecRegistration? ValidateCustomCodecWithCanonicalTarget(ITypeSymbol codecType, ITypeSymbol targetType, Location location)
         {
             if (codecType is not INamedTypeSymbol named)
             {
-                Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType,
-                    "custom Codec must be a closed, public sealed type", location);
+                Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType, "custom Codec must be a closed, public sealed type", location);
                 return null;
             }
-
-            if (HasTypeParameter(named) ||
-                !IsEffectivelyPublic(named) ||
-                !named.IsSealed ||
-                !named.InstanceConstructors.Any(static constructor =>
-                    constructor.DeclaredAccessibility == Accessibility.Public &&
-                    constructor.Parameters.Length == 0))
+            if (HasTypeParameter(named) || !IsEffectivelyPublic(named) || !named.IsSealed ||
+                !named.InstanceConstructors.Any(static constructor => constructor.DeclaredAccessibility == Accessibility.Public && constructor.Parameters.Length == 0))
             {
                 Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType,
                     "custom Codec must be a public sealed type with a public parameterless constructor", location);
                 return null;
             }
-
             var implementsTargetCodec = named.AllInterfaces.Any(item =>
-                item.Name == "IRpcCodec" &&
-                item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
-                item is INamedTypeSymbol { IsGenericType: true } generic &&
-                generic.TypeArguments.Length == 1 &&
+                item.Name == "IRpcCodec" && item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
+                item is INamedTypeSymbol { IsGenericType: true } generic && generic.TypeArguments.Length == 1 &&
                 HasSameCanonicalPolicyTarget(generic.TypeArguments[0], targetType));
             if (!implementsTargetCodec)
             {
@@ -394,14 +372,12 @@ public partial class RpcGenerator
                     $"custom Codec must implement IRpcCodec<{GetTypeName(targetType)}>", location);
                 return null;
             }
-
             if (!HasValidOpaqueSemanticIdentity(named))
             {
                 Report(DtoDiagnosticKind.CustomCodecIdentityInvalid, codecType,
                     "custom Codec must declare a non-zero fixed semantic identity via [RpcCodecSemanticIdentity(high, low)]", location);
                 return null;
             }
-
             return new CustomCodecRegistration(named, location);
         }
 
@@ -411,8 +387,7 @@ public partial class RpcGenerator
                          .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute")))
             {
                 var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
-                if (attribute.ConstructorArguments.Length != 2 ||
-                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                if (attribute.ConstructorArguments.Length != 2 || attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
                     attribute.ConstructorArguments[1].Value is not INamedTypeSymbol adapter)
                 {
                     Report(DtoDiagnosticKind.AdapterBindingInvalid, _compilation.Assembly,
@@ -421,20 +396,16 @@ public partial class RpcGenerator
                 }
                 if (HasTypeParameter(target))
                 {
-                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target,
-                        "Adapter target must be a closed type", location);
+                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target, "Adapter target must be a closed type", location);
                     continue;
                 }
-
                 target = NormalizeAdapterTarget(target);
                 if (IsFrameworkWirePrimitive(target))
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
-                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required",
-                        location);
+                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required", location);
                     continue;
                 }
-
                 AddCanonicalAssemblyBinding(target, new ExplicitBindingCandidate(adapter, location));
             }
         }
@@ -447,15 +418,12 @@ public partial class RpcGenerator
                 if (!SymbolEqualityComparer.Default.Equals(existing.ImplementationType, candidate.ImplementationType))
                 {
                     Report(DtoDiagnosticKind.AdapterSelectionConflict, target,
-                        "the target is explicitly bound to multiple different Codec Adapters",
-                        candidate.Location);
+                        "the target is explicitly bound to multiple different Codec Adapters", candidate.Location);
                     return;
                 }
-
                 _assemblyBindings[target] = existing;
                 return;
             }
-
             _assemblyBindings[target] = candidate;
             _canonicalAssemblyBindings[identity] = candidate;
         }
@@ -464,32 +432,20 @@ public partial class RpcGenerator
         {
             if (_canonicalAssemblyBindings.Count == 0 && _canonicalCustomCodecBindings.Count == 0)
                 return;
-
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
-
             foreach (var reachableType in reachable.Values)
             {
                 var lookupType = NormalizeAdapterTarget(reachableType);
                 var identity = GetCanonicalPolicyTargetIdentity(lookupType);
-                if (!_assemblyBindings.ContainsKey(lookupType) &&
-                    _canonicalAssemblyBindings.TryGetValue(identity, out var adapterBinding))
-                {
+                if (!_assemblyBindings.ContainsKey(lookupType) && _canonicalAssemblyBindings.TryGetValue(identity, out var adapterBinding))
                     _assemblyBindings[lookupType] = adapterBinding;
-                }
-                if (!_customCodecBindings.ContainsKey(lookupType) &&
-                    _canonicalCustomCodecBindings.TryGetValue(identity, out var customBinding))
-                {
+                if (!_customCodecBindings.ContainsKey(lookupType) && _canonicalCustomCodecBindings.TryGetValue(identity, out var customBinding))
                     _customCodecBindings[lookupType] = customBinding;
-                }
             }
         }
 
@@ -499,62 +455,57 @@ public partial class RpcGenerator
             PromoteSelectedFixedMembersToCodecBindings();
             RejectRuntimeSizedUnsafeBlitTypes();
             NormalizeGeneratedModuleDependencies();
-            var finalizedCodecs = FilterFailedCodecClosure(
-                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray());
-            return new DtoAnalysisPassResult(
-                finalizedCodecs,
-                _diagnostics.ToImmutableArray(),
+            var finalizedCodecs = FilterFailedCodecClosure(_models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray());
+            return new DtoAnalysisPassResult(finalizedCodecs, _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
         }
 
         private void RejectRuntimeSizedUnsafeBlitTypes()
         {
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
-
             foreach (var type in reachable.Values)
             {
                 var typeName = GetTypeName(type);
-                if (_models.TryGetValue(typeName, out var selected) &&
-                    selected.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
-                {
+                if (_models.TryGetValue(typeName, out var selected) && selected.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
                     continue;
-                }
-                if (!IsRuntimeSizedUnsafeBlitType(type))
+                if (!type.IsUnmanagedType || !IsRuntimeSizedUnsafeBlitType(type))
                     continue;
-
-                Report(
-                    DtoDiagnosticKind.Unsupported,
-                    type,
+                Report(DtoDiagnosticKind.Unsupported, type,
                     "runtime-sized intrinsic unmanaged types such as System.Numerics.Vector<T> cannot use UnsafeBlit; register an explicit typed Codec or Codec Adapter");
                 _failed.Add(typeName);
             }
         }
 
         private bool IsRuntimeSizedUnsafeBlitType(ITypeSymbol type)
+            => IsRuntimeSizedUnsafeBlitType(type, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
+
+        private bool IsRuntimeSizedUnsafeBlitType(ITypeSymbol type, HashSet<ITypeSymbol> seen)
         {
             var vectorDefinition = _compilation.GetTypeByMetadataName("System.Numerics.Vector`1");
-            return vectorDefinition is not null &&
-                   type is INamedTypeSymbol named &&
-                   SymbolEqualityComparer.Default.Equals(named.OriginalDefinition, vectorDefinition);
+            if (vectorDefinition is not null && type is INamedTypeSymbol vector &&
+                SymbolEqualityComparer.Default.Equals(vector.OriginalDefinition, vectorDefinition))
+            {
+                return true;
+            }
+            if (!type.IsUnmanagedType || type is not INamedTypeSymbol named || !seen.Add(type))
+                return false;
+            foreach (var field in named.GetMembers().OfType<IFieldSymbol>().Where(static field => !field.IsStatic && !field.IsConst))
+            {
+                if (IsRuntimeSizedUnsafeBlitType(field.Type, seen))
+                    return true;
+            }
+            return false;
         }
 
         internal HashSet<string> GetCurrentContractReachableTypeNames()
         {
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: false,
-                includeContracts: true);
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: false, includeContracts: true);
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
@@ -566,29 +517,18 @@ public partial class RpcGenerator
         {
             if (!_applyCodecPolicy || _models.Count == 0)
                 return;
-
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
-
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
-
-            var dtoModels = _models.Values
-                .Where(static model => model.Kind == GeneratedCodecKind.Dto)
-                .ToArray();
+            var dtoModels = _models.Values.Where(static model => model.Kind == GeneratedCodecKind.Dto).ToArray();
             foreach (var model in dtoModels)
             {
                 if (!reachable.TryGetValue(model.TypeName, out var type) || type is not INamedTypeSymbol named)
                     continue;
-
-                var memberSymbols = GetSerializableMembers(named)
-                    .ToDictionary(static member => member.Name, StringComparer.Ordinal);
+                var memberSymbols = GetSerializableMembers(named).ToDictionary(static member => member.Name, StringComparer.Ordinal);
                 var members = model.Members.ToArray();
                 var changed = false;
                 for (var index = 0; index < members.Length; index++)
@@ -596,42 +536,25 @@ public partial class RpcGenerator
                     var member = members[index];
                     if (member.Kind is not (GeneratedMemberKind.Fixed or GeneratedMemberKind.NullableFixed or GeneratedMemberKind.String) ||
                         !memberSymbols.TryGetValue(member.Name, out var memberSymbol))
-                    {
                         continue;
-                    }
-
                     var memberType = GetMemberType(memberSymbol);
                     if (!HasSelectedMemberCodec(memberType))
                         continue;
-
                     Visit(memberType, [], 0);
-                    members[index] = member with
-                    {
-                        Kind = GeneratedMemberKind.Complex,
-                        FixedTypeName = null,
-                        FixedSize = 0,
-                        EnumUnderlyingType = null
-                    };
+                    members[index] = member with { Kind = GeneratedMemberKind.Complex, FixedTypeName = null, FixedSize = 0, EnumUnderlyingType = null };
                     changed = true;
                 }
-
                 if (!changed)
                     continue;
-
                 var finalizedMembers = members.ToImmutableArray();
                 var schema = new StringBuilder(model.TypeName);
                 foreach (var member in finalizedMembers)
                 {
-                    schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName)
-                        .Append(':').Append(member.Kind).Append(':').Append(member.Required);
+                    schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName).Append(':').Append(member.Kind).Append(':').Append(member.Required);
                     if (member.Nullable)
                         schema.Append(":nullable");
                 }
-                _models[model.TypeName] = model with
-                {
-                    Members = finalizedMembers,
-                    SchemaId = GetSchemaId(model.TypeName, schema.ToString())
-                };
+                _models[model.TypeName] = model with { Members = finalizedMembers, SchemaId = GetSchemaId(model.TypeName, schema.ToString()) };
             }
         }
 
@@ -639,7 +562,6 @@ public partial class RpcGenerator
         {
             if (!TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
                 return false;
-
             return (elementType is not null && HasSelectedMemberCodec(elementType)) ||
                    (keyType is not null && HasSelectedMemberCodec(keyType)) ||
                    (valueType is not null && HasSelectedMemberCodec(valueType));
@@ -651,11 +573,8 @@ public partial class RpcGenerator
                 return false;
             if (TrySelectCustomCodec(memberType, out var customCodec))
                 return customCodec is not null;
-
             AdapterRegistration? selected = null;
-            var hasSelection = _contractMode
-                ? TrySelectContractCodecOverride(memberType, out selected)
-                : TrySelectAdapter(memberType, out selected);
+            var hasSelection = _contractMode ? TrySelectContractCodecOverride(memberType, out selected) : TrySelectAdapter(memberType, out selected);
             return hasSelection && selected is not null;
         }
 
@@ -663,74 +582,44 @@ public partial class RpcGenerator
         {
             if (_models.Count == 0)
                 return;
-
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, symbolsByType, seen, 0);
-
             var localFactoryTypes = new HashSet<string>(_models.Keys, StringComparer.Ordinal);
             foreach (var model in _models.Values.ToArray())
             {
                 if (model.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
                 {
-                    _models[model.TypeName] = model with
-                    {
-                        AssemblyDependencies = ImmutableArray<string>.Empty
-                    };
+                    _models[model.TypeName] = model with { AssemblyDependencies = ImmutableArray<string>.Empty };
                     continue;
                 }
-
                 var dependencies = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var dependencyTypeName in GetCodecDependencies(model))
                 {
-                    if (localFactoryTypes.Contains(dependencyTypeName) ||
-                        !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType) ||
-                        IsBuiltin(dependencyType))
-                    {
+                    if (localFactoryTypes.Contains(dependencyTypeName) || !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType) || IsBuiltin(dependencyType))
                         continue;
-                    }
-
                     var assembly = dependencyType.ContainingAssembly;
-                    if (assembly is not null &&
-                        !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) &&
-                        HasGeneratedAssemblyManifest(assembly))
-                    {
+                    if (assembly is not null && !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) && HasGeneratedAssemblyManifest(assembly))
                         dependencies.Add(assembly.Identity.ToString());
-                    }
                 }
-
                 _models[model.TypeName] = model with
                 {
-                    AssemblyDependencies = dependencies
-                        .OrderBy(static identity => identity, StringComparer.Ordinal)
-                        .ToImmutableArray()
+                    AssemblyDependencies = dependencies.OrderBy(static identity => identity, StringComparer.Ordinal).ToImmutableArray()
                 };
             }
         }
 
-        private void CollectFinalBindingTypes(
-            ITypeSymbol type,
-            Dictionary<string, ITypeSymbol> reachable,
-            HashSet<ITypeSymbol> seen,
-            int depth)
+        private void CollectFinalBindingTypes(ITypeSymbol type, Dictionary<string, ITypeSymbol> reachable, HashSet<ITypeSymbol> seen, int depth)
         {
             if (depth > MaximumDepth || !seen.Add(type))
                 return;
             var typeName = GetTypeName(type);
             reachable[typeName] = type;
-            if (_models.TryGetValue(typeName, out var finalModel) &&
-                finalModel.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
-            {
+            if (_models.TryGetValue(typeName, out var finalModel) && finalModel.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
                 return;
-            }
-
             if (type is IArrayTypeSymbol array)
             {
                 CollectFinalBindingTypes(array.ElementType, reachable, seen, depth + 1);
@@ -738,17 +627,13 @@ public partial class RpcGenerator
             }
             if (TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
             {
-                if (elementType is not null)
-                    CollectFinalBindingTypes(elementType, reachable, seen, depth + 1);
-                if (keyType is not null)
-                    CollectFinalBindingTypes(keyType, reachable, seen, depth + 1);
-                if (valueType is not null)
-                    CollectFinalBindingTypes(valueType, reachable, seen, depth + 1);
+                if (elementType is not null) CollectFinalBindingTypes(elementType, reachable, seen, depth + 1);
+                if (keyType is not null) CollectFinalBindingTypes(keyType, reachable, seen, depth + 1);
+                if (valueType is not null) CollectFinalBindingTypes(valueType, reachable, seen, depth + 1);
                 return;
             }
             if (type is not INamedTypeSymbol named || IsThirdPartyType(type))
                 return;
-
             foreach (var member in GetSerializableMembers(named))
                 CollectFinalBindingTypes(GetMemberType(member), reachable, seen, depth + 1);
         }
