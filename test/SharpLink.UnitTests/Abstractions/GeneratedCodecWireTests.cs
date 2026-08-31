@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace SharpLink.UnitTests.Abstractions;
 
 public class GeneratedCodecWireTests
@@ -40,14 +38,17 @@ public class GeneratedCodecWireTests
     }
 
     [Test]
-    public void GeneratedStringWriterShouldRejectIsolatedSurrogates()
+    public void GeneratedStringWriterShouldPreserveIsolatedSurrogates()
     {
         using var writer = new PooledByteBufferWriter();
-        var failure = CaptureException(() => RpcGeneratedCodecWire.WriteString(writer, "\uD800"));
+        var source = new string(['\uD800', 'X', '\uDC00']);
 
-        Ensure(failure is EncoderFallbackException,
-            $"isolated surrogate should fail strict UTF-8 encoding, not {failure?.GetType().Name}");
-        Ensure(writer.WrittenCount == 0, "invalid string must not partially write its length");
+        RpcGeneratedCodecWire.WriteString(writer, source);
+        var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(writer.WrittenMemory));
+        var decoded = RpcGeneratedCodecWire.ReadString(ref reader);
+
+        Ensure(decoded == source, "generated v2 string wire must preserve arbitrary UTF-16 code units");
+        Ensure(reader.Remaining == 0, "generated string reader must consume the full UTF-16 payload");
     }
 
     private static SharpLinkException CaptureSharpLink(Action action)
@@ -72,19 +73,6 @@ public class GeneratedCodecWireTests
             throw new Exception("expected SharpLinkException");
         }
         catch (SharpLinkException exception)
-        {
-            return exception;
-        }
-    }
-
-    private static Exception? CaptureException(Action action)
-    {
-        try
-        {
-            action();
-            return null;
-        }
-        catch (Exception exception)
         {
             return exception;
         }
