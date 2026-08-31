@@ -67,6 +67,25 @@ public sealed class StableAdapter : SharpLink.Abstractions.IRpcCodecAdapter
                     "ISharpLinkGeneratedAssemblyManifest",
                     StringComparison.Ordinal));
 
+        static string ContractCodecIdentity(string manifest, string typeName)
+        {
+            var marker = $"K:global::{typeName}:";
+            var start = manifest.IndexOf(marker, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                marker = $"K:{typeName}:";
+                start = manifest.IndexOf(marker, StringComparison.Ordinal);
+            }
+            if (start < 0)
+                throw new InvalidOperationException($"Contract codec descriptor '{typeName}' was not found.");
+
+            start += marker.Length;
+            var end = manifest.IndexOf(';', start);
+            if (end < 0)
+                throw new InvalidOperationException($"Contract codec descriptor '{typeName}' is malformed.");
+            return manifest[start..end];
+        }
+
         static string EnumSource(bool swapped)
         {
             var members = swapped ? "Ok = 1, Error = 0" : "Ok = 0, Error = 1";
@@ -106,8 +125,8 @@ public interface INullableDtoContract : SharpLink.Sdk.IService
         var fieldOne = Manifest(DtoSource(fieldId: 1, physicalType: "int"));
         var fieldSeven = Manifest(DtoSource(fieldId: 7, physicalType: "int"));
         Ensure(
-            ExtractGeneratedCodecIdentity(fieldOne, "NullablePayload") !=
-            ExtractGeneratedCodecIdentity(fieldSeven, "NullablePayload"),
+            ContractCodecIdentity(fieldOne, "NullablePayload") !=
+            ContractCodecIdentity(fieldSeven, "NullablePayload"),
             "changing RpcMember identity must still change the generated child DTO CodecHash");
         Ensure(
             ExtractGeneratedRpcAssemblyHash(fieldOne) == ExtractGeneratedRpcAssemblyHash(fieldSeven),
