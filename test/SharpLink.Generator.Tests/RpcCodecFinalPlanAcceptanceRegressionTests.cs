@@ -26,11 +26,17 @@ public struct NestedEnumPhysicalPayload
     public NestedPhysicalStatus Status;
 }
 
+[SharpLink.Sdk.RpcSerializable]
+public sealed class NestedEnumPhysicalEnvelope
+{
+    public NestedEnumPhysicalPayload Value { get; set; }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface INestedEnumPhysicalContract : SharpLink.Sdk.IService
 {
-    ValueTask<NestedEnumPhysicalPayload> Echo(
-        NestedEnumPhysicalPayload value,
+    ValueTask<NestedEnumPhysicalEnvelope> Echo(
+        NestedEnumPhysicalEnvelope value,
         CancellationToken cancellationToken);
 }
 """);
@@ -45,9 +51,9 @@ public interface INestedEnumPhysicalContract : SharpLink.Sdk.IService
         var after = Manifest("Ready = 1, Failed = 0");
 
         Ensure(
-            ExtractGeneratedCodecIdentity(before, "NestedEnumPhysicalPayload") !=
-            ExtractGeneratedCodecIdentity(after, "NestedEnumPhysicalPayload"),
-            "a nested enum declaration mapping change must change the enclosing UnsafeBlit CodecHash even when width and struct layout are unchanged");
+            ExtractGeneratedCodecIdentity(before, "NestedEnumPhysicalEnvelope") !=
+            ExtractGeneratedCodecIdentity(after, "NestedEnumPhysicalEnvelope"),
+            "a nested enum declaration mapping change must change an enclosing generated CodecHash even when width and struct layout are unchanged");
         Ensure(
             ExtractGeneratedRpcAssemblyHash(before) != ExtractGeneratedRpcAssemblyHash(after),
             "nested enum declaration semantics must flow through the enclosing UnsafeBlit CodecHash into RpcAssemblyHash");
@@ -74,11 +80,17 @@ public struct EffectiveLayoutPayload
     public long Tail;
 }
 
+[SharpLink.Sdk.RpcSerializable]
+public sealed class EffectiveLayoutEnvelope
+{
+    public EffectiveLayoutPayload Value { get; set; }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IEffectiveLayoutContract : SharpLink.Sdk.IService
 {
-    ValueTask<EffectiveLayoutPayload> Echo(
-        EffectiveLayoutPayload value,
+    ValueTask<EffectiveLayoutEnvelope> Echo(
+        EffectiveLayoutEnvelope value,
         CancellationToken cancellationToken);
 }
 """;
@@ -103,11 +115,17 @@ public struct EffectiveLayoutPayload
 {{fields}}
 }
 
+[SharpLink.Sdk.RpcSerializable]
+public sealed class EffectiveLayoutEnvelope
+{
+    public EffectiveLayoutPayload Value { get; set; }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IEffectiveLayoutContract : SharpLink.Sdk.IService
 {
-    ValueTask<EffectiveLayoutPayload> Echo(
-        EffectiveLayoutPayload value,
+    ValueTask<EffectiveLayoutEnvelope> Echo(
+        EffectiveLayoutEnvelope value,
         CancellationToken cancellationToken);
 }
 """;
@@ -116,34 +134,34 @@ public interface IEffectiveLayoutContract : SharpLink.Sdk.IService
         var sequentialAnsi = Manifest(SequentialSource("Ansi", 8));
         var sequentialUnicode = Manifest(SequentialSource("Unicode", 8));
         Ensure(
-            ExtractGeneratedCodecIdentity(sequentialAnsi, "EffectiveLayoutPayload") ==
-            ExtractGeneratedCodecIdentity(sequentialUnicode, "EffectiveLayoutPayload"),
-            "StructLayout CharSet is source metadata but does not change raw unmanaged field layout and must not perturb UnsafeBlit identity");
+            ExtractGeneratedCodecIdentity(sequentialAnsi, "EffectiveLayoutEnvelope") ==
+            ExtractGeneratedCodecIdentity(sequentialUnicode, "EffectiveLayoutEnvelope"),
+            "StructLayout CharSet is source metadata but does not change raw unmanaged field layout and must not perturb an enclosing generated CodecHash");
 
         var explicitDeclaredForward = Manifest(ExplicitSource(reverseDeclarations: false, tailOffset: 8, size: 16));
         var explicitDeclaredReverse = Manifest(ExplicitSource(reverseDeclarations: true, tailOffset: 8, size: 16));
         Ensure(
-            ExtractGeneratedCodecIdentity(explicitDeclaredForward, "EffectiveLayoutPayload") ==
-            ExtractGeneratedCodecIdentity(explicitDeclaredReverse, "EffectiveLayoutPayload"),
+            ExtractGeneratedCodecIdentity(explicitDeclaredForward, "EffectiveLayoutEnvelope") ==
+            ExtractGeneratedCodecIdentity(explicitDeclaredReverse, "EffectiveLayoutEnvelope"),
             "Explicit-layout field declaration order must canonicalize by effective offset and physical semantics");
 
         var sequentialPack1 = Manifest(SequentialSource("Ansi", 1));
         Ensure(
-            ExtractGeneratedCodecIdentity(sequentialAnsi, "EffectiveLayoutPayload") !=
-            ExtractGeneratedCodecIdentity(sequentialPack1, "EffectiveLayoutPayload"),
-            "an effective Sequential Pack change must change UnsafeBlit identity");
+            ExtractGeneratedCodecIdentity(sequentialAnsi, "EffectiveLayoutEnvelope") !=
+            ExtractGeneratedCodecIdentity(sequentialPack1, "EffectiveLayoutEnvelope"),
+            "an effective Sequential Pack change must change the propagated UnsafeBlit identity");
 
         var explicitOffsetChanged = Manifest(ExplicitSource(reverseDeclarations: false, tailOffset: 4, size: 16));
         Ensure(
-            ExtractGeneratedCodecIdentity(explicitDeclaredForward, "EffectiveLayoutPayload") !=
-            ExtractGeneratedCodecIdentity(explicitOffsetChanged, "EffectiveLayoutPayload"),
-            "an effective Explicit field offset change must change UnsafeBlit identity");
+            ExtractGeneratedCodecIdentity(explicitDeclaredForward, "EffectiveLayoutEnvelope") !=
+            ExtractGeneratedCodecIdentity(explicitOffsetChanged, "EffectiveLayoutEnvelope"),
+            "an effective Explicit field offset change must change the propagated UnsafeBlit identity");
 
         var explicitSizeChanged = Manifest(ExplicitSource(reverseDeclarations: false, tailOffset: 8, size: 24));
         Ensure(
-            ExtractGeneratedCodecIdentity(explicitDeclaredForward, "EffectiveLayoutPayload") !=
-            ExtractGeneratedCodecIdentity(explicitSizeChanged, "EffectiveLayoutPayload"),
-            "an effective Explicit Size change must change UnsafeBlit identity");
+            ExtractGeneratedCodecIdentity(explicitDeclaredForward, "EffectiveLayoutEnvelope") !=
+            ExtractGeneratedCodecIdentity(explicitSizeChanged, "EffectiveLayoutEnvelope"),
+            "an effective Explicit Size change must change the propagated UnsafeBlit identity");
         return Task.CompletedTask;
     }
 
@@ -261,17 +279,23 @@ public unsafe struct FunctionPointerPayload
     public {{signature}} Callback;
 }
 
+[SharpLink.Sdk.RpcSerializable]
+public sealed class FunctionPointerEnvelope
+{
+    public FunctionPointerPayload Value { get; set; }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IFunctionPointerIdentityContract : SharpLink.Sdk.IService
 {
-    ValueTask<FunctionPointerPayload> Echo(
-        FunctionPointerPayload value,
+    ValueTask<FunctionPointerEnvelope> Echo(
+        FunctionPointerEnvelope value,
         CancellationToken cancellationToken);
 }
 """));
 
         var baseline = Manifest("delegate*<int, int>");
-        var baselineCodec = ExtractGeneratedCodecIdentity(baseline, "FunctionPointerPayload");
+        var baselineCodec = ExtractGeneratedCodecIdentity(baseline, "FunctionPointerEnvelope");
         var baselineAssembly = ExtractGeneratedRpcAssemblyHash(baseline);
         foreach (var changedSignature in new[]
                  {
@@ -284,8 +308,8 @@ public interface IFunctionPointerIdentityContract : SharpLink.Sdk.IService
         {
             var changed = Manifest(changedSignature);
             Ensure(
-                baselineCodec != ExtractGeneratedCodecIdentity(changed, "FunctionPointerPayload"),
-                $"function-pointer signature semantic '{changedSignature}' must change the enclosing UnsafeBlit CodecHash");
+                baselineCodec != ExtractGeneratedCodecIdentity(changed, "FunctionPointerEnvelope"),
+                $"function-pointer signature semantic '{changedSignature}' must change an enclosing generated CodecHash");
             Ensure(
                 baselineAssembly != ExtractGeneratedRpcAssemblyHash(changed),
                 $"function-pointer signature semantic '{changedSignature}' must flow into RpcAssemblyHash");

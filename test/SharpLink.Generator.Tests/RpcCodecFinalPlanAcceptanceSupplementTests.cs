@@ -22,11 +22,17 @@ public struct DefaultSequentialPayload
     public long Tail;
 }
 
+[SharpLink.Sdk.RpcSerializable]
+public sealed class DefaultSequentialEnvelope
+{
+    public DefaultSequentialPayload Value { get; set; }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IDefaultSequentialContract : SharpLink.Sdk.IService
 {
-    ValueTask<DefaultSequentialPayload> Echo(
-        DefaultSequentialPayload value,
+    ValueTask<DefaultSequentialEnvelope> Echo(
+        DefaultSequentialEnvelope value,
         CancellationToken cancellationToken);
 }
 """);
@@ -40,9 +46,9 @@ public interface IDefaultSequentialContract : SharpLink.Sdk.IService
         var implicitSequential = Manifest(explicitSequential: false);
         var explicitSequential = Manifest(explicitSequential: true);
         Ensure(
-            ExtractGeneratedCodecIdentity(implicitSequential, "DefaultSequentialPayload") ==
-            ExtractGeneratedCodecIdentity(explicitSequential, "DefaultSequentialPayload"),
-            "implicit Sequential and explicit default Sequential describe the same effective CLR layout and must share one UnsafeBlit CodecHash");
+            ExtractGeneratedCodecIdentity(implicitSequential, "DefaultSequentialEnvelope") ==
+            ExtractGeneratedCodecIdentity(explicitSequential, "DefaultSequentialEnvelope"),
+            "implicit Sequential and explicit default Sequential describe the same effective CLR layout and must propagate the same UnsafeBlit identity into an enclosing generated CodecHash");
         Ensure(
             ExtractGeneratedRpcAssemblyHash(implicitSequential) ==
             ExtractGeneratedRpcAssemblyHash(explicitSequential),
@@ -63,9 +69,10 @@ public struct NullablePhysicalValue
 
 {{extraType}}
 
-public struct NullablePhysicalEnvelope
+[SharpLink.Sdk.RpcSerializable]
+public sealed class NullablePhysicalEnvelope
 {
-    public {{fieldType}} Value;
+    public {{fieldType}} Value { get; set; }
 }
 
 [SharpLink.Sdk.RpcContract]
@@ -110,7 +117,7 @@ public struct NullablePhysicalChildOnly
             "raw Nullable<T> physical identity must model the CLR presence field plus the value field, not only the child T layout");
         Ensure(
             nullableCodec != ExtractGeneratedCodecIdentity(childOnlyReplica, "NullablePhysicalEnvelope"),
-            "removing the Nullable<T> presence representation must change the enclosing UnsafeBlit CodecHash");
+            "removing the Nullable<T> presence representation must change an enclosing generated CodecHash");
         return Task.CompletedTask;
     }
 }
