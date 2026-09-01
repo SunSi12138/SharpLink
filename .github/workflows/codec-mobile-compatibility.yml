@@ -295,13 +295,19 @@ jobs:
             "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" \
             "net11.0-ios/${{ matrix.rid }}"
 
-      - name: Append raw evidence for iOS CoreCLR
+      - name: Validate iOS CoreCLR semantic evidence
+        shell: bash
         run: |
-          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
-            append-raw artifacts/codec-compat/ios-coreclr-verification/verification.json \
-            artifacts/codec-compat/producers artifacts/codec-compat/ios-coreclr-corpus
-          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
-            check-report artifacts/codec-compat/ios-coreclr-verification/verification.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('artifacts/codec-compat/ios-coreclr-verification/verification.json', 'utf8'));
+          if (report?.schemaVersion !== 1) throw new Error('Unexpected iOS verification schema.');
+          if (report?.consumer?.runtimeFamily !== 'CoreCLR') throw new Error(`Expected CoreCLR, got ${report?.consumer?.runtimeFamily}`);
+          if (!String(report?.consumer?.platformTag ?? '').endsWith('-coreclr-net11')) throw new Error(`Unexpected platform tag ${report?.consumer?.platformTag}`);
+          const blocking = (report?.results ?? []).filter(item => item?.blocking).length;
+          if (blocking !== 0) throw new Error(`iOS CoreCLR verification has ${blocking} blocking result(s).`);
+          console.log(`Validated iOS CoreCLR semantic report with ${report?.results?.length ?? 0} result(s) and no blockers.`);
+          NODE
 
       - name: Upload experimental iOS CoreCLR evidence
         if: always()
