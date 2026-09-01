@@ -1,11 +1,78 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadEnvelopes, writeCorpus } from '../SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs';
 
 const bundleId = 'com.sharplink.codeccompat.ios';
 const inputFileName = 'sharplink-input.json';
 const resultFileName = 'sharplink-result.json';
+const builtinRawCategory = 'builtin-semantic-raw';
+
+async function findManifestFiles(root) {
+    const found = [];
+    async function visit(directory) {
+        for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+            const fullPath = path.join(directory, entry.name);
+            if (entry.isDirectory()) {
+                await visit(fullPath);
+            } else if (entry.isFile() && entry.name === 'manifest.json') {
+                found.push(fullPath);
+            }
+        }
+    }
+    await visit(root);
+    found.sort((left, right) => left.localeCompare(right));
+    return found;
+}
+
+async function loadEnvelopes(root) {
+    const manifestFiles = await findManifestFiles(root);
+    if (manifestFiles.length === 0) {
+        throw new Error(`No manifest.json files found under ${root}`);
+    }
+
+    const excludeBuiltinRaw = process.env.SHARPLINK_SKIP_BUILTIN_RAW === '1';
+    const envelopes = [];
+    for (const manifestFile of manifestFiles) {
+        const originalManifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+        if (originalManifest?.schemaVersion !== 1 || !Array.isArray(originalManifest?.cases)) {
+            throw new Error(`Invalid portable manifest ${manifestFile}.`);
+        }
+        const cases = originalManifest.cases.filter(
+            item => !excludeBuiltinRaw || item?.category !== builtinRawCategory);
+        const manifest = { ...originalManifest, cases };
+        const corpusRoot = path.dirname(manifestFile);
+        const caseBytesBase64 = {};
+        for (const item of cases) {
+            const wirePath = path.join(corpusRoot, ...String(item.wireFile).split('/'));
+            caseBytesBase64[item.id] = (await fs.readFile(wirePath)).toString('base64');
+        }
+        envelopes.push({ schemaVersion: 1, manifest, caseBytesBase64 });
+    }
+    return envelopes;
+}
+
+async function writeCorpus(envelope, outputDirectory) {
+    if (envelope?.schemaVersion !== 1 || !envelope?.manifest || !envelope?.caseBytesBase64) {
+        throw new Error('Portable producer output is not a corpus envelope.');
+    }
+
+    await fs.rm(outputDirectory, { recursive: true, force: true });
+    await fs.mkdir(path.join(outputDirectory, 'cases'), { recursive: true });
+    await fs.writeFile(
+        path.join(outputDirectory, 'manifest.json'),
+        JSON.stringify(envelope.manifest, null, 2) + '\n',
+        'utf8');
+
+    for (const item of envelope.manifest.cases ?? []) {
+        const encoded = envelope.caseBytesBase64[item.id];
+        if (typeof encoded !== 'string') {
+            throw new Error(`Portable envelope is missing ${item.id}.`);
+        }
+        const wirePath = path.join(outputDirectory, ...String(item.wireFile).split('/'));
+        await fs.mkdir(path.dirname(wirePath), { recursive: true });
+        await fs.writeFile(wirePath, Buffer.from(encoded, 'base64'));
+    }
+}
 
 function simctl(args, env = process.env) {
     const result = spawnSync('xcrun', ['simctl', ...args], { encoding: 'utf8', env });
