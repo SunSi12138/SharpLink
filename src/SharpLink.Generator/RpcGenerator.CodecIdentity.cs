@@ -4,713 +4,256 @@ public partial class RpcGenerator
 {
     private sealed partial class DtoAnalysisState
     {
-        private readonly Dictionary<string, RpcHashValue?> _opaqueSemanticIdentityCache =
-            new(StringComparer.Ordinal);
-
         internal ImmutableArray<GeneratedCodecHashModel> BuildFinalCodecHashes(
             bool includeSerializable,
             bool includeContracts)
         {
-            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable,
-                includeContracts);
-
-            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
-            foreach (var root in roots.Values)
-                CollectFinalBindingTypes(root, reachable, seen, 0);
-
+            var graph = ResolveFinalCodecGraph(includeSerializable, includeContracts);
             var cache = new Dictionary<string, RpcHashValue>(StringComparer.Ordinal);
-            return reachable
-                .Where(pair => !_failed.Contains(pair.Key))
+            return graph.Plans
                 .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
                 .Select(pair =>
                 {
-                    var hash = GetFinalCodecHash(pair.Value, cache, new HashSet<string>(StringComparer.Ordinal));
+                    var hash = HashCanonicalPlan(pair.Value, graph, cache, new HashSet<string>(StringComparer.Ordinal));
                     return new GeneratedCodecHashModel(pair.Key, hash.High, hash.Low);
                 })
                 .ToImmutableArray();
         }
 
-        private RpcHashValue GetFinalCodecHash(
-            ITypeSymbol type,
+        private static RpcHashValue HashCanonicalPlan(
+            FinalCodecPlan plan,
+            FinalCodecGraph graph,
             Dictionary<string, RpcHashValue> cache,
             HashSet<string> stack)
         {
-            var typeName = GetTypeName(type);
-            if (cache.TryGetValue(typeName, out var cached))
+            if (cache.TryGetValue(plan.TypeName, out var cached))
                 return cached;
-            if (!stack.Add(typeName))
-                return Hashing.GetSemanticHash("codec/v1", "recursive", typeName);
-
-            RpcHashValue result;
-            if (TryGetFrameworkPrimitiveCodecHash(type, cache, stack, out result))
-            {
-                stack.Remove(typeName);
-                cache[typeName] = result;
-                return result;
-            }
-
-            if (_models.TryGetValue(typeName, out var model))
-            {
-                result = GetGeneratedCodecHash(model, cache, stack);
-                stack.Remove(typeName);
-                cache[typeName] = result;
-                return result;
-            }
-
-            if (TryGetReferencedGeneratedCodecHash(type, out result))
-            {
-                stack.Remove(typeName);
-                cache[typeName] = result;
-                return result;
-            }
-
-            if (TryGetCollection(type, out var collectionKind, out var elementType, out var keyType, out var valueType))
-            {
-                if (collectionKind == GeneratedCodecKind.Nullable &&
-                    elementType is not null &&
-                    type.IsUnmanagedType &&
-                    !HasExactBuiltinNullableCodecElement(elementType))
-                {
-                    result = GetRuntimeUnsafeBlitNullableCodecHash(type, elementType);
-                }
-                else if (TryGetBuiltinCollectionElementSemanticIdentity(
-                             collectionKind,
-                             elementType,
-                             out var builtinElementIdentity))
-                {
-                    result = Hashing.GetSemanticHash(
-                        "codec/v1",
-                        "collection",
-                        collectionKind.ToString(),
-                        "runtime-builtin-blit/v1",
-                        builtinElementIdentity);
-                }
-                else
-                {
-                    var parts = new List<string>
-                    {
-                        "codec/v1",
-                        "collection",
-                        collectionKind.ToString()
-                    };
-                    if (elementType is not null)
-                        parts.Add(GetFinalCodecHash(elementType, cache, stack).ToHex());
-                    if (keyType is not null)
-                        parts.Add(GetFinalCodecHash(keyType, cache, stack).ToHex());
-                    if (valueType is not null)
-                        parts.Add(GetFinalCodecHash(valueType, cache, stack).ToHex());
-                    result = Hashing.GetSemanticHash(parts.ToArray());
-                }
-            }
-            else if (type.IsUnmanagedType && !IsRuntimeSizedUnsafeBlitType(type))
-            {
-                var layout = new StringBuilder("unsafe-blit/v2|abi:little-endian|native-pointer-width/64");
-                AppendUnsafeBlitPhysicalLayout(
-                    type,
-                    layout,
-                    new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
-                result = Hashing.GetSemanticHash("codec/v1", layout.ToString());
-            }
-            else
+            if (!stack.Add(plan.TypeName))
             {
                 throw new InvalidOperationException(
-                    $"Final RPC Codec graph cannot resolve deterministic CodecHash metadata for referenced payload '{typeName}'. Rebuild the referenced SharpLink assembly with deterministic identity generation enabled.");
+                    $"Resolved FinalCodecPlan graph contains a hash cycle at '{plan.TypeName}'.");
             }
 
-            stack.Remove(typeName);
-            cache[typeName] = result;
-            return result;
-        }
-
-        private RpcHashValue GetRuntimeUnsafeBlitNullableCodecHash(ITypeSymbol nullableType, ITypeSymbol elementType)
-        {
-            var layout = new StringBuilder("unsafe-blit/v2|abi:little-endian|native-pointer-width/64");
-            AppendUnsafeBlitPhysicalLayout(
-                nullableType,
-                layout,
-                new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
-
-            if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType)
+            RpcHashValue hash = plan switch
             {
-                return Hashing.GetSemanticHash(
+                FinalPrimitiveCodecPlan primitive => HashPrimitivePlan(primitive, graph, cache, stack),
+                FinalEnumCodecPlan enumPlan => HashEnumPlan(enumPlan, graph, cache, stack),
+                FinalGeneratedDtoCodecPlan dto => HashGeneratedDtoPlan(dto, graph, cache, stack),
+                FinalCollectionCodecPlan collection => HashCollectionPlan(collection, graph, cache, stack),
+                FinalUnsafeBlitCodecPlan unsafeBlit => HashUnsafeBlitPlan(unsafeBlit),
+                FinalCustomCodecPlan custom => Hashing.GetSemanticHash(
                     "codec/v1",
-                    "nullable-runtime-unsafe-blit/v1",
-                    layout.ToString(),
-                    GetEnumDeclarationSemanticIdentity(enumType));
-            }
+                    "custom-opaque",
+                    custom.OpaqueSemanticIdentity.ToHex()),
+                FinalAdapterCodecPlan adapter => Hashing.GetSemanticHash(
+                    "codec/v1",
+                    "adapter-closed/v2",
+                    adapter.OpaqueSemanticIdentity.ToHex(),
+                    adapter.ClosedTargetLogicalIdentity.ToHex()),
+                FinalReferencedCodecPlan referenced => referenced.CodecHash,
+                _ => throw new InvalidOperationException(
+                    $"Unknown resolved FinalCodecPlan '{plan.GetType().Name}'.")
+            };
 
-            return Hashing.GetSemanticHash(
-                "codec/v1",
-                "nullable-runtime-unsafe-blit/v1",
-                layout.ToString());
+            stack.Remove(plan.TypeName);
+            cache[plan.TypeName] = hash;
+            return hash;
         }
 
-        private bool TryGetBuiltinCollectionElementSemanticIdentity(
-            GeneratedCodecKind collectionKind,
-            ITypeSymbol? elementType,
-            out string identity)
-        {
-            if (elementType is null ||
-                collectionKind is not (GeneratedCodecKind.Array or
-                    GeneratedCodecKind.List or
-                    GeneratedCodecKind.Memory or
-                    GeneratedCodecKind.ReadOnlyMemory or
-                    GeneratedCodecKind.ImmutableArray) ||
-                !IsBuiltinBlitElement(elementType))
-            {
-                identity = string.Empty;
-                return false;
-            }
-
-            if (string.Equals(elementType.ToDisplayString(), "System.DateTimeOffset", StringComparison.Ordinal))
-            {
-                identity = "datetime-offset/collection-raw16-padding2-7-zero/release-scoped/v1";
-                return true;
-            }
-
-            var layout = new StringBuilder("builtin-blit-element/v1|abi:little-endian");
-            AppendUnsafeBlitPhysicalLayout(
-                elementType,
-                layout,
-                new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
-            identity = layout.ToString();
-            return true;
-        }
-
-        private bool TryGetReferencedGeneratedCodecHash(ITypeSymbol type, out RpcHashValue hash)
-        {
-            var assembly = type.ContainingAssembly;
-            if (assembly is null || SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly))
-            {
-                hash = default;
-                return false;
-            }
-
-            foreach (var attribute in assembly.GetAttributes())
-            {
-                if (!IsAttribute(
-                        attribute,
-                        "SharpLink.Abstractions",
-                        "SharpLinkGeneratedCodecIdentityAttribute") ||
-                    attribute.ConstructorArguments.Length != 3 ||
-                    attribute.ConstructorArguments[0].Value is not ITypeSymbol targetType ||
-                    !SymbolEqualityComparer.Default.Equals(targetType, type) ||
-                    attribute.ConstructorArguments[1].Value is not ulong high ||
-                    attribute.ConstructorArguments[2].Value is not ulong low)
-                {
-                    continue;
-                }
-
-                hash = new RpcHashValue(high, low);
-                return true;
-            }
-
-            hash = default;
-            return false;
-        }
-
-        private RpcHashValue GetGeneratedCodecHash(
-            GeneratedCodecModel model,
+        private static RpcHashValue HashPrimitivePlan(
+            FinalPrimitiveCodecPlan plan,
+            FinalCodecGraph graph,
             Dictionary<string, RpcHashValue> cache,
             HashSet<string> stack)
         {
-            switch (model.Kind)
+            if (string.Equals(plan.Family, "nullable", StringComparison.Ordinal))
             {
-                case GeneratedCodecKind.Custom:
+                if (plan.ChildType is null)
+                    throw new InvalidOperationException($"Nullable plan '{plan.TypeName}' has no child plan.");
+                return Hashing.GetSemanticHash(
+                    "codec/v1",
+                    "nullable",
+                    HashRequiredChild(plan.ChildType, graph, cache, stack).ToHex());
+            }
+
+            var parts = new List<string> { "codec/v1", plan.Family };
+            parts.AddRange(plan.SemanticParts);
+            if (plan.ChildType is not null)
+                parts.Add(HashRequiredChild(plan.ChildType, graph, cache, stack).ToHex());
+            return Hashing.GetSemanticHash(parts.ToArray());
+        }
+
+        private static RpcHashValue HashEnumPlan(
+            FinalEnumCodecPlan plan,
+            FinalCodecGraph graph,
+            Dictionary<string, RpcHashValue> cache,
+            HashSet<string> stack)
+            => Hashing.GetSemanticHash(
+                "codec/v1",
+                "enum",
+                HashRequiredChild(plan.UnderlyingType, graph, cache, stack).ToHex(),
+                plan.DeclarationSemantic);
+
+        private static RpcHashValue HashGeneratedDtoPlan(
+            FinalGeneratedDtoCodecPlan plan,
+            FinalCodecGraph graph,
+            Dictionary<string, RpcHashValue> cache,
+            HashSet<string> stack)
+        {
+            var parts = new List<string>
+            {
+                "codec/v1",
+                "dto",
+                plan.IsReferenceType ? "ref" : "value"
+            };
+            foreach (var member in plan.Members.OrderBy(static item => item.FieldId))
+            {
+                parts.Add(member.FieldId.ToString(InvariantCulture));
+                parts.Add(member.Kind.ToString());
+                parts.Add(member.Required ? "required" : "optional");
+                parts.Add(member.Nullable ? "nullable" : "non-nullable");
+                parts.Add(member.NonNullableReference ? "non-null-ref" : "other-null-semantics");
+                switch (member.WireStrategy)
+                {
+                    case FinalDtoMemberWireStrategy.String:
+                        parts.Add("string/content/utf16le/i32le-byte-length/v1");
+                        parts.Add("string/null/dto-wire-null/v1");
+                        break;
+                    case FinalDtoMemberWireStrategy.Fixed:
+                        parts.Add(member.WireSemantic ?? throw new InvalidOperationException(
+                            "Resolved fixed DTO member has no wire semantic."));
+                        break;
+                    case FinalDtoMemberWireStrategy.ChildCodec:
+                        parts.Add(HashRequiredChild(
+                            member.ChildType ?? throw new InvalidOperationException(
+                                "Resolved complex DTO member has no child plan."),
+                            graph,
+                            cache,
+                            stack).ToHex());
+                        break;
+                }
+            }
+            return Hashing.GetSemanticHash(parts.ToArray());
+        }
+
+        private static RpcHashValue HashCollectionPlan(
+            FinalCollectionCodecPlan plan,
+            FinalCodecGraph graph,
+            Dictionary<string, RpcHashValue> cache,
+            HashSet<string> stack)
+        {
+            var parts = new List<string>
+            {
+                "codec/v1",
+                "collection",
+                plan.CollectionKind.ToString()
+            };
+            switch (plan.WireStrategy)
+            {
+                case FinalCollectionWireStrategy.ChildCodec:
+                    AppendChild(plan.ElementType);
+                    AppendChild(plan.KeyType);
+                    AppendChild(plan.ValueType);
+                    break;
+                case FinalCollectionWireStrategy.RawBlit:
+                    parts.Add(plan.StrategySemantic ?? "builtin-blit-element/v2|abi:little-endian");
+                    parts.Add(HashPhysicalLayout(
+                        plan.RawElementLayout ?? throw new InvalidOperationException(
+                            $"Raw-blit collection '{plan.TypeName}' has no physical element plan.")).ToHex());
+                    break;
+                case FinalCollectionWireStrategy.DateTimeOffsetCanonical:
+                    parts.Add("runtime-datetimeoffset-special/v1");
+                    parts.Add(plan.StrategySemantic ?? throw new InvalidOperationException(
+                        $"DateTimeOffset collection '{plan.TypeName}' has no strategy semantic."));
+                    break;
+            }
+            return Hashing.GetSemanticHash(parts.ToArray());
+
+            void AppendChild(string? childType)
+            {
+                if (childType is not null)
+                    parts.Add(HashRequiredChild(childType, graph, cache, stack).ToHex());
+            }
+        }
+
+        private static RpcHashValue HashUnsafeBlitPlan(FinalUnsafeBlitCodecPlan plan)
+            => Hashing.GetSemanticHash(
+                "codec/v1",
+                "unsafe-blit-plan/v3",
+                "endianness:" + plan.Abi.Endianness,
+                "native-pointer-width:" + plan.Abi.NativePointerWidth.ToString(InvariantCulture),
+                "abi-version:" + plan.Abi.Version,
+                HashPhysicalLayout(plan.Layout).ToHex());
+
+        private static RpcHashValue HashRequiredChild(
+            string childType,
+            FinalCodecGraph graph,
+            Dictionary<string, RpcHashValue> cache,
+            HashSet<string> stack)
+        {
+            if (!graph.Plans.TryGetValue(childType, out var child))
+            {
+                throw new InvalidOperationException(
+                    $"Resolved FinalCodecPlan graph is missing child '{childType}'.");
+            }
+            return HashCanonicalPlan(child, graph, cache, stack);
+        }
+
+        private static RpcHashValue HashPhysicalLayout(FinalPhysicalLayoutPlan plan)
+        {
+            switch (plan)
+            {
+                case FinalPrimitivePhysicalPlan primitive:
                     return Hashing.GetSemanticHash(
-                        "codec/v1",
-                        "custom-opaque",
-                        GetRequiredOpaqueSemanticIdentity(model.CustomCodecType, "custom Codec").ToHex());
-                case GeneratedCodecKind.Adapter:
+                        "physical/v1",
+                        "primitive",
+                        primitive.Token,
+                        primitive.FrameworkRawAbi ?? string.Empty);
+                case FinalEnumPhysicalPlan enumPlan:
                     return Hashing.GetSemanticHash(
-                        "codec/v1",
-                        "adapter-closed/v2",
-                        GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter").ToHex(),
-                        GetAdapterTargetLogicalIdentity(model).ToHex());
-                case GeneratedCodecKind.Dto:
+                        "physical/v1",
+                        "enum",
+                        HashPhysicalLayout(enumPlan.Underlying).ToHex(),
+                        enumPlan.DeclarationSemantic);
+                case FinalPointerPhysicalPlan pointer:
+                    return Hashing.GetSemanticHash(
+                        "physical/v1",
+                        "native-pointer",
+                        pointer.TargetLogicalIdentity);
+                case FinalFunctionPointerPhysicalPlan functionPointer:
+                    return Hashing.GetSemanticHash(
+                        "physical/v1",
+                        "function-pointer",
+                        functionPointer.SignatureSemantic);
+                case FinalFixedBufferPhysicalPlan fixedBuffer:
+                    return Hashing.GetSemanticHash(
+                        "physical/v1",
+                        "fixed-buffer",
+                        fixedBuffer.Length.ToString(InvariantCulture),
+                        HashPhysicalLayout(fixedBuffer.Element).ToHex());
+                case FinalStructPhysicalPlan structure:
                     {
                         var parts = new List<string>
                         {
-                            "codec/v1",
-                            "dto",
-                            model.IsReferenceType ? "ref" : "value"
+                            "physical/v1",
+                            "struct",
+                            structure.LayoutKind.ToString(),
+                            structure.Pack.ToString(InvariantCulture),
+                            structure.Size.ToString(InvariantCulture),
+                            structure.InlineArrayLength?.ToString(InvariantCulture) ?? string.Empty,
+                            structure.Fields.Length.ToString(InvariantCulture)
                         };
-                        foreach (var member in model.Members.OrderBy(static member => member.FieldId))
+                        foreach (var field in structure.Fields)
                         {
-                            parts.Add(member.FieldId.ToString(InvariantCulture));
-                            parts.Add(member.Kind.ToString());
-                            parts.Add(member.Required ? "required" : "optional");
-                            parts.Add(member.Nullable ? "nullable" : "non-nullable");
-                            parts.Add(member.NonNullableReference ? "non-null-ref" : "other-null-semantics");
-                            switch (member.Kind)
-                            {
-                                case GeneratedMemberKind.String:
-                                    parts.Add("string/content/utf16le/i32le-byte-length/v1");
-                                    parts.Add("string/null/dto-wire-null/v1");
-                                    break;
-                                case GeneratedMemberKind.Fixed:
-                                case GeneratedMemberKind.NullableFixed:
-                                    parts.Add(GetFixedMemberSemanticIdentity(member));
-                                    break;
-                                case GeneratedMemberKind.Complex:
-                                    if (!TryResolveReachableType(member.TypeName, out var memberType))
-                                    {
-                                        throw new InvalidOperationException(
-                                            $"Final RPC Codec graph cannot resolve child payload '{member.TypeName}' while hashing '{model.TypeName}'.");
-                                    }
-                                    parts.Add(GetFinalCodecHash(memberType, cache, stack).ToHex());
-                                    break;
-                            }
+                            parts.Add(field.Offset?.ToString(InvariantCulture) ?? "sequential");
+                            parts.Add(HashPhysicalLayout(field.Layout).ToHex());
                         }
                         return Hashing.GetSemanticHash(parts.ToArray());
                     }
                 default:
-                    {
-                        var parts = new List<string>
-                        {
-                            "codec/v1",
-                            "collection",
-                            model.Kind.ToString()
-                        };
-                        AppendChild(model.ElementType);
-                        AppendChild(model.KeyType);
-                        AppendChild(model.ValueType);
-                        return Hashing.GetSemanticHash(parts.ToArray());
-
-                        void AppendChild(string? childTypeName)
-                        {
-                            if (childTypeName is null)
-                                return;
-                            if (!TryResolveReachableType(childTypeName, out var childType))
-                            {
-                                throw new InvalidOperationException(
-                                    $"Final RPC Codec graph cannot resolve child payload '{childTypeName}' while hashing '{model.TypeName}'.");
-                            }
-                            parts.Add(GetFinalCodecHash(childType, cache, stack).ToHex());
-                        }
-                    }
+                    throw new InvalidOperationException(
+                        $"Unknown resolved physical plan '{plan.GetType().Name}'.");
             }
-        }
-
-        private RpcHashValue GetRequiredOpaqueSemanticIdentity(
-            string? implementationTypeName,
-            string implementationKind)
-        {
-            if (TryGetOpaqueSemanticIdentity(implementationTypeName, out var hash))
-                return hash;
-
-            throw new InvalidOperationException(
-                $"Opaque {implementationKind} '{implementationTypeName ?? "<unknown>"}' must declare [RpcCodecSemanticIdentity(high, low)].");
-        }
-
-        private bool TryGetOpaqueSemanticIdentity(string? implementationTypeName, out RpcHashValue hash)
-        {
-            if (implementationTypeName is null)
-            {
-                hash = default;
-                return false;
-            }
-
-            if (_opaqueSemanticIdentityCache.TryGetValue(implementationTypeName, out var cached))
-            {
-                hash = cached ?? default;
-                return cached.HasValue;
-            }
-
-            var assemblies = new Dictionary<string, IAssemblySymbol>(StringComparer.Ordinal)
-            {
-                [_compilation.Assembly.Identity.ToString()] = _compilation.Assembly
-            };
-            var pending = new Queue<IAssemblySymbol>();
-            pending.Enqueue(_compilation.Assembly);
-            while (pending.Count != 0)
-            {
-                var assembly = pending.Dequeue();
-                if (TryFindNamedType(assembly.GlobalNamespace, implementationTypeName, out var implementationType))
-                {
-                    var attribute = implementationType.GetAttributes().FirstOrDefault(static item =>
-                        IsAttribute(item, "SharpLink.Sdk", "RpcCodecSemanticIdentityAttribute"));
-                    if (attribute is not null &&
-                        attribute.ConstructorArguments.Length == 2 &&
-                        attribute.ConstructorArguments[0].Value is ulong high &&
-                        attribute.ConstructorArguments[1].Value is ulong low)
-                    {
-                        hash = new RpcHashValue(high, low);
-                        _opaqueSemanticIdentityCache[implementationTypeName] = hash;
-                        return true;
-                    }
-                }
-
-                foreach (var referenced in assembly.Modules.SelectMany(static module => module.ReferencedAssemblySymbols))
-                {
-                    var identity = referenced.Identity.ToString();
-                    if (assemblies.ContainsKey(identity))
-                        continue;
-                    assemblies.Add(identity, referenced);
-                    pending.Enqueue(referenced);
-                }
-            }
-
-            _opaqueSemanticIdentityCache[implementationTypeName] = null;
-            hash = default;
-            return false;
-        }
-
-        private static bool TryFindNamedType(
-            INamespaceSymbol namespaceSymbol,
-            string typeName,
-            out INamedTypeSymbol type)
-        {
-            foreach (var candidate in namespaceSymbol.GetTypeMembers())
-            {
-                if (TryFindNamedType(candidate, typeName, out type))
-                    return true;
-            }
-            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
-            {
-                if (TryFindNamedType(nestedNamespace, typeName, out type))
-                    return true;
-            }
-            type = null!;
-            return false;
-        }
-
-        private static bool TryFindNamedType(
-            INamedTypeSymbol candidate,
-            string typeName,
-            out INamedTypeSymbol type)
-        {
-            if (string.Equals(GetTypeName(candidate), typeName, StringComparison.Ordinal))
-            {
-                type = candidate;
-                return true;
-            }
-            foreach (var nested in candidate.GetTypeMembers())
-            {
-                if (TryFindNamedType(nested, typeName, out type))
-                    return true;
-            }
-            type = null!;
-            return false;
-        }
-
-        private bool TryResolveReachableType(string typeName, out ITypeSymbol type)
-        {
-            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
-            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
-            foreach (var root in roots.Values)
-                CollectFinalBindingTypes(root, reachable, seen, 0);
-            return reachable.TryGetValue(typeName, out type!);
-        }
-
-        private string GetFixedMemberSemanticIdentity(GeneratedMemberModel member)
-        {
-            var typeName = member.FixedTypeName ?? member.TypeName;
-            if (string.Equals(typeName, "System.DateTimeOffset", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.DateTimeOffset", StringComparison.Ordinal))
-            {
-                return "datetime-offset/dto-offset-minutes-i16le-padding6-utc-ticks-i64le/v1";
-            }
-
-            if (member.EnumUnderlyingType is not null &&
-                TryResolveReachableType(member.TypeName, out var fixedMemberType) &&
-                fixedMemberType is INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType)
-            {
-                return string.Join(
-                    ":",
-                    "fixed/v1",
-                    member.FixedSize.ToString(InvariantCulture),
-                    GetEnumDeclarationSemanticIdentity(enumType));
-            }
-
-            return string.Join(
-                ":",
-                "fixed/v1",
-                member.FixedSize.ToString(InvariantCulture),
-                member.EnumUnderlyingType ?? typeName);
-        }
-
-        private static string GetEnumDeclarationSemanticIdentity(INamedTypeSymbol enumType)
-        {
-            var parts = new List<string>
-            {
-                "enum-declaration/v1",
-                enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                enumType.EnumUnderlyingType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-            };
-            foreach (var field in enumType.GetMembers()
-                         .OfType<IFieldSymbol>()
-                         .Where(static field => field.HasConstantValue)
-                         .OrderBy(static field => field.Name, StringComparer.Ordinal))
-            {
-                parts.Add(field.Name + "=" + Convert.ToString(field.ConstantValue, InvariantCulture));
-            }
-            return string.Join("|", parts);
-        }
-
-        private static bool HasExactBuiltinNullableCodecElement(ITypeSymbol type)
-            => type.TypeKind != TypeKind.Enum && GetFixedSize(type) != 0;
-
-        private bool TryGetFrameworkPrimitiveCodecHash(
-            ITypeSymbol type,
-            Dictionary<string, RpcHashValue> cache,
-            HashSet<string> stack,
-            out RpcHashValue hash)
-        {
-            if (type.TypeKind == TypeKind.Enum &&
-                type is INamedTypeSymbol { EnumUnderlyingType: { } enumUnderlying })
-            {
-                hash = Hashing.GetSemanticHash(
-                    "codec/v1",
-                    "enum",
-                    GetFinalCodecHash(enumUnderlying, cache, stack).ToHex(),
-                    GetEnumDeclarationSemanticIdentity((INamedTypeSymbol)type));
-                return true;
-            }
-
-            if (type is INamedTypeSymbol nullable &&
-                nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
-                nullable.TypeArguments.Length == 1 &&
-                HasExactBuiltinNullableCodecElement(nullable.TypeArguments[0]))
-            {
-                hash = Hashing.GetSemanticHash(
-                    "codec/v1",
-                    "nullable",
-                    GetFinalCodecHash(nullable.TypeArguments[0], cache, stack).ToHex());
-                return true;
-            }
-
-            if (type.SpecialType == SpecialType.System_String)
-            {
-                hash = Hashing.GetSemanticHash(
-                    "codec/v1",
-                    "framework",
-                    "string/content/utf16le/i32le-byte-length/v1",
-                    "string/null/i32-minus-one/v1");
-                return true;
-            }
-
-            string? token = type.SpecialType switch
-            {
-                SpecialType.System_Boolean => "bool/fixed1/v1",
-                SpecialType.System_Byte => "u8/fixed1/v1",
-                SpecialType.System_SByte => "i8/fixed1/v1",
-                SpecialType.System_Int16 => "i16/fixed2/v1",
-                SpecialType.System_UInt16 => "u16/fixed2/v1",
-                SpecialType.System_Char => "char/fixed2/v1",
-                SpecialType.System_Int32 => "i32/fixed4/v1",
-                SpecialType.System_UInt32 => "u32/fixed4/v1",
-                SpecialType.System_Single => "f32/fixed4/v1",
-                SpecialType.System_Int64 => "i64/fixed8/v1",
-                SpecialType.System_UInt64 => "u64/fixed8/v1",
-                SpecialType.System_Double => "f64/fixed8/v1",
-                SpecialType.System_Decimal => "decimal/fixed16/v1",
-                _ => null
-            };
-
-            if (token is null && type is IArrayTypeSymbol { Rank: 1, ElementType.SpecialType: SpecialType.System_Byte })
-                token = "bytes/v1";
-            if (token is null)
-            {
-                token = type.ToDisplayString() switch
-                {
-                    "System.Half" => "half/fixed2/v1",
-                    "System.Text.Rune" => "rune/fixed4/v1",
-                    "System.Guid" => "guid/fixed16/v1",
-                    "System.DateTimeOffset" => "datetime-offset/root-ticks-i64le-offset-minutes-i16le/v1",
-                    "System.DateTime" => "datetime/fixed8/v1",
-                    "System.DateOnly" => "date-only/fixed4/v1",
-                    "System.TimeOnly" => "time-only/fixed8/v1",
-                    "System.TimeSpan" => "timespan/fixed8/v1",
-                    "System.Int128" => "i128/fixed16/v1",
-                    "System.UInt128" => "u128/fixed16/v1",
-                    "System.Index" => "index/fixed4/v1",
-                    "System.Range" => "range/fixed8/v1",
-                    _ => null
-                };
-            }
-
-            if (token is null)
-            {
-                hash = default;
-                return false;
-            }
-
-            hash = Hashing.GetSemanticHash("codec/v1", "framework", token);
-            return true;
-        }
-
-        private void AppendUnsafeBlitPhysicalLayout(
-            ITypeSymbol type,
-            StringBuilder builder,
-            HashSet<ITypeSymbol> stack)
-        {
-            if (TryAppendPhysicalPrimitive(type, builder))
-                return;
-
-            if (type.TypeKind == TypeKind.Enum &&
-                type is INamedTypeSymbol { EnumUnderlyingType: { } enumUnderlying })
-            {
-                builder.Append("|enum");
-                AppendUnsafeBlitPhysicalLayout(enumUnderlying, builder, stack);
-                return;
-            }
-
-            if (type is IPointerTypeSymbol pointer)
-            {
-                builder.Append("|native-pointer-width/64|pointer|");
-                AppendUnsafeBlitPhysicalLayout(pointer.PointedAtType, builder, stack);
-                return;
-            }
-            if (type is IFunctionPointerTypeSymbol)
-            {
-                builder.Append("|native-pointer-width/64|function-pointer");
-                return;
-            }
-            if (type is not INamedTypeSymbol named)
-            {
-                builder.Append("|unknown-unmanaged");
-                return;
-            }
-
-            AppendPhysicalLayoutAttribute(builder, named, "System.Runtime.InteropServices.StructLayoutAttribute", stack);
-            AppendPhysicalLayoutAttribute(builder, named, "System.Runtime.CompilerServices.InlineArrayAttribute", stack);
-
-            if (!stack.Add(type))
-            {
-                builder.Append("|recursive");
-                return;
-            }
-
-            if (named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
-                named.TypeArguments.Length == 1)
-            {
-                builder.Append("|nullable-underlying");
-                AppendUnsafeBlitPhysicalLayout(named.TypeArguments[0], builder, stack);
-                stack.Remove(type);
-                return;
-            }
-
-            var fields = named.GetMembers()
-                .OfType<IFieldSymbol>()
-                .Where(static field => !field.IsStatic && !field.IsConst)
-                .ToArray();
-            builder.Append("|fields:").Append(fields.Length.ToString(InvariantCulture));
-            for (var index = 0; index < fields.Length; index++)
-            {
-                var field = fields[index];
-                builder.Append("|field:").Append(index.ToString(InvariantCulture));
-                if (field.IsFixedSizeBuffer)
-                    builder.Append("|fixed-buffer:").Append(field.FixedSize.ToString(InvariantCulture));
-                AppendPhysicalLayoutAttribute(builder, field, "System.Runtime.InteropServices.FieldOffsetAttribute", stack);
-                AppendPhysicalLayoutAttribute(builder, field, "System.Runtime.CompilerServices.FixedBufferAttribute", stack);
-                AppendUnsafeBlitPhysicalLayout(field.Type, builder, stack);
-            }
-
-            stack.Remove(type);
-        }
-
-        private static bool TryAppendPhysicalPrimitive(ITypeSymbol type, StringBuilder builder)
-        {
-            var token = type.SpecialType switch
-            {
-                SpecialType.System_Boolean => "bool1",
-                SpecialType.System_Byte => "u8",
-                SpecialType.System_SByte => "i8",
-                SpecialType.System_Int16 => "i16",
-                SpecialType.System_UInt16 => "u16",
-                SpecialType.System_Char => "char16",
-                SpecialType.System_Int32 => "i32",
-                SpecialType.System_UInt32 => "u32",
-                SpecialType.System_Single => "f32",
-                SpecialType.System_Int64 => "i64",
-                SpecialType.System_UInt64 => "u64",
-                SpecialType.System_IntPtr => "native-pointer-width/64:intptr",
-                SpecialType.System_UIntPtr => "native-pointer-width/64:uintptr",
-                SpecialType.System_Double => "f64",
-                SpecialType.System_Decimal => "decimal128",
-                _ => null
-            };
-            if (token is null)
-            {
-                token = type.ToDisplayString() switch
-                {
-                    "System.Half" => "half16",
-                    "System.Text.Rune" => "rune32",
-                    "System.Guid" => "guid128",
-                    "System.DateTimeOffset" => "datetimeoffset128",
-                    "System.DateTime" => "datetime64",
-                    "System.DateOnly" => "dateonly32",
-                    "System.TimeOnly" => "timeonly64",
-                    "System.TimeSpan" => "timespan64",
-                    "System.Int128" => "i128",
-                    "System.UInt128" => "u128",
-                    "System.Index" => "index32",
-                    "System.Range" => "range64",
-                    _ => null
-                };
-            }
-            if (token is null)
-                return false;
-            builder.Append('|').Append(token);
-            return true;
-        }
-
-        private static void AppendPhysicalLayoutAttribute(
-            StringBuilder builder,
-            ISymbol symbol,
-            string attributeName,
-            HashSet<ITypeSymbol> stack)
-        {
-            var attribute = symbol.GetAttributes().FirstOrDefault(item =>
-                string.Equals(item.AttributeClass?.ToDisplayString(), attributeName, StringComparison.Ordinal));
-            if (attribute is null)
-                return;
-
-            builder.Append("|attr:").Append(attributeName);
-            foreach (var argument in attribute.ConstructorArguments)
-                AppendPhysicalLayoutConstant(builder, argument, stack);
-            foreach (var argument in attribute.NamedArguments.OrderBy(static item => item.Key, StringComparer.Ordinal))
-            {
-                builder.Append('|').Append(argument.Key).Append('=');
-                AppendPhysicalLayoutConstant(builder, argument.Value, stack);
-            }
-        }
-
-        private static void AppendPhysicalLayoutConstant(
-            StringBuilder builder,
-            TypedConstant constant,
-            HashSet<ITypeSymbol> stack)
-        {
-            builder.Append(':').Append(constant.Kind.ToString()).Append('=');
-            if (constant.Kind == TypedConstantKind.Array)
-            {
-                builder.Append('[');
-                foreach (var item in constant.Values)
-                    AppendPhysicalLayoutConstant(builder, item, stack);
-                builder.Append(']');
-                return;
-            }
-
-            if (constant.Value is ITypeSymbol type)
-            {
-                if (!TryAppendPhysicalPrimitive(type, builder))
-                    builder.Append("layout-type");
-                return;
-            }
-
-            builder.Append(Convert.ToString(constant.Value, InvariantCulture) ?? "null");
         }
     }
 }
