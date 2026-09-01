@@ -191,7 +191,7 @@ public interface IExternalAutoLayoutContract : SharpLink.Sdk.IService
             references: GetPlatformReferences().Concat(additionalReferences),
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
-        IIncrementalGenerator generator = new UnsafeBlitCompatibilityDiagnosticGenerator();
+        IIncrementalGenerator generator = new RpcGenerator();
         GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
         driver = driver.RunGenerators(compilation);
         return driver.GetRunResult().Diagnostics;
