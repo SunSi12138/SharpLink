@@ -53,6 +53,7 @@ internal static class RpcBuiltinCollectionWireCatalog
         string elementTypeName,
         out RpcBuiltinCollectionWireDescriptor descriptor)
     {
+        elementTypeName = NormalizeTypeName(elementTypeName);
         for (var index = 0; index < Items.Length; index++)
         {
             if (string.Equals(Items[index].ElementTypeName, elementTypeName, System.StringComparison.Ordinal))
@@ -64,6 +65,30 @@ internal static class RpcBuiltinCollectionWireCatalog
 
         descriptor = default;
         return false;
+    }
+
+    private static string NormalizeTypeName(string typeName)
+    {
+        const string globalPrefix = "global::";
+        if (typeName.StartsWith(globalPrefix, System.StringComparison.Ordinal))
+            typeName = typeName.Substring(globalPrefix.Length);
+        return typeName switch
+        {
+            "bool" => "System.Boolean",
+            "byte" => "System.Byte",
+            "sbyte" => "System.SByte",
+            "short" => "System.Int16",
+            "ushort" => "System.UInt16",
+            "char" => "System.Char",
+            "int" => "System.Int32",
+            "uint" => "System.UInt32",
+            "float" => "System.Single",
+            "long" => "System.Int64",
+            "ulong" => "System.UInt64",
+            "double" => "System.Double",
+            "decimal" => "System.Decimal",
+            _ => typeName
+        };
     }
 
     private static RpcBuiltinCollectionWireDescriptor Raw(string typeName)
