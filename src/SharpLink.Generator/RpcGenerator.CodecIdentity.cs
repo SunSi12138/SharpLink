@@ -200,9 +200,7 @@ public partial class RpcGenerator
                             $"Raw-blit collection '{plan.TypeName}' has no physical element plan.")).ToHex());
                     break;
                 case FinalCollectionWireStrategy.DateTimeOffsetCanonical:
-                    parts.Add("runtime-datetimeoffset-special/v1");
-                    parts.Add(plan.StrategySemantic ?? throw new InvalidOperationException(
-                        $"DateTimeOffset collection '{plan.TypeName}' has no strategy semantic."));
+                    parts.Add("datetime-offset/collection16/i16le-offset-minutes/zero6/i64le-utc-ticks/v2");
                     break;
             }
             return Hashing.GetSemanticHash(parts.ToArray());
