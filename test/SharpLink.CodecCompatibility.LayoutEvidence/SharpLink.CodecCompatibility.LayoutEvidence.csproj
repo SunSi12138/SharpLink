@@ -15,6 +15,7 @@
     <Compile Include="../SharpLink.CodecCompatibility/Fixtures.cs" Link="Shared/Fixtures.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/Models.cs" Link="Shared/Models.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.cs" Link="Shared/UnsafeBlitLayoutEvidence.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.Matrix.cs" Link="Shared/UnsafeBlitLayoutEvidence.Matrix.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.StringCompatibility.cs" Link="Shared/UnsafeBlitLayoutEvidence.StringCompatibility.cs" />
   </ItemGroup>
 </Project>
