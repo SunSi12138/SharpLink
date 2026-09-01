@@ -67,7 +67,7 @@ public sealed class HelloService : IHelloService
         Ensure(first.Json.Contains("\"schemaFingerprint\":", StringComparison.Ordinal),
             "schema fingerprint");
         var generatorVersion = typeof(RpcGenerator).Assembly.GetName().Version!.ToString(3);
-        Ensure(first.Json.Contains($"\"generatorVersion\": \"{generatorVersion}\";", StringComparison.Ordinal),
+        Ensure(first.Json.Contains($"\"generatorVersion\": \"{generatorVersion}\"", StringComparison.Ordinal),
             "executing generator assembly version");
         Ensure(!first.Json.Contains(Directory.GetCurrentDirectory(), StringComparison.Ordinal),
             "Manifest must not contain absolute paths");
@@ -325,8 +325,7 @@ public sealed class ImmutableManifestService : IImmutableManifestService
             AdapterContractSource(semanticLow: 0x3333333333333333UL),
             baseline);
 
-        Ensure(!changed.Diagnostics.Any(IsCompatibilityDiagnostic) ||
-               changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
             "an opaque Adapter semantic identity change is incompatible");
         return Task.CompletedTask;
     }
