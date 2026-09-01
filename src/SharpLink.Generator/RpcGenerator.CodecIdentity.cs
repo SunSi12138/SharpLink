@@ -153,16 +153,20 @@ public partial class RpcGenerator
                     AppendChild(plan.ValueType);
                     break;
                 case FinalCollectionWireStrategy.RawBlit:
-                    parts.Add(plan.StrategySemantic ?? "builtin-blit-element/v2|abi:little-endian");
+                    parts.Add(RequireStrategySemantic());
                     parts.Add(HashPhysicalLayout(
                         plan.RawElementLayout ?? throw new InvalidOperationException(
                             $"Raw-blit collection '{plan.TypeName}' has no physical element plan.")).ToHex());
                     break;
                 case FinalCollectionWireStrategy.DateTimeOffsetCanonical:
-                    parts.Add("datetime-offset/collection16/i16le-offset-minutes/zero6/i64le-utc-ticks/v2");
+                    parts.Add(RequireStrategySemantic());
                     break;
             }
             return Hashing.GetSemanticHash(parts.ToArray());
+
+            string RequireStrategySemantic()
+                => plan.StrategySemantic ?? throw new InvalidOperationException(
+                    $"Resolved collection '{plan.TypeName}' has no wire strategy semantic.");
 
             void AppendChild(string? childType)
             {
