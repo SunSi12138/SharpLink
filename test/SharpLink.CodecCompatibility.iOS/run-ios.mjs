@@ -6,6 +6,9 @@ const bundleId = 'com.sharplink.codeccompat.ios';
 const inputFileName = 'sharplink-input.json';
 const resultFileName = 'sharplink-result.json';
 const builtinRawCategory = 'builtin-semantic-raw';
+const probeTimeoutMs = Number(process.env.SHARPLINK_IOS_PROBE_TIMEOUT_MS ?? 300_000);
+const maxProbeAttempts = Number(process.env.SHARPLINK_IOS_PROBE_ATTEMPTS ?? 2);
+const probeTimeoutCode = 'SHARPLINK_IOS_PROBE_TIMEOUT';
 
 async function findManifestFiles(root) {
     const found = [];
@@ -100,7 +103,7 @@ function delay(milliseconds) {
 }
 
 async function waitForResult(resultPath, launchOutput) {
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + probeTimeoutMs;
     while (Date.now() < deadline) {
         try {
             return await fs.readFile(resultPath, 'utf8');
@@ -112,22 +115,24 @@ async function waitForResult(resultPath, launchOutput) {
 
     const diagnostics = [
         `simctl launch output:\n${launchOutput}`,
+        simctlDiagnostic(['list', 'devices']),
         simctlDiagnostic(['get_app_container', 'booted', bundleId, 'app']),
         simctlDiagnostic(['get_app_container', 'booted', bundleId, 'data']),
         simctlDiagnostic([
             'spawn', 'booted', 'log', 'show',
-            '--last', '3m',
+            '--last', '5m',
             '--style', 'compact',
             '--predicate', 'process CONTAINS[c] "SharpLink" OR eventMessage CONTAINS[c] "SharpLink codec"'
         ])
     ].join('\n\n');
-    throw new Error(`iOS simulator probe timed out waiting for container result file.\n${diagnostics}`);
+    const error = new Error(
+        `iOS simulator probe timed out after ${probeTimeoutMs} ms waiting for container result file.\n${diagnostics}`);
+    error.code = probeTimeoutCode;
+    throw error;
 }
 
 async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, targetFramework) {
     const input = mode === 'verify' ? JSON.stringify(await loadEnvelopes(producerRoot)) : null;
-
-    try { simctl(['terminate', 'booted', bundleId]); } catch {}
 
     const dataContainer = simctl(['get_app_container', 'booted', bundleId, 'data']).trim();
     if (!dataContainer) throw new Error('simctl returned an empty iOS app data-container path.');
@@ -135,7 +140,6 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, target
     const inputPath = path.join(documentsDirectory, inputFileName);
     const resultPath = path.join(documentsDirectory, resultFileName);
     await fs.mkdir(documentsDirectory, { recursive: true });
-    await fs.rm(resultPath, { force: true });
     await fs.rm(inputPath, { force: true });
     if (input !== null) await fs.writeFile(inputPath, input, 'utf8');
 
@@ -146,14 +150,41 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, target
         SIMCTL_CHILD_SHARPLINK_SDK_VERSION: sdkVersion,
         SIMCTL_CHILD_SHARPLINK_TARGET_FRAMEWORK: targetFramework
     };
-    const launchOutput = simctl(
-        ['launch', '--terminate-running-process', 'booted', bundleId],
-        launchEnv);
-    console.log(`iOS simulator launch: ${launchOutput.trim()}`);
-    console.log(`iOS simulator data container: ${dataContainer}`);
 
+    let resultText;
     try {
-        const resultText = await waitForResult(resultPath, launchOutput);
+        for (let attempt = 1; attempt <= maxProbeAttempts; attempt++) {
+            try { simctl(['terminate', 'booted', bundleId]); } catch {}
+            await fs.rm(resultPath, { force: true });
+            if (input !== null) await fs.writeFile(inputPath, input, 'utf8');
+
+            if (attempt > 1) {
+                console.warn(`Retrying iOS simulator probe (${attempt}/${maxProbeAttempts}) after timeout.`);
+                await delay(3_000);
+            }
+
+            const launchOutput = simctl(
+                ['launch', '--terminate-running-process', 'booted', bundleId],
+                launchEnv);
+            console.log(`iOS simulator launch attempt ${attempt}/${maxProbeAttempts}: ${launchOutput.trim()}`);
+            console.log(`iOS simulator data container: ${dataContainer}`);
+
+            try {
+                resultText = await waitForResult(resultPath, launchOutput);
+                break;
+            } catch (error) {
+                if (error?.code !== probeTimeoutCode || attempt === maxProbeAttempts) {
+                    throw error;
+                }
+                console.warn(error.message);
+                try { simctl(['terminate', 'booted', bundleId]); } catch {}
+            }
+        }
+
+        if (resultText === undefined) {
+            throw new Error('iOS simulator probe completed without a result.');
+        }
+
         const parsed = JSON.parse(resultText);
         if (parsed?.portableProbeError) {
             throw new Error(parsed.portableProbeError);
