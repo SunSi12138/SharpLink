@@ -95,19 +95,15 @@ public class DateTimeOffsetCollectionCodecTests
             throw new Exception($"assert failed: {message}");
     }
 
-    private sealed class TestSequenceSegment(ReadOnlyMemory<byte> memory) : ReadOnlySequenceSegment<byte>
+    private sealed class TestSequenceSegment : ReadOnlySequenceSegment<byte>
     {
-        public TestSequenceSegment() : this(ReadOnlyMemory<byte>.Empty)
+        public TestSequenceSegment(ReadOnlyMemory<byte> memory)
         {
-        }
-
-        public TestSequenceSegment(ReadOnlyMemory<byte> memory, bool _) : this(memory)
-        {
+            Memory = memory;
         }
 
         public void Append(TestSequenceSegment next)
         {
-            Memory = memory;
             next.RunningIndex = RunningIndex + Memory.Length;
             Next = next;
         }
