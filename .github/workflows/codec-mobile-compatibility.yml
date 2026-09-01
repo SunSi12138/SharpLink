@@ -184,6 +184,7 @@ jobs:
           retention-days: 30
 
   ios-coreclr:
+    needs: desktop-reference
     strategy:
       fail-fast: false
       matrix:
@@ -235,6 +236,12 @@ jobs:
           test "$actual" = "$DOTNET_11_SDK"
           echo "SHARPLINK_SDK_VERSION=$actual" >> "$GITHUB_ENV"
 
+      - name: Download canonical desktop corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-mobile-corpus-desktop-linux-x64
+          path: artifacts/codec-compat/producers/codec-mobile-corpus-desktop-linux-x64
+
       - name: Boot an iOS simulator
         shell: bash
         run: |
@@ -284,7 +291,7 @@ jobs:
           cp -R artifacts/codec-compat/ios-coreclr-corpus/. \
             artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}-coreclr/
 
-      - name: Verify experimental iOS CoreCLR self edge
+      - name: Verify desktop and self edges on experimental iOS CoreCLR
         shell: bash
         env:
           SHARPLINK_SKIP_BUILTIN_RAW: '1'
@@ -304,9 +311,14 @@ jobs:
           if (report?.schemaVersion !== 1) throw new Error('Unexpected iOS verification schema.');
           if (report?.consumer?.runtimeFamily !== 'CoreCLR') throw new Error(`Expected CoreCLR, got ${report?.consumer?.runtimeFamily}`);
           if (!String(report?.consumer?.platformTag ?? '').endsWith('-coreclr-net11')) throw new Error(`Unexpected platform tag ${report?.consumer?.platformTag}`);
+          const expectedProducers = new Set(['linux-x64-hosted-desktop-coreclr-net10', report.consumer.platformTag]);
+          const actualProducers = new Set((report?.results ?? []).map(item => String(item?.producer ?? '')));
+          if (actualProducers.size !== expectedProducers.size || [...expectedProducers].some(value => !actualProducers.has(value))) {
+            throw new Error(`Unexpected iOS producer set: ${[...actualProducers].sort().join(', ')}`);
+          }
           const blocking = (report?.results ?? []).filter(item => item?.blocking).length;
           if (blocking !== 0) throw new Error(`iOS CoreCLR verification has ${blocking} blocking result(s).`);
-          console.log(`Validated iOS CoreCLR semantic report with ${report?.results?.length ?? 0} result(s) and no blockers.`);
+          console.log(`Validated iOS CoreCLR cross-platform semantic report with ${report?.results?.length ?? 0} result(s) and no blockers.`);
           NODE
 
       - name: Upload experimental iOS CoreCLR evidence
