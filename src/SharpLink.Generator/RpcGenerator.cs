@@ -302,6 +302,16 @@ public partial class RpcGenerator : IIncrementalGenerator
                     diagnostic.Detail));
             }
 
+            foreach (var diagnostic in result.UnsafeBlitAutoLayoutDiagnostics)
+            {
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    ImplicitUnsafeBlitAutoLayoutRule,
+                    diagnostic.Location,
+                    diagnostic.PayloadType,
+                    diagnostic.TypeName,
+                    diagnostic.FieldPath));
+            }
+
             if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)
             {
                 spc.AddSource(
