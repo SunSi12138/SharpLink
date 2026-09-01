@@ -213,4 +213,4 @@ internal readonly record struct GeneratedCodecHashModel(
     ulong High,
     ulong Low);
 
-internal readonly record struct RpcHashValue(ulong High, ulong Low)
+internal readonly record struct RpcHashValue(ulong High, ulong Low);
