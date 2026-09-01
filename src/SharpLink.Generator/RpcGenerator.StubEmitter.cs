@@ -245,8 +245,8 @@ public partial class RpcGenerator
             var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
             var clientStreamCount = method.Parameters.Count(static parameter => parameter.IsStream);
             var hasClientStreams = clientStreamCount != 0;
-            var methodTimeout = method.TimeoutSeconds is { } seconds
-                ? $"TimeSpan.FromSeconds({seconds.ToString("R", InvariantCulture)}d)"
+            var methodTimeout = method.TimeoutTicks is { } ticks
+                ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
                 : "null";
             sb.AppendLine($"            case {method.Hash}L:");
             sb.AppendLine($"                descriptor = new RpcMethodDescriptor({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
