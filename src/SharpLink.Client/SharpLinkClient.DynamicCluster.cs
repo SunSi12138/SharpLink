@@ -3,8 +3,8 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkClient
 {
     /// <summary>
-    /// Owns resolver and connection lifecycle orchestration for a dynamic endpoint cluster. Endpoint
-    /// topology/selection and connection-set/retirement state are delegated to focused collaborators.
+    /// Orchestrates resolver topology, connection ownership and focused reconnect/lifecycle collaborators
+    /// for a dynamic endpoint cluster.
     /// </summary>
     private sealed class DynamicClusterRuntime : IEndpointClusterRuntime
     {
@@ -15,18 +15,13 @@ internal sealed partial class SharpLinkClient
         private readonly DynamicClusterTopologyState _current;
         private readonly DynamicClusterConnectionState _connections = new();
         private readonly Lock _gate = new();
+        private readonly DynamicClusterRuntimeLifecycle _lifecycle;
+        private readonly DynamicClusterReconnectCoordinator _reconnect;
         private TaskCompletionSource _topologyChanged = CreateTopologyChangedSignal();
-        private Task? _connectTask;
-        private Task? _resolverTask;
-        private Task? _stopTask;
-        private int _reconnectCursor;
         private int _initialConnectCoordinatorCount;
         private int _telemetryActiveEndpointCount;
         private int _telemetryReadyEndpointCount;
         private int _telemetryDrainingEndpointCount;
-        private int _stopping;
-        private int _resolverDisposed;
-        private IClientTransportFactory[] _stoppedFactories = [];
 
         public DynamicClusterRuntime(
             SharpLinkClient client,
@@ -40,6 +35,21 @@ internal sealed partial class SharpLinkClient
             _current = new DynamicClusterTopologyState(
                 topology.LoadBalancingStrategy,
                 topology.EndpointSelector);
+            _lifecycle = new DynamicClusterRuntimeLifecycle(
+                _client,
+                _resolver,
+                _gate,
+                snapshot => ApplySnapshotAsync(snapshot),
+                UpdateClientReadiness);
+            _reconnect = new DynamicClusterReconnectCoordinator(
+                _client,
+                _gate,
+                _options,
+                _current,
+                _connections,
+                () => _lifecycle.IsStopping,
+                ConnectOneAsync,
+                (task, name) => _lifecycle.TrackTask(task, name));
         }
 
         public int ReadyConnectionCount => _current.ReadyConnectionCount;
@@ -51,46 +61,15 @@ internal sealed partial class SharpLinkClient
         public int ActiveStreamCount => CountConnections(static connection =>
             connection.Session.StreamManager.ActiveStreamCount);
 
-        public void BeginStop()
-        {
-            lock (_gate)
-                Volatile.Write(ref _stopping, 1);
-        }
+        public void BeginStop() => _lifecycle.BeginStop();
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken)
-        {
-            Task task;
-            lock (_gate)
-            {
-                if (Volatile.Read(ref _client._stopStarted) != 0 ||
-                    Volatile.Read(ref _stopping) != 0 ||
-                    _client._shutdownCts.IsCancellationRequested)
-                    return ValueTask.FromException(CreateConnectionClosedException("Client has stopped."));
-                if (ReadyConnectionCount != 0)
-                    return ValueTask.CompletedTask;
-                _client.TransitionTo(SharpLinkConnectionState.Connecting);
-                if (_connectTask is null ||
-                    ((_connectTask.IsFaulted || _connectTask.IsCanceled) && _resolverTask is null))
-                {
-                    _connectTask = StartAsync(_client._shutdownCts.Token);
-                    _client.TrackFrameworkTask(
-                        _connectTask,
-                        "DynamicClusterInitialConnect",
-                        TaskObservationMode.ExternallyObserved);
-                }
-                else if (_connectTask.IsFaulted || _connectTask.IsCanceled ||
-                         (_connectTask.IsCompletedSuccessfully && _current.Current.Length != 0))
-                {
-                    _connectTask = WaitForRecoveryAsync();
-                    _client.TrackFrameworkTask(
-                        _connectTask,
-                        "DynamicClusterRecoveryWait",
-                        TaskObservationMode.ExternallyObserved);
-                }
-                task = _connectTask;
-            }
-            return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
-        }
+            => _lifecycle.ConnectAsync(
+                cancellationToken,
+                () => ReadyConnectionCount,
+                () => _current.Current.Length != 0,
+                StartAsync,
+                WaitForRecoveryAsync);
 
         public ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
@@ -169,23 +148,23 @@ internal sealed partial class SharpLinkClient
             var disposeNow = false;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0)
+                if (_lifecycle.IsStopping)
                     return;
                 if (!_connections.TryMarkDraining(connection, out endpoint, out disposeNow))
                     return;
                 PublishReadySnapshotLocked();
                 if (disposeNow)
                 {
-                    _client.TrackFrameworkTask(
-                        DisposeConnectionAsync(connection),
+                    _lifecycle.TrackTask(
+                        DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connection),
                         "DynamicClusterForcedRetirementCleanup");
                 }
             }
             if (endpoint!.Retiring)
                 ScheduleRetiredStateRelease(endpoint);
             else
-                EnsureReconnect(endpoint);
-            EnsureMinimumReadyEndpoints();
+                _reconnect.EnsureReconnect(endpoint);
+            _reconnect.EnsureMinimumReadyEndpoints();
             UpdateClientReadiness();
         }
 
@@ -216,7 +195,7 @@ internal sealed partial class SharpLinkClient
             DynamicEndpointState? endpoint;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0)
+                if (_lifecycle.IsStopping)
                     return;
                 endpoint = FindEndpointLocked(connection);
             }
@@ -231,31 +210,24 @@ internal sealed partial class SharpLinkClient
             DynamicEndpointState? endpoint;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0)
+                if (_lifecycle.IsStopping)
                     return;
                 if (!_connections.TryRetireDrainingIfIdle(connection, out endpoint))
                     return;
                 PublishReadySnapshotLocked();
-                _client.TrackFrameworkTask(
-                    DisposeConnectionAsync(connection),
+                _lifecycle.TrackTask(
+                    DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connection),
                     "DynamicClusterIdleConnectionCleanup");
             }
             if (endpoint!.Retiring)
                 ScheduleRetiredStateRelease(endpoint);
             else
-                EnsureReconnect(endpoint);
-            EnsureMinimumReadyEndpoints();
+                _reconnect.EnsureReconnect(endpoint);
+            _reconnect.EnsureMinimumReadyEndpoints();
             UpdateClientReadiness();
         }
 
-        public ValueTask StopAsync()
-        {
-            lock (_gate)
-            {
-                _stopTask ??= StopCoreAsync();
-                return new ValueTask(_stopTask);
-            }
-        }
+        public ValueTask StopAsync() => _lifecycle.StopAsync(DetachForStopLocked);
 
         private async Task StartAsync(CancellationToken cancellationToken)
         {
@@ -269,7 +241,7 @@ internal sealed partial class SharpLinkClient
                     throw new InvalidOperationException(
                         "The endpoint resolver returned an invalid initial topology.");
                 }
-                StartResolverWorker(resolveBeforeWatch: false);
+                _lifecycle.StartResolverWorker(resolveBeforeWatch: false);
                 await ConnectCurrentEndpointsAsync(cancellationToken).ConfigureAwait(false);
                 UpdateClientReadiness();
             }
@@ -285,7 +257,7 @@ internal sealed partial class SharpLinkClient
                 if (!resolverSucceeded)
                     SharpLinkTelemetry.RecordClientResolverFailure();
                 _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
-                StartResolverWorker(resolveBeforeWatch: true);
+                _lifecycle.StartResolverWorker(resolveBeforeWatch: true);
                 throw new SharpLinkException(
                     SharpLinkErrorCode.Unavailable,
                     "The endpoint resolver could not provide an initial topology.",
@@ -297,14 +269,14 @@ internal sealed partial class SharpLinkClient
         {
             while (true)
             {
-                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
+                if (_lifecycle.IsStopping || _client._shutdownCts.IsCancellationRequested)
                     throw new OperationCanceledException(_client._shutdownCts.Token);
                 if (Volatile.Read(ref _client._stopStarted) != 0)
                     throw new OperationCanceledException(_client._shutdownCts.Token);
                 if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                     return;
 
-                EnsureMinimumReadyEndpoints();
+                _reconnect.EnsureMinimumReadyEndpoints();
                 var topologyChanged = CaptureTopologyChangedSignal(out var acceptedEmptyTopology);
                 if (acceptedEmptyTopology)
                     return;
@@ -333,86 +305,6 @@ internal sealed partial class SharpLinkClient
         private static TaskCompletionSource CreateTopologyChangedSignal()
             => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        private void StartResolverWorker(bool resolveBeforeWatch)
-        {
-            lock (_gate)
-            {
-                if (Volatile.Read(ref _stopping) != 0 || _resolverTask is { IsCompleted: false })
-                    return;
-                _resolverTask = RunResolverWorkerAsync(resolveBeforeWatch);
-                _client.TrackFrameworkTask(_resolverTask, "DynamicClusterTopologyResolver");
-            }
-        }
-
-        private async Task RunResolverWorkerAsync(bool resolveBeforeWatch)
-        {
-            var delayMilliseconds = 100;
-            var mustResolve = resolveBeforeWatch;
-            while (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
-            {
-                if (mustResolve)
-                {
-                    try
-                    {
-                        var snapshot = await _resolver.ResolveAsync(_client._shutdownCts.Token).ConfigureAwait(false);
-                        if (await ApplySnapshotAsync(snapshot).ConfigureAwait(false))
-                            delayMilliseconds = 100;
-                        mustResolve = false;
-                        UpdateClientReadiness();
-                    }
-                    catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
-                    {
-                        return;
-                    }
-                    catch (Exception exception)
-                    {
-                        SharpLinkTelemetry.RecordClientResolverFailure();
-                        LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
-                        await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
-                        delayMilliseconds = Math.Min(delayMilliseconds * 2, 30_000);
-                        continue;
-                    }
-                }
-
-                try
-                {
-                    await foreach (var snapshot in _resolver.WatchAsync(_client._shutdownCts.Token)
-                                       .WithCancellation(_client._shutdownCts.Token)
-                                       .ConfigureAwait(false))
-                    {
-                        if (Volatile.Read(ref _stopping) != 0)
-                            return;
-                        if (await ApplySnapshotAsync(snapshot).ConfigureAwait(false))
-                            delayMilliseconds = 100;
-                        UpdateClientReadiness();
-                    }
-                    mustResolve = true;
-                }
-                catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception exception)
-                {
-                    SharpLinkTelemetry.RecordClientResolverFailure();
-                    LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
-                    mustResolve = true;
-                }
-
-                await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
-                delayMilliseconds = Math.Min(delayMilliseconds * 2, 30_000);
-            }
-        }
-
-        private async Task DelayResolverRetryAsync(int delayMilliseconds)
-        {
-            await Task.Delay(
-                    _client._reconnectJitter.ScaleTwentyPercent(delayMilliseconds),
-                    _client._runtimeContext.TimeProvider,
-                    _client._shutdownCts.Token)
-                .ConfigureAwait(false);
-        }
-
         private async Task<bool> ApplySnapshotAsync(
             SharpLinkEndpointSnapshot snapshot,
             bool deferInitialReconciliation = false)
@@ -436,7 +328,7 @@ internal sealed partial class SharpLinkClient
             HashSet<IClientTransportFactory> ownedFactories;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || snapshot.Version <= _current.LastAcceptedVersion)
+                if (_lifecycle.IsStopping || snapshot.Version <= _current.LastAcceptedVersion)
                     return false;
                 previous = _current.SnapshotCurrentById();
                 ownedFactories = GetOwnedFactoriesLocked();
@@ -465,7 +357,7 @@ internal sealed partial class SharpLinkClient
             {
                 lock (_gate)
                     ownedFactories.UnionWith(GetOwnedFactoriesLocked());
-                await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
+                await _lifecycle.DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 SharpLinkTelemetry.RecordClientResolverFailure();
                 LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
@@ -479,7 +371,7 @@ internal sealed partial class SharpLinkClient
             DynamicEndpointState[] current;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || snapshot.Version <= _current.LastAcceptedVersion)
+                if (_lifecycle.IsStopping || snapshot.Version <= _current.LastAcceptedVersion)
                 {
                     abandoned = true;
                     ownedFactories.UnionWith(GetOwnedFactoriesLocked());
@@ -530,8 +422,8 @@ internal sealed partial class SharpLinkClient
                     PublishReadySnapshotLocked(force: true);
                     for (var index = 0; index < connectionsToDispose.Count; index++)
                     {
-                        _client.TrackFrameworkTask(
-                            DisposeConnectionAsync(connectionsToDispose[index]),
+                        _lifecycle.TrackTask(
+                            DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connectionsToDispose[index]),
                             "DynamicClusterTopologyRetirementCleanup");
                     }
                     for (var index = 0; index < statesToRelease.Count; index++)
@@ -543,7 +435,7 @@ internal sealed partial class SharpLinkClient
 
             if (abandoned || rejectedForFactoryOwnership)
             {
-                await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
+                await _lifecycle.DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 if (rejectedForFactoryOwnership)
                 {
                     SharpLinkTelemetry.RecordClientResolverFailure();
@@ -557,7 +449,7 @@ internal sealed partial class SharpLinkClient
             }
 
             if (!deferInitialReconciliation)
-                EnsureMinimumReadyEndpoints();
+                _reconnect.EnsureMinimumReadyEndpoints();
             SharpLinkTelemetry.RecordClientResolverUpdate();
             return true;
         }
@@ -611,14 +503,14 @@ internal sealed partial class SharpLinkClient
                         throw new OperationCanceledException(_client._shutdownCts.Token);
                     if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                     {
-                        EnsureMinimumReadyEndpoints();
+                        _reconnect.EnsureMinimumReadyEndpoints();
                         return;
                     }
 
                     var topologyChanged = CaptureTopologyChangedSignal(out var acceptedEmptyTopology);
                     if (acceptedEmptyTopology)
                     {
-                        EnsureMinimumReadyEndpoints();
+                        _reconnect.EnsureMinimumReadyEndpoints();
                         return;
                     }
                     var readySignal = Volatile.Read(ref _client._readySignal).Task;
@@ -632,7 +524,7 @@ internal sealed partial class SharpLinkClient
                     lastFailure ??= await dial.ConfigureAwait(false);
                     if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                     {
-                        EnsureMinimumReadyEndpoints();
+                        _reconnect.EnsureMinimumReadyEndpoints();
                         return;
                     }
 
@@ -647,7 +539,7 @@ internal sealed partial class SharpLinkClient
                     startGate.TrySetResult();
                 }
 
-                EnsureMinimumReadyEndpoints();
+                _reconnect.EnsureMinimumReadyEndpoints();
                 throw new SharpLinkException(
                     SharpLinkErrorCode.Unavailable,
                     "No dynamic SharpLink endpoint could connect.",
@@ -656,11 +548,11 @@ internal sealed partial class SharpLinkClient
             finally
             {
                 if (Interlocked.Decrement(ref _initialConnectCoordinatorCount) == 0 &&
-                    Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+                    !_lifecycle.IsStopping && !_client._shutdownCts.IsCancellationRequested)
                 {
                     // A sibling can release its current-generation initial reservation while this
                     // coordinator is active. Reconcile once the coordinator hand-off is complete.
-                    EnsureMinimumReadyEndpoints();
+                    _reconnect.EnsureMinimumReadyEndpoints();
                 }
             }
         }
@@ -674,7 +566,7 @@ internal sealed partial class SharpLinkClient
                     endpoints[index].InitialDialReservations++;
                 for (var index = 0; index < attempts.Length; index++)
                 {
-                    _client.TrackFrameworkTask(
+                    _lifecycle.TrackTask(
                         ObserveInitialDialAsync(endpoints[index], attempts[index]),
                         "DynamicClusterInitialDialObserver");
                 }
@@ -687,7 +579,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 _ = await attempt.ConfigureAwait(false);
-                shouldReconcile = Volatile.Read(ref _stopping) == 0;
+                shouldReconcile = !_lifecycle.IsStopping;
             }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
             {
@@ -697,9 +589,8 @@ internal sealed partial class SharpLinkClient
                 lock (_gate)
                     endpoint.InitialDialReservations--;
             }
-
             if (shouldReconcile && Volatile.Read(ref _initialConnectCoordinatorCount) == 0)
-                EnsureMinimumReadyEndpoints();
+                _reconnect.EnsureMinimumReadyEndpoints();
         }
 
         private async Task<Exception?> TryConnectOneAfterInitialReservationAsync(
@@ -732,7 +623,7 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested ||
+                if (_lifecycle.IsStopping || _client._shutdownCts.IsCancellationRequested ||
                     endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                     IsRetiringBudgetExceededLocked() ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
@@ -781,23 +672,25 @@ internal sealed partial class SharpLinkClient
 
                 lock (_gate)
                 {
-                    if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
+                    if (_lifecycle.IsStopping || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                         IsRetiringBudgetExceededLocked())
+                    {
                         throw CreateConnectionClosedException("Endpoint generation retired while connecting.");
+                    }
                     _connections.Add(endpoint, createdConnection);
                     PublishReadySnapshotLocked();
                     session.NotifyConnected();
-                    _client.TrackFrameworkTask(
+                    _lifecycle.TrackTask(
                         _client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token),
                         "DynamicClusterHeartbeatSendLoop");
-                    _client.TrackFrameworkTask(
+                    _lifecycle.TrackTask(
                         _client.RunProcessRequestLoopAsync(createdConnection, sessionCts.Token),
                         "DynamicClusterProcessRequestLoop");
                 }
                 session = null;
                 connection = null;
                 UpdateClientReadiness();
-                EnsureMinimumReadyEndpoints();
+                _reconnect.EnsureMinimumReadyEndpoints();
             }
             catch (Exception exception)
             {
@@ -813,8 +706,10 @@ internal sealed partial class SharpLinkClient
                 }
             }
             if (connectFailure is not null)
+            {
                 await RethrowAfterFailedConnectionCleanupAsync(connectFailure, transport, connection, session)
                     .ConfigureAwait(false);
+            }
         }
 
         private void HandleDisconnected(DynamicEndpointState endpoint, ClientConnection connection, Exception exception)
@@ -822,84 +717,31 @@ internal sealed partial class SharpLinkClient
             var retired = false;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0)
+                if (_lifecycle.IsStopping)
                     return;
                 if (!_connections.Remove(endpoint, connection))
                     return;
                 retired = endpoint.Retiring;
                 PublishReadySnapshotLocked();
                 connection.Fail(exception);
-                _client.TrackFrameworkTask(
-                    DisposeConnectionAsync(connection),
+                _lifecycle.TrackTask(
+                    DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connection),
                     "DynamicClusterDisconnectedConnectionCleanup");
             }
             if (retired)
                 ScheduleRetiredStateRelease(endpoint);
-            else if (Volatile.Read(ref _stopping) == 0)
-            {
-                EnsureReconnect(endpoint);
-            }
-            if (Volatile.Read(ref _stopping) == 0)
-                EnsureMinimumReadyEndpoints();
+            else if (!_lifecycle.IsStopping)
+                _reconnect.EnsureReconnect(endpoint);
+            if (!_lifecycle.IsStopping)
+                _reconnect.EnsureMinimumReadyEndpoints();
             UpdateClientReadiness();
-        }
-
-        private void EnsureMinimumReadyEndpoints()
-        {
-            List<DynamicEndpointState>? missing = null;
-            lock (_gate)
-            {
-                if (Volatile.Read(ref _stopping) != 0)
-                    return;
-                var current = _current.Current;
-                var target = Math.Min(_options.MinReadyEndpoints, current.Length);
-                var availableCapacity = _options.MaxConnections - TotalActiveConnectionsLocked();
-                var activeReconnects = current.Count(static endpoint => endpoint.ReconnectTask is { IsCompleted: false });
-                var activeInitialDials = _current.CountActiveCurrentInitialDials();
-                var remaining = Math.Min(
-                    target - _current.ReadyEndpointCount - activeReconnects - activeInitialDials,
-                    availableCapacity);
-                var start = unchecked((uint)Interlocked.Increment(ref _reconnectCursor));
-                for (var offset = 0; remaining > 0 && offset < current.Length; offset++)
-                {
-                    var index = (int)((start + (uint)offset) % (uint)current.Length);
-                    var endpoint = current[index];
-                    if (endpoint.ReadyConnections.Length != 0 ||
-                        _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount != 0 ||
-                        endpoint.ReconnectTask is { IsCompleted: false })
-                        continue;
-                    (missing ??= []).Add(endpoint);
-                    remaining--;
-                }
-            }
-
-            if (missing is not null)
-                for (var index = 0; index < missing.Count; index++)
-                    EnsureReconnect(missing[index]);
-        }
-
-        private void EnsureReconnect(DynamicEndpointState endpoint)
-        {
-            lock (_gate)
-            {
-                var current = _current.Current;
-                var target = Math.Min(_options.MinReadyEndpoints, current.Length);
-                var activeReconnects = current.Count(static candidate => candidate.ReconnectTask is { IsCompleted: false });
-                if (endpoint.ReconnectTask is { IsCompleted: false } || !NeedsReconnectLocked(endpoint) ||
-                    activeReconnects >= target - _current.ReadyEndpointCount)
-                {
-                    return;
-                }
-                endpoint.ReconnectTask = ReconnectAsync(endpoint);
-                _client.TrackFrameworkTask(endpoint.ReconnectTask, "DynamicClusterReconnect");
-            }
         }
 
         private void EnsureExpansion(DynamicEndpointState endpoint)
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
+                if (_lifecycle.IsStopping || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                     endpoint.ExpansionTask is { IsCompleted: false } ||
                     IsRetiringBudgetExceededLocked() ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
@@ -908,7 +750,7 @@ internal sealed partial class SharpLinkClient
                     return;
                 }
                 endpoint.ExpansionTask = ExpandAsync(endpoint);
-                _client.TrackFrameworkTask(endpoint.ExpansionTask, "DynamicClusterExpansion");
+                _lifecycle.TrackTask(endpoint.ExpansionTask, "DynamicClusterExpansion");
             }
         }
 
@@ -925,52 +767,9 @@ internal sealed partial class SharpLinkClient
             {
                 LogClientConnectionAttemptFailed(_client._logger, nameof(ExpandAsync), exception);
                 if (endpoint.ReadyConnections.Length == 0)
-                    EnsureReconnect(endpoint);
+                    _reconnect.EnsureReconnect(endpoint);
             }
         }
-
-        private async Task ReconnectAsync(DynamicEndpointState endpoint)
-        {
-            int delayMilliseconds;
-            lock (_gate)
-                delayMilliseconds = endpoint.ReconnectDelayMilliseconds;
-            try
-            {
-                await Task.Delay(
-                    _client._reconnectJitter.AddQuarterWindow(delayMilliseconds),
-                    _client._runtimeContext.TimeProvider,
-                    _client._shutdownCts.Token).ConfigureAwait(false);
-                var shouldConnect = false;
-                lock (_gate)
-                    shouldConnect = NeedsReconnectLocked(endpoint);
-                if (shouldConnect)
-                {
-                    SharpLinkTelemetry.ReconnectAttempt();
-                    await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
-                    lock (_gate)
-                        endpoint.ReconnectDelayMilliseconds = endpoint.ReadyConnections.Length != 0 ? 100 : NextReconnectDelay(delayMilliseconds);
-                }
-            }
-            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception exception)
-            {
-                LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
-                lock (_gate)
-                    endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
-            }
-            finally
-            {
-                lock (_gate)
-                    endpoint.ReconnectTask = null;
-            }
-            if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
-                EnsureMinimumReadyEndpoints();
-        }
-
-        private static int NextReconnectDelay(int delayMilliseconds) => Math.Min(delayMilliseconds * 2, 5000);
 
         private void UpdateClientReadiness()
         {
@@ -980,10 +779,8 @@ internal sealed partial class SharpLinkClient
                 _client.TransitionTo(SharpLinkConnectionState.Ready);
                 return;
             }
-            if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
-            {
+            if (!_lifecycle.IsStopping && !_client._shutdownCts.IsCancellationRequested)
                 _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
-            }
         }
 
         private void PublishReadySnapshotLocked(bool force = false)
@@ -1011,14 +808,6 @@ internal sealed partial class SharpLinkClient
         private bool IsCurrentLocked(DynamicEndpointState endpoint)
             => _current.IsCurrent(endpoint);
 
-        private bool NeedsReconnectLocked(DynamicEndpointState endpoint)
-            => Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested &&
-               !endpoint.Retiring && IsCurrentLocked(endpoint) &&
-               !IsRetiringBudgetExceededLocked() &&
-               _current.ReadyEndpointCount < Math.Min(_options.MinReadyEndpoints, _current.Current.Length) &&
-               TotalActiveConnectionsLocked() < _options.MaxConnections &&
-               _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount == 0;
-
         private bool IsRetiringBudgetExceededLocked()
             => _connections.IsRetiringBudgetExceeded(_options.MaxRetiringConnections);
 
@@ -1035,14 +824,14 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0)
+                if (_lifecycle.IsStopping)
                     return;
                 ScheduleRetiredStateReleaseLocked(endpoint);
             }
         }
 
         private void ScheduleRetiredStateReleaseLocked(DynamicEndpointState endpoint)
-            => _client.TrackFrameworkTask(
+            => _lifecycle.TrackTask(
                 ReleaseRetiredStateAsync(endpoint),
                 "DynamicClusterRetiredTopologyRelease");
 
@@ -1086,75 +875,38 @@ internal sealed partial class SharpLinkClient
                     endpoint.Generation);
                 lifecycle.Retire(candidate);
             }
-            await DisposeFactoryQuietlyAsync(endpoint.Configuration.TransportFactory).ConfigureAwait(false);
+            await DynamicClusterRuntimeLifecycle.DisposeFactoryQuietlyAsync(endpoint.Configuration.TransportFactory)
+                .ConfigureAwait(false);
         }
 
-        private async Task StopCoreAsync()
+        private DynamicClusterStopSnapshot DetachForStopLocked()
         {
-            Interlocked.Exchange(ref _stopping, 1);
-            var cleanupFailures = new List<Exception>();
-            ClientConnection[] connections;
-            lock (_gate)
-            {
-                var states = _current.States;
-                connections = _connections.DetachAll();
-                _stoppedFactories = [.. states
-                    .Where(static state => !state.FactoryReleased)
-                    .Select(static state =>
-                    {
-                        state.FactoryReleased = true;
-                        return state.Configuration.TransportFactory;
-                    })];
-                _current.Clear();
-                SharpLinkTelemetry.AddClientActiveEndpoints(-_telemetryActiveEndpointCount);
-                SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
-                SharpLinkTelemetry.AddClientDrainingEndpoints(-_telemetryDrainingEndpointCount);
-                _telemetryActiveEndpointCount = 0;
-                _telemetryReadyEndpointCount = 0;
-                _telemetryDrainingEndpointCount = 0;
-                _client.PublishReadinessFacts(new ClientReadinessFacts(
-                    ActiveEndpoints: 0,
-                    ReadyEndpoints: 0,
-                    ReadyConnections: 0,
-                    TargetReadyEndpoints: 0));
-            }
-
-            if (Interlocked.Exchange(ref _resolverDisposed, 1) == 0)
-            {
-                try { await _resolver.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception exception) { cleanupFailures.Add(exception); }
-            }
-
-            var stopping = CreateConnectionClosedException("Client is stopping.");
-            for (var index = 0; index < connections.Length; index++)
-            {
-                connections[index].Fail(stopping);
-                try { await DisposeConnectionAsync(connections[index]).ConfigureAwait(false); }
-                catch (Exception exception) { cleanupFailures.Add(exception); }
-            }
-            ThrowCleanupFailures(cleanupFailures);
+            var states = _current.States;
+            var connections = _connections.DetachAll();
+            var stoppedFactories = states
+                .Where(static state => !state.FactoryReleased)
+                .Select(static state =>
+                {
+                    state.FactoryReleased = true;
+                    return state.Configuration.TransportFactory;
+                })
+                .ToArray();
+            _current.Clear();
+            SharpLinkTelemetry.AddClientActiveEndpoints(-_telemetryActiveEndpointCount);
+            SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
+            SharpLinkTelemetry.AddClientDrainingEndpoints(-_telemetryDrainingEndpointCount);
+            _telemetryActiveEndpointCount = 0;
+            _telemetryReadyEndpointCount = 0;
+            _telemetryDrainingEndpointCount = 0;
+            _client.PublishReadinessFacts(new ClientReadinessFacts(
+                ActiveEndpoints: 0,
+                ReadyEndpoints: 0,
+                ReadyConnections: 0,
+                TargetReadyEndpoints: 0));
+            return new DynamicClusterStopSnapshot(connections, stoppedFactories);
         }
 
-        public async ValueTask DisposeResourcesAsync()
-        {
-            var cleanupFailures = new List<Exception>();
-            var factories = Interlocked.Exchange(ref _stoppedFactories, []);
-            for (var index = 0; index < factories.Length; index++)
-            {
-                try { await DisposeFactoryQuietlyAsync(factories[index]).ConfigureAwait(false); }
-                catch (Exception exception) { cleanupFailures.Add(exception); }
-            }
-            ThrowCleanupFailures(cleanupFailures);
-        }
-
-        private static void ThrowCleanupFailures(List<Exception> failures)
-        {
-            if (failures.Count == 0)
-                return;
-            if (failures.Count == 1)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
-            throw new AggregateException(failures);
-        }
+        public ValueTask DisposeResourcesAsync() => _lifecycle.DisposeResourcesAsync();
 
         private static bool SameGeneration(SharpLinkEndpoint left, SharpLinkEndpoint right)
             => Equals(left.Address, right.Address) && StringComparer.Ordinal.Equals(left.Authority, right.Authority);
@@ -1164,39 +916,5 @@ internal sealed partial class SharpLinkClient
 
         private HashSet<IClientTransportFactory> GetOwnedFactoriesLocked()
             => _current.GetOwnedFactories();
-
-        private static async Task DisposeConnectionAsync(ClientConnection connection)
-        {
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
-        }
-
-        private static async Task DisposeFactoryQuietlyAsync(IClientTransportFactory factory)
-        {
-            try { await factory.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
-        }
-
-        private async Task DisposeCreatedFactoriesAsync(
-            IEnumerable<DynamicEndpointState> states,
-            ISet<IClientTransportFactory>? preservedFactories = null)
-        {
-            var factories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
-            foreach (var state in states)
-            {
-                var factory = state.Configuration.TransportFactory;
-                if (factories.Add(factory) && (preservedFactories is null || !preservedFactories.Contains(factory)))
-                {
-                    try { await DisposeFactoryQuietlyAsync(factory).ConfigureAwait(false); }
-                    catch (Exception exception)
-                    {
-                        LogClientBackgroundLoopUnhandledException(
-                            _client._logger,
-                            nameof(DisposeCreatedFactoriesAsync),
-                            exception);
-                    }
-                }
-            }
-        }
     }
 }
