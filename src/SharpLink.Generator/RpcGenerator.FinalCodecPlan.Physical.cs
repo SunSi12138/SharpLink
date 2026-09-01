@@ -90,7 +90,7 @@ public partial class RpcGenerator
                         stack);
                 }
 
-                var offset = effective.Kind == FinalEffectiveLayoutKind.Explicit
+                int? offset = effective.Kind == FinalEffectiveLayoutKind.Explicit
                     ? GetFieldOffset(field)
                     : null;
                 fields.Add(new FinalPhysicalFieldPlan(offset, fieldLayout));
