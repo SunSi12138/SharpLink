@@ -13,9 +13,10 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
         var standalone = standaloneState.AnalyzeWithFinalCodecBindings();
-        var standaloneHashes = standaloneState.BuildFinalCodecHashes(
+        var standaloneGraph = standaloneState.ResolveFinalCodecGraph(
             includeSerializable: true,
             includeContracts: false);
+        var standaloneHashes = standaloneState.BuildFinalCodecHashes(standaloneGraph);
         var standaloneCodecs = AttachCodecHashes(standalone.Codecs, standaloneHashes);
 
         var contractDefaultState = new DtoAnalysisState(
@@ -25,9 +26,10 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: true);
         var contractDefault = contractDefaultState.AnalyzeWithFinalCodecBindings();
-        var contractDefaultHashes = contractDefaultState.BuildFinalCodecHashes(
+        var contractDefaultGraph = contractDefaultState.ResolveFinalCodecGraph(
             includeSerializable: false,
             includeContracts: true);
+        var contractDefaultHashes = contractDefaultState.BuildFinalCodecHashes(contractDefaultGraph);
         var contractDefaultCodecs = AttachCodecHashes(contractDefault.Codecs, contractDefaultHashes);
 
         var contractPolicyState = new DtoAnalysisState(
@@ -37,9 +39,10 @@ public partial class RpcGenerator
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
         var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
-        var codecHashes = contractPolicyState.BuildFinalCodecHashes(
+        var contractPolicyGraph = contractPolicyState.ResolveFinalCodecGraph(
             includeSerializable: false,
             includeContracts: true);
+        var codecHashes = contractPolicyState.BuildFinalCodecHashes(contractPolicyGraph);
         var contractPolicyCodecs = AttachCodecHashes(contractPolicy.Codecs, codecHashes);
 
         var currentContractTypes = contractPolicyState.GetCurrentContractReachableTypeNames();
