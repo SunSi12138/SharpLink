@@ -276,7 +276,11 @@ jobs:
 
       - name: Add Android producers to fan-in
         shell: bash
-        run: cp -R artifacts/layout/android-download/android-producers/. artifacts/layout/producers/android/
+        run: |
+          android_producers="$(find artifacts/layout/android-download -type d -name android-producers -print -quit)"
+          test -n "$android_producers"
+          mkdir -p artifacts/layout/producers/android
+          cp -R "$android_producers"/. artifacts/layout/producers/android/
 
       - name: Verify complete matrix on desktop CoreCLR
         run: >-
@@ -332,7 +336,11 @@ jobs:
 
       - name: Add Android producers to fan-in
         shell: bash
-        run: cp -R artifacts/layout/android-download/android-producers/. artifacts/layout/producers/android/
+        run: |
+          android_producers="$(find artifacts/layout/android-download -type d -name android-producers -print -quit)"
+          test -n "$android_producers"
+          mkdir -p artifacts/layout/producers/android
+          cp -R "$android_producers"/. artifacts/layout/producers/android/
 
       - name: Publish Browser probe
         run: >-
