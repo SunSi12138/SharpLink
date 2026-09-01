@@ -75,11 +75,14 @@ internal static class Program
         if (files.Length == 0)
             throw new InvalidOperationException($"No layout-verification.json files found under {inputDirectory}.");
         var reports = files.Select(path => Deserialize<LayoutEvidenceReport>(File.ReadAllText(path, Encoding.UTF8))).ToArray();
+        LayoutEvidenceValidation.ValidateCompleteMatrix(reports);
         var summary = LayoutEvidenceSummaryBuilder.Build(reports);
+        var retainedPortableFixtures = LayoutEvidenceValidation.ValidateRetainedPortableDomain(summary);
         Directory.CreateDirectory(outputDirectory);
         var json = JsonSerializer.Serialize(summary, typeof(LayoutEvidenceSummary), LayoutEvidenceJsonContext.Default);
         WriteText(Path.Combine(outputDirectory, "unsafe-blit-layout-summary.json"), json);
         WriteText(Path.Combine(outputDirectory, "unsafe-blit-layout-summary.md"), LayoutEvidenceSummaryBuilder.CreateMarkdown(summary));
+        Console.WriteLine($"Retained portable UnsafeBlit domain: {retainedPortableFixtures} fixed-width primitive Sequential/Explicit fixtures are raw-representation stable across the complete matrix.");
         foreach (var hypothesis in summary.Hypotheses)
             Console.WriteLine($"{hypothesis.Id}: supported={hypothesis.SupportedByObservedMatrix} evidence={string.Join("; ", hypothesis.Evidence)} counter={string.Join("; ", hypothesis.CounterEvidence)}");
         return 0;
