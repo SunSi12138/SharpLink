@@ -22,6 +22,26 @@ public sealed class RpcUnsafeBlitPlatformTests
     }
 
     [Test]
+    public void DateTimeOffsetRawAbiShouldBeCapabilityGuarded()
+    {
+        Ensure(
+            RpcUnsafeBlitPlatform.IsSupported(typeof(DateTimeOffsetPayload), 8),
+            "the current supported runtime must satisfy the declared DateTimeOffset raw ABI");
+        Ensure(
+            !RpcUnsafeBlitPlatform.IsSupported(
+                typeof(DateTimeOffsetPayload),
+                8,
+                dateTimeOffsetRawAbiSupported: false),
+            "UnsafeBlit must reject a runtime whose DateTimeOffset raw representation does not satisfy the declared ABI");
+        Ensure(
+            RpcUnsafeBlitPlatform.IsSupported(
+                typeof(PortablePayload),
+                8,
+                dateTimeOffsetRawAbiSupported: false),
+            "an unrelated fixed-width UnsafeBlit graph must not be rejected by the DateTimeOffset-specific ABI guard");
+    }
+
+    [Test]
     public void RuntimeSizedVectorShouldNeverUseUnsafeBlit()
     {
         Ensure(
@@ -73,6 +93,12 @@ public sealed class RpcUnsafeBlitPlatformTests
     {
         public byte Prefix { get; set; }
         public long Value { get; set; }
+    }
+
+    private struct DateTimeOffsetPayload
+    {
+        public int Prefix { get; set; }
+        public DateTimeOffset Value { get; set; }
     }
 
     private struct VectorPayload
