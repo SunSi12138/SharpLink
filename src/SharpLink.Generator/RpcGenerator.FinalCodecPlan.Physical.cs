@@ -241,7 +241,10 @@ public partial class RpcGenerator
                     _ => null
                 };
                 if (string.Equals(type.ToDisplayString(), "System.DateTimeOffset", StringComparison.Ordinal))
-                    frameworkRawAbi = "framework-raw/datetimeoffset/native16/release-scoped/v1";
+                {
+                    frameworkRawAbi =
+                        "framework-raw/datetimeoffset/native16/offset-i16-zero6-utc-ticks-i64/little-endian/v2";
+                }
             }
             if (token is null)
             {
