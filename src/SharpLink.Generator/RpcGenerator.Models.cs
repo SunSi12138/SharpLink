@@ -51,6 +51,10 @@ internal record RpcMethodModel(
     internal bool ReturnsValueTask => ReturnType.StartsWith(
         "global::System.Threading.Tasks.ValueTask",
         StringComparison.Ordinal);
+
+    internal long? TimeoutTicks => TimeoutSeconds is { } seconds
+        ? TimeSpan.FromSeconds(seconds).Ticks
+        : null;
 }
 
 internal record RpcParameterModel(
@@ -258,6 +262,8 @@ internal sealed record DtoGenerationResult(
 {
     public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =
         ImmutableArray<GeneratedCodecHashModel>.Empty;
+    public ImmutableArray<FinalCodecAutoLayoutDiagnosticModel> UnsafeBlitAutoLayoutDiagnostics { get; init; } =
+        ImmutableArray<FinalCodecAutoLayoutDiagnosticModel>.Empty;
     public string AssemblyLogicalIdentity { get; init; } = string.Empty;
 }
 
@@ -278,6 +284,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             x.ContractCodecs.Length != y.ContractCodecs.Length ||
             x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||
             x.CodecHashes.Length != y.CodecHashes.Length ||
+            x.UnsafeBlitAutoLayoutDiagnostics.Length != y.UnsafeBlitAutoLayoutDiagnostics.Length ||
             x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length ||
             !string.Equals(x.AssemblyLogicalIdentity, y.AssemblyLogicalIdentity, StringComparison.Ordinal))
         {
@@ -299,6 +306,17 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         {
             if (x.CodecHashes[index] != y.CodecHashes[index])
                 return false;
+        }
+        for (var index = 0; index < x.UnsafeBlitAutoLayoutDiagnostics.Length; index++)
+        {
+            var left = x.UnsafeBlitAutoLayoutDiagnostics[index];
+            var right = y.UnsafeBlitAutoLayoutDiagnostics[index];
+            if (!string.Equals(left.PayloadType, right.PayloadType, StringComparison.Ordinal) ||
+                !string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+                !string.Equals(left.FieldPath, right.FieldPath, StringComparison.Ordinal))
+            {
+                return false;
+            }
         }
         for (var index = 0; index < x.Diagnostics.Length; index++)
         {
@@ -349,6 +367,12 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codecHash.TypeName));
             hash = unchecked(hash * 31 + codecHash.High.GetHashCode());
             hash = unchecked(hash * 31 + codecHash.Low.GetHashCode());
+        }
+        foreach (var diagnostic in obj.UnsafeBlitAutoLayoutDiagnostics)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.PayloadType));
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.TypeName));
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.FieldPath));
         }
         foreach (var diagnostic in obj.Diagnostics)
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.Detail));
