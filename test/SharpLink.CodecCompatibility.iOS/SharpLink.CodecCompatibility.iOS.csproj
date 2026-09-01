@@ -15,6 +15,7 @@
     <UseMonoRuntime Condition="'$(CodecRuntime)' == 'mono'">true</UseMonoRuntime>
     <UseMonoRuntime Condition="'$(CodecRuntime)' == 'coreclr'">false</UseMonoRuntime>
     <UseInterpreter Condition="'$(CodecRuntime)' == 'mono'">true</UseInterpreter>
+    <MtouchDebug Condition="'$(CodecRuntime)' == 'coreclr'">false</MtouchDebug>
     <IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);IL2026;IL2090;CA1422</NoWarn>
   </PropertyGroup>
