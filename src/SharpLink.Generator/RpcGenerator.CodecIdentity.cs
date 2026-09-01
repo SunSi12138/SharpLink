@@ -6,56 +6,15 @@ public partial class RpcGenerator
     {
         internal ImmutableArray<GeneratedCodecHashModel> BuildFinalCodecHashes(FinalCodecGraph graph)
         {
-            var hashGraph = CreateHashMetadataGraph(graph);
             var cache = new Dictionary<string, RpcHashValue>(StringComparer.Ordinal);
-            return hashGraph.Plans
+            return graph.Plans
                 .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
                 .Select(pair =>
                 {
-                    var hash = HashCanonicalPlan(pair.Value, hashGraph, cache, new HashSet<string>(StringComparer.Ordinal));
+                    var hash = HashCanonicalPlan(pair.Value, graph, cache, new HashSet<string>(StringComparer.Ordinal));
                     return new GeneratedCodecHashModel(pair.Key, hash.High, hash.Low);
                 })
                 .ToImmutableArray();
-        }
-
-        private FinalCodecGraph CreateHashMetadataGraph(FinalCodecGraph graph)
-        {
-            if (_enums.Count == 0)
-                return graph;
-
-            var plans = graph.Plans.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
-            foreach (var enumModel in _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal))
-            {
-                if (plans.ContainsKey(enumModel.TypeName))
-                    continue;
-                if (!TryResolveReachableType(enumModel.TypeName, out var type) ||
-                    type is not INamedTypeSymbol { TypeKind: TypeKind.Enum, EnumUnderlyingType: { } underlying } enumType)
-                {
-                    throw new InvalidOperationException(
-                        $"Final RPC Codec graph cannot resolve reached enum metadata for '{enumModel.TypeName}'.");
-                }
-
-                var underlyingType = GetTypeName(underlying);
-                if (!plans.ContainsKey(underlyingType))
-                {
-                    if (!TryGetFrameworkScalarSemantic(underlying, out var semantic))
-                    {
-                        throw new InvalidOperationException(
-                            $"Final RPC Codec graph cannot resolve enum underlying Codec semantics for '{underlyingType}'.");
-                    }
-                    plans.Add(underlyingType, new FinalPrimitiveCodecPlan(
-                        underlyingType,
-                        "framework",
-                        semantic));
-                }
-
-                plans.Add(enumModel.TypeName, new FinalEnumCodecPlan(
-                    enumModel.TypeName,
-                    underlyingType,
-                    GetEnumDeclarationSemanticIdentity(enumType)));
-            }
-
-            return new FinalCodecGraph(plans, graph.RootTypes);
         }
 
         private static RpcHashValue HashCanonicalPlan(
@@ -268,24 +227,24 @@ public partial class RpcGenerator
                         fixedBuffer.Length.ToString(InvariantCulture),
                         HashPhysicalLayout(fixedBuffer.Element).ToHex());
                 case FinalStructPhysicalPlan structure:
+                {
+                    var parts = new List<string>
                     {
-                        var parts = new List<string>
-                        {
-                            "physical/v1",
-                            "struct",
-                            structure.LayoutKind.ToString(),
-                            structure.Pack.ToString(InvariantCulture),
-                            structure.Size.ToString(InvariantCulture),
-                            structure.InlineArrayLength?.ToString(InvariantCulture) ?? string.Empty,
-                            structure.Fields.Length.ToString(InvariantCulture)
-                        };
-                        foreach (var field in structure.Fields)
-                        {
-                            parts.Add(field.Offset?.ToString(InvariantCulture) ?? "sequential");
-                            parts.Add(HashPhysicalLayout(field.Layout).ToHex());
-                        }
-                        return Hashing.GetSemanticHash(parts.ToArray());
+                        "physical/v1",
+                        "struct",
+                        structure.LayoutKind.ToString(),
+                        structure.Pack.ToString(InvariantCulture),
+                        structure.Size.ToString(InvariantCulture),
+                        structure.InlineArrayLength?.ToString(InvariantCulture) ?? string.Empty,
+                        structure.Fields.Length.ToString(InvariantCulture)
+                    };
+                    foreach (var field in structure.Fields)
+                    {
+                        parts.Add(field.Offset?.ToString(InvariantCulture) ?? "sequential");
+                        parts.Add(HashPhysicalLayout(field.Layout).ToHex());
                     }
+                    return Hashing.GetSemanticHash(parts.ToArray());
+                }
                 default:
                     throw new InvalidOperationException(
                         $"Unknown resolved physical plan '{plan.GetType().Name}'.");
