@@ -27,6 +27,7 @@
     <Compile Include="../SharpLink.CodecCompatibility/PortableModels.cs" Link="Shared/PortableModels.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/PortableProbe.cs" Link="Shared/PortableProbe.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.cs" Link="Shared/UnsafeBlitLayoutEvidence.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.Matrix.cs" Link="Shared/UnsafeBlitLayoutEvidence.Matrix.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.StringCompatibility.cs" Link="Shared/UnsafeBlitLayoutEvidence.StringCompatibility.cs" />
   </ItemGroup>
 </Project>
