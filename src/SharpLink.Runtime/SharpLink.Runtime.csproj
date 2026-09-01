@@ -11,6 +11,11 @@
     </ItemGroup>
 
     <ItemGroup>
+      <Compile Include="..\SharpLink.Shared\RpcBuiltinCollectionWireCatalog.cs"
+               Link="Shared\RpcBuiltinCollectionWireCatalog.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
       <InternalsVisibleTo Include="SharpLink.UnitTests" />
       <InternalsVisibleTo Include="SharpLink.CodecCompatibility" />
       <InternalsVisibleTo Include="SharpLink.Client" />
