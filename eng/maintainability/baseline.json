@@ -18,12 +18,6 @@
     },
     {
       "domain": "source",
-      "path": "src/SharpLink.Generator/RpcGenerator.Analysis.cs",
-      "maxLoc": 1655,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs",
       "maxLoc": 1638,
       "reason": "Existing dev debt captured by issue #350."
