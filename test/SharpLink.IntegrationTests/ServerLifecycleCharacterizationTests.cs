@@ -126,17 +126,13 @@ internal static class ServerLifecycleResourceInspector
         var serverType = server.GetType();
         var admission = serverType.GetField("_admissionController", InstanceFlags)?.GetValue(server);
         return new ServerLifecycleResourceSnapshot(
-            ReadIntField(server, "_globalActiveCalls"),
+            ServerCallAdmissionDiagnostics.ActiveCallCount(server),
             ReadCountField(server, "_connections"),
             ReadCountField(server, "_retiredConnections"),
             ReadIntProperty(admission, "ActivePermits"),
             ReadIntProperty(admission, "QueuedCalls"),
             ReadLongProperty(admission, "QueuedBytes"));
     }
-
-    private static int ReadIntField(object value, string name)
-        => (int)(value.GetType().GetField(name, InstanceFlags)?.GetValue(value) ??
-            throw new InvalidOperationException($"Lifecycle field '{name}' was not found."));
 
     private static int ReadCountField(object value, string name)
     {
