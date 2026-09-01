@@ -847,7 +847,7 @@ public partial class RpcGenerator
         var isIdempotent = false;
         var isNonCancellable = false;
         var hasTimeout = false;
-        double? timeoutSeconds = null;
+        long? timeoutTicks = null;
         foreach (var attribute in method.GetAttributes())
         {
             var attributeClass = attribute.AttributeClass;
@@ -874,8 +874,11 @@ public partial class RpcGenerator
                     break;
                 case "TimeoutAttribute":
                     hasTimeout = true;
-                    if (TryGetTimeoutSeconds(attribute, out var seconds))
-                        timeoutSeconds = seconds;
+                    if (TryGetTimeoutSeconds(attribute, out var seconds) &&
+                        TryValidateTimeoutSeconds(seconds, out _))
+                    {
+                        timeoutTicks = TimeSpan.FromSeconds(seconds).Ticks;
+                    }
                     break;
             }
         }
@@ -884,7 +887,7 @@ public partial class RpcGenerator
             isIdempotent,
             isNonCancellable,
             hasTimeout,
-            timeoutSeconds);
+            timeoutTicks);
     }
 
     private readonly record struct InheritedRpcPolicy(
@@ -892,7 +895,7 @@ public partial class RpcGenerator
         bool IsIdempotent,
         bool IsNonCancellable,
         bool HasTimeout,
-        double? TimeoutSeconds);
+        long? TimeoutTicks);
 
     private readonly record struct InheritedRpcSignatureGroup(
         IMethodSymbol Representative,
@@ -1050,6 +1053,9 @@ public partial class RpcGenerator
                 var isOneWay = m.GetAttributes().Any(IsOnewayAttribute);
                 var isIdempotent = m.GetAttributes().Any(IsIdempotentAttribute);
                 var timeoutSeconds = GetTimeoutSecondsOrNull(m, out var hasTimeoutAttribute);
+                var timeoutTicks = timeoutSeconds is { } seconds
+                    ? TimeSpan.FromSeconds(seconds).Ticks
+                    : (long?)null;
 
                 var isStreamReturn = false;
                 string? streamItemType = null;
@@ -1113,7 +1119,7 @@ public partial class RpcGenerator
                 var kind = isOneWay ? "OneWay" : isStreamReturn
                     ? (paramArray.Any(static parameter => parameter.IsStream) ? "DuplexStreaming" : "ServerStreaming")
                     : paramArray.Any(static parameter => parameter.IsStream) ? "ClientStreaming" : "Unary";
-                var canonical = $"{m.Name}|{methodHash}|{kind}|{requestSchema}|{responseSchema}|cancel={paramArray.Any(static parameter => parameter.IsCancellationToken)}|timeout={hasTimeoutAttribute}:{timeoutSeconds?.ToString("R", CultureInfo.InvariantCulture)}|idempotent={isIdempotent}";
+                var canonical = $"{m.Name}|{methodHash}|{kind}|{requestSchema}|{responseSchema}|cancel={paramArray.Any(static parameter => parameter.IsCancellationToken)}|timeout={hasTimeoutAttribute}:{timeoutTicks?.ToString(CultureInfo.InvariantCulture)}|idempotent={isIdempotent}";
 
                 return new RpcMethodModel(
                     Name: m.Name,
