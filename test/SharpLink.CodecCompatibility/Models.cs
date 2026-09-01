@@ -51,7 +51,8 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
         FixtureRegistry ??= CreateFixtureRegistry();
 
         ValidateFixtureRegistry();
-        var derivedTag = $"{Os}-{ProcessArchitecture}-{ExecutionEnvironment}-{RuntimeFamily.ToLowerInvariant()}-net10";
+        var frameworkTag = GetFrameworkTag(TargetFramework);
+        var derivedTag = $"{Os}-{ProcessArchitecture}-{ExecutionEnvironment}-{RuntimeFamily.ToLowerInvariant()}-{frameworkTag}";
         if (!string.Equals(PlatformTag, derivedTag, StringComparison.Ordinal))
             throw new InvalidOperationException($"Runtime manifest platformTag mismatch: recorded={PlatformTag}, derived={derivedTag}.");
 
@@ -87,6 +88,12 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
                 break;
             case "ios-arm64-simulator-mono-net10":
                 ValidateKnownIdentity("ios", "arm64", "simulator", "Mono", "platform-runtime-pack", "iossimulator-arm64", "net10.0-ios/iossimulator-arm64", 8);
+                break;
+            case "ios-x64-simulator-coreclr-net11":
+                ValidateKnownIdentity("ios", "x64", "simulator", "CoreCLR", "runtime-reflection", "iossimulator-x64", "net11.0-ios/iossimulator-x64", 8);
+                break;
+            case "ios-arm64-simulator-coreclr-net11":
+                ValidateKnownIdentity("ios", "arm64", "simulator", "CoreCLR", "runtime-reflection", "iossimulator-arm64", "net11.0-ios/iossimulator-arm64", 8);
                 break;
             case "android-arm64-physical-device-mono-net10":
             case "android-arm64-physical-device-coreclr-net10":
@@ -128,6 +135,20 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
 
     private void ValidateFixtureRegistry()
         => CompatibilityPolicy.ValidateManifestFixtureRegistry(this);
+
+    private static string GetFrameworkTag(string targetFramework)
+    {
+        var tfm = (targetFramework ?? string.Empty).Split('/', 2)[0];
+        var platformSeparator = tfm.IndexOf('-');
+        if (platformSeparator >= 0)
+            tfm = tfm[..platformSeparator];
+        var versionSeparator = tfm.IndexOf('.');
+        if (versionSeparator > 0)
+            tfm = tfm[..versionSeparator];
+        if (!tfm.StartsWith("net", StringComparison.OrdinalIgnoreCase) || tfm.Length <= 3)
+            throw new InvalidOperationException($"Unsupported target framework identity {targetFramework}.");
+        return tfm.ToLowerInvariant();
+    }
 
     private static string DefaultRuntimeFamilySource()
         => OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst()
