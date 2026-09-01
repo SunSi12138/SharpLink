@@ -231,24 +231,24 @@ public partial class RpcGenerator
                         fixedBuffer.Length.ToString(InvariantCulture),
                         HashPhysicalLayout(fixedBuffer.Element).ToHex());
                 case FinalStructPhysicalPlan structure:
-                {
-                    var parts = new List<string>
                     {
-                        "physical/v1",
-                        "struct",
-                        structure.LayoutKind.ToString(),
-                        structure.Pack.ToString(InvariantCulture),
-                        structure.Size.ToString(InvariantCulture),
-                        structure.InlineArrayLength?.ToString(InvariantCulture) ?? string.Empty,
-                        structure.Fields.Length.ToString(InvariantCulture)
-                    };
-                    foreach (var field in structure.Fields)
-                    {
-                        parts.Add(field.Offset?.ToString(InvariantCulture) ?? "sequential");
-                        parts.Add(HashPhysicalLayout(field.Layout).ToHex());
+                        var parts = new List<string>
+                        {
+                            "physical/v1",
+                            "struct",
+                            structure.LayoutKind.ToString(),
+                            structure.Pack.ToString(InvariantCulture),
+                            structure.Size.ToString(InvariantCulture),
+                            structure.InlineArrayLength?.ToString(InvariantCulture) ?? string.Empty,
+                            structure.Fields.Length.ToString(InvariantCulture)
+                        };
+                        foreach (var field in structure.Fields)
+                        {
+                            parts.Add(field.Offset?.ToString(InvariantCulture) ?? "sequential");
+                            parts.Add(HashPhysicalLayout(field.Layout).ToHex());
+                        }
+                        return Hashing.GetSemanticHash(parts.ToArray());
                     }
-                    return Hashing.GetSemanticHash(parts.ToArray());
-                }
                 default:
                     throw new InvalidOperationException(
                         $"Unknown resolved physical plan '{plan.GetType().Name}'.");
