@@ -1,0 +1,406 @@
+name: UnsafeBlit Layout Evidence
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/codec-unsafe-blit-layout-evidence.yml'
+      - 'src/SharpLink.Runtime/Codec/**'
+      - 'src/SharpLink.Runtime/SharpLink.Runtime.csproj'
+      - 'test/SharpLink.CodecCompatibility/**'
+      - 'test/SharpLink.CodecCompatibility.LayoutEvidence/**'
+      - 'test/SharpLink.CodecCompatibility.Android/**'
+      - 'test/SharpLink.CodecCompatibility.Browser/**'
+
+concurrency:
+  group: unsafe-blit-layout-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  SHARPLINK_COMMIT: ${{ github.sha }}
+
+jobs:
+  desktop-produce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Produce fixed-width desktop evidence
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility.LayoutEvidence/SharpLink.CodecCompatibility.LayoutEvidence.csproj
+          -- produce --profile fixed-width --output artifacts/layout/desktop/fixed-width
+
+      - name: Produce native-width desktop evidence
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility.LayoutEvidence/SharpLink.CodecCompatibility.LayoutEvidence.csproj
+          -- produce --profile native-width --output artifacts/layout/desktop/native-width
+
+      - name: Upload desktop layout corpora
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsafe-blit-layout-corpus-desktop-linux-x64
+          path: artifacts/layout/desktop
+          if-no-files-found: error
+          retention-days: 30
+
+  browser-produce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Publish Browser probe
+        run: >-
+          dotnet publish -c Release
+          test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
+          -o artifacts/layout/browser-publish
+
+      - name: Produce fixed-width Browser evidence
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/run-layout-browser.mjs
+          produce artifacts/layout/browser-publish artifacts/layout/browser/fixed-width fixed-width
+          "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
+
+      - name: Produce native-width Browser evidence
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/run-layout-browser.mjs
+          produce artifacts/layout/browser-publish artifacts/layout/browser/native-width native-width
+          "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
+
+      - name: Upload Browser layout corpora
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsafe-blit-layout-corpus-browser-wasm
+          path: artifacts/layout/browser
+          if-no-files-found: error
+          retention-days: 30
+
+  android-matrix:
+    needs: [desktop-produce, browser-produce]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      ANDROID_API: '35'
+      ANDROID_AVD: sharplink-layout-evidence
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Android workload
+        run: dotnet workload install android
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download desktop producer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-corpus-desktop-linux-x64
+          path: artifacts/layout/producers/desktop
+
+      - name: Download Browser producer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-corpus-browser-wasm
+          path: artifacts/layout/producers/browser
+
+      - name: Prepare Android x64 emulator
+        shell: bash
+        run: |
+          sudo chmod 666 /dev/kvm || true
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "emulator" "platforms;android-$ANDROID_API" "system-images;android-$ANDROID_API;google_apis;x86_64"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-layout-avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$AVDMANAGER" create avd --force --name "$ANDROID_AVD" --package "system-images;android-$ANDROID_API;google_apis;x86_64" --device pixel_6
+          nohup emulator -avd "$ANDROID_AVD" -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on > artifacts-layout-android-emulator.log 2>&1 &
+          timeout 180 adb wait-for-device
+          for attempt in $(seq 1 120); do
+            [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] && break
+            sleep 2
+          done
+          [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == "1" ]]
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+
+      - name: Build Android CoreCLR probe
+        shell: bash
+        run: |
+          rm -rf test/SharpLink.CodecCompatibility.Android/bin test/SharpLink.CodecCompatibility.Android/obj
+          dotnet build -c Debug -f net10.0-android -r android-x64 \
+            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
+            -t:SignAndroidPackage -p:CodecRuntime=coreclr -p:AndroidPackageFormats=apk -p:AndroidBuildApplicationPackage=true
+          apk="$(find test/SharpLink.CodecCompatibility.Android/bin/Debug -name '*-Signed.apk' -type f | head -n 1)"
+          test -n "$apk"
+          cp "$apk" artifacts/layout/android-coreclr.apk
+
+      - name: Produce Android CoreCLR fixed/native corpora
+        shell: bash
+        run: |
+          adb install -r artifacts/layout/android-coreclr.apk
+          node test/SharpLink.CodecCompatibility.Android/run-layout-android.mjs produce \
+            artifacts/layout/android-producers/coreclr/fixed-width fixed-width "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" CoreCLR
+          node test/SharpLink.CodecCompatibility.Android/run-layout-android.mjs produce \
+            artifacts/layout/android-producers/coreclr/native-width native-width "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" CoreCLR
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Build Android Mono probe
+        shell: bash
+        run: |
+          rm -rf test/SharpLink.CodecCompatibility.Android/bin test/SharpLink.CodecCompatibility.Android/obj
+          dotnet build -c Debug -f net10.0-android -r android-x64 \
+            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
+            -t:SignAndroidPackage -p:CodecRuntime=mono -p:AndroidPackageFormats=apk -p:AndroidBuildApplicationPackage=true
+          apk="$(find test/SharpLink.CodecCompatibility.Android/bin/Debug -name '*-Signed.apk' -type f | head -n 1)"
+          test -n "$apk"
+          cp "$apk" artifacts/layout/android-mono.apk
+
+      - name: Produce Android Mono fixed/native corpora
+        shell: bash
+        run: |
+          adb install -r artifacts/layout/android-mono.apk
+          node test/SharpLink.CodecCompatibility.Android/run-layout-android.mjs produce \
+            artifacts/layout/android-producers/mono/fixed-width fixed-width "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" Mono
+          node test/SharpLink.CodecCompatibility.Android/run-layout-android.mjs produce \
+            artifacts/layout/android-producers/mono/native-width native-width "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" Mono
+          adb uninstall com.sharplink.codeccompat || true
+          cp -R artifacts/layout/android-producers/. artifacts/layout/producers/android/
+
+      - name: Verify complete matrix on Android CoreCLR
+        shell: bash
+        run: |
+          adb install -r artifacts/layout/android-coreclr.apk
+          node test/SharpLink.CodecCompatibility.Android/run-layout-android.mjs verify \
+            artifacts/layout/producers artifacts/layout/android-reports/coreclr/layout-verification.json \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" CoreCLR
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Verify complete matrix on Android Mono
+        shell: bash
+        run: |
+          adb install -r artifacts/layout/android-mono.apk
+          node test/SharpLink.CodecCompatibility.Android/run-layout-android.mjs verify \
+            artifacts/layout/producers artifacts/layout/android-reports/mono/layout-verification.json \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" Mono
+          adb uninstall com.sharplink.codeccompat || true
+
+      - name: Upload Android layout evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsafe-blit-layout-android
+          path: |
+            artifacts/layout/android-producers
+            artifacts/layout/android-reports
+            artifacts-layout-android-emulator.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  desktop-verify:
+    needs: [desktop-produce, browser-produce, android-matrix]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download desktop producer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-corpus-desktop-linux-x64
+          path: artifacts/layout/producers/desktop
+
+      - name: Download Browser producer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-corpus-browser-wasm
+          path: artifacts/layout/producers/browser
+
+      - name: Download Android producers
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-android
+          path: artifacts/layout/android-download
+
+      - name: Add Android producers to fan-in
+        shell: bash
+        run: cp -R artifacts/layout/android-download/android-producers/. artifacts/layout/producers/android/
+
+      - name: Verify complete matrix on desktop CoreCLR
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility.LayoutEvidence/SharpLink.CodecCompatibility.LayoutEvidence.csproj
+          -- verify --input artifacts/layout/producers --output artifacts/layout/desktop-report/layout-verification.json
+
+      - name: Upload desktop verification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsafe-blit-layout-verification-desktop
+          path: artifacts/layout/desktop-report/layout-verification.json
+          if-no-files-found: error
+          retention-days: 30
+
+  browser-verify:
+    needs: [desktop-produce, browser-produce, android-matrix]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download desktop producer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-corpus-desktop-linux-x64
+          path: artifacts/layout/producers/desktop
+
+      - name: Download Browser producer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-corpus-browser-wasm
+          path: artifacts/layout/producers/browser
+
+      - name: Download Android producers
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-android
+          path: artifacts/layout/android-download
+
+      - name: Add Android producers to fan-in
+        shell: bash
+        run: cp -R artifacts/layout/android-download/android-producers/. artifacts/layout/producers/android/
+
+      - name: Publish Browser probe
+        run: >-
+          dotnet publish -c Release
+          test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
+          -o artifacts/layout/browser-publish
+
+      - name: Verify complete matrix in Browser wasm32
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/run-layout-browser.mjs
+          verify artifacts/layout/browser-publish artifacts/layout/producers
+          artifacts/layout/browser-report/layout-verification.json
+          "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
+
+      - name: Upload Browser verification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsafe-blit-layout-verification-browser
+          path: artifacts/layout/browser-report/layout-verification.json
+          if-no-files-found: error
+          retention-days: 30
+
+  summary:
+    needs: [android-matrix, desktop-verify, browser-verify]
+    if: always() && needs.android-matrix.result == 'success' && needs.desktop-verify.result == 'success' && needs.browser-verify.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Android reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-android
+          path: artifacts/layout/reports/android
+
+      - name: Download desktop report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-verification-desktop
+          path: artifacts/layout/reports/desktop
+
+      - name: Download Browser report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsafe-blit-layout-verification-browser
+          path: artifacts/layout/reports/browser
+
+      - name: Build hypothesis summary
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility.LayoutEvidence/SharpLink.CodecCompatibility.LayoutEvidence.csproj
+          -- summarize --input artifacts/layout/reports --output artifacts/layout/summary
+
+      - name: Publish Markdown summary
+        shell: bash
+        run: cat artifacts/layout/summary/unsafe-blit-layout-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload UnsafeBlit layout summary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsafe-blit-layout-summary
+          path: artifacts/layout/summary
+          if-no-files-found: error
+          retention-days: 30
