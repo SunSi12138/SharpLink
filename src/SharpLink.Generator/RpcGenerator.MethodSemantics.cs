@@ -5,7 +5,6 @@ public partial class RpcGenerator
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
         => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
 
-
     private static bool HasValidControlParameterOrder(IMethodSymbol method)
         => !method.Parameters.Any(IsCancellationTokenParameter) ||
            IsCancellationTokenParameter(method.Parameters[method.Parameters.Length - 1]);
@@ -131,13 +130,9 @@ public partial class RpcGenerator
             var leftParameter = left.Parameters[index];
             var rightParameter = right.Parameters[index];
             if (IsCancellationTokenParameter(leftParameter))
-            {
                 continue;
-            }
             if (!string.Equals(leftParameter.Name, rightParameter.Name, StringComparison.Ordinal) ||
-                !SymbolEqualityComparer.IncludeNullability.Equals(
-                    leftParameter.Type,
-                    rightParameter.Type))
+                !SymbolEqualityComparer.IncludeNullability.Equals(leftParameter.Type, rightParameter.Type))
             {
                 return false;
             }
@@ -180,9 +175,9 @@ public partial class RpcGenerator
                 case "TimeoutAttribute":
                     hasTimeout = true;
                     if (TryGetTimeoutSeconds(attribute, out var seconds) &&
-                        TryValidateTimeoutSeconds(seconds, out _))
+                        TryNormalizeTimeoutSeconds(seconds, out var ticks, out _))
                     {
-                        timeoutTicks = TimeSpan.FromSeconds(seconds).Ticks;
+                        timeoutTicks = ticks;
                     }
                     break;
             }
@@ -213,36 +208,26 @@ public partial class RpcGenerator
            string.Equals(symbol.ContainingNamespace.ToDisplayString(), "SharpLink.Sdk", StringComparison.Ordinal);
 
     private static bool IsRpcServiceAttribute(AttributeData attribute)
-    {
-        return IsAttribute(attribute, "SharpLink.Sdk", "RpcServiceAttribute") ||
-               IsAttribute(attribute, "SharpLink.Abstractions", "RpcServiceAttribute");
-    }
+        => IsAttribute(attribute, "SharpLink.Sdk", "RpcServiceAttribute") ||
+           IsAttribute(attribute, "SharpLink.Abstractions", "RpcServiceAttribute");
 
     private static bool IsOnewayAttribute(AttributeData attribute)
-    {
-        return IsAttribute(attribute, "SharpLink.Sdk", "OnewayAttribute") ||
-               IsAttribute(attribute, "SharpLink.Abstractions", "OnewayAttribute");
-    }
+        => IsAttribute(attribute, "SharpLink.Sdk", "OnewayAttribute") ||
+           IsAttribute(attribute, "SharpLink.Abstractions", "OnewayAttribute");
 
     private static bool IsTimeoutAttribute(AttributeData attribute)
-    {
-        return IsAttribute(attribute, "SharpLink.Sdk", "TimeoutAttribute") ||
-               IsAttribute(attribute, "SharpLink.Abstractions", "TimeoutAttribute");
-    }
+        => IsAttribute(attribute, "SharpLink.Sdk", "TimeoutAttribute") ||
+           IsAttribute(attribute, "SharpLink.Abstractions", "TimeoutAttribute");
 
     private static bool IsIdempotentAttribute(AttributeData attribute)
-    {
-        return IsAttribute(attribute, "SharpLink.Sdk", "IdempotentAttribute") ||
-               IsAttribute(attribute, "SharpLink.Abstractions", "IdempotentAttribute");
-    }
+        => IsAttribute(attribute, "SharpLink.Sdk", "IdempotentAttribute") ||
+           IsAttribute(attribute, "SharpLink.Abstractions", "IdempotentAttribute");
 
     private static bool IsNonCancellableAttribute(AttributeData attribute)
-    {
-        return IsAttribute(attribute, "SharpLink.Sdk", "NonCancellableAttribute") ||
-               IsAttribute(attribute, "SharpLink.Abstractions", "NonCancellableAttribute");
-    }
+        => IsAttribute(attribute, "SharpLink.Sdk", "NonCancellableAttribute") ||
+           IsAttribute(attribute, "SharpLink.Abstractions", "NonCancellableAttribute");
 
-    private static double? GetTimeoutSecondsOrNull(IMethodSymbol method, out bool hasTimeoutAttribute)
+    private static long? GetTimeoutTicksOrNull(IMethodSymbol method, out bool hasTimeoutAttribute)
     {
         hasTimeoutAttribute = false;
         foreach (var attribute in method.GetAttributes())
@@ -255,8 +240,8 @@ public partial class RpcGenerator
                 return null;
 
             return TryGetTimeoutSeconds(attribute, out var seconds) &&
-                   TryValidateTimeoutSeconds(seconds, out _)
-                ? seconds
+                   TryNormalizeTimeoutSeconds(seconds, out var ticks, out _)
+                ? ticks
                 : null;
         }
 
@@ -289,7 +274,11 @@ public partial class RpcGenerator
     }
 
     private static bool TryValidateTimeoutSeconds(double seconds, out string detail)
+        => TryNormalizeTimeoutSeconds(seconds, out _, out detail);
+
+    private static bool TryNormalizeTimeoutSeconds(double seconds, out long ticks, out string detail)
     {
+        ticks = default;
         if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds <= 0)
         {
             detail = "seconds must be a finite number greater than zero";
@@ -298,11 +287,13 @@ public partial class RpcGenerator
 
         try
         {
-            if (TimeSpan.FromSeconds(seconds) <= TimeSpan.Zero)
+            var timeout = TimeSpan.FromSeconds(seconds);
+            if (timeout <= TimeSpan.Zero)
             {
                 detail = "seconds is too small to produce a positive TimeSpan";
                 return false;
             }
+            ticks = timeout.Ticks;
         }
         catch (OverflowException)
         {
