@@ -43,6 +43,8 @@ public partial class RpcGenerator
             includeSerializable: false,
             includeContracts: true);
         var codecHashes = contractPolicyState.BuildFinalCodecHashes(contractPolicyGraph);
+        var unsafeBlitAutoLayoutDiagnostics =
+            DtoAnalysisState.BuildUnsafeBlitAutoLayoutDiagnostics(contractPolicyGraph);
         var contractPolicyCodecs = AttachCodecHashes(contractPolicy.Codecs, codecHashes);
 
         var currentContractTypes = contractPolicyState.GetCurrentContractReachableTypeNames();
@@ -117,6 +119,7 @@ public partial class RpcGenerator
             enums)
         {
             CodecHashes = codecHashes,
+            UnsafeBlitAutoLayoutDiagnostics = unsafeBlitAutoLayoutDiagnostics,
             AssemblyLogicalIdentity = compilation.Assembly.Identity.Name
         };
     }
