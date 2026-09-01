@@ -9,7 +9,7 @@
 | 子系统 | 主要所有权 | 详细说明 |
 | --- | --- | --- |
 | Generator | 契约/服务编译期分析、诊断、生成 Proxy/Stub/Codec/Manifest | [Generator 架构](architecture-generator.md) |
-| Runtime | 协议、Session、帧/流调度、发送泵、Codec/Manifest Runtime Context、传输机制 | [Runtime 架构](architecture-runtime.md) |
+| Runtime | 协议、Session、帧/流调度、发送泵、Runtime Context 内部 Codec/Manifest/Buffer 机制状态、传输机制 | [Runtime 架构](architecture-runtime.md) |
 | Client | Client 配置、连接/端点拓扑、请求状态、重连、取消/deadline 与 `IRpcChannel` | [Client 架构](architecture-client.md) |
 | Server | Server 配置、监听/会话编排、服务注册与调用生命周期、认证/异常边界 | [Server 架构](architecture-server.md) |
 
@@ -78,15 +78,15 @@ Generator 生命周期只存在于编译阶段。它读取 Roslyn 符号与 meta
 
 ### Runtime
 
-Runtime 拥有 Runtime Context 与单条物理 Session 的机制状态，包括帧读写、发送泵、stream dispatcher、flow-control、传输连接和 Runtime 级 Codec/Manifest 状态。Context 构建后配置冻结；Session 终止必须释放其所有底层资源。详见 [Runtime 架构](architecture-runtime.md)。
+Client/Server 分别拥有各自 Runtime Context 的实例生命周期，并在自己的实例 Build/Stop 或 Run/Stop 边界创建、绑定和释放 Context。Runtime 定义并管理 Context 内部的 Codec/Manifest/Buffer 等机制状态与资源，同时拥有单条物理 Session 的机制状态，包括帧读写、发送泵、stream dispatcher、flow-control 和传输连接。Context 构建后配置冻结；Session 终止必须释放其所有底层资源。详见 [Runtime 架构](architecture-runtime.md)。
 
 ### Client
 
-Client 拥有从 Build 到 Connect/Stop 的客户端实例生命周期，以及 endpoint snapshot、连接池、重连 worker、pending request、request-to-session 绑定和调用取消/deadline 状态。Runtime Session 是 Client 使用的机制，不反向拥有 Client 策略。详见 [Client 架构](architecture-client.md)。
+Client 拥有从 Build 到 Connect/Stop 的客户端实例生命周期及其 Runtime Context 实例生命周期，以及 endpoint snapshot、连接池、重连 worker、pending request、request-to-session 绑定和调用取消/deadline 状态。Runtime Session 是 Client 使用的机制，不反向拥有 Client 策略。详见 [Client 架构](architecture-client.md)。
 
 ### Server
 
-Server 拥有从 Build 到 Run/Stop 的服务端实例生命周期，以及 listener、连接接入、服务 Registry、认证上下文、调用/stream 生命周期与排空。Runtime 负责帧和 Session 机制；生成 Stub/Activator 负责类型安全的调用入口。详见 [Server 架构](architecture-server.md)。
+Server 拥有从 Build 到 Run/Stop 的服务端实例生命周期及其 Runtime Context 实例生命周期，以及 listener、连接接入、服务 Registry、认证上下文、调用/stream 生命周期与排空。Runtime 负责帧和 Session 机制；生成 Stub/Activator 负责类型安全的调用入口。详见 [Server 架构](architecture-server.md)。
 
 ## 性能与 NativeAOT 原则
 
