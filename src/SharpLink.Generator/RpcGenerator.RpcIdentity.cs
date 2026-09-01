@@ -88,7 +88,7 @@ public partial class RpcGenerator
             method.HasCancellationToken ? "cancellable" : "non-cancellable",
             method.IsIdempotent ? "idempotent" : "non-idempotent",
             method.HasTimeoutAttribute ? "timeout" : "no-timeout",
-            method.TimeoutSeconds?.ToString("R", InvariantCulture) ?? string.Empty,
+            method.TimeoutTicks?.ToString(InvariantCulture) ?? string.Empty,
             payloadParameters.Length.ToString(InvariantCulture)
         };
         for (var index = 0; index < payloadParameters.Length; index++)
