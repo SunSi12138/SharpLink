@@ -56,7 +56,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal API 4 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 4, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-2.0-api4-rpcchannel-codec-provider-v3", StringComparison.Ordinal),
+               manifest.Contains("sharplink-2.0-api4-rpcchannel-codec-provider-v4", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -3414,7 +3414,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v3")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v4")]
 
 namespace SharpLink.Generated
 {
