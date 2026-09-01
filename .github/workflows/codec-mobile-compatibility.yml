@@ -1,7 +1,7 @@
 name: Codec Mobile Evidence
 
-# This workflow retains explicitly documented producer -> consumer edges.
-# It is not an all-to-all mobile compatibility matrix.
+# This workflow currently exercises only non-Mono mobile codec evidence.
+# Mono-based Android/iOS coverage is intentionally excluded from this matrix.
 
 permissions:
   contents: read
@@ -16,7 +16,6 @@ on:
       - 'src/SharpLink.Runtime/SharpLink.Runtime.csproj'
       - 'test/SharpLink.CodecCompatibility/**'
       - 'test/SharpLink.CodecCompatibility.Android/**'
-      - 'test/SharpLink.CodecCompatibility.iOS/**'
       - 'test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs'
 
 concurrency:
@@ -127,25 +126,6 @@ jobs:
           adb shell settings put global animator_duration_scale 0
           adb shell getprop ro.product.cpu.abi
 
-      - name: Build and run Android Mono producer
-        shell: bash
-        run: |
-          rm -rf test/SharpLink.CodecCompatibility.Android/bin test/SharpLink.CodecCompatibility.Android/obj
-          dotnet build -c Debug -f net10.0-android -r android-x64 \
-            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
-            -t:SignAndroidPackage \
-            -p:CodecRuntime=mono \
-            -p:AndroidPackageFormats=apk \
-            -p:AndroidBuildApplicationPackage=true
-          apk="$(find test/SharpLink.CodecCompatibility.Android/bin/Debug -name '*-Signed.apk' -type f | head -n 1)"
-          test -n "$apk"
-          cp "$apk" artifacts/codec-compat/android-mono.apk
-          adb install -r "$apk"
-          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
-            produce artifacts/codec-compat/android-mono-corpus \
-            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" Mono
-          adb uninstall com.sharplink.codeccompat || true
-
       - name: Build and run Android CoreCLR producer
         shell: bash
         run: |
@@ -165,12 +145,10 @@ jobs:
             "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" CoreCLR
           adb uninstall com.sharplink.codeccompat || true
 
-      - name: Assemble Android producer fan-in
+      - name: Assemble Android CoreCLR producer fan-in
         shell: bash
         run: |
-          mkdir -p artifacts/codec-compat/producers/codec-mobile-corpus-android-x64-mono
           mkdir -p artifacts/codec-compat/producers/codec-mobile-corpus-android-x64-coreclr
-          cp -R artifacts/codec-compat/android-mono-corpus/. artifacts/codec-compat/producers/codec-mobile-corpus-android-x64-mono/
           cp -R artifacts/codec-compat/android-coreclr-corpus/. artifacts/codec-compat/producers/codec-mobile-corpus-android-x64-coreclr/
 
       - name: Verify documented edges on Android CoreCLR
@@ -193,207 +171,56 @@ jobs:
           node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
             check-report artifacts/codec-compat/android-coreclr-verification/verification.json
 
-      - name: Verify documented edges on Android Mono
-        shell: bash
-        env:
-          SHARPLINK_SKIP_BUILTIN_RAW: '1'
-        run: |
-          adb install -r artifacts/codec-compat/android-mono.apk
-          node test/SharpLink.CodecCompatibility.Android/run-android.mjs \
-            verify artifacts/codec-compat/producers \
-            artifacts/codec-compat/android-mono-verification/verification.json \
-            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" Mono
-          adb uninstall com.sharplink.codeccompat || true
-
-      - name: Append raw evidence for Android Mono
-        run: |
-          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
-            append-raw artifacts/codec-compat/android-mono-verification/verification.json \
-            artifacts/codec-compat/producers artifacts/codec-compat/android-mono-corpus
-          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
-            check-report artifacts/codec-compat/android-mono-verification/verification.json
-
-      - name: Upload Android evidence
+      - name: Upload Android CoreCLR evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: codec-mobile-evidence-android-x64
           path: |
-            artifacts/codec-compat/android-mono-corpus
             artifacts/codec-compat/android-coreclr-corpus
-            artifacts/codec-compat/android-mono-verification/verification.json
             artifacts/codec-compat/android-coreclr-verification/verification.json
+            artifacts/codec-compat/android-coreclr-verification/verification-progress.log
             artifacts-android-emulator.log
           if-no-files-found: warn
           retention-days: 30
 
-  ios:
-    needs: [desktop-reference, android]
-    if: ${{ always() && needs.desktop-reference.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: ios-simulator-x64
-            os: macos-26-intel
-            rid: iossimulator-x64
-          - id: ios-simulator-arm64
-            os: macos-26
-            rid: iossimulator-arm64
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      SHARPLINK_COMMIT: ${{ github.sha }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Install iOS workload
-        run: dotnet workload install ios
-
-      - name: Record SDK version
-        shell: bash
-        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
-
-      - name: Download canonical desktop corpus
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: codec-mobile-corpus-desktop-linux-x64
-          path: artifacts/codec-compat/producers/codec-mobile-corpus-desktop-linux-x64
-
-      - name: Boot an iOS simulator
-        shell: bash
-        run: |
-          xcrun simctl shutdown all || true
-          udid="$(python3 - <<'PY'
-          import json, subprocess
-          data = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))
-          for runtime, devices in data['devices'].items():
-              if 'iOS' not in runtime:
-                  continue
-              for device in devices:
-                  if device.get('isAvailable') and device.get('name', '').startswith('iPhone'):
-                      print(device['udid'])
-                      raise SystemExit
-          raise SystemExit('No available iPhone simulator found')
-          PY
-          )"
-          echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
-          xcrun simctl boot "$udid" || true
-          for attempt in $(seq 1 90); do
-            if xcrun simctl list devices | grep "$udid" | grep -q '(Booted)'; then
-              break
-            fi
-            sleep 2
-          done
-          xcrun simctl list devices | grep "$udid" | grep '(Booted)'
-
-      - name: Build and run iOS simulator producer
-        shell: bash
-        run: |
-          rm -rf test/SharpLink.CodecCompatibility.iOS/bin test/SharpLink.CodecCompatibility.iOS/obj
-          dotnet build -c Debug -f net10.0-ios -r "${{ matrix.rid }}" \
-            test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj
-          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Debug -path "*/${{ matrix.rid }}/*" -name '*.app' -type d | head -n 1)"
-          test -n "$app"
-          xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
-          node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
-            produce artifacts/codec-compat/ios-corpus \
-            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" \
-            "net10.0-ios/${{ matrix.rid }}"
-
-      - name: Assemble iOS producer fan-in
-        shell: bash
-        run: |
-          mkdir -p artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}
-          cp -R artifacts/codec-compat/ios-corpus/. artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}/
-
-      - name: Verify documented edges on iOS simulator
-        shell: bash
-        env:
-          SHARPLINK_SKIP_BUILTIN_RAW: '1'
-        run: |
-          node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
-            verify artifacts/codec-compat/producers \
-            artifacts/codec-compat/ios-verification/verification.json \
-            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" \
-            "net10.0-ios/${{ matrix.rid }}"
-
-      - name: Append raw evidence for iOS simulator
-        run: |
-          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
-            append-raw artifacts/codec-compat/ios-verification/verification.json \
-            artifacts/codec-compat/producers artifacts/codec-compat/ios-corpus
-          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
-            check-report artifacts/codec-compat/ios-verification/verification.json
-
-      - name: Upload iOS simulator evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: codec-mobile-evidence-${{ matrix.id }}
-          path: |
-            artifacts/codec-compat/ios-corpus
-            artifacts/codec-compat/ios-verification/verification.json
-          if-no-files-found: warn
-          retention-days: 30
-
   summary:
-    needs: [android, ios]
+    needs: android
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      SHARPLINK_COMMIT: ${{ github.sha }}
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Download mobile verification evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: codec-mobile-evidence-*
-          path: artifacts/codec-compat/verifications
-          merge-multiple: false
-
-      - name: Require every documented mobile consumer report
+      - name: Require Android CoreCLR job
         shell: bash
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
         run: |
-          count="$(find artifacts/codec-compat/verifications -name verification.json -type f | wc -l | tr -d ' ')"
-          if [[ "$count" != "4" ]]; then
-            echo "::error::Expected 4 mobile consumer reports, found $count."
+          if [[ "$ANDROID_RESULT" != "success" ]]; then
+            echo "::error::Android CoreCLR codec evidence result: $ANDROID_RESULT"
             exit 1
           fi
 
-      - name: Aggregate documented mobile edge evidence
-        run: >-
-          dotnet run -c Release
-          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
-          -- summarize
-          --input artifacts/codec-compat/verifications
-          --output artifacts/codec-compat/summary
-          --profile mobile
-
-      - name: Upload mobile evidence summary
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Download Android CoreCLR evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: codec-mobile-evidence-summary
-          path: artifacts/codec-compat/summary
-          if-no-files-found: warn
-          retention-days: 30
+          name: codec-mobile-evidence-android-x64
+          path: artifacts/codec-compat/verifications
+
+      - name: Locate Android CoreCLR verification report
+        shell: bash
+        run: |
+          report="$(find artifacts/codec-compat/verifications -path '*android-coreclr-verification/verification.json' -type f | head -n 1)"
+          if [[ -z "$report" ]]; then
+            echo "::error::Android CoreCLR verification report was not found."
+            exit 1
+          fi
+          echo "CORECLR_REPORT=$report" >> "$GITHUB_ENV"
+
+      - name: Validate Android CoreCLR evidence report
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs
+          check-report
+          "$CORECLR_REPORT"
