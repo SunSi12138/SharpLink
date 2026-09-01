@@ -46,6 +46,7 @@ Runtime 拥有：
 Runtime 不拥有：
 
 - endpoint discovery、负载均衡、Retry、Circuit Breaker 或 connection-pool policy；这些属于 [Client](architecture-client.md)。
+- 动态 Contract/Proxy 或 Service module generation 的对外发布、替换、注销与 drain policy；这些由 Client/Server 实例拥有，Runtime Context 只承接相应 registration 的运行时状态。
 - 服务 Registry、服务实例生命周期、认证/授权、异常映射 policy 或 admission；这些属于 [Server](architecture-server.md)。
 - 契约发现、源码诊断或生成 Artifact；这些属于 [Generator](architecture-generator.md)。
 - Generic Host 的应用启动/停止 policy；Hosting 只包装 Client/Server 生命周期。
@@ -56,7 +57,7 @@ Runtime Context 是运行时共享机制的实例级所有权边界：
 
 1. Builder/上层组件提供 Codec、Buffer、Manifest 等配置。
 2. Build 阶段验证并冻结配置，避免调用进行中读取进程级可变选项。
-3. 静态 Manifest 快照被导入 Context；动态模块可以通过明确的实例 API 发布新 generation。
+3. 静态 Manifest 快照被导入 Context；动态模块由 Client/Server 通过各自的实例 API 发布、替换或注销 generation，Runtime Context 接收对应 registration identity 并维护其 Codec/Manifest runtime state，而不拥有上层 module publication policy。
 4. Codec/cache 绑定对应的 registration identity；替换/卸载不能让旧 generation 清理误删新 generation 状态。
 5. Context 释放时，Runtime 自己创建并拥有的资源必须随之释放；调用方显式提供且保留所有权的对象不得被越权释放。
 
