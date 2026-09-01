@@ -239,37 +239,53 @@ public partial class RpcGenerator
                     GeneratedCodecKind.List or
                     GeneratedCodecKind.Memory or
                     GeneratedCodecKind.ReadOnlyMemory or
-                    GeneratedCodecKind.ImmutableArray) ||
-                !IsBuiltinBlitElement(elementType))
+                    GeneratedCodecKind.ImmutableArray))
             {
                 plan = null!;
                 return false;
             }
 
-            if (string.Equals(elementType.ToDisplayString(), "System.DateTimeOffset", StringComparison.Ordinal))
+            var elementTypeName = elementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            if (elementTypeName.StartsWith("global::", StringComparison.Ordinal))
+                elementTypeName = elementTypeName.Substring("global::".Length);
+            if (!global::SharpLink.RpcBuiltinCollectionWireCatalog.TryGet(elementTypeName, out var descriptor))
             {
-                plan = new FinalCollectionCodecPlan(
-                    typeName,
-                    collectionKind,
-                    FinalCollectionWireStrategy.DateTimeOffsetCanonical,
-                    GetTypeName(elementType),
-                    null,
-                    null,
-                    RawElementLayout: null,
-                    StrategySemantic: "datetime-offset/collection16/i16le-offset-minutes/zero6/i64le-utc-ticks/v2");
-                return true;
+                plan = null!;
+                return false;
             }
 
-            plan = new FinalCollectionCodecPlan(
-                typeName,
-                collectionKind,
-                FinalCollectionWireStrategy.RawBlit,
-                GetTypeName(elementType),
-                null,
-                null,
-                ResolvePhysicalLayout(elementType, GetTypeName(elementType), collectAutoLayoutHazards: false, null),
-                StrategySemantic: "builtin-blit-element/v2|abi:little-endian");
-            return true;
+            switch (descriptor.Strategy)
+            {
+                case global::SharpLink.RpcBuiltinCollectionWireStrategy.DateTimeOffsetCanonical:
+                    plan = new FinalCollectionCodecPlan(
+                        typeName,
+                        collectionKind,
+                        FinalCollectionWireStrategy.DateTimeOffsetCanonical,
+                        GetTypeName(elementType),
+                        null,
+                        null,
+                        RawElementLayout: null,
+                        StrategySemantic: descriptor.Semantic);
+                    return true;
+                case global::SharpLink.RpcBuiltinCollectionWireStrategy.RawBlit:
+                    plan = new FinalCollectionCodecPlan(
+                        typeName,
+                        collectionKind,
+                        FinalCollectionWireStrategy.RawBlit,
+                        GetTypeName(elementType),
+                        null,
+                        null,
+                        ResolvePhysicalLayout(
+                            elementType,
+                            GetTypeName(elementType),
+                            collectAutoLayoutHazards: false,
+                            null),
+                        StrategySemantic: descriptor.Semantic);
+                    return true;
+                default:
+                    throw new InvalidOperationException(
+                        $"Unknown builtin collection wire strategy '{descriptor.Strategy}'.");
+            }
         }
 
         private string GetResolvedFixedMemberSemantic(
