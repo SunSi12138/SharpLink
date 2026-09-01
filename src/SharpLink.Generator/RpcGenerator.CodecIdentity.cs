@@ -4,11 +4,8 @@ public partial class RpcGenerator
 {
     private sealed partial class DtoAnalysisState
     {
-        internal ImmutableArray<GeneratedCodecHashModel> BuildFinalCodecHashes(
-            bool includeSerializable,
-            bool includeContracts)
+        internal ImmutableArray<GeneratedCodecHashModel> BuildFinalCodecHashes(FinalCodecGraph graph)
         {
-            var graph = ResolveFinalCodecGraph(includeSerializable, includeContracts);
             var cache = new Dictionary<string, RpcHashValue>(StringComparer.Ordinal);
             return graph.Plans
                 .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
