@@ -322,25 +322,29 @@ internal static class CodecHelpers
         for (var index = 0; index < length; index++)
         {
             var encoded = payload.Slice((long)index * DateTimeOffsetCollectionElementSize, DateTimeOffsetCollectionElementSize);
-            ReadOnlySpan<byte> element;
             if (encoded.FirstSpan.Length >= DateTimeOffsetCollectionElementSize)
             {
-                element = encoded.FirstSpan[..DateTimeOffsetCollectionElementSize];
+                result[index] = ReadDateTimeOffsetCollectionElement(
+                    encoded.FirstSpan[..DateTimeOffsetCollectionElementSize]);
             }
             else
             {
                 encoded.CopyTo(temporary);
-                element = temporary;
+                result[index] = ReadDateTimeOffsetCollectionElement(temporary);
             }
-
-            if (element.Slice(sizeof(short), 6).IndexOfAnyExcept((byte)0) >= 0)
-                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains non-canonical padding.");
-
-            var offsetMinutes = BinaryPrimitives.ReadInt16LittleEndian(element);
-            var utcTicks = BinaryPrimitives.ReadInt64LittleEndian(element.Slice(sizeof(long)));
-            result[index] = CreateDateTimeOffsetFromUtcTicks(utcTicks, offsetMinutes);
         }
         return result;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static DateTimeOffset ReadDateTimeOffsetCollectionElement(ReadOnlySpan<byte> element)
+    {
+        if (element.Slice(sizeof(short), 6).IndexOfAnyExcept((byte)0) >= 0)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains non-canonical padding.");
+
+        var offsetMinutes = BinaryPrimitives.ReadInt16LittleEndian(element);
+        var utcTicks = BinaryPrimitives.ReadInt64LittleEndian(element.Slice(sizeof(long)));
+        return CreateDateTimeOffsetFromUtcTicks(utcTicks, offsetMinutes);
     }
 
     public static DateTimeOffset[] ReadRequiredDateTimeOffsetCollection(in ReadOnlySequence<byte> buffer)
