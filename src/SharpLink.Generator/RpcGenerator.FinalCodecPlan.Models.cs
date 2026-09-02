@@ -90,6 +90,7 @@ internal sealed record FinalUnsafeBlitCodecPlan(
 internal sealed record FinalCustomCodecPlan(
     string TypeName,
     RpcHashValue OpaqueSemanticIdentity,
+    RpcHashValue ClosedTargetLogicalIdentity,
     string CodecTypeName)
     : FinalCodecPlan(TypeName, FinalCodecPlanKind.Custom);
 

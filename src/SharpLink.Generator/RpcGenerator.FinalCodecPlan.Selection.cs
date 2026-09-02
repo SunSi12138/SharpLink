@@ -20,7 +20,7 @@ public partial class RpcGenerator
                     $"Final Codec graph contains an unresolved recursive Codec selection at '{typeName}'.");
             }
 
-            if (TryResolvePolicyCodecPlan(type, plans, resolving, out var policyPlan))
+            if (TryResolvePolicyCodecPlan(type, out var policyPlan))
             {
                 resolving.Remove(typeName);
                 if (policyPlan is not null)
@@ -30,9 +30,16 @@ public partial class RpcGenerator
 
             _models.TryGetValue(typeName, out var generatedModel);
             FinalCodecPlan? plan;
-            if (TryGetReferencedGeneratedCodecHash(type, out var referencedHash))
+            if (TryGetReferencedGeneratedCodecHash(
+                    type,
+                    out var referencedHash,
+                    out var incompatibleReferencedAbi))
             {
                 plan = new FinalReferencedCodecPlan(typeName, referencedHash);
+            }
+            else if (incompatibleReferencedAbi)
+            {
+                return FailCurrent();
             }
             else if (type.TypeKind == TypeKind.Enum &&
                      type is INamedTypeSymbol { EnumUnderlyingType: { } underlying } enumType)
@@ -138,8 +145,6 @@ public partial class RpcGenerator
 
         private bool TryResolvePolicyCodecPlan(
             ITypeSymbol type,
-            Dictionary<string, FinalCodecPlan> plans,
-            HashSet<string> resolving,
             out FinalCodecPlan? plan)
         {
             var typeName = GetTypeName(type);
@@ -153,7 +158,11 @@ public partial class RpcGenerator
 
                 var model = CreateCustomCodecModel(type, typeName, customCodec);
                 _models[typeName] = model;
-                plan = ResolveGeneratedCodecPlan(type, model, plans, resolving);
+                plan = new FinalCustomCodecPlan(
+                    typeName,
+                    GetRequiredOpaqueSemanticIdentity(customCodec.CodecType, "custom Codec"),
+                    GetCustomCodecTargetLogicalIdentity(type),
+                    GetTypeName(customCodec.CodecType));
                 return true;
             }
 
@@ -179,11 +188,17 @@ public partial class RpcGenerator
             }
 
             AddAdapterModel(type, typeName, selectedAdapter);
-            plan = ResolveGeneratedCodecPlan(type, _models[typeName], plans, resolving);
+            plan = new FinalAdapterCodecPlan(
+                typeName,
+                GetRequiredOpaqueSemanticIdentity(selectedAdapter.AdapterType, "Codec Adapter"),
+                GetAdapterTargetLogicalIdentity(type),
+                GetTypeName(selectedAdapter.AdapterType),
+                selectedAdapter.AdapterId);
             return true;
         }
 
         private GeneratedCodecModel CreateCustomCodecModel(
+
             ITypeSymbol type,
             string typeName,
             CustomCodecRegistration customCodec)
@@ -254,20 +269,9 @@ public partial class RpcGenerator
             switch (model.Kind)
             {
                 case GeneratedCodecKind.Custom:
-                    return new FinalCustomCodecPlan(
-                        model.TypeName,
-                        GetRequiredOpaqueSemanticIdentity(model.CustomCodecType, "custom Codec"),
-                        model.CustomCodecType ?? throw new InvalidOperationException(
-                            $"Final custom Codec plan '{model.TypeName}' is missing its implementation binding."));
                 case GeneratedCodecKind.Adapter:
-                    return new FinalAdapterCodecPlan(
-                        model.TypeName,
-                        GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter"),
-                        GetAdapterTargetLogicalIdentity(type),
-                        model.AdapterType ?? throw new InvalidOperationException(
-                            $"Final Codec Adapter plan '{model.TypeName}' is missing its implementation binding."),
-                        model.AdapterId ?? throw new InvalidOperationException(
-                            $"Final Codec Adapter plan '{model.TypeName}' is missing its adapter identity."));
+                    throw new InvalidOperationException(
+                        $"Final policy Codec plan '{model.TypeName}' must be resolved from the selected implementation symbol.");
                 case GeneratedCodecKind.Dto:
                     return ResolveGeneratedDtoPlan(type, model, plans, resolving);
                 default:
@@ -574,14 +578,19 @@ public partial class RpcGenerator
             return token is not null;
         }
 
-        private bool TryGetReferencedGeneratedCodecHash(ITypeSymbol type, out RpcHashValue hash)
+        private bool TryGetReferencedGeneratedCodecHash(
+            ITypeSymbol type,
+            out RpcHashValue hash,
+            out bool incompatibleAbi)
         {
+            incompatibleAbi = false;
             var assembly = type.ContainingAssembly;
             if (assembly is null || SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly))
             {
                 hash = default;
                 return false;
             }
+
             foreach (var attribute in assembly.GetAttributes())
             {
                 if (!IsAttribute(attribute, "SharpLink.Abstractions", "SharpLinkGeneratedCodecIdentityAttribute") ||
@@ -593,106 +602,62 @@ public partial class RpcGenerator
                 {
                     continue;
                 }
+
+                if (!HasCurrentGeneratedAbiIdentity(assembly))
+                {
+                    Report(
+                        DtoDiagnosticKind.Unsupported,
+                        type,
+                        $"referenced assembly '{assembly.Identity.Name}' publishes generated CodecHash metadata from an incompatible SharpLink generated ABI. Rebuild/regenerate the referenced assembly with the current SharpLink SDK.");
+                    hash = default;
+                    incompatibleAbi = true;
+                    return false;
+                }
+
                 hash = new RpcHashValue(high, low);
                 return true;
             }
+
             hash = default;
             return false;
         }
 
-        private RpcHashValue GetRequiredOpaqueSemanticIdentity(
-            string? implementationTypeName,
+        private static bool HasCurrentGeneratedAbiIdentity(IAssemblySymbol assembly)
+        {
+            foreach (var attribute in assembly.GetAttributes())
+            {
+                if (IsAttribute(attribute, "SharpLink.Abstractions", "SharpLinkGeneratedAssemblyManifestAttribute") &&
+                    attribute.ConstructorArguments.Length >= 5 &&
+                    attribute.ConstructorArguments[4].Value is string abiIdentity &&
+                    string.Equals(abiIdentity, GeneratedAbiIdentity, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static RpcHashValue GetRequiredOpaqueSemanticIdentity(
+            INamedTypeSymbol implementationType,
             string implementationKind)
         {
-            if (TryGetOpaqueSemanticIdentity(implementationTypeName, out var hash))
-                return hash;
+            var attribute = implementationType.OriginalDefinition.GetAttributes().FirstOrDefault(static item =>
+                IsAttribute(item, "SharpLink.Sdk", "RpcCodecSemanticIdentityAttribute"));
+            if (attribute is not null &&
+                attribute.ConstructorArguments.Length == 2 &&
+                attribute.ConstructorArguments[0].Value is ulong high &&
+                attribute.ConstructorArguments[1].Value is ulong low)
+            {
+                return new RpcHashValue(high, low);
+            }
+
             throw new InvalidOperationException(
-                $"Opaque {implementationKind} '{implementationTypeName ?? "<unknown>"}' must declare [RpcCodecSemanticIdentity(high, low)].");
+                $"Opaque {implementationKind} '{GetTypeName(implementationType)}' must declare [RpcCodecSemanticIdentity(high, low)].");
         }
 
-        private bool TryGetOpaqueSemanticIdentity(string? implementationTypeName, out RpcHashValue hash)
-        {
-            if (implementationTypeName is null)
-            {
-                hash = default;
-                return false;
-            }
-            if (_opaqueSemanticIdentityCache.TryGetValue(implementationTypeName, out var cached))
-            {
-                hash = cached ?? default;
-                return cached.HasValue;
-            }
-
-            var visited = new HashSet<string>(StringComparer.Ordinal);
-            var pending = new Queue<IAssemblySymbol>();
-            pending.Enqueue(_compilation.Assembly);
-            while (pending.Count != 0)
-            {
-                var assembly = pending.Dequeue();
-                if (!visited.Add(assembly.Identity.ToString()))
-                    continue;
-                if (TryFindNamedType(assembly.GlobalNamespace, implementationTypeName, out var implementationType))
-                {
-                    var attribute = implementationType.GetAttributes().FirstOrDefault(static item =>
-                        IsAttribute(item, "SharpLink.Sdk", "RpcCodecSemanticIdentityAttribute"));
-                    if (attribute is not null &&
-                        attribute.ConstructorArguments.Length == 2 &&
-                        attribute.ConstructorArguments[0].Value is ulong high &&
-                        attribute.ConstructorArguments[1].Value is ulong low)
-                    {
-                        hash = new RpcHashValue(high, low);
-                        _opaqueSemanticIdentityCache[implementationTypeName] = hash;
-                        return true;
-                    }
-                }
-                foreach (var referenced in assembly.Modules.SelectMany(static module => module.ReferencedAssemblySymbols))
-                    pending.Enqueue(referenced);
-            }
-
-            _opaqueSemanticIdentityCache[implementationTypeName] = null;
-            hash = default;
-            return false;
-        }
-
-        private static bool TryFindNamedType(
-            INamespaceSymbol namespaceSymbol,
-            string typeName,
-            out INamedTypeSymbol type)
-        {
-            foreach (var candidate in namespaceSymbol.GetTypeMembers())
-            {
-                if (TryFindNamedType(candidate, typeName, out type))
-                    return true;
-            }
-            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
-            {
-                if (TryFindNamedType(nestedNamespace, typeName, out type))
-                    return true;
-            }
-            type = null!;
-            return false;
-        }
-
-        private static bool TryFindNamedType(
-            INamedTypeSymbol candidate,
-            string typeName,
-            out INamedTypeSymbol type)
-        {
-            if (string.Equals(GetTypeName(candidate), typeName, StringComparison.Ordinal))
-            {
-                type = candidate;
-                return true;
-            }
-            foreach (var nested in candidate.GetTypeMembers())
-            {
-                if (TryFindNamedType(nested, typeName, out type))
-                    return true;
-            }
-            type = null!;
-            return false;
-        }
-
-        private bool TryResolveReachableType(string typeName, out ITypeSymbol type)
+        private bool TryResolveReachableType(
+string typeName, out ITypeSymbol type)
         {
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             CollectCurrentAssemblyRoots(
@@ -705,6 +670,13 @@ public partial class RpcGenerator
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
             return reachable.TryGetValue(typeName, out type!);
+        }
+
+        private RpcHashValue GetCustomCodecTargetLogicalIdentity(ITypeSymbol targetType)
+        {
+            var parts = new List<string> { "custom-target/v1" };
+            AppendClosedTargetLogicalIdentity(targetType, parts);
+            return Hashing.GetSemanticHash(parts.ToArray());
         }
 
         private RpcHashValue GetAdapterTargetLogicalIdentity(ITypeSymbol targetType)

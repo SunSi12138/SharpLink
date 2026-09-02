@@ -40,8 +40,9 @@ public partial class RpcGenerator
                 FinalUnsafeBlitCodecPlan unsafeBlit => HashUnsafeBlitPlan(unsafeBlit),
                 FinalCustomCodecPlan custom => Hashing.GetSemanticHash(
                     "codec/v1",
-                    "custom-opaque",
-                    custom.OpaqueSemanticIdentity.ToHex()),
+                    "custom-closed/v1",
+                    custom.OpaqueSemanticIdentity.ToHex(),
+                    custom.ClosedTargetLogicalIdentity.ToHex()),
                 FinalAdapterCodecPlan adapter => Hashing.GetSemanticHash(
                     "codec/v1",
                     "adapter-closed/v2",

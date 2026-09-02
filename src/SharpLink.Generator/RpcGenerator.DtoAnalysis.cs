@@ -414,6 +414,11 @@ public partial class RpcGenerator
                 return;
             }
 
+            // Referenced generated Codec metadata is only a discovery candidate here.
+            // Its hash and ABI provenance are validated later by ResolveFinalCodecPlan.
+            if (HasReferencedGeneratedCodecIdentityCandidate(type))
+                return;
+
             if (IsThirdPartyType(type))
             {
                 Report(DtoDiagnosticKind.Unsupported, type,
@@ -1078,6 +1083,26 @@ public partial class RpcGenerator
                     return false;
             }
             return true;
+        }
+
+        private static bool HasReferencedGeneratedCodecIdentityCandidate(ITypeSymbol type)
+        {
+            var assembly = type.ContainingAssembly;
+            if (assembly is null)
+                return false;
+
+            foreach (var attribute in assembly.GetAttributes())
+            {
+                if (IsAttribute(attribute, "SharpLink.Abstractions", "SharpLinkGeneratedCodecIdentityAttribute") &&
+                    attribute.ConstructorArguments.Length == 3 &&
+                    attribute.ConstructorArguments[0].Value is ITypeSymbol targetType &&
+                    SymbolEqualityComparer.Default.Equals(targetType, type))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private bool IsThirdPartyType(ITypeSymbol type)

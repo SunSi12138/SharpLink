@@ -7,8 +7,6 @@ public partial class RpcGenerator
         private static readonly FinalUnsafeBlitAbiPlan UnsafeBlitAbi =
             new("little-endian", 8, "v3");
 
-        private readonly Dictionary<string, RpcHashValue?> _opaqueSemanticIdentityCache =
-            new(StringComparer.Ordinal);
 
         internal FinalCodecGraph ResolveFinalCodecGraph(
             bool includeSerializable,
