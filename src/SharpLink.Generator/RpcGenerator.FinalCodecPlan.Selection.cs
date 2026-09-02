@@ -4,7 +4,7 @@ public partial class RpcGenerator
 {
     private sealed partial class DtoAnalysisState
     {
-        private FinalCodecPlan ResolveFinalCodecPlan(
+        private FinalCodecPlan? ResolveFinalCodecPlan(
             ITypeSymbol type,
             Dictionary<string, FinalCodecPlan> plans,
             HashSet<string> resolving)
@@ -12,26 +12,33 @@ public partial class RpcGenerator
             var typeName = GetTypeName(type);
             if (plans.TryGetValue(typeName, out var existing))
                 return existing;
+            if (_failed.Contains(typeName))
+                return null;
             if (!resolving.Add(typeName))
             {
                 throw new InvalidOperationException(
                     $"Final Codec graph contains an unresolved recursive Codec selection at '{typeName}'.");
             }
 
-            _models.TryGetValue(typeName, out var generatedModel);
-            FinalCodecPlan plan;
-            if (generatedModel is { Kind: GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter })
+            if (TryResolvePolicyCodecPlan(type, plans, resolving, out var policyPlan))
             {
-                plan = ResolveGeneratedCodecPlan(type, generatedModel, plans, resolving);
+                resolving.Remove(typeName);
+                if (policyPlan is not null)
+                    plans[typeName] = policyPlan;
+                return policyPlan;
             }
-            else if (TryGetReferencedGeneratedCodecHash(type, out var referencedHash))
+
+            _models.TryGetValue(typeName, out var generatedModel);
+            FinalCodecPlan? plan;
+            if (TryGetReferencedGeneratedCodecHash(type, out var referencedHash))
             {
                 plan = new FinalReferencedCodecPlan(typeName, referencedHash);
             }
             else if (type.TypeKind == TypeKind.Enum &&
                      type is INamedTypeSymbol { EnumUnderlyingType: { } underlying } enumType)
             {
-                ResolveFinalCodecPlan(underlying, plans, resolving);
+                if (ResolveFinalCodecPlan(underlying, plans, resolving) is null)
+                    return FailCurrent();
                 plan = new FinalEnumCodecPlan(
                     typeName,
                     GetTypeName(underlying),
@@ -43,6 +50,8 @@ public partial class RpcGenerator
                      HasExactBuiltinNullableCodecElement(nullable.TypeArguments[0]))
             {
                 var child = ResolveFinalCodecPlan(nullable.TypeArguments[0], plans, resolving);
+                if (child is null)
+                    return FailCurrent();
                 plan = new FinalPrimitiveCodecPlan(
                     typeName,
                     "nullable",
@@ -70,6 +79,8 @@ public partial class RpcGenerator
                             $"Final collection selection for '{typeName}' received incompatible generated candidate kind '{generatedModel.Kind}'.");
                     }
                     plan = ResolveGeneratedCodecPlan(type, generatedModel, plans, resolving);
+                    if (plan is null)
+                        return FailCurrent();
                 }
                 else if (collectionKind == GeneratedCodecKind.Nullable &&
                          elementType is not null &&
@@ -99,6 +110,8 @@ public partial class RpcGenerator
             else if (generatedModel is { Kind: GeneratedCodecKind.Dto })
             {
                 plan = ResolveGeneratedCodecPlan(type, generatedModel, plans, resolving);
+                if (plan is null)
+                    return FailCurrent();
             }
             else if (generatedModel is not null)
             {
@@ -114,9 +127,125 @@ public partial class RpcGenerator
             resolving.Remove(typeName);
             plans[typeName] = plan;
             return plan;
+
+            FinalCodecPlan? FailCurrent()
+            {
+                resolving.Remove(typeName);
+                _failed.Add(typeName);
+                return null;
+            }
         }
 
-        private FinalCodecPlan ResolveGeneratedCodecPlan(
+        private bool TryResolvePolicyCodecPlan(
+            ITypeSymbol type,
+            Dictionary<string, FinalCodecPlan> plans,
+            HashSet<string> resolving,
+            out FinalCodecPlan? plan)
+        {
+            var typeName = GetTypeName(type);
+            if (TrySelectCustomCodec(type, out var customCodec))
+            {
+                if (customCodec is null)
+                {
+                    plan = null;
+                    return true;
+                }
+
+                var model = CreateCustomCodecModel(type, typeName, customCodec);
+                _models[typeName] = model;
+                plan = ResolveGeneratedCodecPlan(type, model, plans, resolving);
+                return true;
+            }
+
+            if (!_applyCodecPolicy)
+            {
+                plan = null;
+                return false;
+            }
+
+            AdapterRegistration? selectedAdapter = null;
+            var hasSelection = _contractMode
+                ? TrySelectContractCodecOverride(type, out selectedAdapter)
+                : TrySelectAdapter(type, out selectedAdapter);
+            if (!hasSelection)
+            {
+                plan = null;
+                return false;
+            }
+            if (selectedAdapter is null)
+            {
+                plan = null;
+                return true;
+            }
+
+            AddAdapterModel(type, typeName, selectedAdapter);
+            plan = ResolveGeneratedCodecPlan(type, _models[typeName], plans, resolving);
+            return true;
+        }
+
+        private GeneratedCodecModel CreateCustomCodecModel(
+            ITypeSymbol type,
+            string typeName,
+            CustomCodecRegistration customCodec)
+            => new(
+                typeName,
+                GetCodecName(typeName, _contractMode),
+                GetSchemaId(typeName, "custom|" + GetTypeName(customCodec.CodecType)),
+                GeneratedCodecKind.Custom,
+                type.IsReferenceType,
+                ImmutableArray<GeneratedMemberModel>.Empty,
+                ImmutableArray<string>.Empty,
+                null,
+                null,
+                null,
+                GetTypeName(customCodec.CodecType),
+                null,
+                null,
+                string.Empty,
+                GetAssemblyDependencies([type]),
+                type.Locations.FirstOrDefault());
+
+        private bool HasCodecPolicyCandidate(ITypeSymbol type)
+        {
+            var normalized = NormalizeAdapterTarget(type);
+            if (type.GetAttributes().Any(static attribute =>
+                    IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute")) ||
+                _customCodecBindings.ContainsKey(normalized))
+            {
+                return true;
+            }
+
+            if (!_applyCodecPolicy)
+                return false;
+
+            var attributes = type.GetAttributes();
+            var hasSelector = attributes.Any(attribute =>
+                attribute.AttributeClass is { } attributeClass &&
+                _adaptersBySelector.ContainsKey(attributeClass));
+            if (_contractMode && _selectorOnlyContractDefaults)
+                return hasSelector;
+
+            if (hasSelector ||
+                attributes.Any(static attribute =>
+                    IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute")) ||
+                _assemblyBindings.ContainsKey(normalized))
+            {
+                return true;
+            }
+
+            return _contractMode && HasMatchingAssemblyRoute(type);
+        }
+
+        private bool HasCompositeCodecPolicyCandidate(ITypeSymbol type)
+        {
+            if (!TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
+                return false;
+            return (elementType is not null && HasCodecPolicyCandidate(elementType)) ||
+                   (keyType is not null && HasCodecPolicyCandidate(keyType)) ||
+                   (valueType is not null && HasCodecPolicyCandidate(valueType));
+        }
+
+        private FinalCodecPlan? ResolveGeneratedCodecPlan(
             ITypeSymbol type,
             GeneratedCodecModel model,
             Dictionary<string, FinalCodecPlan> plans,
@@ -146,7 +275,7 @@ public partial class RpcGenerator
             }
         }
 
-        private FinalGeneratedDtoCodecPlan ResolveGeneratedDtoPlan(
+        private FinalGeneratedDtoCodecPlan? ResolveGeneratedDtoPlan(
             ITypeSymbol type,
             GeneratedCodecModel model,
             Dictionary<string, FinalCodecPlan> plans,
@@ -160,11 +289,30 @@ public partial class RpcGenerator
             {
                 memberSymbols.TryGetValue(member.Name, out var memberSymbol);
                 var memberType = memberSymbol is null ? null : GetMemberType(memberSymbol);
+
+                if (memberType is not null && HasCodecPolicyCandidate(memberType))
+                {
+                    var selectedChild = ResolveFinalCodecPlan(memberType, plans, resolving);
+                    if (selectedChild is null)
+                        return null;
+                    if (selectedChild is FinalCustomCodecPlan or FinalAdapterCodecPlan)
+                    {
+                        members.Add(CreateMember(
+                            member,
+                            GeneratedMemberKind.Complex,
+                            FinalDtoMemberWireStrategy.ChildCodec,
+                            null,
+                            selectedChild.TypeName));
+                        continue;
+                    }
+                }
+
                 switch (member.Kind)
                 {
                     case GeneratedMemberKind.String:
                         members.Add(CreateMember(
                             member,
+                            member.Kind,
                             FinalDtoMemberWireStrategy.String,
                             "string/content/utf16le/i32le-byte-length/v1|string/null/dto-wire-null/v1",
                             null));
@@ -173,6 +321,7 @@ public partial class RpcGenerator
                     case GeneratedMemberKind.NullableFixed:
                         members.Add(CreateMember(
                             member,
+                            member.Kind,
                             FinalDtoMemberWireStrategy.Fixed,
                             GetResolvedFixedMemberSemantic(member, memberType),
                             null));
@@ -184,8 +333,11 @@ public partial class RpcGenerator
                                 $"Final Codec plan for '{model.TypeName}' cannot resolve child '{member.TypeName}'.");
                         }
                         var child = ResolveFinalCodecPlan(memberType, plans, resolving);
+                        if (child is null)
+                            return null;
                         members.Add(CreateMember(
                             member,
+                            member.Kind,
                             FinalDtoMemberWireStrategy.ChildCodec,
                             null,
                             child.TypeName));
@@ -200,12 +352,13 @@ public partial class RpcGenerator
 
             static FinalDtoMemberPlan CreateMember(
                 GeneratedMemberModel member,
+                GeneratedMemberKind kind,
                 FinalDtoMemberWireStrategy strategy,
                 string? wireSemantic,
                 string? childType)
                 => new(
                     member.FieldId,
-                    member.Kind,
+                    kind,
                     member.Required,
                     member.Nullable,
                     member.NonNullableReference,
@@ -214,7 +367,7 @@ public partial class RpcGenerator
                     childType);
         }
 
-        private FinalCollectionCodecPlan ResolveGeneratedCollectionPlan(
+        private FinalCollectionCodecPlan? ResolveGeneratedCollectionPlan(
             ITypeSymbol type,
             GeneratedCodecModel model,
             Dictionary<string, FinalCodecPlan> plans,
@@ -229,9 +382,12 @@ public partial class RpcGenerator
                 key = resolvedKey;
                 value = resolvedValue;
             }
-            ResolveChild(element, model.ElementType);
-            ResolveChild(key, model.KeyType);
-            ResolveChild(value, model.ValueType);
+            if (!ResolveChild(element, model.ElementType) ||
+                !ResolveChild(key, model.KeyType) ||
+                !ResolveChild(value, model.ValueType))
+            {
+                return null;
+            }
             return new FinalCollectionCodecPlan(
                 model.TypeName,
                 model.Kind,
@@ -242,16 +398,16 @@ public partial class RpcGenerator
                 RawElementLayout: null,
                 StrategySemantic: null);
 
-            void ResolveChild(ITypeSymbol? symbol, string? childTypeName)
+            bool ResolveChild(ITypeSymbol? symbol, string? childTypeName)
             {
                 if (childTypeName is null)
-                    return;
+                    return true;
                 if (symbol is null && !TryResolveReachableType(childTypeName, out symbol!))
                 {
                     throw new InvalidOperationException(
                         $"Final Codec plan for '{model.TypeName}' cannot resolve child '{childTypeName}'.");
                 }
-                ResolveFinalCodecPlan(symbol, plans, resolving);
+                return ResolveFinalCodecPlan(symbol, plans, resolving) is not null;
             }
         }
 
