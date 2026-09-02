@@ -22,9 +22,6 @@ public partial class RpcGenerator
             FinalCodecPlan plan;
             if (generatedModel is { Kind: GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter })
             {
-                // Explicit validated bindings create exact generated factories and therefore outrank
-                // runtime enum/unmanaged fallbacks. Candidate analysis supplies emitter details only;
-                // the resolved plan remains the final semantic selection.
                 plan = ResolveGeneratedCodecPlan(type, generatedModel, plans, resolving);
             }
             else if (TryGetReferencedGeneratedCodecHash(type, out var referencedHash))
@@ -130,12 +127,18 @@ public partial class RpcGenerator
                 case GeneratedCodecKind.Custom:
                     return new FinalCustomCodecPlan(
                         model.TypeName,
-                        GetRequiredOpaqueSemanticIdentity(model.CustomCodecType, "custom Codec"));
+                        GetRequiredOpaqueSemanticIdentity(model.CustomCodecType, "custom Codec"),
+                        model.CustomCodecType ?? throw new InvalidOperationException(
+                            $"Final custom Codec plan '{model.TypeName}' is missing its implementation binding."));
                 case GeneratedCodecKind.Adapter:
                     return new FinalAdapterCodecPlan(
                         model.TypeName,
                         GetRequiredOpaqueSemanticIdentity(model.AdapterType, "Codec Adapter"),
-                        GetAdapterTargetLogicalIdentity(type));
+                        GetAdapterTargetLogicalIdentity(type),
+                        model.AdapterType ?? throw new InvalidOperationException(
+                            $"Final Codec Adapter plan '{model.TypeName}' is missing its implementation binding."),
+                        model.AdapterId ?? throw new InvalidOperationException(
+                            $"Final Codec Adapter plan '{model.TypeName}' is missing its adapter identity."));
                 case GeneratedCodecKind.Dto:
                     return ResolveGeneratedDtoPlan(type, model, plans, resolving);
                 default:
