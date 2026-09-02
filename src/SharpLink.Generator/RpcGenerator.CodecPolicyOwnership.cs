@@ -51,6 +51,7 @@ public partial class RpcGenerator
         var codecHashes = contractPolicyState.BuildFinalCodecHashes(contractPolicyGraph);
         var unsafeBlitAutoLayoutDiagnostics =
             DtoAnalysisState.BuildUnsafeBlitAutoLayoutDiagnostics(contractPolicyGraph);
+        var unsafeBlitRequirements = BuildUnsafeBlitRequirements(standaloneGraph, contractPolicyGraph);
         var contractPolicyCodecs = AttachCodecHashes(
             contractPolicy.Codecs,
             contractPolicyGraph,
@@ -147,6 +148,7 @@ public partial class RpcGenerator
             enums)
         {
             CodecHashes = codecHashes,
+            UnsafeBlitRequirements = unsafeBlitRequirements,
             UnsafeBlitAutoLayoutDiagnostics = unsafeBlitAutoLayoutDiagnostics,
             AssemblyLogicalIdentity = compilation.Assembly.Identity.Name
         };

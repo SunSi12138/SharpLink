@@ -22,6 +22,8 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 当一个值类型没有命中共享内置 Codec、显式/生成 Codec 或 resolver，且其运行时表示不包含 managed reference 时，Runtime 可以回退到 `UnsafeBlitCodec<T>`，直接把 `Unsafe.SizeOf<T>()` 范围内的 managed representation 写入 payload。这个原始表示包含结构体 padding；它既不是 canonical field-wise 编码，也不能把普通 `new`/`default` 后的 padding 为零当作跨运行时安全保证。涉及 unsafe/native/uninitialized 来源或机密边界时，可靠的支持路径是为该 **user-defined payload type** 显式绑定 field-wise/non-raw representation 的自定义 Codec/Adapter，而不是依赖调用方先清 padding 后再经过可能发生的 struct copy。完整边界见 [UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)；跨运行时 ABI/兼容性范围见 [UnsafeBlit 兼容性](codec-compatibility.md)。这里描述的是 RPC payload Codec，不改变 SharpLink 自身协议 framing 字段的编码。
 
+NativeAOT 不会在运行时重新反射 UnsafeBlit payload 的字段图。Generator 从最终 `FinalUnsafeBlitCodecPlan` 直接发布 native-pointer width 与 framework raw-ABI requirement；Runtime 只验证这份 resolved metadata。没有 source-generated ABI metadata 的任意 unmanaged fallback 在 NativeAOT 下 fail-closed，JIT runtime 则保留运行时字段图检查。
+
 DTO 演进规则：
 
 - 字段 id 是 wire identity；发布后不要重用或改变含义。

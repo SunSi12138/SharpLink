@@ -38,6 +38,8 @@ internal sealed record DtoGenerationResult(
 {
     public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =
         ImmutableArray<GeneratedCodecHashModel>.Empty;
+    public ImmutableArray<GeneratedUnsafeBlitRequirementModel> UnsafeBlitRequirements { get; init; } =
+        ImmutableArray<GeneratedUnsafeBlitRequirementModel>.Empty;
     public ImmutableArray<FinalCodecAutoLayoutDiagnosticModel> UnsafeBlitAutoLayoutDiagnostics { get; init; } =
         ImmutableArray<FinalCodecAutoLayoutDiagnosticModel>.Empty;
     public string AssemblyLogicalIdentity { get; init; } = string.Empty;
@@ -60,6 +62,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             x.ContractCodecs.Length != y.ContractCodecs.Length ||
             x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||
             x.CodecHashes.Length != y.CodecHashes.Length ||
+            x.UnsafeBlitRequirements.Length != y.UnsafeBlitRequirements.Length ||
             x.UnsafeBlitAutoLayoutDiagnostics.Length != y.UnsafeBlitAutoLayoutDiagnostics.Length ||
             x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length ||
             !string.Equals(x.AssemblyLogicalIdentity, y.AssemblyLogicalIdentity, StringComparison.Ordinal))
@@ -81,6 +84,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         for (var index = 0; index < x.CodecHashes.Length; index++)
         {
             if (x.CodecHashes[index] != y.CodecHashes[index])
+                return false;
+        }
+        for (var index = 0; index < x.UnsafeBlitRequirements.Length; index++)
+        {
+            if (x.UnsafeBlitRequirements[index] != y.UnsafeBlitRequirements[index])
                 return false;
         }
         for (var index = 0; index < x.UnsafeBlitAutoLayoutDiagnostics.Length; index++)
@@ -143,6 +151,12 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codecHash.TypeName));
             hash = unchecked(hash * 31 + codecHash.High.GetHashCode());
             hash = unchecked(hash * 31 + codecHash.Low.GetHashCode());
+        }
+        foreach (var requirement in obj.UnsafeBlitRequirements)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(requirement.TypeName));
+            hash = unchecked(hash * 31 + requirement.NativePointerWidth);
+            hash = unchecked(hash * 31 + requirement.RequiresDateTimeOffsetRawAbi.GetHashCode());
         }
         foreach (var diagnostic in obj.UnsafeBlitAutoLayoutDiagnostics)
         {

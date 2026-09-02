@@ -318,6 +318,13 @@ public partial class RpcGenerator : IIncrementalGenerator
                     "SharpLink.GeneratedCodecs.g.cs",
                     SourceText.From(GenerateCodecs(result.Codecs.AddRange(result.ContractCodecs)), Encoding.UTF8));
             }
+
+            if (!result.UnsafeBlitRequirements.IsDefaultOrEmpty)
+            {
+                spc.AddSource(
+                    "SharpLink.GeneratedUnsafeBlitRequirements.g.cs",
+                    SourceText.From(GenerateUnsafeBlitRequirements(result.UnsafeBlitRequirements), Encoding.UTF8));
+            }
         });
 
         var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);

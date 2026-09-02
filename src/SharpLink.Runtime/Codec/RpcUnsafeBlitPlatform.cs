@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
+#if !SHARPLINK_NATIVEAOT
 using System.Reflection;
+#endif
 using System.Runtime.InteropServices;
 
 namespace SharpLink.Runtime;
@@ -12,6 +14,21 @@ internal static class RpcUnsafeBlitPlatform
     internal static void EnsureSupported(Type targetType)
     {
         ArgumentNullException.ThrowIfNull(targetType);
+        if (SharpLinkGeneratedUnsafeBlitCatalog.TryGet(targetType, out var generatedRequirement))
+        {
+            if (!IsSupported(generatedRequirement, IntPtr.Size, DateTimeOffsetRawAbiSupported))
+            {
+                throw new PlatformNotSupportedException(
+                    $"UnsafeBlit Codec for '{targetType.FullName}' does not satisfy its source-generated runtime ABI requirement.");
+            }
+            return;
+        }
+
+#if SHARPLINK_NATIVEAOT
+        throw new PlatformNotSupportedException(
+            $"UnsafeBlit Codec for '{targetType.FullName}' requires source-generated ABI metadata under NativeAOT. " +
+            "Use the type in a generated RPC contract or bind an explicit Codec/Adapter.");
+#else
         if (ContainsRuntimeSizedMember(targetType, new HashSet<Type>()))
         {
             throw new PlatformNotSupportedException(
@@ -27,6 +44,7 @@ internal static class RpcUnsafeBlitPlatform
             throw new PlatformNotSupportedException(
                 $"UnsafeBlit Codec for '{targetType.FullName}' contains DateTimeOffset, whose raw representation does not match the SharpLink declared framework ABI on this runtime.");
         }
+#endif
     }
 
     internal static bool IsSupported(Type targetType, int nativePointerSize)
@@ -38,11 +56,26 @@ internal static class RpcUnsafeBlitPlatform
         bool dateTimeOffsetRawAbiSupported)
     {
         ArgumentNullException.ThrowIfNull(targetType);
+        if (SharpLinkGeneratedUnsafeBlitCatalog.TryGet(targetType, out var generatedRequirement))
+            return IsSupported(generatedRequirement, nativePointerSize, dateTimeOffsetRawAbiSupported);
+
+#if SHARPLINK_NATIVEAOT
+        return false;
+#else
         return nativePointerSize == SupportedNativePointerSize &&
                !ContainsRuntimeSizedMember(targetType, new HashSet<Type>()) &&
                (dateTimeOffsetRawAbiSupported || !ContainsDateTimeOffset(targetType, new HashSet<Type>()));
+#endif
     }
 
+    private static bool IsSupported(
+        SharpLinkGeneratedUnsafeBlitRequirement requirement,
+        int nativePointerSize,
+        bool dateTimeOffsetRawAbiSupported)
+        => nativePointerSize == requirement.NativePointerWidth &&
+           (!requirement.RequiresDateTimeOffsetRawAbi || dateTimeOffsetRawAbiSupported);
+
+#if !SHARPLINK_NATIVEAOT
     private static bool ContainsRuntimeSizedMember(Type type, HashSet<Type> seen)
     {
         if (IsRuntimeSizedIntrinsic(type))
@@ -76,6 +109,10 @@ internal static class RpcUnsafeBlitPlatform
         return false;
     }
 
+    private static bool IsRuntimeSizedIntrinsic(Type type)
+        => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(System.Numerics.Vector<>);
+#endif
+
     private static bool ProbeDateTimeOffsetRawAbi()
     {
         var value = new DateTimeOffset(2026, 8, 31, 13, 45, 12, TimeSpan.FromMinutes(330));
@@ -88,7 +125,4 @@ internal static class RpcUnsafeBlitPlatform
         BinaryPrimitives.WriteInt64LittleEndian(expected.Slice(8), value.UtcTicks);
         return raw.SequenceEqual(expected);
     }
-
-    private static bool IsRuntimeSizedIntrinsic(Type type)
-        => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(System.Numerics.Vector<>);
 }
