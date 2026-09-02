@@ -104,8 +104,8 @@ public interface INullablePhysicalContract : SharpLink.Sdk.IService
         var hashes = AnalyzeFinalCodecHashesForAcceptance(source);
         var nullableCodec = hashes
             .Single(static pair =>
-                pair.Key.Contains("System.Nullable", StringComparison.Ordinal) &&
-                pair.Key.Contains("NullablePhysicalValue", StringComparison.Ordinal))
+                pair.Key.Contains("NullablePhysicalValue", StringComparison.Ordinal) &&
+                !string.Equals(pair.Key, "global::NullablePhysicalValue", StringComparison.Ordinal))
             .Value;
         var fullReplicaCodec = hashes["global::NullablePhysicalReplica"];
         var childOnlyCodec = hashes["global::NullablePhysicalChildOnly"];
