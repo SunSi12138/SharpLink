@@ -335,30 +335,12 @@ public partial class RpcGenerator
                 _failed.Add(typeName);
                 return;
             }
-            if (TrySelectCustomCodec(type, out var customCodec))
-            {
-                if (customCodec is not null)
-                {
-                    _models[typeName] = new GeneratedCodecModel(
-                        typeName,
-                        GetCodecName(typeName, _contractMode),
-                        GetSchemaId(typeName, "custom|" + GetTypeName(customCodec.CodecType)),
-                        GeneratedCodecKind.Custom,
-                        type.IsReferenceType,
-                        ImmutableArray<GeneratedMemberModel>.Empty,
-                        ImmutableArray<string>.Empty,
-                        null,
-                        null,
-                        null,
-                        GetTypeName(customCodec.CodecType),
-                        null,
-                        null,
-                        string.Empty,
-                        GetAssemblyDependencies([type]),
-                        type.Locations.FirstOrDefault());
-                }
+
+            // Policy declarations are candidates only at this stage. Final custom/adapter selection,
+            // validation and factory materialization happen in ResolveFinalCodecPlan so emitted
+            // behavior and CodecHash consume the same resolved node.
+            if (HasCodecPolicyCandidate(type))
                 return;
-            }
 
             if (type.TypeKind == TypeKind.Dynamic)
             {
@@ -368,20 +350,11 @@ public partial class RpcGenerator
                 return;
             }
 
-            AdapterRegistration? selectedAdapter = null;
-            var hasSelectedOverride = _applyCodecPolicy &&
-                (_contractMode
-                    ? TrySelectContractCodecOverride(type, out selectedAdapter)
-                    : TrySelectAdapter(type, out selectedAdapter));
-            if (hasSelectedOverride)
+            if (HasRuntimeCodecWithoutGeneratedFactoryCandidate(type) &&
+                !HasCompositeCodecPolicyCandidate(type))
             {
-                if (selectedAdapter is not null)
-                    AddAdapterModel(type, typeName, selectedAdapter);
                 return;
             }
-
-            if (IsBuiltin(type) && !HasSelectedCompositeCodecDependency(type))
-                return;
             if (depth > MaximumDepth)
             {
                 Report(DtoDiagnosticKind.Depth, type, $"more than {MaximumDepth} nested types");
@@ -1173,7 +1146,7 @@ public partial class RpcGenerator
             }
         }
 
-        private static bool IsBuiltin(ITypeSymbol type)
+        private static bool HasRuntimeCodecWithoutGeneratedFactoryCandidate(ITypeSymbol type)
         {
             if (type.SpecialType == SpecialType.System_String || GetFixedSize(type) != 0 || type.IsUnmanagedType)
                 return true;
@@ -1185,12 +1158,20 @@ public partial class RpcGenerator
             }
             if (!TryGetCollection(type, out var kind, out var element, out _, out _) ||
                 kind is GeneratedCodecKind.Dictionary or GeneratedCodecKind.Nullable ||
-                element is null)
+                element is null || element.TypeKind == TypeKind.Enum)
             {
                 return false;
             }
-            return IsBuiltinBlitElement(element);
+
+            return global::SharpLink.RpcBuiltinCollectionWireCatalog.TryGet(
+                element.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                out _);
         }
+
+        // Kept as a compatibility alias for pre-plan candidate utilities. New discovery and final
+        // selection code should use the explicit runtime-factory wording above.
+        private static bool IsBuiltin(ITypeSymbol type)
+            => HasRuntimeCodecWithoutGeneratedFactoryCandidate(type);
 
         private static ITypeSymbol NormalizeAdapterTarget(ITypeSymbol type)
             => type is INamedTypeSymbol
@@ -1200,19 +1181,6 @@ public partial class RpcGenerator
             }
                 ? underlying
                 : type;
-
-        private static bool IsBuiltinBlitElement(ITypeSymbol type)
-        {
-            if (type.TypeKind == TypeKind.Enum)
-                return false;
-            var name = type.ToDisplayString();
-            return name is "bool" or "byte" or "sbyte" or "short" or "ushort" or "char" or
-                "System.Half" or "int" or "uint" or "float" or "System.Text.Rune" or
-                "long" or "ulong" or "double" or "System.Guid" or "decimal" or
-                "System.DateTimeOffset" or "System.DateTime" or "System.DateOnly" or
-                "System.TimeOnly" or "System.TimeSpan" or "System.Int128" or "System.UInt128" or
-                "System.Index" or "System.Range";
-        }
 
         private static GeneratedMemberKind GetMemberKind(
             ITypeSymbol type,
