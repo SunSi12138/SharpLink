@@ -36,7 +36,7 @@ public partial class RpcGenerator
         if (emittedCodecs.Any(static codec =>
                 codec.Kind == GeneratedCodecKind.Dto &&
                 codec.Members.Any(static member => member.Kind == GeneratedMemberKind.String)))
-            AppendGeneratedUtf8Helper(sb);
+            AppendGeneratedUtf16Helper(sb);
 
         foreach (var codec in emittedCodecs)
         {
@@ -76,24 +76,22 @@ public partial class RpcGenerator
         sb.AppendLine();
     }
 
-    private static void AppendGeneratedUtf8Helper(StringBuilder sb)
+    private static void AppendGeneratedUtf16Helper(StringBuilder sb)
     {
-        sb.AppendLine("internal static class __SharpLinkGeneratedUtf8");
+        sb.AppendLine("internal static class __SharpLinkGeneratedUtf16");
         sb.AppendLine("{");
-        sb.AppendLine("    private static readonly global::System.Text.UTF8Encoding StrictEncoding = new global::System.Text.UTF8Encoding(false, true);");
-        sb.AppendLine();
-        sb.AppendLine("    internal static int GetByteCount(string value) => StrictEncoding.GetByteCount(value);");
+        sb.AppendLine("    internal static int GetByteCount(string value) => checked(value.Length * sizeof(char));");
         sb.AppendLine();
         sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
         sb.AppendLine("    {");
-        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));");
-        sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(length, checked((uint)byteCount));");
-        sb.AppendLine("        writer.Advance(sizeof(uint));");
+        sb.AppendLine("        var length = writer.GetSpan(sizeof(int));");
+        sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(length, byteCount);");
+        sb.AppendLine("        writer.Advance(sizeof(int));");
         sb.AppendLine("        if (byteCount == 0)");
         sb.AppendLine("            return;");
         sb.AppendLine("        var payload = writer.GetSpan(byteCount);");
-        sb.AppendLine("        var written = StrictEncoding.GetBytes(value, payload);");
-        sb.AppendLine("        writer.Advance(written);");
+        sb.AppendLine("        value.AsSpan().CopyTo(global::System.Runtime.InteropServices.MemoryMarshal.Cast<byte, char>(payload));");
+        sb.AppendLine("        writer.Advance(byteCount);");
         sb.AppendLine("    }");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -336,7 +334,7 @@ public partial class RpcGenerator
                 case GeneratedMemberKind.String:
                     sb.AppendLine($"            var __string_{memberIndex} = {value};");
                     sb.AppendLine(
-                        $"            var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex});");
+                        $"            var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__string_{memberIndex});");
                     break;
                 case GeneratedMemberKind.Fixed:
                     sb.AppendLine($"            var __fixed_{memberIndex} = {value};");
@@ -481,7 +479,7 @@ public partial class RpcGenerator
             var value = $"value.{EscapeIdentifier(member.Identifier)}";
             sb.AppendLine($"{indent}var __string_{memberIndex} = {value};");
             sb.AppendLine(
-                $"{indent}var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex});");
+                $"{indent}var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__string_{memberIndex});");
         }
 
         AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: indent);
@@ -531,7 +529,7 @@ public partial class RpcGenerator
                 if (cachedMemberIndex >= 0)
                 {
                     sb.AppendLine(
-                        $"{childIndent}__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, {value}, __stringByteCount_{cachedMemberIndex});");
+                        $"{childIndent}__SharpLinkGeneratedUtf16.WriteStringKnownSize(writer, {value}, __stringByteCount_{cachedMemberIndex});");
                 }
                 else
                 {
@@ -559,7 +557,7 @@ public partial class RpcGenerator
             {
                 sb.AppendLine($"        var __string_{memberIndex} = {value};");
                 sb.AppendLine(
-                    $"        var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex});");
+                    $"        var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__string_{memberIndex});");
             }
             else if (member.Kind == GeneratedMemberKind.Fixed)
             {
@@ -672,7 +670,7 @@ public partial class RpcGenerator
                 case GeneratedMemberKind.String:
                     sb.AppendLine($"        __snapshot.__string_{memberIndex} = {value};");
                     sb.AppendLine(
-                        $"        __snapshot.__stringByteCount_{memberIndex} = __snapshot.__string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf8.GetByteCount(__snapshot.__string_{memberIndex});");
+                        $"        __snapshot.__stringByteCount_{memberIndex} = __snapshot.__string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_{memberIndex});");
                     break;
                 case GeneratedMemberKind.Fixed:
                     sb.AppendLine($"        __snapshot.__fixed_{memberIndex} = {value};");
@@ -785,7 +783,7 @@ public partial class RpcGenerator
                     {
                         var nullSize = GetFieldKeySize(member.FieldId, 0);
                         var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
-                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount({value})));");
+                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf16.GetByteCount({value})));");
                         break;
                     }
                 case GeneratedMemberKind.Complex:
@@ -922,7 +920,7 @@ public partial class RpcGenerator
                     sb.AppendLine("        {");
                     sb.AppendLine($"            RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
                     sb.AppendLine(
-                        $"            __SharpLinkGeneratedUtf8.WriteStringKnownSize(buffer, __snapshot.__string_{memberIndex}, __snapshot.__stringByteCount_{memberIndex});");
+                        $"            __SharpLinkGeneratedUtf16.WriteStringKnownSize(buffer, __snapshot.__string_{memberIndex}, __snapshot.__stringByteCount_{memberIndex});");
                     sb.AppendLine("        }");
                     break;
                 case GeneratedMemberKind.Complex:
