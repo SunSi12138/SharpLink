@@ -93,7 +93,7 @@ public interface IClosedGenericAdapterContract : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task SameFqnCustomCodecShouldUseAliasedSelectedSymbolIdentity()
+    public Task AliasOnlyCustomCodecImplementationShouldBeRejectedBeforeEmission()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
         var payload = CreateMetadataReference(
@@ -148,18 +148,66 @@ public interface ISameFqnCodecContract : IService
 }
 """;
 
-        var manifestA = RunGeneratorAndGetSources(Consumer("CodecA"), sdk, payload, codecA, codecB)
-            .Single(static generated => generated.Contains(
-                "ISharpLinkGeneratedAssemblyManifest",
-                StringComparison.Ordinal));
-        var manifestB = RunGeneratorAndGetSources(Consumer("CodecB"), sdk, payload, codecA, codecB)
-            .Single(static generated => generated.Contains(
-                "ISharpLinkGeneratedAssemblyManifest",
-                StringComparison.Ordinal));
-
+        var diagnostics = RunGenerator(Consumer("CodecA"), sdk, payload, codecA, codecB);
         Ensure(
-            ExtractGeneratedRpcAssemblyHash(manifestA) != ExtractGeneratedRpcAssemblyHash(manifestB),
-            "same-FQN implementations from different referenced assemblies must use the semantic identity of the actually selected symbol");
+            diagnostics.Any(static diagnostic =>
+                diagnostic.GetMessage().Contains("referenced only through extern aliases", StringComparison.Ordinal)),
+            $"alias-only custom Codec implementations must be rejected before emitting an uncompilable global:: factory reference. Actual: {FormatDiagnostics(diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task AliasOnlyAdapterImplementationShouldBeRejectedBeforeEmission()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
+        static MetadataReference Alias(MetadataReference reference, string alias)
+            => ((PortableExecutableReference)reference).WithAliases(ImmutableArray.Create(alias));
+
+        var adapter = Alias(CreateMetadataReference(
+            "AliasOnlyAdapter",
+            """
+using System;
+using SharpLink.Abstractions;
+using SharpLink.Sdk;
+
+namespace SameName
+{
+    [RpcCodecSemanticIdentity(0xccccccccccccccccUL, 0x3333333333333333UL)]
+    public sealed class PayloadAdapter : IRpcCodecAdapter
+    {
+        public string AdapterId => "alias-adapter/v1";
+        public IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
+    }
+}
+""",
+            sdk), "AdapterOnly");
+
+        const string consumer = """
+extern alias AdapterOnly;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpLink.Sdk;
+
+[assembly: RpcCodecAdapterRegistration(typeof(AdapterOnly::SameName.PayloadAdapter), "alias-adapter/v1")]
+
+[RpcCodecAdapter(typeof(AdapterOnly::SameName.PayloadAdapter))]
+public sealed class AdapterPayload
+{
+    public int Value { get; set; }
+}
+
+[RpcContract]
+public interface IAliasOnlyAdapterContract : IService
+{
+    ValueTask<AdapterPayload> Echo(AdapterPayload value, CancellationToken cancellationToken);
+}
+""";
+
+        var diagnostics = RunGenerator(consumer, sdk, adapter);
+        Ensure(
+            diagnostics.Any(static diagnostic =>
+                diagnostic.GetMessage().Contains("referenced only through extern aliases", StringComparison.Ordinal)),
+            $"alias-only Codec Adapter implementations must be rejected before emitting an uncompilable global:: holder reference. Actual: {FormatDiagnostics(diagnostics)}");
         return Task.CompletedTask;
     }
 
@@ -199,7 +247,7 @@ namespace SharpLink.Abstractions
 
 namespace Referenced
 {
-    public sealed class Payload { public int Value { get; set; } }
+    public struct Payload { public System.Numerics.Vector<int> Value; }
     public sealed class Manifest { }
 }
 """);
@@ -234,6 +282,10 @@ public interface IReferencedCodecContract : IService
             !currentDiagnostics.Any(static diagnostic =>
                 diagnostic.GetMessage().Contains("incompatible SharpLink generated ABI", StringComparison.Ordinal)),
             "a referenced CodecHash produced by the current generated ABI must remain accepted");
+        Ensure(
+            !currentDiagnostics.Any(static diagnostic =>
+                diagnostic.GetMessage().Contains("runtime-sized intrinsic unmanaged types", StringComparison.Ordinal)),
+            $"a current generated Codec identity must bypass pre-plan UnsafeBlit rejection even when the referenced unmanaged payload contains Vector<T>. Actual: {FormatDiagnostics(currentDiagnostics)}");
         return Task.CompletedTask;
     }
 }

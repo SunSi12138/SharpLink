@@ -618,8 +618,13 @@ public partial class RpcGenerator
             foreach (var type in reachable.Values)
             {
                 var typeName = GetTypeName(type);
-                if (HasCodecPolicyCandidate(type))
+                if (HasCodecPolicyCandidate(type) ||
+                    HasReferencedGeneratedCodecIdentityCandidate(type))
+                {
+                    // Referenced generated Codec metadata is only a candidate here.
+                    // ResolveFinalCodecPlan owns its ABI/hash validation and final selection.
                     continue;
+                }
                 if (!type.IsUnmanagedType || !IsRuntimeSizedUnsafeBlitType(type))
                     continue;
                 Report(DtoDiagnosticKind.Unsupported, type,

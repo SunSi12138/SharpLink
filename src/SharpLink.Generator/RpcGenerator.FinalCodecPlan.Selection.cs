@@ -156,6 +156,17 @@ public partial class RpcGenerator
                     return true;
                 }
 
+                if (IsExternAliasOnlyImplementation(customCodec.CodecType))
+                {
+                    Report(
+                        DtoDiagnosticKind.CustomCodecTypeInvalid,
+                        customCodec.CodecType,
+                        $"custom Codec implementation '{GetTypeName(customCodec.CodecType)}' is referenced only through extern aliases; generated Codec factories require the implementation assembly to be globally visible");
+                    _failed.Add(typeName);
+                    plan = null;
+                    return true;
+                }
+
                 var model = CreateCustomCodecModel(type, typeName, customCodec);
                 _models[typeName] = model;
                 plan = new FinalCustomCodecPlan(
@@ -183,6 +194,17 @@ public partial class RpcGenerator
             }
             if (selectedAdapter is null)
             {
+                plan = null;
+                return true;
+            }
+
+            if (IsExternAliasOnlyImplementation(selectedAdapter.AdapterType))
+            {
+                Report(
+                    DtoDiagnosticKind.AdapterTypeInvalid,
+                    selectedAdapter.AdapterType,
+                    $"Codec Adapter implementation '{GetTypeName(selectedAdapter.AdapterType)}' is referenced only through extern aliases; generated Codec factories require the implementation assembly to be globally visible");
+                _failed.Add(typeName);
                 plan = null;
                 return true;
             }
@@ -219,6 +241,33 @@ public partial class RpcGenerator
                 string.Empty,
                 GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
+
+        private bool IsExternAliasOnlyImplementation(INamedTypeSymbol implementationType)
+        {
+            var assembly = implementationType.ContainingAssembly;
+            if (assembly is null || SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly))
+                return false;
+
+            var matchedReference = false;
+            foreach (var reference in _compilation.References)
+            {
+                if (_compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol referencedAssembly ||
+                    !SymbolEqualityComparer.Default.Equals(referencedAssembly, assembly))
+                {
+                    continue;
+                }
+
+                matchedReference = true;
+                var aliases = reference.Properties.Aliases;
+                if (aliases.IsDefaultOrEmpty ||
+                    aliases.Any(static alias => string.Equals(alias, "global", StringComparison.Ordinal)))
+                {
+                    return false;
+                }
+            }
+
+            return matchedReference;
+        }
 
         private bool HasCodecPolicyCandidate(ITypeSymbol type)
         {
