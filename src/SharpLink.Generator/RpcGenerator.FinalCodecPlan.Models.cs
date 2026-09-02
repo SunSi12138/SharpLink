@@ -89,13 +89,16 @@ internal sealed record FinalUnsafeBlitCodecPlan(
 
 internal sealed record FinalCustomCodecPlan(
     string TypeName,
-    RpcHashValue OpaqueSemanticIdentity)
+    RpcHashValue OpaqueSemanticIdentity,
+    string CodecTypeName)
     : FinalCodecPlan(TypeName, FinalCodecPlanKind.Custom);
 
 internal sealed record FinalAdapterCodecPlan(
     string TypeName,
     RpcHashValue OpaqueSemanticIdentity,
-    RpcHashValue ClosedTargetLogicalIdentity)
+    RpcHashValue ClosedTargetLogicalIdentity,
+    string AdapterTypeName,
+    string AdapterId)
     : FinalCodecPlan(TypeName, FinalCodecPlanKind.Adapter);
 
 internal sealed record FinalReferencedCodecPlan(
