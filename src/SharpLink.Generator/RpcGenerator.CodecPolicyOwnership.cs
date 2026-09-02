@@ -67,20 +67,33 @@ public partial class RpcGenerator
             StringComparer.Ordinal);
 
         var standaloneTypes = new HashSet<string>(
-            standaloneCodecs.Select(static codec => codec.TypeName),
+            standaloneGraph.Plans.Keys,
             StringComparer.Ordinal);
-        var defaultByType = currentContractDefaultCodecs
-            .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var policyByType = currentContractPolicyCodecs
-            .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var globalExcludedTypes = new HashSet<string>(
-            contractOwnedPolicyRoots.Where(type =>
-                !standaloneTypes.Contains(type) &&
-                policyByType.TryGetValue(type, out var policyCodec) &&
-                (!defaultByType.TryGetValue(type, out var defaultCodec) ||
-                 !HasSameFinalCodecBinding(defaultCodec, policyCodec))),
+        var defaultHashByType = contractDefaultHashes.ToDictionary(
+            static hash => hash.TypeName,
+            static hash => new RpcHashValue(hash.High, hash.Low),
             StringComparer.Ordinal);
-        ExpandReverseCodecDependencyClosure(currentContractDefaultCodecs, globalExcludedTypes);
+        var policyHashByType = codecHashes.ToDictionary(
+            static hash => hash.TypeName,
+            static hash => new RpcHashValue(hash.High, hash.Low),
+            StringComparer.Ordinal);
+        var globalExcludedTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var policyRoot in contractOwnedPolicyRoots)
+        {
+            if (standaloneTypes.Contains(policyRoot) ||
+                !contractPolicyGraph.Plans.TryGetValue(policyRoot, out var policyPlan) ||
+                !RequiresGeneratedFactory(policyPlan))
+            {
+                continue;
+            }
+
+            if (!contractDefaultGraph.Plans.TryGetValue(policyRoot, out var defaultPlan) ||
+                !HasSameResolvedFactoryBinding(defaultPlan, policyPlan, defaultHashByType, policyHashByType))
+            {
+                globalExcludedTypes.Add(policyRoot);
+            }
+        }
+        ExpandReverseCodecDependencyClosure(contractDefaultGraph, globalExcludedTypes);
         var globalByType = currentContractDefaultCodecs
             .Where(codec => !globalExcludedTypes.Contains(codec.TypeName))
             .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
@@ -93,10 +106,14 @@ public partial class RpcGenerator
         var contractCodecs = SelectOwnedContractCodecs(
             currentContractDefaultCodecs,
             currentContractPolicyCodecs,
+            contractDefaultGraph,
+            contractPolicyGraph,
+            defaultHashByType,
+            policyHashByType,
             contractOwnedPolicyRoots);
-        var finalCodecBoundTypes = currentContractPolicyCodecs
-            .Select(static codec => codec.TypeName)
-            .Distinct(StringComparer.Ordinal)
+        var finalCodecBoundTypes = contractPolicyGraph.Plans.Values
+            .Where(RequiresGeneratedFactory)
+            .Select(static plan => plan.TypeName)
             .OrderBy(static type => type, StringComparer.Ordinal)
             .ToImmutableArray();
 
@@ -106,9 +123,9 @@ public partial class RpcGenerator
             .Select(static group => group.First())
             .ToImmutableArray();
         var codecOwnedEnumTypes = new HashSet<string>(
-            currentContractPolicyCodecs
-                .Where(static codec => codec.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
-                .Select(static codec => codec.TypeName),
+            contractPolicyGraph.Plans.Values
+                .Where(static plan => plan is FinalCustomCodecPlan or FinalAdapterCodecPlan)
+                .Select(static plan => plan.TypeName),
             StringComparer.Ordinal);
         var enums = standalone.Enums
             .Concat(contractDefault.Enums.Where(item => currentContractTypes.Contains(item.TypeName)))
@@ -178,8 +195,13 @@ public partial class RpcGenerator
         => plan switch
         {
             FinalGeneratedDtoCodecPlan => codec.Kind == GeneratedCodecKind.Dto,
-            FinalCustomCodecPlan => codec.Kind == GeneratedCodecKind.Custom,
-            FinalAdapterCodecPlan => codec.Kind == GeneratedCodecKind.Adapter,
+            FinalCustomCodecPlan custom =>
+                codec.Kind == GeneratedCodecKind.Custom &&
+                string.Equals(codec.CustomCodecType, custom.CodecTypeName, StringComparison.Ordinal),
+            FinalAdapterCodecPlan adapter =>
+                codec.Kind == GeneratedCodecKind.Adapter &&
+                string.Equals(codec.AdapterType, adapter.AdapterTypeName, StringComparison.Ordinal) &&
+                string.Equals(codec.AdapterId, adapter.AdapterId, StringComparison.Ordinal),
             FinalCollectionCodecPlan collection =>
                 collection.WireStrategy == FinalCollectionWireStrategy.ChildCodec &&
                 codec.Kind == collection.CollectionKind,
@@ -202,19 +224,19 @@ public partial class RpcGenerator
     }
 
     private static void ExpandReverseCodecDependencyClosure(
-        ImmutableArray<GeneratedCodecModel> codecs,
+        FinalCodecGraph graph,
         HashSet<string> scopedTypes)
     {
         bool changed;
         do
         {
             changed = false;
-            foreach (var codec in codecs)
+            foreach (var plan in graph.Plans.Values)
             {
-                if (scopedTypes.Contains(codec.TypeName))
+                if (!RequiresGeneratedFactory(plan) || scopedTypes.Contains(plan.TypeName))
                     continue;
-                if (GetCodecDependencies(codec).Any(scopedTypes.Contains))
-                    changed |= scopedTypes.Add(codec.TypeName);
+                if (DtoAnalysisState.GetFinalCodecPlanDependencies(plan).Any(scopedTypes.Contains))
+                    changed |= scopedTypes.Add(plan.TypeName);
             }
         }
         while (changed);
@@ -223,48 +245,49 @@ public partial class RpcGenerator
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
         ImmutableArray<GeneratedCodecModel> contractDefault,
         ImmutableArray<GeneratedCodecModel> contractPolicy,
+        FinalCodecGraph defaultGraph,
+        FinalCodecGraph policyGraph,
+        IReadOnlyDictionary<string, RpcHashValue> defaultHashes,
+        IReadOnlyDictionary<string, RpcHashValue> policyHashes,
         IReadOnlyCollection<string> policyRoots)
     {
         var defaultByType = contractDefault.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var policyTypes = new HashSet<string>(
-            contractPolicy.Select(static codec => codec.TypeName),
+        var policyByType = contractPolicy.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+        var policyFactoryTypes = new HashSet<string>(
+            policyGraph.Plans.Values.Where(RequiresGeneratedFactory).Select(static plan => plan.TypeName),
             StringComparer.Ordinal);
         var scopedTypes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var policyRoot in policyRoots)
         {
-            if (policyTypes.Contains(policyRoot))
+            if (policyFactoryTypes.Contains(policyRoot))
                 scopedTypes.Add(policyRoot);
         }
 
-        foreach (var codec in contractPolicy)
+        foreach (var policyPlan in policyGraph.Plans.Values.Where(RequiresGeneratedFactory))
         {
-            if (!defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) ||
-                !HasSameFinalCodecBinding(defaultCodec, codec))
+            if (!defaultGraph.Plans.TryGetValue(policyPlan.TypeName, out var defaultPlan) ||
+                !HasSameResolvedFactoryBinding(defaultPlan, policyPlan, defaultHashes, policyHashes))
             {
-                scopedTypes.Add(codec.TypeName);
+                scopedTypes.Add(policyPlan.TypeName);
             }
         }
 
-        bool changed;
-        do
-        {
-            changed = false;
-            foreach (var codec in contractPolicy)
-            {
-                if (scopedTypes.Contains(codec.TypeName))
-                    continue;
-                if (GetCodecDependencies(codec).Any(scopedTypes.Contains))
-                    changed |= scopedTypes.Add(codec.TypeName);
-            }
-        }
-        while (changed);
+        ExpandReverseCodecDependencyClosure(policyGraph, scopedTypes);
 
-        return contractPolicy
-            .Where(codec => scopedTypes.Contains(codec.TypeName))
-            .Select(codec =>
+        return scopedTypes
+            .OrderBy(static type => type, StringComparer.Ordinal)
+            .Select(type =>
             {
-                if (defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) &&
-                    HasSameFinalCodecBinding(defaultCodec, codec))
+                if (!policyByType.TryGetValue(type, out var codec))
+                {
+                    throw new InvalidOperationException(
+                        $"Resolved contract-owned Codec plan '{type}' requires a generated factory but candidate analysis produced none.");
+                }
+
+                if (defaultByType.TryGetValue(type, out var defaultCodec) &&
+                    defaultGraph.Plans.TryGetValue(type, out var defaultPlan) &&
+                    policyGraph.Plans.TryGetValue(type, out var policyPlan) &&
+                    HasSameResolvedFactoryBinding(defaultPlan, policyPlan, defaultHashes, policyHashes))
                 {
                     return codec with { CodecName = defaultCodec.CodecName };
                 }
@@ -272,36 +295,36 @@ public partial class RpcGenerator
                 return codec with
                 {
                     CodecName = "__SharpLinkGeneratedContractPolicyCodec_" +
-                                Hashing.GetIdentifierHash("contract-policy|" + codec.TypeName)
+                                Hashing.GetIdentifierHash("contract-policy|" + type)
                 };
             })
-            .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
     }
 
-    private static bool HasSameFinalCodecBinding(GeneratedCodecModel left, GeneratedCodecModel right)
+    private static bool HasSameResolvedFactoryBinding(
+        FinalCodecPlan left,
+        FinalCodecPlan right,
+        IReadOnlyDictionary<string, RpcHashValue> leftHashes,
+        IReadOnlyDictionary<string, RpcHashValue> rightHashes)
     {
-        if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-            left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
-            !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
-            !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
-            !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
-            !string.Equals(left.CustomCodecType, right.CustomCodecType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
-            !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
-            !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
-            left.Members.Length != right.Members.Length)
+        if (left.Kind != right.Kind ||
+            !string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+            !leftHashes.TryGetValue(left.TypeName, out var leftHash) ||
+            !rightHashes.TryGetValue(right.TypeName, out var rightHash) ||
+            leftHash != rightHash)
         {
             return false;
         }
 
-        for (var index = 0; index < left.Members.Length; index++)
+        return (left, right) switch
         {
-            if (left.Members[index] with { Location = null } != right.Members[index] with { Location = null })
-                return false;
-        }
-        return true;
+            (FinalCustomCodecPlan leftCustom, FinalCustomCodecPlan rightCustom) =>
+                string.Equals(leftCustom.CodecTypeName, rightCustom.CodecTypeName, StringComparison.Ordinal),
+            (FinalAdapterCodecPlan leftAdapter, FinalAdapterCodecPlan rightAdapter) =>
+                string.Equals(leftAdapter.AdapterTypeName, rightAdapter.AdapterTypeName, StringComparison.Ordinal) &&
+                string.Equals(leftAdapter.AdapterId, rightAdapter.AdapterId, StringComparison.Ordinal),
+            _ => true
+        };
     }
 
     private sealed partial class DtoAnalysisState
