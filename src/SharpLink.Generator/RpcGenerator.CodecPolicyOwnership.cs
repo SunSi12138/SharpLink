@@ -17,7 +17,7 @@ public partial class RpcGenerator
             includeSerializable: true,
             includeContracts: false);
         var standaloneHashes = standaloneState.BuildFinalCodecHashes(standaloneGraph);
-        var standaloneCodecs = AttachCodecHashes(standalone.Codecs, standaloneHashes);
+        var standaloneCodecs = AttachCodecHashes(standalone.Codecs, standaloneGraph, standaloneHashes);
 
         var contractDefaultState = new DtoAnalysisState(
             compilation,
@@ -30,7 +30,10 @@ public partial class RpcGenerator
             includeSerializable: false,
             includeContracts: true);
         var contractDefaultHashes = contractDefaultState.BuildFinalCodecHashes(contractDefaultGraph);
-        var contractDefaultCodecs = AttachCodecHashes(contractDefault.Codecs, contractDefaultHashes);
+        var contractDefaultCodecs = AttachCodecHashes(
+            contractDefault.Codecs,
+            contractDefaultGraph,
+            contractDefaultHashes);
 
         var contractPolicyState = new DtoAnalysisState(
             compilation,
@@ -45,9 +48,14 @@ public partial class RpcGenerator
         var codecHashes = contractPolicyState.BuildFinalCodecHashes(contractPolicyGraph);
         var unsafeBlitAutoLayoutDiagnostics =
             DtoAnalysisState.BuildUnsafeBlitAutoLayoutDiagnostics(contractPolicyGraph);
-        var contractPolicyCodecs = AttachCodecHashes(contractPolicy.Codecs, codecHashes);
+        var contractPolicyCodecs = AttachCodecHashes(
+            contractPolicy.Codecs,
+            contractPolicyGraph,
+            codecHashes);
 
-        var currentContractTypes = contractPolicyState.GetCurrentContractReachableTypeNames();
+        var currentContractTypes = new HashSet<string>(
+            contractPolicyGraph.Plans.Keys,
+            StringComparer.Ordinal);
         var currentContractDefaultCodecs = contractDefaultCodecs
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
@@ -126,16 +134,30 @@ public partial class RpcGenerator
 
     private static ImmutableArray<GeneratedCodecModel> AttachCodecHashes(
         ImmutableArray<GeneratedCodecModel> codecs,
+        FinalCodecGraph graph,
         ImmutableArray<GeneratedCodecHashModel> hashes)
     {
+        var codecByType = codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
         var hashByType = hashes.ToDictionary(static item => item.TypeName, StringComparer.Ordinal);
-        return codecs
-            .Select(codec =>
+        return graph.Plans.Values
+            .Where(RequiresGeneratedFactory)
+            .OrderBy(static plan => plan.TypeName, StringComparer.Ordinal)
+            .Select(plan =>
             {
-                if (!hashByType.TryGetValue(codec.TypeName, out var hash))
+                if (!codecByType.TryGetValue(plan.TypeName, out var codec))
                 {
                     throw new InvalidOperationException(
-                        $"Final Codec graph is missing deterministic identity for generated Codec '{codec.TypeName}'.");
+                        $"Final Codec plan '{plan.TypeName}' requires a generated factory but candidate analysis produced none.");
+                }
+                if (!MatchesGeneratedFactoryPlan(plan, codec))
+                {
+                    throw new InvalidOperationException(
+                        $"Final Codec plan '{plan.TypeName}' does not match generated factory candidate kind '{codec.Kind}'.");
+                }
+                if (!hashByType.TryGetValue(plan.TypeName, out var hash))
+                {
+                    throw new InvalidOperationException(
+                        $"Final Codec graph is missing deterministic identity for generated Codec '{plan.TypeName}'.");
                 }
                 return codec with
                 {
@@ -145,6 +167,24 @@ public partial class RpcGenerator
             })
             .ToImmutableArray();
     }
+
+    private static bool RequiresGeneratedFactory(FinalCodecPlan plan)
+        => plan is FinalGeneratedDtoCodecPlan or
+            FinalCustomCodecPlan or
+            FinalAdapterCodecPlan or
+            FinalCollectionCodecPlan { WireStrategy: FinalCollectionWireStrategy.ChildCodec };
+
+    private static bool MatchesGeneratedFactoryPlan(FinalCodecPlan plan, GeneratedCodecModel codec)
+        => plan switch
+        {
+            FinalGeneratedDtoCodecPlan => codec.Kind == GeneratedCodecKind.Dto,
+            FinalCustomCodecPlan => codec.Kind == GeneratedCodecKind.Custom,
+            FinalAdapterCodecPlan => codec.Kind == GeneratedCodecKind.Adapter,
+            FinalCollectionCodecPlan collection =>
+                collection.WireStrategy == FinalCollectionWireStrategy.ChildCodec &&
+                codec.Kind == collection.CollectionKind,
+            _ => false
+        };
 
     private static bool ContainsRpcContract(INamespaceSymbol namespaceSymbol)
     {
