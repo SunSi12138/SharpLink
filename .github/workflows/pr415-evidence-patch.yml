@@ -10,7 +10,6 @@ on:
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'chore: apply PR 415 integration evidence patch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -19,59 +18,45 @@ jobs:
           fetch-depth: 0
 
       - name: Align DateTimeOffset integration evidence
-        shell: python
+        shell: bash
         run: |
+          python3 - <<'PY'
           from pathlib import Path
 
           path = Path('test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs')
           text = path.read_text()
 
-          old_test = '''        var malformedFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
-              BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset + sizeof(long)), long.MaxValue));
+          value_marker = '            CreateDateTimeOffsetWithPoisonedPadding()), writer);'
+          if text.count(value_marker) != 1:
+              raise SystemExit('expected poisoned DateTimeOffset value exactly once')
+          text = text.replace(
+              value_marker,
+              '            new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8))), writer);')
 
-          var paddingIsCanonical = field.WireType == RpcGeneratedWireType.Fixed16 && field.Length == 16 &&
-                                   field.Offset + field.Length <= serialized.Length &&
-                                   serialized.AsSpan(field.Offset + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0;
-          Ensure(paddingIsCanonical &&
-                 malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
-              "generated DateTimeOffset must clear native padding and reject invalid ticks");'''
-          new_test = '''        var malformedFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
-              BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset + sizeof(long)), long.MaxValue));
-          var paddingFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
-              payload[offset + sizeof(short)] = 0xA5);
+          helper_start = text.index('    private static DateTimeOffset CreateDateTimeOffsetWithPoisonedPadding()')
+          helper_end = text.index('    private static (int Offset, int Length, RpcGeneratedWireType WireType) FindGeneratedSemanticField(', helper_start)
+          text = text[:helper_start] + text[helper_end:]
 
-          var paddingIsCanonical = field.WireType == RpcGeneratedWireType.Fixed16 && field.Length == 16 &&
-                                   field.Offset + field.Length <= serialized.Length &&
-                                   serialized.AsSpan(field.Offset + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0;
-          Ensure(paddingIsCanonical &&
-                 malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss } &&
-                 paddingFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
-              "generated DateTimeOffset must emit canonical padding and reject malformed ticks or padding");'''
+          padding_marker = '        var paddingIsCanonical = field.WireType == RpcGeneratedWireType.Fixed16 && field.Length == 16 &&'
+          if text.count(padding_marker) != 1:
+              raise SystemExit('expected DateTimeOffset padding assertion exactly once')
+          text = text.replace(
+              padding_marker,
+              '        var paddingFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>\n'
+              '            payload[offset + sizeof(short)] = 0xA5);\n\n'
+              + padding_marker)
 
-          old_value = '''            new TimeOnly(12, 34, 56),
-              CreateDateTimeOffsetWithPoisonedPadding()), writer);
-          return writer.WrittenMemory.ToArray();
-      }
+          ensure_marker = '               malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },\n            "generated DateTimeOffset must clear native padding and reject invalid ticks");'
+          if text.count(ensure_marker) != 1:
+              raise SystemExit('expected DateTimeOffset validation assertion exactly once')
+          text = text.replace(
+              ensure_marker,
+              '               malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss } &&\n'
+              '               paddingFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },\n'
+              '            "generated DateTimeOffset must emit canonical padding and reject malformed ticks or padding");')
 
-      private static DateTimeOffset CreateDateTimeOffsetWithPoisonedPadding()
-      {
-          var value = new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8));
-          Span<byte> bytes = stackalloc byte[16];
-          bytes.Fill(0xA5);
-          BinaryPrimitives.WriteInt16LittleEndian(bytes, checked((short)value.Offset.TotalMinutes));
-          BinaryPrimitives.WriteInt64LittleEndian(bytes[sizeof(long)..], value.UtcTicks);
-          return System.Runtime.InteropServices.MemoryMarshal.Read<DateTimeOffset>(bytes);
-      }'''
-          new_value = '''            new TimeOnly(12, 34, 56),
-              new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8))), writer);
-          return writer.WrittenMemory.ToArray();
-      }'''
-
-          if text.count(old_test) != 1:
-              raise SystemExit('expected DateTimeOffset assertion block exactly once')
-          if text.count(old_value) != 1:
-              raise SystemExit('expected poisoned DateTimeOffset helper block exactly once')
-          path.write_text(text.replace(old_test, new_test).replace(old_value, new_value))
+          path.write_text(text)
+          PY
 
       - name: Commit patch and remove temporary workflow
         shell: bash
