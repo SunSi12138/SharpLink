@@ -558,7 +558,7 @@ public partial class RpcGenerator
             return Hashing.GetSemanticHash(parts.ToArray());
         }
 
-        private static IEnumerable<string> GetFinalCodecPlanDependencies(FinalCodecPlan plan)
+        internal static IEnumerable<string> GetFinalCodecPlanDependencies(FinalCodecPlan plan)
         {
             switch (plan)
             {
