@@ -219,7 +219,8 @@ public partial class RpcGenerator
 
         private bool IsRouteEligible(ITypeSymbol type)
         {
-            if (IsFrameworkWirePrimitive(type) ||
+            if (type.TypeKind is TypeKind.Dynamic or TypeKind.Pointer or TypeKind.FunctionPointer ||
+                IsFrameworkWirePrimitive(type) ||
                 (_assemblyRoutes.Count == 0 && _conflictingRouteScopes.Count == 0))
             {
                 return false;
