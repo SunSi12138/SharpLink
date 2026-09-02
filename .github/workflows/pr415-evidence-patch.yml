@@ -1,0 +1,84 @@
+name: PR415 Evidence Patch
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - feature/issue-396-deterministic-rpc-identity
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: apply PR 415 integration evidence patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feature/issue-396-deterministic-rpc-identity
+          fetch-depth: 0
+
+      - name: Align DateTimeOffset integration evidence
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs')
+          text = path.read_text()
+
+          old_test = '''        var malformedFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
+              BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset + sizeof(long)), long.MaxValue));
+
+          var paddingIsCanonical = field.WireType == RpcGeneratedWireType.Fixed16 && field.Length == 16 &&
+                                   field.Offset + field.Length <= serialized.Length &&
+                                   serialized.AsSpan(field.Offset + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0;
+          Ensure(paddingIsCanonical &&
+                 malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+              "generated DateTimeOffset must clear native padding and reject invalid ticks");'''
+          new_test = '''        var malformedFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
+              BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset + sizeof(long)), long.MaxValue));
+          var paddingFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
+              payload[offset + sizeof(short)] = 0xA5);
+
+          var paddingIsCanonical = field.WireType == RpcGeneratedWireType.Fixed16 && field.Length == 16 &&
+                                   field.Offset + field.Length <= serialized.Length &&
+                                   serialized.AsSpan(field.Offset + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0;
+          Ensure(paddingIsCanonical &&
+                 malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss } &&
+                 paddingFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+              "generated DateTimeOffset must emit canonical padding and reject malformed ticks or padding");'''
+
+          old_value = '''            new TimeOnly(12, 34, 56),
+              CreateDateTimeOffsetWithPoisonedPadding()), writer);
+          return writer.WrittenMemory.ToArray();
+      }
+
+      private static DateTimeOffset CreateDateTimeOffsetWithPoisonedPadding()
+      {
+          var value = new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8));
+          Span<byte> bytes = stackalloc byte[16];
+          bytes.Fill(0xA5);
+          BinaryPrimitives.WriteInt16LittleEndian(bytes, checked((short)value.Offset.TotalMinutes));
+          BinaryPrimitives.WriteInt64LittleEndian(bytes[sizeof(long)..], value.UtcTicks);
+          return System.Runtime.InteropServices.MemoryMarshal.Read<DateTimeOffset>(bytes);
+      }'''
+          new_value = '''            new TimeOnly(12, 34, 56),
+              new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8))), writer);
+          return writer.WrittenMemory.ToArray();
+      }'''
+
+          if text.count(old_test) != 1:
+              raise SystemExit('expected DateTimeOffset assertion block exactly once')
+          if text.count(old_value) != 1:
+              raise SystemExit('expected poisoned DateTimeOffset helper block exactly once')
+          path.write_text(text.replace(old_test, new_test).replace(old_value, new_value))
+
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/pr415-evidence-patch.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs .github/workflows/pr415-evidence-patch.yml
+          git commit -m "test: align DateTimeOffset integration evidence with canonical wire"
+          git push origin HEAD:feature/issue-396-deterministic-rpc-identity
