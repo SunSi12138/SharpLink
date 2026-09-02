@@ -18,9 +18,13 @@ public partial class RpcGenerator
                     $"Final Codec graph contains an unresolved recursive Codec selection at '{typeName}'.");
             }
 
+            _models.TryGetValue(typeName, out var generatedModel);
             FinalCodecPlan plan;
-            if (_models.TryGetValue(typeName, out var generatedModel))
+            if (generatedModel is { Kind: GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter })
             {
+                // Explicit validated bindings create exact generated factories and therefore outrank
+                // runtime enum/unmanaged fallbacks. Candidate analysis supplies emitter details only;
+                // the resolved plan remains the final semantic selection.
                 plan = ResolveGeneratedCodecPlan(type, generatedModel, plans, resolving);
             }
             else if (TryGetReferencedGeneratedCodecHash(type, out var referencedHash))
@@ -59,10 +63,21 @@ public partial class RpcGenerator
                          out _,
                          out _))
             {
-                if (collectionKind == GeneratedCodecKind.Nullable &&
-                    elementType is not null &&
-                    type.IsUnmanagedType &&
-                    !HasExactBuiltinNullableCodecElement(elementType))
+                if (generatedModel is not null)
+                {
+                    if (generatedModel.Kind is GeneratedCodecKind.Dto or
+                        GeneratedCodecKind.Custom or
+                        GeneratedCodecKind.Adapter)
+                    {
+                        throw new InvalidOperationException(
+                            $"Final collection selection for '{typeName}' received incompatible generated candidate kind '{generatedModel.Kind}'.");
+                    }
+                    plan = ResolveGeneratedCodecPlan(type, generatedModel, plans, resolving);
+                }
+                else if (collectionKind == GeneratedCodecKind.Nullable &&
+                         elementType is not null &&
+                         type.IsUnmanagedType &&
+                         !HasExactBuiltinNullableCodecElement(elementType))
                 {
                     plan = ResolveUnsafeBlitCodecPlan(type);
                 }
@@ -83,6 +98,15 @@ public partial class RpcGenerator
             else if (type.IsUnmanagedType && !IsRuntimeSizedUnsafeBlitType(type))
             {
                 plan = ResolveUnsafeBlitCodecPlan(type);
+            }
+            else if (generatedModel is { Kind: GeneratedCodecKind.Dto })
+            {
+                plan = ResolveGeneratedCodecPlan(type, generatedModel, plans, resolving);
+            }
+            else if (generatedModel is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Final RPC Codec graph received unsupported generated candidate kind '{generatedModel.Kind}' for '{typeName}'.");
             }
             else
             {
