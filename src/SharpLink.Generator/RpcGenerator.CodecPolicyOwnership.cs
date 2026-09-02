@@ -12,10 +12,11 @@ public partial class RpcGenerator
             contractMode: false,
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
-        var standalone = standaloneState.AnalyzeWithFinalCodecBindings();
+        _ = standaloneState.AnalyzeWithFinalCodecBindings();
         var standaloneGraph = standaloneState.ResolveFinalCodecGraph(
             includeSerializable: true,
             includeContracts: false);
+        var standalone = standaloneState.FinalizeResolvedCodecCandidates(standaloneGraph);
         var standaloneHashes = standaloneState.BuildFinalCodecHashes(standaloneGraph);
         var standaloneCodecs = AttachCodecHashes(standalone.Codecs, standaloneGraph, standaloneHashes);
 
@@ -25,10 +26,11 @@ public partial class RpcGenerator
             contractMode: true,
             applyCodecPolicy: true,
             selectorOnlyContractDefault: true);
-        var contractDefault = contractDefaultState.AnalyzeWithFinalCodecBindings();
+        _ = contractDefaultState.AnalyzeWithFinalCodecBindings();
         var contractDefaultGraph = contractDefaultState.ResolveFinalCodecGraph(
             includeSerializable: false,
             includeContracts: true);
+        var contractDefault = contractDefaultState.FinalizeResolvedCodecCandidates(contractDefaultGraph);
         var contractDefaultHashes = contractDefaultState.BuildFinalCodecHashes(contractDefaultGraph);
         var contractDefaultCodecs = AttachCodecHashes(
             contractDefault.Codecs,
@@ -41,10 +43,11 @@ public partial class RpcGenerator
             contractMode: true,
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
-        var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
+        _ = contractPolicyState.AnalyzeWithFinalCodecBindings();
         var contractPolicyGraph = contractPolicyState.ResolveFinalCodecGraph(
             includeSerializable: false,
             includeContracts: true);
+        var contractPolicy = contractPolicyState.FinalizeResolvedCodecCandidates(contractPolicyGraph);
         var codecHashes = contractPolicyState.BuildFinalCodecHashes(contractPolicyGraph);
         var unsafeBlitAutoLayoutDiagnostics =
             DtoAnalysisState.BuildUnsafeBlitAutoLayoutDiagnostics(contractPolicyGraph);
@@ -166,6 +169,7 @@ public partial class RpcGenerator
                     throw new InvalidOperationException(
                         $"Final Codec plan '{plan.TypeName}' requires a generated factory but candidate analysis produced none.");
                 }
+                codec = ApplyResolvedEmissionPlan(plan, codec);
                 if (!MatchesGeneratedFactoryPlan(plan, codec))
                 {
                     throw new InvalidOperationException(
@@ -183,6 +187,66 @@ public partial class RpcGenerator
                 };
             })
             .ToImmutableArray();
+    }
+
+    private static GeneratedCodecModel ApplyResolvedEmissionPlan(
+        FinalCodecPlan plan,
+        GeneratedCodecModel codec)
+    {
+        if (plan is not FinalGeneratedDtoCodecPlan dto)
+            return codec;
+
+        var resolvedByField = dto.Members.ToDictionary(static member => member.FieldId);
+        var changed = false;
+        var members = codec.Members.Select(member =>
+        {
+            if (!resolvedByField.TryGetValue(member.FieldId, out var resolved) ||
+                resolved.Kind == member.Kind)
+            {
+                return member;
+            }
+
+            changed = true;
+            return resolved.WireStrategy == FinalDtoMemberWireStrategy.ChildCodec
+                ? member with
+                {
+                    Kind = GeneratedMemberKind.Complex,
+                    FixedTypeName = null,
+                    FixedSize = 0,
+                    EnumUnderlyingType = null
+                }
+                : member with { Kind = resolved.Kind };
+        }).ToImmutableArray();
+
+        if (!changed)
+            return codec;
+
+        var schema = new StringBuilder(codec.TypeName);
+        foreach (var member in members)
+        {
+            schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName)
+                .Append(':').Append(member.Kind).Append(':').Append(member.Required);
+            if (member.Nullable)
+                schema.Append(":nullable");
+        }
+        return codec with
+        {
+            Members = members,
+            SchemaId = GetResolvedSchemaId(codec.TypeName, schema.ToString())
+        };
+    }
+
+    private static string GetResolvedSchemaId(string typeName, string schema)
+    {
+        const ulong offset = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        var hash = offset;
+        foreach (var character in schema)
+        {
+            hash ^= character;
+            hash *= prime;
+        }
+        return typeName + ":" + hash.ToString("X16", InvariantCulture);
     }
 
     private static bool RequiresGeneratedFactory(FinalCodecPlan plan)
@@ -521,11 +585,23 @@ public partial class RpcGenerator
         internal DtoAnalysisPassResult AnalyzeWithFinalCodecBindings()
         {
             _ = Analyze();
-            PromoteSelectedFixedMembersToCodecBindings();
             RejectRuntimeSizedUnsafeBlitTypes();
-            NormalizeGeneratedModuleDependencies();
-            var finalizedCodecs = FilterFailedCodecClosure(_models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray());
-            return new DtoAnalysisPassResult(finalizedCodecs, _diagnostics.ToImmutableArray(),
+            return SnapshotAnalysisResult();
+        }
+
+        internal DtoAnalysisPassResult FinalizeResolvedCodecCandidates(FinalCodecGraph graph)
+        {
+            NormalizeGeneratedModuleDependencies(graph);
+            return SnapshotAnalysisResult();
+        }
+
+        private DtoAnalysisPassResult SnapshotAnalysisResult()
+        {
+            var finalizedCodecs = FilterFailedCodecClosure(
+                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray());
+            return new DtoAnalysisPassResult(
+                finalizedCodecs,
+                _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
         }
 
@@ -540,7 +616,7 @@ public partial class RpcGenerator
             foreach (var type in reachable.Values)
             {
                 var typeName = GetTypeName(type);
-                if (_models.TryGetValue(typeName, out var selected) && selected.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+                if (HasCodecPolicyCandidate(type))
                     continue;
                 if (!type.IsUnmanagedType || !IsRuntimeSizedUnsafeBlitType(type))
                     continue;
@@ -571,124 +647,69 @@ public partial class RpcGenerator
             return false;
         }
 
-        internal HashSet<string> GetCurrentContractReachableTypeNames()
-        {
-            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: false, includeContracts: true);
-            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
-            foreach (var root in roots.Values)
-                CollectFinalBindingTypes(root, reachable, seen, 0);
-            return new HashSet<string>(reachable.Keys, StringComparer.Ordinal);
-        }
-
-        private void PromoteSelectedFixedMembersToCodecBindings()
-        {
-            if (!_applyCodecPolicy || _models.Count == 0)
-                return;
-            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
-            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
-            foreach (var root in roots.Values)
-                CollectFinalBindingTypes(root, reachable, seen, 0);
-            var dtoModels = _models.Values.Where(static model => model.Kind == GeneratedCodecKind.Dto).ToArray();
-            foreach (var model in dtoModels)
-            {
-                if (!reachable.TryGetValue(model.TypeName, out var type) || type is not INamedTypeSymbol named)
-                    continue;
-                var memberSymbols = GetSerializableMembers(named).ToDictionary(static member => member.Name, StringComparer.Ordinal);
-                var members = model.Members.ToArray();
-                var changed = false;
-                for (var index = 0; index < members.Length; index++)
-                {
-                    var member = members[index];
-                    if (member.Kind is not (GeneratedMemberKind.Fixed or GeneratedMemberKind.NullableFixed or GeneratedMemberKind.String) ||
-                        !memberSymbols.TryGetValue(member.Name, out var memberSymbol))
-                        continue;
-                    var memberType = GetMemberType(memberSymbol);
-                    if (!HasSelectedMemberCodec(memberType))
-                        continue;
-                    Visit(memberType, [], 0);
-                    members[index] = member with { Kind = GeneratedMemberKind.Complex, FixedTypeName = null, FixedSize = 0, EnumUnderlyingType = null };
-                    changed = true;
-                }
-                if (!changed)
-                    continue;
-                var finalizedMembers = members.ToImmutableArray();
-                var schema = new StringBuilder(model.TypeName);
-                foreach (var member in finalizedMembers)
-                {
-                    schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName).Append(':').Append(member.Kind).Append(':').Append(member.Required);
-                    if (member.Nullable)
-                        schema.Append(":nullable");
-                }
-                _models[model.TypeName] = model with { Members = finalizedMembers, SchemaId = GetSchemaId(model.TypeName, schema.ToString()) };
-            }
-        }
-
-        private bool HasSelectedCompositeCodecDependency(ITypeSymbol type)
-        {
-            if (!TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
-                return false;
-            return (elementType is not null && HasSelectedMemberCodec(elementType)) ||
-                   (keyType is not null && HasSelectedMemberCodec(keyType)) ||
-                   (valueType is not null && HasSelectedMemberCodec(valueType));
-        }
-
-        private bool HasSelectedMemberCodec(ITypeSymbol memberType)
-        {
-            if (IsFrameworkWirePrimitive(memberType))
-                return false;
-            if (TrySelectCustomCodec(memberType, out var customCodec))
-                return customCodec is not null;
-            AdapterRegistration? selected = null;
-            var hasSelection = _contractMode ? TrySelectContractCodecOverride(memberType, out selected) : TrySelectAdapter(memberType, out selected);
-            return hasSelection && selected is not null;
-        }
-
-        private void NormalizeGeneratedModuleDependencies()
+        private void NormalizeGeneratedModuleDependencies(FinalCodecGraph graph)
         {
             if (_models.Count == 0)
                 return;
+
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, symbolsByType, seen, 0);
-            var localFactoryTypes = new HashSet<string>(_models.Keys, StringComparer.Ordinal);
-            foreach (var model in _models.Values.ToArray())
+
+            var localFactoryTypes = new HashSet<string>(
+                graph.Plans.Values.Where(RequiresGeneratedFactory).Select(static plan => plan.TypeName),
+                StringComparer.Ordinal);
+            foreach (var plan in graph.Plans.Values.Where(RequiresGeneratedFactory))
             {
-                if (model.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+                if (!_models.TryGetValue(plan.TypeName, out var model))
+                    continue;
+                if (plan is FinalCustomCodecPlan or FinalAdapterCodecPlan)
                 {
-                    _models[model.TypeName] = model with { AssemblyDependencies = ImmutableArray<string>.Empty };
+                    _models[plan.TypeName] = model with { AssemblyDependencies = ImmutableArray<string>.Empty };
                     continue;
                 }
+
                 var dependencies = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var dependencyTypeName in GetCodecDependencies(model))
+                foreach (var dependencyTypeName in GetFinalCodecPlanDependencies(plan))
                 {
-                    if (localFactoryTypes.Contains(dependencyTypeName) || !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType) || IsBuiltin(dependencyType))
+                    if (localFactoryTypes.Contains(dependencyTypeName) ||
+                        !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType))
+                    {
                         continue;
+                    }
                     var assembly = dependencyType.ContainingAssembly;
-                    if (assembly is not null && !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) && HasGeneratedAssemblyManifest(assembly))
+                    if (assembly is not null &&
+                        !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) &&
+                        HasGeneratedAssemblyManifest(assembly))
+                    {
                         dependencies.Add(assembly.Identity.ToString());
+                    }
                 }
-                _models[model.TypeName] = model with
+                _models[plan.TypeName] = model with
                 {
                     AssemblyDependencies = dependencies.OrderBy(static identity => identity, StringComparer.Ordinal).ToImmutableArray()
                 };
             }
         }
 
-        private void CollectFinalBindingTypes(ITypeSymbol type, Dictionary<string, ITypeSymbol> reachable, HashSet<ITypeSymbol> seen, int depth)
+        private void CollectFinalBindingTypes(
+            ITypeSymbol type,
+            Dictionary<string, ITypeSymbol> reachable,
+            HashSet<ITypeSymbol> seen,
+            int depth)
         {
             if (depth > MaximumDepth || !seen.Add(type))
                 return;
             var typeName = GetTypeName(type);
             reachable[typeName] = type;
-            if (_models.TryGetValue(typeName, out var finalModel) && finalModel.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+            if (_models.TryGetValue(typeName, out var finalModel) &&
+                finalModel.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+            {
                 return;
+            }
             if (type is IArrayTypeSymbol array)
             {
                 CollectFinalBindingTypes(array.ElementType, reachable, seen, depth + 1);
