@@ -29,17 +29,6 @@ public partial class RpcGenerator
                     ResolveFinalCodecPlan(pair.Value, plans, resolving);
             }
 
-            // Candidate analysis can discover factories before this pass, but final Codec selection
-            // is represented only by the resolved plan graph. Every emitted factory must therefore
-            // have a corresponding plan before hashes/metadata are produced.
-            foreach (var model in _models.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal))
-            {
-                if (_failed.Contains(model.TypeName) || plans.ContainsKey(model.TypeName))
-                    continue;
-                if (TryResolveReachableType(model.TypeName, out var type))
-                    ResolveFinalCodecPlan(type, plans, resolving);
-            }
-
             // Enum declaration semantics can be required by generated metadata even when the
             // enclosing runtime Codec is a raw physical plan such as UnsafeBlit<Nullable<TEnum>>.
             // Materialize those reached enum nodes here so every downstream consumer observes the
