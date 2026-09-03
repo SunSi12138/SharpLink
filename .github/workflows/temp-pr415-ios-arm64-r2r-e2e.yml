@@ -132,6 +132,13 @@ jobs:
           mkdir -p artifacts/codec-compat/producers/codec-mobile-corpus-ios-simulator-arm64-coreclr
           cp -R artifacts/codec-compat/ios-coreclr-corpus/. \
             artifacts/codec-compat/producers/codec-mobile-corpus-ios-simulator-arm64-coreclr/
+      - name: Reset iOS app before verification
+        shell: bash
+        run: |
+          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Release -path '*/net11.0-ios/iossimulator-arm64/*' -name '*.app' -type d | head -n 1)"
+          test -n "$app"
+          xcrun simctl uninstall "$IOS_SIMULATOR_UDID" com.sharplink.codeccompat.ios || true
+          xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
       - name: Verify desktop and self edges
         shell: bash
         env:
