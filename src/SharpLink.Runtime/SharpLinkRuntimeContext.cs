@@ -139,7 +139,9 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedCodecSnapshot()
         => ((RpcCodecProvider)Codecs).CreateGeneratedRegistrationSnapshot();
 
-    internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
+    internal void PublishGeneratedCodecs(
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations,
+        RpcGeneratedManifestRegistration? pendingRegistration = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         RpcGeneratedManifestRegistration[] manifests;
@@ -149,6 +151,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             manifests = [.. _manifestRegistrations];
         }
         ValidateReferencedCodecDependencies(manifests, registrations);
+        if (pendingRegistration is not null)
+            ValidateReferencedCodecDependencies([pendingRegistration], registrations);
         ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
     }
 

@@ -81,7 +81,7 @@ internal sealed partial class SharpLinkClient
                             rollbackError = dependencyError;
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
+                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         Volatile.Write(ref _proxies, candidate.Proxies);
                         _dynamicModules.Add(assembly, module);
@@ -241,9 +241,9 @@ internal sealed partial class SharpLinkClient
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
+                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _dynamicModules.Add(newAssembly, newModule);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         Volatile.Write(ref _proxies, candidate.Proxies);
                         _registryGeneration++;
@@ -468,11 +468,15 @@ internal sealed partial class SharpLinkClient
         ISharpLinkGeneratedAssemblyManifest manifest,
         Assembly ownerAssembly)
     {
-        var identity = ownerAssembly.FullName;
-        if (identity is not null && EnumerateManifestDependencies(manifest)
-            .Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal)))
+        foreach (var dependency in EnumerateManifestDependencies(manifest))
         {
-            return true;
+            if (SharpLinkGeneratedDependencyBinding.Matches(
+                    manifest.OwnerAssembly,
+                    dependency,
+                    ownerAssembly))
+            {
+                return true;
+            }
         }
 
         if (manifest is not ISharpLinkReferencedCodecDependencyManifest dependencyManifest ||
@@ -491,22 +495,28 @@ internal sealed partial class SharpLinkClient
         ISharpLinkGeneratedAssemblyManifest incoming,
         SharpLinkDynamicModule[] currentModules)
     {
-        var available = new HashSet<string>(StringComparer.Ordinal);
+        var available = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
         for (var index = 0; index < _staticManifests.Count; index++)
-            available.Add(_staticManifests[index].OwnerAssembly.FullName ?? string.Empty);
+            available.Add(_staticManifests[index].OwnerAssembly);
         for (var index = 0; index < currentModules.Length; index++)
         {
             var module = currentModules[index];
             if (module.State == SharpLinkDynamicModuleState.Running)
-                available.Add(module.Manifest.OwnerAssembly.FullName ?? string.Empty);
+                available.Add(module.Manifest.OwnerAssembly);
         }
         var self = incoming.OwnerAssembly.FullName;
         foreach (var dependency in EnumerateManifestDependencies(incoming).Distinct(StringComparer.Ordinal))
         {
-            if (string.Equals(dependency, self, StringComparison.Ordinal) || available.Contains(dependency))
+            var boundAssembly = SharpLinkGeneratedDependencyBinding.Resolve(
+                incoming.OwnerAssembly,
+                dependency);
+            if (ReferenceEquals(boundAssembly, incoming.OwnerAssembly) ||
+                boundAssembly is not null && available.Contains(boundAssembly))
+            {
                 continue;
+            }
             return CreateError(SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
-                $"Generated dependency '{dependency}' must be registered and running before '{self}'.",
+                $"Generated dependency '{dependency}' must resolve through '{self}' to the exact registered and running Assembly generation before registration.",
                 incoming.OwnerAssembly, "Dependency");
         }
         return null;

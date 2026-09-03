@@ -18,6 +18,7 @@
     <ProjectReference Include="..\SharpLink.DynamicServices\SharpLink.DynamicServices.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.ReferencedCodecProvider\SharpLink.ReferencedCodecProvider.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.ReferencedCodecConsumer\SharpLink.ReferencedCodecConsumer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\SharpLink.ModuleDependencyConsumer\SharpLink.ModuleDependencyConsumer.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
