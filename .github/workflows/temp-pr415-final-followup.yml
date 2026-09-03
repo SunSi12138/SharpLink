@@ -1,0 +1,142 @@
+name: Temp PR415 Final Follow-up
+
+on:
+  push:
+    branches:
+      - tmp/pr415-baseline-shutdown-mobile-followup
+
+permissions:
+  contents: write
+
+jobs:
+  code-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Apply follow-up patch
+        shell: bash
+        run: |
+          python3 .github/temp-pr415-final-followup.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('test/SharpLink.Generator.Tests/RpcCodecTenthReviewRegressionTests.cs')
+          text = p.read_text()
+          text = text.replace('additionalReferences: h1)', 'additionalReferences: [h1])')
+          text = text.replace('additionalReferences: h2)', 'additionalReferences: [h2])')
+          p.write_text(text)
+          PY
+      - name: Diff check
+        run: git diff --check
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+      - name: Maintainability tests
+        run: python3 eng/test-verify-maintainability.py
+      - name: Maintainability gate
+        run: bash eng/check-maintainability.sh
+      - name: Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+      - name: Generator tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-restore
+      - name: Integration tests
+        run: dotnet test --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release --no-restore
+      - name: Focused dependency unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -- --treenode-filter "/*/*/(SharpLinkClientContractDependencyTests)|(SharpLinkRuntimeContextTests)/*"
+      - name: Commit validated patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/SharpLink.Generator/RpcGenerator.ContractManifest.cs \
+            src/SharpLink.Generator/RpcGenerator.ContractManifest.Infrastructure.cs \
+            src/SharpLink.Generator/RpcGenerator.ContractManifest.Compatibility.cs \
+            src/SharpLink.Runtime/GeneratedAssembly/SharpLinkGeneratedDependencyBinding.cs \
+            src/SharpLink.Client/SharpLinkClient.cs \
+            src/SharpLink.Client/SharpLinkClient.AssemblyRegistration.cs \
+            src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs \
+            src/SharpLink.Server/SharpLinkServer.AssemblyRegistration.cs \
+            test/SharpLink.Generator.Tests/ContractManifestGeneratorTestHelpers.cs \
+            test/SharpLink.Generator.Tests/RpcCodecTenthReviewRegressionTests.cs \
+            test/SharpLink.IntegrationTests/RuntimeAssemblyDependencyIdentityIntegrationTests.cs \
+            .github/workflows/codec-mobile-compatibility.yml
+          git commit -m "fix: close referenced codec identity gaps [skip ci]"
+          git push origin HEAD:tmp/pr415-baseline-shutdown-mobile-followup
+
+  ios-arm64-validation:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_11_SDK: 11.0.100-preview.7.26381.103
+      IOS_SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-5
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply Mobile patch
+        run: python3 .github/temp-pr415-final-followup.py
+      - name: Pin .NET 11 preview
+        shell: bash
+        run: |
+          cat > global.json <<EOF
+          {
+            "sdk": {
+              "version": "$DOTNET_11_SDK",
+              "rollForward": "disable",
+              "allowPrerelease": true
+            }
+          }
+          EOF
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.100-preview.7.26381.103
+      - name: Install iOS workload
+        run: dotnet workload install ios
+      - name: Select exact workload-compatible simulator
+        shell: bash
+        run: |
+          xcrun simctl shutdown all || true
+          xcrun simctl list runtimes
+          udid="$(python3 - <<'PY'
+          import json, os, subprocess
+          data = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))
+          runtime = os.environ['IOS_SIMULATOR_RUNTIME']
+          devices = data['devices'].get(runtime, [])
+          for device in devices:
+              if device.get('isAvailable') and device.get('name', '').startswith('iPhone'):
+                  print(device['udid'])
+                  raise SystemExit
+          raise SystemExit(f'No available iPhone simulator for {runtime}')
+          PY
+          )"
+          echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl boot "$udid" || true
+          for attempt in $(seq 1 90); do
+            if xcrun simctl list devices | grep "$udid" | grep -q '(Booted)'; then
+              break
+            fi
+            sleep 2
+          done
+          xcrun simctl list devices | grep "$udid" | grep '(Booted)'
+      - name: Build and run arm64 iOS CoreCLR producer
+        shell: bash
+        run: |
+          actual="$(dotnet --version)"
+          test "$actual" = "$DOTNET_11_SDK"
+          rm -rf test/SharpLink.CodecCompatibility.iOS/bin test/SharpLink.CodecCompatibility.iOS/obj
+          dotnet build -c Debug -f net11.0-ios -r iossimulator-arm64 \
+            test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj \
+            -p:CodecRuntime=coreclr
+          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Debug -path '*/net11.0-ios/iossimulator-arm64/*' -name '*.app' -type d | head -n 1)"
+          test -n "$app"
+          xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
+          node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
+            produce artifacts/codec-compat/ios-arm64-coreclr-corpus \
+            "$SHARPLINK_COMMIT" "$actual" \
+            net11.0-ios/iossimulator-arm64
+          test -f artifacts/codec-compat/ios-arm64-coreclr-corpus/manifest.json
