@@ -63,12 +63,8 @@ public sealed class SharpLinkClientContractDependencyTests
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Client unregister dependency guard was not found.");
 
-        var dependencyAssembly = AssemblyBuilder.DefineDynamicAssembly(
-            new AssemblyName("SharpLink.ContractDependency.B." + Guid.NewGuid().ToString("N")),
-            AssemblyBuilderAccess.Run);
-        var dependantAssembly = AssemblyBuilder.DefineDynamicAssembly(
-            new AssemblyName("SharpLink.ContractDependency.A." + Guid.NewGuid().ToString("N")),
-            AssemblyBuilderAccess.Run);
+        var dependencyAssembly = typeof(IService).Assembly;
+        var dependantAssembly = client.GetType().Assembly;
         var dependencyManifest = new TestManifest(dependencyAssembly, []);
         var dependantManifest = new TestManifest(
             dependantAssembly,

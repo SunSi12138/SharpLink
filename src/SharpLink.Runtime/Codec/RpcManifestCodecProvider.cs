@@ -88,11 +88,19 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
         if (_owner.Codecs.TryGetValue(targetType, out var ownerRegistration))
             return ResolveOwned<T>(targetType, ownerRegistration);
 
+        var referencedDependency = FindReferencedCodecDependency(targetType);
         if (_runtimeProvider is not null &&
             _runtimeProvider.CreateGeneratedRegistrationSnapshot().TryGetValue(targetType, out var dependency) &&
-            IsGeneratedDependencyAllowed(targetType, dependency))
+            IsGeneratedDependencyAllowed(targetType, dependency, referencedDependency))
         {
             return ResolveOwned<T>(targetType, dependency);
+        }
+        if (referencedDependency is not null)
+        {
+            throw new InvalidOperationException(
+                $"Contract assembly '{_owner.Manifest.OwnerAssembly.FullName}' requires referenced generated Codec " +
+                $"'{targetType.FullName}' from the exact bound runtime Type/assembly generation with CodecHash " +
+                $"'{referencedDependency.ExpectedCodecHash}', but that exact generated registration is not available.");
         }
 
         if (BuiltinRpcCodecs.TryGet(targetType, out var builtin))
@@ -119,30 +127,59 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
 
     private bool IsGeneratedDependencyAllowed(
         Type targetType,
-        RpcGeneratedCodecRegistration registration)
+        RpcGeneratedCodecRegistration registration,
+        SharpLinkReferencedCodecDependency? referencedDependency)
     {
+        if (referencedDependency is not null)
+        {
+            return ReferenceEquals(referencedDependency.TargetType, targetType) &&
+                   ReferenceEquals(registration.Owner.Manifest.OwnerAssembly, targetType.Assembly) &&
+                   registration.Factory.CodecHash == referencedDependency.ExpectedCodecHash;
+        }
+
         if (ReferenceEquals(registration.Owner, _owner))
             return true;
 
         var dependencyAssembly = registration.Owner.Manifest.OwnerAssembly;
-        var dependencyIdentity = dependencyAssembly.FullName;
-        if (dependencyIdentity is null || !IsTargetOwnedByDependency(targetType, dependencyAssembly))
+        if (!IsTargetOwnedByDependency(targetType, dependencyAssembly))
             return false;
 
-        if (ContainsIdentity(_owner.Manifest.ContractDependencies, dependencyIdentity))
+        if (ContainsBoundDependency(_owner.Manifest.ContractDependencies, dependencyAssembly))
             return true;
 
         // Compatibility for custom manifests that predate ContractDependencies and publish their
-        // whole generated-module closure through Dependencies.
-        return ContainsIdentity(_owner.Manifest.Dependencies, dependencyIdentity);
+        // whole generated-module closure through Dependencies. The string is only a CLR AssemblyRef
+        // locator; the actual permission is bound to the resolved Assembly object/generation.
+        return ContainsBoundDependency(_owner.Manifest.Dependencies, dependencyAssembly);
     }
 
-    private static bool ContainsIdentity(IReadOnlyList<string> dependencies, string identity)
+    private SharpLinkReferencedCodecDependency? FindReferencedCodecDependency(Type targetType)
+    {
+        if (_owner.Manifest is not ISharpLinkReferencedCodecDependencyManifest dependencyManifest)
+            return null;
+        var dependencies = dependencyManifest.ReferencedCodecDependencies;
+        for (var index = 0; index < dependencies.Count; index++)
+        {
+            var dependency = dependencies[index];
+            if (dependency is not null && ReferenceEquals(dependency.TargetType, targetType))
+                return dependency;
+        }
+        return null;
+    }
+
+    private bool ContainsBoundDependency(
+        IReadOnlyList<string> dependencies,
+        Assembly dependencyAssembly)
     {
         for (var index = 0; index < dependencies.Count; index++)
         {
-            if (string.Equals(dependencies[index], identity, StringComparison.Ordinal))
+            if (SharpLinkGeneratedDependencyBinding.Matches(
+                    _owner.Manifest.OwnerAssembly,
+                    dependencies[index],
+                    dependencyAssembly))
+            {
                 return true;
+            }
         }
         return false;
     }
