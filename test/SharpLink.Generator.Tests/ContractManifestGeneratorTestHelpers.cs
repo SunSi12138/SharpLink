@@ -208,7 +208,7 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 
     private static void EnsurePayloadIdentity(
         System.Text.Json.Nodes.JsonNode node,
-        bool expectOpaqueCodecHash,
+        bool requireCodecHash,
         bool? stream,
         string scenario)
     {
@@ -217,15 +217,15 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
             $"{scenario} wire type");
         Ensure(!value.ContainsKey("wireFormatId"),
             $"{scenario} must not contain legacy wireFormatId");
-        if (expectOpaqueCodecHash)
+        if (requireCodecHash)
         {
             Ensure(IsValidCodecHashText(value["codecHash"]?.GetValue<string>()),
-                $"{scenario} opaque CodecHash");
+                $"{scenario} CodecHash");
         }
-        else
+        else if (value.TryGetPropertyValue("codecHash", out var codecHashNode) && codecHashNode is not null)
         {
-            Ensure(!value.ContainsKey("codecHash"),
-                $"{scenario} native payload position does not need a second identity field");
+            Ensure(IsValidCodecHashText(codecHashNode.GetValue<string>()),
+                $"{scenario} final CodecHash when present");
         }
         if (stream is not null)
             Ensure(value["stream"]?.GetValue<bool>() == stream, $"{scenario} stream shape");
