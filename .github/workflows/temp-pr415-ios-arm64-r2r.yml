@@ -13,21 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-4
-            runtime_label: ios-26-4-a
-          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-4
-            runtime_label: ios-26-4-b
-          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-5
-            runtime_label: ios-26-5-a
-          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-5
-            runtime_label: ios-26-5-b
+        replica: [a, b]
     runs-on: macos-26
     timeout-minutes: 35
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_11_SDK: 11.0.100-preview.7.26381.103
-      IOS_SIMULATOR_RUNTIME: ${{ matrix.runtime }}
+      IOS_SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-5
       SHARPLINK_COMMIT: ${{ github.sha }}
       SHARPLINK_IOS_PROBE_TIMEOUT_MS: '60000'
       SHARPLINK_IOS_PROBE_ATTEMPTS: '1'
@@ -38,7 +30,43 @@ jobs:
         run: |
           sw_vers
           xcodebuild -version
-          echo "runtime=${IOS_SIMULATOR_RUNTIME}"
+      - name: Inject fixture-construction diagnostics
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/SharpLink.CodecCompatibility/Fixtures.cs')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '    {\n        Id = id;\n        Category = category;\n        _value = value;',
+                  '    {\n        Console.WriteLine($"SharpLink codec diagnostic: construct start {id} ({typeof(T).FullName}).");\n        Id = id;\n        Category = category;\n        _value = value;'
+              ),
+              (
+                  '        FieldOffsets = fieldNames.ToDictionary(static name => name, static name => Marshal.OffsetOf<T>(name).ToInt32(), StringComparer.Ordinal);\n        ExpectedLogicalValue = Describe(value);',
+                  '        FieldOffsets = fieldNames.ToDictionary(static name => name, static name => Marshal.OffsetOf<T>(name).ToInt32(), StringComparer.Ordinal);\n        Console.WriteLine($"SharpLink codec diagnostic: offsets complete {id}.");\n        ExpectedLogicalValue = Describe(value);\n        Console.WriteLine($"SharpLink codec diagnostic: construct complete {id}.");'
+              ),
+              (
+                  '    private static IReadOnlyList<IFixture> CreateFixtures()\n    {\n        var block64',
+                  '    private static IReadOnlyList<IFixture> CreateFixtures()\n    {\n        Console.WriteLine("SharpLink codec diagnostic: CreateFixtures start.");\n        var block64'
+              ),
+              (
+                  '        return\n        [\n            new Fixture<byte>("Byte", "no-padding", 0xA5),',
+                  '        Console.WriteLine("SharpLink codec diagnostic: CreateFixtures block values complete.");\n        return\n        [\n            new Fixture<byte>("Byte", "no-padding", 0xA5),'
+              )
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'diagnostic patch anchor not found: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          git diff --check
+          git diff -- test/SharpLink.CodecCompatibility/Fixtures.cs
       - name: Pin .NET 11 Preview 7
         shell: bash
         run: |
@@ -56,7 +84,7 @@ jobs:
           dotnet-version: 11.0.100-preview.7.26381.103
       - name: Install iOS workload
         run: dotnet workload install ios
-      - name: Boot selected iOS simulator
+      - name: Boot iOS 26.5 simulator
         shell: bash
         run: |
           xcrun simctl shutdown all || true
@@ -93,11 +121,10 @@ jobs:
             -p:PublishReadyToRun=true
           app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Release -path '*/net11.0-ios/iossimulator-arm64/*' -name '*.app' -type d | head -n 1)"
           test -n "$app"
-          echo "APP=$app"
           file "$app/SharpLink.CodecCompatibility" || true
           xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
           node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
-            produce "artifacts/codec-compat/${{ matrix.runtime_label }}" \
+            produce "artifacts/codec-compat/construct-${{ matrix.replica }}" \
             "$SHARPLINK_COMMIT" "$actual" \
             net11.0-ios/iossimulator-arm64
-          test -f "artifacts/codec-compat/${{ matrix.runtime_label }}/manifest.json"
+          test -f "artifacts/codec-compat/construct-${{ matrix.replica }}/manifest.json"
