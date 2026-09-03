@@ -18,17 +18,18 @@ public partial class RpcGenerator
             return false;
         }
 
-        var opaqueCodecTypes = new HashSet<string>(
+        var identityBoundCodecTypes = new HashSet<string>(
             manifest.Codecs
                 .Where(static codec => codec is not null &&
                     (string.Equals(codec.Kind, "Custom", StringComparison.Ordinal) ||
-                     string.Equals(codec.Kind, "Adapter", StringComparison.Ordinal)) &&
+                     string.Equals(codec.Kind, "Adapter", StringComparison.Ordinal) ||
+                     string.Equals(codec.Kind, "Referenced", StringComparison.Ordinal)) &&
                     IsValidCodecHash(codec.CodecHash))
                 .Select(static codec => codec.Type),
             StringComparer.Ordinal);
 
         bool HasValueIdentity(string type, string? codecHash)
-            => !opaqueCodecTypes.Contains(type) || IsValidCodecHash(codecHash);
+            => !identityBoundCodecTypes.Contains(type) || IsValidCodecHash(codecHash);
 
         return manifest.Contracts.All(contract =>
                    contract is not null &&
@@ -79,10 +80,10 @@ public partial class RpcGenerator
     private static string GetCodecHash(GeneratedCodecModel codec)
         => new RpcHashValue(codec.CodecHashHigh, codec.CodecHashLow).ToHex();
 
-    private static string? GetOpaqueCodecHash(
+    private static string? GetContractCodecHash(
         string typeName,
-        IReadOnlyDictionary<string, string> opaqueCodecHashes)
-        => opaqueCodecHashes.TryGetValue(RemoveGlobalPrefix(typeName), out var codecHash)
+        IReadOnlyDictionary<string, string> contractCodecHashes)
+        => contractCodecHashes.TryGetValue(RemoveGlobalPrefix(typeName), out var codecHash)
             ? codecHash
             : null;
 

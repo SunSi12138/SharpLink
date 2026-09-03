@@ -122,6 +122,39 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task ReferencedCodecDependenciesShouldShutdownDependantsBeforeProvidersOnClientAndServer()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        var directory = GetProjectOutputDirectory("SharpLink.ReferencedCodecConsumer");
+        var loadContext = new PluginLoadContext("referenced-codec-shutdown", directory);
+        try
+        {
+            var provider = loadContext.LoadFromAssemblyPath(
+                Path.Combine(directory, "SharpLink.ReferencedCodecProvider.dll"));
+            var consumer = loadContext.LoadFromAssemblyPath(
+                Path.Combine(directory, "SharpLink.ReferencedCodecConsumer.dll"));
+
+            Ensure(harness.Client.RegisterAssembly(provider).Succeeded, "client registers shutdown provider first");
+            Ensure(harness.Server.RegisterAssembly(provider).Succeeded, "server registers shutdown provider first");
+            Ensure(harness.Client.RegisterAssembly(consumer).Succeeded, "client registers typed dependant second");
+            Ensure(harness.Server.RegisterAssembly(consumer).Succeeded, "server registers typed dependant second");
+
+            await harness.Client.StopAsync();
+            await harness.Server.StopAsync(TimeSpan.Zero);
+
+            Ensure(GetDynamicModuleCount(harness.Client) == 0,
+                "client StopAsync must release both typed dependant and provider without leaving the provider registered");
+            Ensure(GetDynamicModuleCount(harness.Server) == 0,
+                "server StopAsync must release both typed dependant and provider without leaving the provider registered");
+        }
+        finally
+        {
+            loadContext.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task SameFullNameDeclaredModuleDependencyShouldRequireExactBoundGenerationOnClientAndServer()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -186,6 +219,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             firstContext.Unload();
             secondContext.Unload();
         }
+    }
+
+    private static int GetDynamicModuleCount(object endpoint)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var field = endpoint.GetType().GetField("_dynamicModules", flags)
+            ?? throw new InvalidOperationException($"Dynamic module registry was not available from '{endpoint.GetType()}'.");
+        var registry = field.GetValue(endpoint)
+            ?? throw new InvalidOperationException("Dynamic module registry was null.");
+        var countProperty = registry.GetType().GetProperty("Count")
+            ?? throw new InvalidOperationException("Dynamic module registry count was unavailable.");
+        return (int)(countProperty.GetValue(registry)
+            ?? throw new InvalidOperationException("Dynamic module registry count was null."));
     }
 
     private static async Task EnsureDependencyPreventsUnregisterAsync(

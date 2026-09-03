@@ -274,12 +274,14 @@ public partial class RpcGenerator
             if (!currentCodecs.TryGetValue(oldCodec.Type, out var newCodec))
                 continue;
 
-            var opaque =
+            var identityBound =
                 string.Equals(oldCodec.Kind, "Custom", StringComparison.Ordinal) ||
                 string.Equals(oldCodec.Kind, "Adapter", StringComparison.Ordinal) ||
+                string.Equals(oldCodec.Kind, "Referenced", StringComparison.Ordinal) ||
                 string.Equals(newCodec.Kind, "Custom", StringComparison.Ordinal) ||
-                string.Equals(newCodec.Kind, "Adapter", StringComparison.Ordinal);
-            if (!opaque || string.Equals(oldCodec.CodecHash, newCodec.CodecHash, StringComparison.Ordinal))
+                string.Equals(newCodec.Kind, "Adapter", StringComparison.Ordinal) ||
+                string.Equals(newCodec.Kind, "Referenced", StringComparison.Ordinal);
+            if (!identityBound || string.Equals(oldCodec.CodecHash, newCodec.CodecHash, StringComparison.Ordinal))
                 continue;
             if (directlyDescribedCodecTypes.Contains(oldCodec.Type))
                 continue;

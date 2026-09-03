@@ -219,12 +219,19 @@ public partial class RpcGenerator
                 static group => group.Key,
                 static group => new RpcHashValue(group.First().High, group.First().Low).ToHex(),
                 StringComparer.Ordinal);
-        var opaqueCodecHashes = codecsByType
+        var contractCodecHashes = codecsByType
             .Where(static pair => pair.Value.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
             .ToDictionary(
                 static pair => pair.Key,
                 static pair => GetCodecHash(pair.Value),
                 StringComparer.Ordinal);
+        foreach (var codecHash in codecHashes
+                     .Where(static item => item.IsReferenced)
+                     .OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+        {
+            contractCodecHashes[RemoveGlobalPrefix(codecHash.TypeName)] =
+                new RpcHashValue(codecHash.High, codecHash.Low).ToHex();
+        }
         foreach (var contract in interfaces
                      .Where(static item => item is not null)
                      .Select(static item => item!)
@@ -263,7 +270,7 @@ public partial class RpcGenerator
                         WireType = GetContractWireType(typeName, parameter.IsStream
                             ? parameter.StreamItemEnumUnderlyingType
                             : parameter.EnumUnderlyingType),
-                        CodecHash = GetOpaqueCodecHash(typeName, opaqueCodecHashes),
+                        CodecHash = GetContractCodecHash(typeName, contractCodecHashes),
                         Nullable = parameter.PayloadNullable,
                         Stream = parameter.IsStream,
                         SourceLocation = parameter.Location
@@ -283,7 +290,7 @@ public partial class RpcGenerator
                         method.IsStreamReturn
                             ? method.StreamItemEnumUnderlyingType
                             : method.ResponseEnumUnderlyingType),
-                    CodecHash = GetOpaqueCodecHash(responseType, opaqueCodecHashes),
+                    CodecHash = GetContractCodecHash(responseType, contractCodecHashes),
                     Nullable = method.ResponseNullable,
                     Stream = method.IsStreamReturn,
                     SourceLocation = method.Location
@@ -311,7 +318,7 @@ public partial class RpcGenerator
                     Id = member.FieldId,
                     Type = RemoveGlobalPrefix(member.TypeName),
                     WireType = GetMemberWireType(member),
-                    CodecHash = GetOpaqueCodecHash(member.TypeName, opaqueCodecHashes),
+                    CodecHash = GetContractCodecHash(member.TypeName, contractCodecHashes),
                     Nullable = member.Nullable,
                     Required = member.Required,
                     ExplicitId = member.HasExplicitId,
@@ -329,6 +336,23 @@ public partial class RpcGenerator
                 Kind = codec.Kind.ToString(),
                 CodecHash = GetCodecHash(codec),
                 SourceLocation = codec.Location
+            });
+        }
+        var emittedCodecTypes = new HashSet<string>(
+            document.Codecs.Select(static item => item.Type),
+            StringComparer.Ordinal);
+        foreach (var codecHash in codecHashes
+                     .Where(static item => item.IsReferenced)
+                     .OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+        {
+            var typeName = RemoveGlobalPrefix(codecHash.TypeName);
+            if (!emittedCodecTypes.Add(typeName))
+                continue;
+            document.Codecs.Add(new ContractManifestCodec
+            {
+                Type = typeName,
+                Kind = "Referenced",
+                CodecHash = new RpcHashValue(codecHash.High, codecHash.Low).ToHex()
             });
         }
 

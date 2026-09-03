@@ -212,6 +212,101 @@ public interface IAliasOnlyAdapterContract : IService
     }
 
     [Test]
+    public Task ReferencedCodecHashChangeShouldFailDirectAndNestedContractBaselines()
+    {
+        static MetadataReference GeneratedPayloadReference(ulong low)
+            => CreateMetadataReference(
+                "ReferencedBaselinePayload",
+                $$"""
+using System;
+
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute(typeof(Referenced.Payload), 0x5555555555555555UL, {{low}}UL)]
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v4")]
+
+namespace SharpLink.Abstractions
+{
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+    public sealed class SharpLinkGeneratedCodecIdentityAttribute : Attribute
+    {
+        public SharpLinkGeneratedCodecIdentityAttribute(Type targetType, ulong high, ulong low) { }
+    }
+
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = false)]
+    public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
+    {
+        public SharpLinkGeneratedAssemblyManifestAttribute(
+            Type manifestType,
+            int apiVersion,
+            int protocolVersion,
+            string generatorVersion,
+            string abiIdentity) { }
+    }
+}
+
+namespace Referenced
+{
+    public sealed class Payload { public int Value { get; set; } }
+    public sealed class Manifest { }
+}
+""");
+
+        const string directConsumer = """
+using System.Threading;
+using System.Threading.Tasks;
+using SharpLink.Sdk;
+
+[RpcContract]
+public interface IReferencedBaselineContract : IService
+{
+    ValueTask<Referenced.Payload> Echo(Referenced.Payload value, CancellationToken cancellationToken);
+}
+""";
+        const string nestedConsumer = """
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpLink.Sdk;
+
+[RpcContract]
+public interface IReferencedNestedBaselineContract : IService
+{
+    ValueTask<List<Referenced.Payload>> Echo(List<Referenced.Payload> value, CancellationToken cancellationToken);
+}
+""";
+
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
+        var h1 = GeneratedPayloadReference(0x1111111111111111UL);
+        var h2 = GeneratedPayloadReference(0x2222222222222222UL);
+        var directBaseline = RunContractGenerator(directConsumer, additionalReferences: [sdk, h1]).Json;
+        var directDocument = System.Text.Json.Nodes.JsonNode.Parse(directBaseline)!.AsObject();
+        var directRequest = directDocument["contracts"]!.AsArray()[0]!["methods"]!.AsArray()[0]!["request"]!.AsArray()[0]!.AsObject();
+        Ensure(IsValidCodecHashText(directRequest["codecHash"]?.GetValue<string>()),
+            "a direct referenced final Codec leaf must persist its exact hash on the request value");
+        var directReferencedCodec = directDocument["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(static item => item["type"]!.GetValue<string>() == "Referenced.Payload");
+        Ensure(directReferencedCodec["kind"]!.GetValue<string>() == "Referenced" &&
+               IsValidCodecHashText(directReferencedCodec["codecHash"]?.GetValue<string>()),
+            "a direct referenced final Codec leaf must also persist in the reachable Codec identity inventory");
+        var directChanged = RunContractGenerator(directConsumer, directBaseline, additionalReferences: [sdk, h2]);
+        Ensure(directChanged.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"a direct referenced final CodecHash H1 -> H2 change must fail the contract baseline. Actual: {FormatDiagnostics(directChanged.Diagnostics)}");
+
+        var nestedBaseline = RunContractGenerator(nestedConsumer, additionalReferences: [sdk, h1]).Json;
+        var nestedDocument = System.Text.Json.Nodes.JsonNode.Parse(nestedBaseline)!.AsObject();
+        var referencedCodec = nestedDocument["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(static item => item["type"]!.GetValue<string>() == "Referenced.Payload");
+        Ensure(referencedCodec["kind"]!.GetValue<string>() == "Referenced" &&
+               IsValidCodecHashText(referencedCodec["codecHash"]?.GetValue<string>()),
+            "nested referenced final Codec leaves must be persisted in the reachable Codec identity inventory");
+        var nestedChanged = RunContractGenerator(nestedConsumer, nestedBaseline, additionalReferences: [sdk, h2]);
+        Ensure(nestedChanged.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            $"a nested referenced final CodecHash H1 -> H2 change must fail the contract baseline. Actual: {FormatDiagnostics(nestedChanged.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ReferencedCodecHashShouldRequireCurrentGeneratedAbi()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));

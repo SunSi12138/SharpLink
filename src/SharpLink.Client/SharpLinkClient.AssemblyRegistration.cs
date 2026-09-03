@@ -467,29 +467,7 @@ internal sealed partial class SharpLinkClient
     private static bool ManifestDependsOn(
         ISharpLinkGeneratedAssemblyManifest manifest,
         Assembly ownerAssembly)
-    {
-        foreach (var dependency in EnumerateManifestDependencies(manifest))
-        {
-            if (SharpLinkGeneratedDependencyBinding.Matches(
-                    manifest.OwnerAssembly,
-                    dependency,
-                    ownerAssembly))
-            {
-                return true;
-            }
-        }
-
-        if (manifest is not ISharpLinkReferencedCodecDependencyManifest dependencyManifest ||
-            dependencyManifest.ReferencedCodecDependencies is not { } referencedDependencies)
-        {
-            return false;
-        }
-
-        return referencedDependencies.Any(dependency =>
-            dependency is not null &&
-            dependency.TargetType is { } targetType &&
-            ReferenceEquals(targetType.Assembly, ownerAssembly));
-    }
+        => SharpLinkGeneratedDependencyBinding.ManifestDependsOn(manifest, ownerAssembly);
 
     private SharpLinkAssemblyRegistrationError? ValidateDependencies(
         ISharpLinkGeneratedAssemblyManifest incoming,

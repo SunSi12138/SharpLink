@@ -229,10 +229,12 @@ internal sealed partial class SharpLinkServer
         lock (_registryGate)
             modules = [.. _dynamicModules];
 
+        var manifests = modules.Select(static pair => pair.Value.Manifest).ToArray();
+        var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
         List<Exception>? failures = null;
-        for (var index = 0; index < modules.Length; index++)
+        for (var index = 0; index < order.Length; index++)
         {
-            var pair = modules[index];
+            var pair = modules[order[index]];
             try
             {
                 pair.Value.TryBeginDraining();
