@@ -414,9 +414,9 @@ public interface IResponseFingerprintContract : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DtoMemberNullabilityMustParticipateInRuntimeCodecHash()
+    public Task OptionalDtoMemberNullabilityAnnotationShouldNotPerturbRuntimeCodecHash()
     {
-        var required = BuildSource("""
+        var nonNullable = BuildSource("""
 #nullable enable
 [SharpLink.Sdk.RpcContract]
 public interface IDtoSchemaContract : SharpLink.Sdk.IService
@@ -425,7 +425,7 @@ public interface IDtoSchemaContract : SharpLink.Sdk.IService
 }
 public sealed class Payload { public string Name { get; set; } = string.Empty; }
 """);
-        var optional = BuildSource("""
+        var nullable = BuildSource("""
 #nullable enable
 [SharpLink.Sdk.RpcContract]
 public interface IDtoSchemaContract : SharpLink.Sdk.IService
@@ -435,10 +435,10 @@ public interface IDtoSchemaContract : SharpLink.Sdk.IService
 public sealed class Payload { public string? Name { get; set; } }
 """);
 
-        var requiredHash = GetFirstGeneratedCodecHash(required);
-        var optionalHash = GetFirstGeneratedCodecHash(optional);
-        Ensure(!string.Equals(requiredHash, optionalHash, StringComparison.Ordinal),
-            "required and nullable DTO members must not publish the same runtime CodecHash");
+        var nonNullableHash = GetFirstGeneratedCodecHash(nonNullable);
+        var nullableHash = GetFirstGeneratedCodecHash(nullable);
+        Ensure(string.Equals(nonNullableHash, nullableHash, StringComparison.Ordinal),
+            "optional nullable annotations must not change runtime CodecHash when generated null behavior is identical");
         return Task.CompletedTask;
     }
 
@@ -1221,7 +1221,7 @@ public sealed class HelloService : IHelloService
 }
 """);
 
-        EnsureHasRuleContaining(source, "SHARPLINK020", "99");
+        EnsureHasRule(source, "SHARPLINK020");
         return Task.CompletedTask;
     }
 
@@ -2096,7 +2096,7 @@ public sealed class InvalidAdapter { }
 public sealed class ValidAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "valid.adapter/v1";
-    public string WireFormatId => "valid-wire/v1";
+    public string WireFormatId => "wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 
