@@ -26,6 +26,7 @@ jobs:
           mkdir -p src/SharpLink.Runtime/GeneratedAssembly
           python3 .github/temp-pr415-followup.py
           python3 .github/temp-pr415-followup-maintainability.py
+          python3 .github/temp-pr415-followup-unit-fixture.py
 
       - name: Diff check
         run: git diff --check
