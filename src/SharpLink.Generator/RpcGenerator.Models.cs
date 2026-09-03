@@ -211,7 +211,8 @@ internal sealed record GeneratedCodecModel(
 internal readonly record struct GeneratedCodecHashModel(
     string TypeName,
     ulong High,
-    ulong Low);
+    ulong Low,
+    bool IsReferenced = false);
 
 internal readonly record struct GeneratedUnsafeBlitRequirementModel(
     string TypeName,

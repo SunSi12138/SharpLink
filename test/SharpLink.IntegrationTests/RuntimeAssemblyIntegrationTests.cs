@@ -9,6 +9,100 @@ public sealed class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
+    public async Task SameFullNameReferencedCodecDependencyShouldRequireExactGenerationOnClientAndServer()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        var directory = GetReferencedCodecOutputDirectory();
+        var firstContext = new PluginLoadContext("referenced-codec-generation-1", directory);
+        var secondContext = new PluginLoadContext("referenced-codec-generation-2", directory);
+        try
+        {
+            var providerPath = Path.Combine(directory, "SharpLink.ReferencedCodecProvider.dll");
+            var consumerPath = Path.Combine(directory, "SharpLink.ReferencedCodecConsumer.dll");
+            var provider1 = firstContext.LoadFromAssemblyPath(providerPath);
+            var provider2 = secondContext.LoadFromAssemblyPath(providerPath);
+            var consumer2 = secondContext.LoadFromAssemblyPath(consumerPath);
+
+            Ensure(provider1.FullName == provider2.FullName && !ReferenceEquals(provider1, provider2),
+                "test setup must load two distinct provider generations with the same Assembly.FullName");
+            var consumerManifestType = consumer2.GetType(
+                "SharpLink.ReferencedCodecConsumer.ConsumerManifest",
+                throwOnError: true)!;
+            var consumerManifest = (ISharpLinkReferencedCodecDependencyManifest)Activator.CreateInstance(
+                consumerManifestType)!;
+            var typedDependency = consumerManifest.ReferencedCodecDependencies.Single();
+            Ensure(ReferenceEquals(typedDependency.TargetType.Assembly, provider2),
+                "consumer generation 2 must retain the exact provider generation selected by its runtime Type binding");
+
+            Ensure(harness.Client.RegisterAssembly(provider1).Succeeded,
+                "client registers generation-1 provider");
+            Ensure(harness.Server.RegisterAssembly(provider1).Succeeded,
+                "server registers generation-1 provider");
+
+            var wrongClient = harness.Client.RegisterAssembly(consumer2);
+            Ensure(!wrongClient.Succeeded &&
+                   wrongClient.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest &&
+                   wrongClient.Error.Message.Contains("exact bound runtime Type/assembly generation", StringComparison.Ordinal),
+                $"client must reject generation-2 consumer when only same-FullName generation-1 provider is registered: {wrongClient.Error}");
+            var wrongServer = harness.Server.RegisterAssembly(consumer2);
+            Ensure(!wrongServer.Succeeded &&
+                   wrongServer.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest &&
+                   wrongServer.Error.Message.Contains("exact bound runtime Type/assembly generation", StringComparison.Ordinal),
+                $"server must reject generation-2 consumer when only same-FullName generation-1 provider is registered: {wrongServer.Error}");
+
+            Ensure((await harness.Client.UnregisterAssemblyAsync(provider1, TimeSpan.FromSeconds(2))).ReferencesReleased,
+                "client releases generation-1 provider after rejected consumer");
+            Ensure((await harness.Server.UnregisterAssemblyAsync(provider1, TimeSpan.FromSeconds(2))).ReferencesReleased,
+                "server releases generation-1 provider after rejected consumer");
+
+            Ensure(harness.Client.RegisterAssembly(provider2).Succeeded,
+                "client registers exact generation-2 provider");
+            Ensure(harness.Server.RegisterAssembly(provider2).Succeeded,
+                "server registers exact generation-2 provider");
+            Ensure(harness.Client.RegisterAssembly(consumer2).Succeeded,
+                "client accepts consumer with exact bound provider generation and expected CodecHash");
+            Ensure(harness.Server.RegisterAssembly(consumer2).Succeeded,
+                "server accepts consumer with exact bound provider generation and expected CodecHash");
+
+            try
+            {
+                _ = await harness.Client.UnregisterAssemblyAsync(provider2, TimeSpan.FromSeconds(2));
+                throw new Exception("assert failed: client must reject provider unregister while exact typed consumer depends on it");
+            }
+            catch (InvalidOperationException exception)
+            {
+                Ensure(exception.Message.Contains("depends on it", StringComparison.Ordinal),
+                    "client reverse dependency check uses exact provider Assembly generation");
+            }
+            try
+            {
+                _ = await harness.Server.UnregisterAssemblyAsync(provider2, TimeSpan.FromSeconds(2));
+                throw new Exception("assert failed: server must reject provider unregister while exact typed consumer depends on it");
+            }
+            catch (InvalidOperationException exception)
+            {
+                Ensure(exception.Message.Contains("depends on it", StringComparison.Ordinal),
+                    "server reverse dependency check uses exact provider Assembly generation");
+            }
+
+            Ensure((await harness.Client.UnregisterAssemblyAsync(consumer2, TimeSpan.FromSeconds(2))).ReferencesReleased,
+                "client releases typed consumer before provider");
+            Ensure((await harness.Server.UnregisterAssemblyAsync(consumer2, TimeSpan.FromSeconds(2))).ReferencesReleased,
+                "server releases typed consumer before provider");
+            Ensure((await harness.Client.UnregisterAssemblyAsync(provider2, TimeSpan.FromSeconds(2))).ReferencesReleased,
+                "client releases exact provider after dependant removal");
+            Ensure((await harness.Server.UnregisterAssemblyAsync(provider2, TimeSpan.FromSeconds(2))).ReferencesReleased,
+                "server releases exact provider after dependant removal");
+        }
+        finally
+        {
+            firstContext.Unload();
+            secondContext.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task MultiClusterDynamicRegistrationShouldRouteToOneExplicitSlot()
     {
         await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
@@ -2005,6 +2099,22 @@ public sealed class RuntimeAssemblyIntegrationTests
                 "Release",
                 "net10.0");
         }
+    }
+
+    private static string GetReferencedCodecOutputDirectory()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Sharplink.slnx")))
+            directory = directory.Parent;
+        if (directory is null)
+            throw new DirectoryNotFoundException("SharpLink workspace root was not found.");
+        return Path.Combine(
+            directory.FullName,
+            "test",
+            "SharpLink.ReferencedCodecConsumer",
+            "bin",
+            "Release",
+            "net10.0");
     }
 
     private sealed class PluginLoadContext(string name, string directory)

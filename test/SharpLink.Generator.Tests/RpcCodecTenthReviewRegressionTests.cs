@@ -286,6 +286,19 @@ public interface IReferencedCodecContract : IService
             !currentDiagnostics.Any(static diagnostic =>
                 diagnostic.GetMessage().Contains("runtime-sized intrinsic unmanaged types", StringComparison.Ordinal)),
             $"a current generated Codec identity must bypass pre-plan UnsafeBlit rejection even when the referenced unmanaged payload contains Vector<T>. Actual: {FormatDiagnostics(currentDiagnostics)}");
+
+        var currentManifest = RunGeneratorAndGetSources(consumer, sdk, current)
+            .Single(static generated => generated.Contains(
+                "ISharpLinkGeneratedAssemblyManifest",
+                StringComparison.Ordinal));
+        Ensure(
+            currentManifest.Contains("ISharpLinkReferencedCodecDependencyManifest", StringComparison.Ordinal) &&
+            currentManifest.Contains("new SharpLinkReferencedCodecDependency(", StringComparison.Ordinal) &&
+            currentManifest.Contains("typeof(global::Referenced.Payload)", StringComparison.Ordinal),
+            "a FinalReferencedCodecPlan leaf must emit a binding-aware Type + CodecHash dependency descriptor");
+        Ensure(
+            !currentManifest.Contains("CurrentGeneratedPayload, Version=", StringComparison.Ordinal),
+            "referenced Codec dependency provenance must not collapse back to an Assembly.FullName string");
         return Task.CompletedTask;
     }
 }
