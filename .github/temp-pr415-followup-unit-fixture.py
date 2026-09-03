@@ -2,8 +2,8 @@ from pathlib import Path
 
 path = Path("test/SharpLink.UnitTests/Client/SharpLinkClientContractDependencyTests.cs")
 text = path.read_text()
-old = '''        var dependencyManifest = new TestManifest(dependencyAssembly, []);\n        var dependantManifest = new TestManifest(\n'''
-new = '''        var dependencyType = dependencyAssembly\n            .DefineDynamicModule("Dependency")\n            .DefineType("SharpLink.ContractDependency.Marker", TypeAttributes.Public)\n            .CreateType()!;\n        var dependantModuleBuilder = dependantAssembly.DefineDynamicModule("Dependant");\n        var dependantTypeBuilder = dependantModuleBuilder.DefineType(\n            "SharpLink.ContractDependency.Dependant", TypeAttributes.Public);\n        _ = dependantTypeBuilder.DefineField(\n            "Dependency", dependencyType, FieldAttributes.Public);\n        _ = dependantTypeBuilder.CreateType();\n\n        var dependencyManifest = new TestManifest(dependencyAssembly, []);\n        var dependantManifest = new TestManifest(\n'''
+old = '''        var dependencyAssembly = AssemblyBuilder.DefineDynamicAssembly(\n            new AssemblyName("SharpLink.ContractDependency.B." + Guid.NewGuid().ToString("N")),\n            AssemblyBuilderAccess.Run);\n        var dependantAssembly = AssemblyBuilder.DefineDynamicAssembly(\n            new AssemblyName("SharpLink.ContractDependency.A." + Guid.NewGuid().ToString("N")),\n            AssemblyBuilderAccess.Run);\n        var dependencyManifest = new TestManifest(dependencyAssembly, []);\n'''
+new = '''        var dependencyAssembly = typeof(IService).Assembly;\n        var dependantAssembly = client.GetType().Assembly;\n        var dependencyManifest = new TestManifest(dependencyAssembly, []);\n'''
 if old not in text:
-    raise RuntimeError("contract dependency fixture insertion point not found")
+    raise RuntimeError("contract dependency fixture block not found")
 path.write_text(text.replace(old, new, 1))
