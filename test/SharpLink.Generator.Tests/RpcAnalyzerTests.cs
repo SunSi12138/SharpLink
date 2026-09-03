@@ -1221,7 +1221,7 @@ public sealed class HelloService : IHelloService
 }
 """);
 
-        EnsureHasRule(source, "SHARPLINK020");
+        EnsureHasRuleContaining(source, "SHARPLINK020", "99");
         return Task.CompletedTask;
     }
 
@@ -2096,7 +2096,7 @@ public sealed class InvalidAdapter { }
 public sealed class ValidAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "valid.adapter/v1";
-    public string WireFormatId => "wire/v1";
+    public string WireFormatId => "valid-wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 
