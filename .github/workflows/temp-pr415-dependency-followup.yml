@@ -22,7 +22,9 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Apply patch
-        run: python3 .github/temp-pr415-followup.py
+        run: |
+          mkdir -p src/SharpLink.Runtime/GeneratedAssembly
+          python3 .github/temp-pr415-followup.py
 
       - name: Diff check
         run: git diff --check
