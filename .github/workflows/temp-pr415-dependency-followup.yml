@@ -1,0 +1,58 @@
+name: Temp PR415 Dependency Follow-up
+
+on:
+  push:
+    branches:
+      - tmp/pr415-dependency-binding-followup
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Apply patch
+        run: python3 .github/temp-pr415-followup.py
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Maintainability tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
+
+      - name: Generator tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-restore
+
+      - name: Integration tests
+        run: dotnet test --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release --no-restore
+
+      - name: Commit validated patch
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src test
+          git commit -m "fix: bind generated dependencies to runtime assemblies"
+          git push origin HEAD:tmp/pr415-dependency-binding-followup
