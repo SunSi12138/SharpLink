@@ -113,8 +113,9 @@ public partial class RpcGenerator
                 parts.Add(member.FieldId.ToString(InvariantCulture));
                 parts.Add(member.Kind.ToString());
                 parts.Add(member.Required ? "required" : "optional");
-                parts.Add(member.Nullable ? "nullable" : "non-nullable");
-                parts.Add(member.NonNullableReference ? "non-null-ref" : "other-null-semantics");
+                parts.Add(member.Required && member.NonNullableReference
+                    ? "required-non-null-ref"
+                    : "no-required-reference-null-rejection");
                 switch (member.WireStrategy)
                 {
                     case FinalDtoMemberWireStrategy.String:
