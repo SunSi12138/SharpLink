@@ -8,27 +8,20 @@ def replace_once(path, old, new):
         raise SystemExit(f"missing expected block in {path}: {old[:160]!r}")
     p.write_text(text.replace(old, new, 1))
 
-# The first validation patch changed the RunContractGenerator signature, but its broad
-# compilation replacement hit an earlier helper. Wire the H1/H2 metadata reference into
-# the actual contract-manifest compilation.
-path = "test/SharpLink.Generator.Tests/ContractManifestGeneratorTestHelpers.cs"
-replace_once(path,
-'''        var compilation = CSharpCompilation.Create(
-            "ContractManifestTestAssembly",
-            [syntaxTree],
-            GetPlatformReferences(),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-''',
-'''        var compilation = CSharpCompilation.Create(
+# The first patch already updates the actual RunContractGenerator compilation. Assert that
+# exact invariant here so the validation script fails loudly if its targeting regresses.
+helper = Path("test/SharpLink.Generator.Tests/ContractManifestGeneratorTestHelpers.cs").read_text()
+required_helper = '''        var compilation = CSharpCompilation.Create(
             "ContractManifestTestAssembly",
             [syntaxTree],
             GetPlatformReferences().Concat(additionalReferences),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-''')
+'''
+if required_helper not in helper:
+    raise SystemExit("RunContractGenerator does not include additionalReferences in its compilation")
 
 # Make the direct-baseline regression prove both persistence surfaces, not just the final
-# compatibility diagnostic. This makes a future failure distinguish manifest construction
-# from comparison immediately.
+# compatibility diagnostic. This distinguishes manifest construction from comparison.
 path = "test/SharpLink.Generator.Tests/RpcCodecTenthReviewRegressionTests.cs"
 replace_once(path,
 '''        var directBaseline = RunContractGenerator(directConsumer, additionalReferences: [h1]).Json;
