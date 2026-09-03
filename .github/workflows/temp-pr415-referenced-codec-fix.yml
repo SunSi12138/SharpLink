@@ -6,41 +6,20 @@ on:
       - tmp/pr415-referenced-codec-dependency
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-and-test:
-    if: github.actor != 'github-actions[bot]'
+  integration-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      - name: Apply patch
-        run: python3 .github/temp-pr415-apply.py
-
-      - name: Diff check
-        run: git diff --check
-
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
-      - name: Generator tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-restore
-
-      - name: Unit tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
-
-      - name: Commit validated patch
-        if: success()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src test
-          git commit -m "fix: bind referenced codec dependencies by type and hash"
-          git push origin HEAD:tmp/pr415-referenced-codec-dependency
+      - name: Integration tests
+        run: dotnet test --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release --no-restore
