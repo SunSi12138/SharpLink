@@ -567,12 +567,13 @@ internal sealed partial class SharpLinkServer
         SharpLinkDynamicModule oldModule,
         ISharpLinkGeneratedAssemblyManifest incoming)
     {
-        var oldIdentity = oldModule.Manifest.OwnerAssembly.FullName;
+        var oldAssembly = oldModule.Manifest.OwnerAssembly;
+        var oldIdentity = oldAssembly.FullName;
         var newIdentity = incoming.OwnerAssembly.FullName;
         foreach (var candidate in _dynamicModules.Values)
         {
             if (!ReferenceEquals(candidate, oldModule) &&
-                ManifestDependsOn(candidate.Manifest, oldIdentity))
+                ManifestDependsOn(candidate.Manifest, oldAssembly))
             {
                 return CreateError(
                     SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
@@ -593,9 +594,28 @@ internal sealed partial class SharpLinkServer
             yield return dependency;
     }
 
-    private static bool ManifestDependsOn(ISharpLinkGeneratedAssemblyManifest manifest, string? identity)
-        => identity is not null && EnumerateManifestDependencies(manifest)
-            .Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal));
+    private static bool ManifestDependsOn(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        Assembly ownerAssembly)
+    {
+        var identity = ownerAssembly.FullName;
+        if (identity is not null && EnumerateManifestDependencies(manifest)
+            .Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (manifest is not ISharpLinkReferencedCodecDependencyManifest dependencyManifest ||
+            dependencyManifest.ReferencedCodecDependencies is not { } referencedDependencies)
+        {
+            return false;
+        }
+
+        return referencedDependencies.Any(dependency =>
+            dependency is not null &&
+            dependency.TargetType is { } targetType &&
+            ReferenceEquals(targetType.Assembly, ownerAssembly));
+    }
 
     private SharpLinkAssemblyRegistrationError? ValidateServiceDependencies(
         ISharpLinkGeneratedAssemblyManifest incoming,
