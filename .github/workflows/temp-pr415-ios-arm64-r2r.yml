@@ -10,24 +10,36 @@ permissions:
 
 jobs:
   ios-arm64-r2r:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-4
+            runtime_label: ios-26-4-a
+          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-4
+            runtime_label: ios-26-4-b
+          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-5
+            runtime_label: ios-26-5-a
+          - runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-5
+            runtime_label: ios-26-5-b
+    runs-on: macos-26
     timeout-minutes: 35
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_11_SDK: 11.0.100-preview.3.26207.106
-      DOTNET_11_WORKLOAD_SET: 11.0.100-preview.3.26213.1
-      IOS_SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-3
+      DOTNET_11_SDK: 11.0.100-preview.7.26381.103
+      IOS_SIMULATOR_RUNTIME: ${{ matrix.runtime }}
       SHARPLINK_COMMIT: ${{ github.sha }}
       SHARPLINK_IOS_PROBE_TIMEOUT_MS: '60000'
       SHARPLINK_IOS_PROBE_ATTEMPTS: '1'
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode 26.3
+      - name: Record runner and Xcode
         shell: bash
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          sw_vers
           xcodebuild -version
-      - name: Pin .NET 11 Preview 3
+          echo "runtime=${IOS_SIMULATOR_RUNTIME}"
+      - name: Pin .NET 11 Preview 7
         shell: bash
         run: |
           cat > global.json <<EOF
@@ -41,14 +53,10 @@ jobs:
           EOF
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 11.0.100-preview.3.26207.106
-      - name: Install Preview 3 iOS workload
-        run: |
-          dotnet workload install ios \
-            --version "$DOTNET_11_WORKLOAD_SET" \
-            --source https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-workloads/nuget/v3/index.json
-          dotnet workload --info
-      - name: Boot iOS 26.3 simulator
+          dotnet-version: 11.0.100-preview.7.26381.103
+      - name: Install iOS workload
+        run: dotnet workload install ios
+      - name: Boot selected iOS simulator
         shell: bash
         run: |
           xcrun simctl shutdown all || true
@@ -89,7 +97,7 @@ jobs:
           file "$app/SharpLink.CodecCompatibility" || true
           xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
           node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
-            produce artifacts/codec-compat/ios-arm64-coreclr-corpus \
+            produce "artifacts/codec-compat/${{ matrix.runtime_label }}" \
             "$SHARPLINK_COMMIT" "$actual" \
             net11.0-ios/iossimulator-arm64
-          test -f artifacts/codec-compat/ios-arm64-coreclr-corpus/manifest.json
+          test -f "artifacts/codec-compat/${{ matrix.runtime_label }}/manifest.json"
