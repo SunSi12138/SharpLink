@@ -59,19 +59,22 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
-    public async Task DeadlineTimerShouldSetDeadlineReason()
+    public void DeadlineTimerShouldSetDeadlineReason()
     {
-        var state = Rent(
+        var timeProvider = new ManualTimeProvider();
+        var state = ServerCallCancellationState.Rent(
             2,
-            DateTimeOffset.UtcNow.AddMilliseconds(25),
-            DeadlineAfter(TimeSpan.FromMilliseconds(25)),
+            RpcDeadline.Create(TimeSpan.FromMilliseconds(25), timeProvider),
+            timeProvider,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
-        using var scheduledCall = Schedule(state);
+        using var scheduledCall = Schedule(state, timeProvider);
 
-        await WaitUntilAsync(() => state.Reason == ServerCallCancellationReason.DeadlineExceeded);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(25));
 
+        Ensure(state.Reason == ServerCallCancellationReason.DeadlineExceeded,
+            "deadline scheduler should publish the deadline reason at the configured boundary");
         Ensure(state.InvocationToken.IsCancellationRequested, "deadline should cancel the invocation token");
         Ensure(!state.TryClaimResponse(), "deadline must suppress a late response");
     }
@@ -79,40 +82,45 @@ public class ServerCallCancellationStateTests
     [Test]
     public async Task DeadlineReasonShouldBePublishedBeforeInvocationCallbacksRun()
     {
-        var state = Rent(
+        var timeProvider = new ManualTimeProvider();
+        var state = ServerCallCancellationState.Rent(
             20,
-            DateTimeOffset.UtcNow.AddMilliseconds(25),
-            DeadlineAfter(TimeSpan.FromMilliseconds(25)),
+            RpcDeadline.Create(TimeSpan.FromMilliseconds(25), timeProvider),
+            timeProvider,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
-        using var scheduledCall = Schedule(state);
+        using var scheduledCall = Schedule(state, timeProvider);
         var observedReason = new TaskCompletionSource<ServerCallCancellationReason>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var registration = state.InvocationToken.Register(
             () => observedReason.TrySetResult(state.Reason));
 
-        var callbackReason = await observedReason.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        timeProvider.Advance(TimeSpan.FromMilliseconds(25));
+        var callbackReason = await observedReason.Task;
 
         Ensure(callbackReason == ServerCallCancellationReason.DeadlineExceeded,
             "business cancellation callbacks must observe the published deadline reason");
     }
 
     [Test]
-    public async Task NonCooperativeDeadlineShouldNotCreateInvocationCancellationSource()
+    public void NonCooperativeDeadlineShouldNotCreateInvocationCancellationSource()
     {
-        var state = Rent(
+        var timeProvider = new ManualTimeProvider();
+        var state = ServerCallCancellationState.Rent(
             21,
-            DateTimeOffset.UtcNow.AddMilliseconds(25),
-            DeadlineAfter(TimeSpan.FromMilliseconds(25)),
+            RpcDeadline.Create(TimeSpan.FromMilliseconds(25), timeProvider),
+            timeProvider,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: false);
-        using var scheduledCall = Schedule(state);
+        using var scheduledCall = Schedule(state, timeProvider);
 
         Ensure(!state.InvocationToken.CanBeCanceled,
             "non-cooperative calls should not allocate an invocation cancellation source");
-        await WaitUntilAsync(() => state.Reason == ServerCallCancellationReason.DeadlineExceeded);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(25));
+        Ensure(state.Reason == ServerCallCancellationReason.DeadlineExceeded,
+            "the scheduler should publish the non-cooperative deadline reason at the configured boundary");
         Ensure(!state.TryClaimResponse(), "non-cooperative late response must be suppressed");
     }
 
@@ -238,38 +246,42 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
-    public async Task UserCancellationBeforeDeadlineShouldRemainTheTerminalReason()
+    public void UserCancellationBeforeDeadlineShouldRemainTheTerminalReason()
     {
-        var state = Rent(
+        var timeProvider = new ManualTimeProvider();
+        var state = ServerCallCancellationState.Rent(
             23,
-            DateTimeOffset.UtcNow.AddMilliseconds(40),
-            DeadlineAfter(TimeSpan.FromMilliseconds(40)),
+            RpcDeadline.Create(TimeSpan.FromMilliseconds(40), timeProvider),
+            timeProvider,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
-        using var scheduledCall = Schedule(state);
+        using var scheduledCall = Schedule(state, timeProvider);
 
         Ensure(state.TryCancel(ServerCallCancellationReason.RemoteCancel),
             "user cancellation should claim the call");
-        await Task.Delay(80);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(40));
 
         Ensure(state.Reason == ServerCallCancellationReason.RemoteCancel,
             "a later deadline must not replace user cancellation");
     }
 
     [Test]
-    public async Task DeadlineBeforeUserCancellationShouldRemainTheTerminalReason()
+    public void DeadlineBeforeUserCancellationShouldRemainTheTerminalReason()
     {
-        var state = Rent(
+        var timeProvider = new ManualTimeProvider();
+        var state = ServerCallCancellationState.Rent(
             24,
-            DateTimeOffset.UtcNow.AddMilliseconds(20),
-            DeadlineAfter(TimeSpan.FromMilliseconds(20)),
+            RpcDeadline.Create(TimeSpan.FromMilliseconds(20), timeProvider),
+            timeProvider,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
-        using var scheduledCall = Schedule(state);
+        using var scheduledCall = Schedule(state, timeProvider);
 
-        await WaitUntilAsync(() => state.Reason == ServerCallCancellationReason.DeadlineExceeded);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(20));
+        Ensure(state.Reason == ServerCallCancellationReason.DeadlineExceeded,
+            "deadline scheduler should publish the winner before later user cancellation");
 
         Ensure(!state.TryCancel(ServerCallCancellationReason.RemoteCancel),
             "user cancellation must lose after the deadline is published");
@@ -778,17 +790,6 @@ public class ServerCallCancellationStateTests
             moduleDrainingToken,
             supportsCooperativeCancellation);
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        var timeout = DateTime.UtcNow.AddSeconds(2);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= timeout)
-                throw new TimeoutException("condition was not reached");
-            await Task.Delay(5);
-        }
-    }
-
     private static long DeadlineAfter(TimeSpan duration)
         => Stopwatch.GetTimestamp() +
            Math.Max(1L, (long)Math.Ceiling(duration.TotalSeconds * Stopwatch.Frequency));
@@ -844,13 +845,16 @@ public class ServerCallCancellationStateTests
     }
 
     private static ScheduledCall Schedule(ServerCallCancellationState state)
+        => Schedule(state, TimeProvider.System);
+
+    private static ScheduledCall Schedule(ServerCallCancellationState state, TimeProvider timeProvider)
     {
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
         calls.Set(state.RequestId, state);
         var scheduler = new ServerCallDeadlineScheduler(
             calls,
             maxCalls: 1,
-            TimeProvider.System);
+            timeProvider);
         scheduler.Register(state);
         return new ScheduledCall(calls, scheduler, state);
     }
