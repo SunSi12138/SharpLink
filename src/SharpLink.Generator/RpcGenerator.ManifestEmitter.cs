@@ -32,6 +32,10 @@ public partial class RpcGenerator
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static dependency => dependency, StringComparer.Ordinal)
             .ToArray();
+        var referencedCodecDependencies = codecHashes
+            .Where(static codecHash => codecHash.IsReferenced)
+            .OrderBy(static codecHash => codecHash.TypeName, StringComparer.Ordinal)
+            .ToArray();
         var compileTimeDescriptor = BuildCompileTimeDescriptor(contracts, serviceModels, codecs, contractCodecs);
 
         var sb = new StringBuilder();
@@ -56,7 +60,7 @@ public partial class RpcGenerator
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
         sb.AppendLine("[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]");
-        sb.AppendLine($"public sealed partial class {manifestTypeName} : ISharpLinkGeneratedAssemblyManifest");
+        sb.AppendLine($"public sealed partial class {manifestTypeName} : ISharpLinkGeneratedAssemblyManifest, ISharpLinkReferencedCodecDependencyManifest");
         sb.AppendLine("{");
         sb.AppendLine($"    public const string CompileTimeDescriptor = \"{EscapeString(compileTimeDescriptor)}\";");
         sb.AppendLine($"    public static readonly {manifestTypeName} Instance = new();");
@@ -87,18 +91,29 @@ public partial class RpcGenerator
         foreach (var dependency in contractDependencies)
             sb.AppendLine($"        \"{EscapeString(dependency)}\",");
         sb.AppendLine("    };");
+        sb.AppendLine("    private static readonly SharpLinkReferencedCodecDependency[] __referencedCodecDependencies = new SharpLinkReferencedCodecDependency[]");
+        sb.AppendLine("    {");
+        foreach (var dependency in referencedCodecDependencies)
+        {
+            sb.AppendLine("        new SharpLinkReferencedCodecDependency(");
+            sb.AppendLine($"            typeof({dependency.TypeName}),");
+            sb.AppendLine($"            new RpcHash128({dependency.High.ToString(InvariantCulture)}UL, {dependency.Low.ToString(InvariantCulture)}UL)),");
+        }
+        sb.AppendLine("    };");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedContractDescriptor> __readOnlyContracts = Array.AsReadOnly(__contracts);");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedServiceDescriptor> __readOnlyServices = Array.AsReadOnly(__services);");
         sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyCodecs = Array.AsReadOnly(__codecs);");
         sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyContractCodecs = Array.AsReadOnly(__contractCodecs);");
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyContractDependencies = Array.AsReadOnly(__contractDependencies);");
+        sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkReferencedCodecDependency> __readOnlyReferencedCodecDependencies = Array.AsReadOnly(__referencedCodecDependencies);");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => __readOnlyContractCodecs;");
         sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");
         sb.AppendLine("    public IReadOnlyList<string> ContractDependencies => __readOnlyContractDependencies;");
+        sb.AppendLine("    public IReadOnlyList<SharpLinkReferencedCodecDependency> ReferencedCodecDependencies => __readOnlyReferencedCodecDependencies;");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("internal static class __SharpLinkGeneratedAssemblyManifestInitializer");

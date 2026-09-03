@@ -151,6 +151,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codecHash.TypeName));
             hash = unchecked(hash * 31 + codecHash.High.GetHashCode());
             hash = unchecked(hash * 31 + codecHash.Low.GetHashCode());
+            hash = unchecked(hash * 31 + codecHash.IsReferenced.GetHashCode());
         }
         foreach (var requirement in obj.UnsafeBlitRequirements)
         {

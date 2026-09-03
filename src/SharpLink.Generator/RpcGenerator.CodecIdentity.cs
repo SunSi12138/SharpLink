@@ -12,7 +12,11 @@ public partial class RpcGenerator
                 .Select(pair =>
                 {
                     var hash = HashCanonicalPlan(pair.Value, graph, cache, new HashSet<string>(StringComparer.Ordinal));
-                    return new GeneratedCodecHashModel(pair.Key, hash.High, hash.Low);
+                    return new GeneratedCodecHashModel(
+                        pair.Key,
+                        hash.High,
+                        hash.Low,
+                        pair.Value is FinalReferencedCodecPlan);
                 })
                 .ToImmutableArray();
         }
