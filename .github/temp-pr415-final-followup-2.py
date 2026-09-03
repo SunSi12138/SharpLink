@@ -64,6 +64,13 @@ replace_once(path,
 
 path = "test/SharpLink.IntegrationTests/RuntimeAssemblyDependencyIdentityIntegrationTests.cs"
 replace_once(path,
+'''            await harness.Client.StopAsync();
+            await harness.Server.StopAsync();
+''',
+'''            await harness.Client.StopAsync();
+            await harness.Server.StopAsync(TimeSpan.Zero);
+''')
+replace_once(path,
 '''        return ((System.Collections.IDictionary)(field.GetValue(endpoint)
             ?? throw new InvalidOperationException("Dynamic module registry was null."))).Count;
 ''',
