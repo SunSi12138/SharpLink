@@ -31,6 +31,7 @@ jobs:
           text = text.replace('additionalReferences: h2)', 'additionalReferences: [h2])')
           p.write_text(text)
           PY
+          python3 .github/temp-pr415-final-followup-2.py
       - name: Diff check
         run: git diff --check
       - name: Restore
@@ -76,6 +77,8 @@ jobs:
       DOTNET_11_SDK: 11.0.100-preview.7.26381.103
       IOS_SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-5
       SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_IOS_PROBE_TIMEOUT_MS: '60000'
+      SHARPLINK_IOS_PROBE_ATTEMPTS: '1'
     steps:
       - uses: actions/checkout@v4
       - name: Apply Mobile patch
@@ -123,17 +126,19 @@ jobs:
             sleep 2
           done
           xcrun simctl list devices | grep "$udid" | grep '(Booted)'
-      - name: Build and run arm64 iOS CoreCLR producer
+      - name: Build and run arm64 iOS CoreCLR producer (Release/R2R)
         shell: bash
         run: |
           actual="$(dotnet --version)"
           test "$actual" = "$DOTNET_11_SDK"
           rm -rf test/SharpLink.CodecCompatibility.iOS/bin test/SharpLink.CodecCompatibility.iOS/obj
-          dotnet build -c Debug -f net11.0-ios -r iossimulator-arm64 \
+          dotnet build -c Release -f net11.0-ios -r iossimulator-arm64 \
             test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj \
-            -p:CodecRuntime=coreclr
-          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Debug -path '*/net11.0-ios/iossimulator-arm64/*' -name '*.app' -type d | head -n 1)"
+            -p:CodecRuntime=coreclr \
+            -p:PublishReadyToRun=true
+          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Release -path '*/net11.0-ios/iossimulator-arm64/*' -name '*.app' -type d | head -n 1)"
           test -n "$app"
+          file "$app/SharpLink.CodecCompatibility" || true
           xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
           node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
             produce artifacts/codec-compat/ios-arm64-coreclr-corpus \
