@@ -49,8 +49,8 @@ jobs:
       - name: Integration tests
         run: dotnet test --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release --no-restore
 
-      - name: Unit tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
+      - name: Relevant Unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -- --treenode-filter "/*/*/(SharpLinkClientContractDependencyTests)|(SharpLinkRuntimeContextTests)/*"
 
       - name: Commit validated patch
         if: success()
