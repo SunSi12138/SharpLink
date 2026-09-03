@@ -1,0 +1,180 @@
+name: Temp PR415 iOS arm64 R2R Fresh Simulator
+
+on:
+  push:
+    branches:
+      - tmp/pr415-ios-arm64-r2r-fresh-simulator
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      PR_HEAD: 937c6f8497d2aff9b266ddf4649d9808b8a2a634
+      SHARPLINK_COMMIT: 937c6f8497d2aff9b266ddf4649d9808b8a2a634
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 937c6f8497d2aff9b266ddf4649d9808b8a2a634
+      - name: Verify exact PR source
+        run: test "$(git rev-parse HEAD)" = "$PR_HEAD"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Produce canonical desktop corpus
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- produce
+          --output artifacts/codec-compat/desktop-reference
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr415-freshsim-desktop-corpus
+          path: artifacts/codec-compat/desktop-reference
+          if-no-files-found: error
+
+  ios-arm64-r2r-fresh-simulator:
+    needs: desktop-reference
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_11_SDK: 11.0.100-preview.7.26381.103
+      IOS_SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-5
+      PR_HEAD: 937c6f8497d2aff9b266ddf4649d9808b8a2a634
+      SHARPLINK_COMMIT: 937c6f8497d2aff9b266ddf4649d9808b8a2a634
+      SHARPLINK_IOS_PROBE_TIMEOUT_MS: '300000'
+      SHARPLINK_IOS_PROBE_ATTEMPTS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 937c6f8497d2aff9b266ddf4649d9808b8a2a634
+      - name: Verify exact PR source and record runner
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          sw_vers
+          xcodebuild -version
+      - name: Pin .NET 11 Preview 7
+        shell: bash
+        run: |
+          cat > global.json <<EOF
+          {
+            "sdk": {
+              "version": "$DOTNET_11_SDK",
+              "rollForward": "disable",
+              "allowPrerelease": true
+            }
+          }
+          EOF
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.100-preview.7.26381.103
+      - name: Install iOS workload
+        run: dotnet workload install ios
+      - name: Record SDK version
+        shell: bash
+        run: |
+          actual="$(dotnet --version)"
+          test "$actual" = "$DOTNET_11_SDK"
+          echo "SHARPLINK_SDK_VERSION=$actual" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: pr415-freshsim-desktop-corpus
+          path: artifacts/codec-compat/producers/codec-mobile-corpus-desktop-linux-x64
+      - name: Select producer and verifier simulators
+        shell: bash
+        run: |
+          xcrun simctl shutdown all || true
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json, os, subprocess
+          data = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))
+          runtime = os.environ['IOS_SIMULATOR_RUNTIME']
+          devices = [d for d in data['devices'].get(runtime, []) if d.get('isAvailable') and d.get('name', '').startswith('iPhone')]
+          if len(devices) < 2:
+              raise SystemExit(f'Need two available iPhone simulators for {runtime}, found {len(devices)}')
+          print(f"IOS_PRODUCER_UDID={devices[0]['udid']}")
+          print(f"IOS_VERIFIER_UDID={devices[1]['udid']}")
+          PY
+      - name: Boot producer simulator
+        shell: bash
+        run: |
+          xcrun simctl boot "$IOS_PRODUCER_UDID" || true
+          for attempt in $(seq 1 90); do
+            if xcrun simctl list devices | grep "$IOS_PRODUCER_UDID" | grep -q '(Booted)'; then
+              break
+            fi
+            sleep 2
+          done
+          xcrun simctl list devices | grep "$IOS_PRODUCER_UDID" | grep '(Booted)'
+          echo "IOS_SIMULATOR_UDID=$IOS_PRODUCER_UDID" >> "$GITHUB_ENV"
+      - name: Build and run exact-head Release ReadyToRun producer
+        shell: bash
+        run: |
+          rm -rf test/SharpLink.CodecCompatibility.iOS/bin test/SharpLink.CodecCompatibility.iOS/obj
+          dotnet build -c Release -f net11.0-ios -r iossimulator-arm64 \
+            test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj \
+            -p:CodecRuntime=coreclr \
+            -p:PublishReadyToRun=true
+          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Release -path '*/net11.0-ios/iossimulator-arm64/*' -name '*.app' -type d | head -n 1)"
+          test -n "$app"
+          file "$app/SharpLink.CodecCompatibility" || true
+          xcrun simctl install "$IOS_PRODUCER_UDID" "$app"
+          node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
+            produce artifacts/codec-compat/ios-coreclr-corpus \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" \
+            net11.0-ios/iossimulator-arm64
+      - name: Assemble producer fan-in
+        shell: bash
+        run: |
+          mkdir -p artifacts/codec-compat/producers/codec-mobile-corpus-ios-simulator-arm64-coreclr
+          cp -R artifacts/codec-compat/ios-coreclr-corpus/. \
+            artifacts/codec-compat/producers/codec-mobile-corpus-ios-simulator-arm64-coreclr/
+      - name: Switch to fresh verifier simulator
+        shell: bash
+        run: |
+          xcrun simctl shutdown "$IOS_PRODUCER_UDID" || true
+          xcrun simctl boot "$IOS_VERIFIER_UDID" || true
+          for attempt in $(seq 1 90); do
+            if xcrun simctl list devices | grep "$IOS_VERIFIER_UDID" | grep -q '(Booted)'; then
+              break
+            fi
+            sleep 2
+          done
+          xcrun simctl list devices | grep "$IOS_VERIFIER_UDID" | grep '(Booted)'
+          app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Release -path '*/net11.0-ios/iossimulator-arm64/*' -name '*.app' -type d | head -n 1)"
+          test -n "$app"
+          xcrun simctl install "$IOS_VERIFIER_UDID" "$app"
+          echo "IOS_SIMULATOR_UDID=$IOS_VERIFIER_UDID" >> "$GITHUB_ENV"
+      - name: Verify desktop and self edges on fresh simulator
+        shell: bash
+        env:
+          SHARPLINK_SKIP_BUILTIN_RAW: '1'
+        run: |
+          node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
+            verify artifacts/codec-compat/producers \
+            artifacts/codec-compat/ios-coreclr-verification/verification.json \
+            "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" \
+            net11.0-ios/iossimulator-arm64
+      - name: Validate semantic evidence
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('artifacts/codec-compat/ios-coreclr-verification/verification.json', 'utf8'));
+          if (report?.schemaVersion !== 1) throw new Error('Unexpected iOS verification schema.');
+          if (report?.consumer?.runtimeFamily !== 'CoreCLR') throw new Error(`Expected CoreCLR, got ${report?.consumer?.runtimeFamily}`);
+          if (!String(report?.consumer?.platformTag ?? '').endsWith('-coreclr-net11')) throw new Error(`Unexpected platform tag ${report?.consumer?.platformTag}`);
+          const expectedProducers = new Set(['linux-x64-hosted-desktop-coreclr-net10', report.consumer.platformTag]);
+          const actualProducers = new Set((report?.results ?? []).map(item => String(item?.producer ?? '')));
+          if (actualProducers.size !== expectedProducers.size || [...expectedProducers].some(value => !actualProducers.has(value))) {
+            throw new Error(`Unexpected iOS producer set: ${[...actualProducers].sort().join(', ')}`);
+          }
+          const blocking = (report?.results ?? []).filter(item => item?.blocking).length;
+          if (blocking !== 0) throw new Error(`iOS CoreCLR verification has ${blocking} blocking result(s).`);
+          console.log(`Validated iOS CoreCLR report with ${report?.results?.length ?? 0} result(s) and no blockers.`);
+          NODE
