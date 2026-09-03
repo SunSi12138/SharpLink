@@ -226,7 +226,8 @@ public partial class RpcGenerator
                 static pair => GetCodecHash(pair.Value),
                 StringComparer.Ordinal);
         foreach (var codecHash in codecHashes
-                     .Where(static item => item.IsReferenced)
+                     .Where(item => item.IsReferenced ||
+                                    !codecsByType.ContainsKey(RemoveGlobalPrefix(item.TypeName)))
                      .OrderBy(static item => item.TypeName, StringComparer.Ordinal))
         {
             contractCodecHashes[RemoveGlobalPrefix(codecHash.TypeName)] =
@@ -341,9 +342,7 @@ public partial class RpcGenerator
         var emittedCodecTypes = new HashSet<string>(
             document.Codecs.Select(static item => item.Type),
             StringComparer.Ordinal);
-        foreach (var codecHash in codecHashes
-                     .Where(static item => item.IsReferenced)
-                     .OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+        foreach (var codecHash in codecHashes.OrderBy(static item => item.TypeName, StringComparer.Ordinal))
         {
             var typeName = RemoveGlobalPrefix(codecHash.TypeName);
             if (!emittedCodecTypes.Add(typeName))
@@ -351,7 +350,7 @@ public partial class RpcGenerator
             document.Codecs.Add(new ContractManifestCodec
             {
                 Type = typeName,
-                Kind = "Referenced",
+                Kind = codecHash.IsReferenced ? "Referenced" : "Final",
                 CodecHash = new RpcHashValue(codecHash.High, codecHash.Low).ToHex()
             });
         }
