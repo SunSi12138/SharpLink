@@ -43,6 +43,8 @@ public static class Application
             string result;
             if (string.Equals(mode, "produce", StringComparison.Ordinal))
             {
+                TracePortableProducerPreflight();
+                Console.WriteLine("SharpLink codec diagnostic: preflight complete; entering PortableProbe.ProduceJson.");
                 result = PortableProbe.ProduceJson(
                     commit,
                     sdk,
@@ -90,6 +92,21 @@ public static class Application
                 Console.Error.WriteLine($"Failed to persist iOS probe error: {reportingException}");
             }
         }
+    }
+
+    private static void TracePortableProducerPreflight()
+    {
+        Console.WriteLine("SharpLink codec diagnostic: fixture preflight start.");
+        foreach (var fixture in FixtureRegistry.All)
+        {
+            Console.WriteLine($"SharpLink codec diagnostic: fixture start {fixture.Id}.");
+            var bytes = fixture.Serialize();
+            Console.WriteLine($"SharpLink codec diagnostic: fixture complete {fixture.Id} ({bytes.Length} bytes).");
+        }
+
+        Console.WriteLine("SharpLink codec diagnostic: padding poison start.");
+        _ = FixtureRegistry.RunPaddingPoison();
+        Console.WriteLine("SharpLink codec diagnostic: padding poison complete.");
     }
 
     private static void WriteResultAtomically(string resultPath, string contents)
