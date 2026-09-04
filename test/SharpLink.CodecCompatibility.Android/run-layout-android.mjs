@@ -37,10 +37,10 @@ async function waitForResult(launchOutput) {
         await delay(250);
     }
     const logcat = adbTry(['logcat','-d','-t','2000']);
-    const readDiagnostics = lastRead is null
+    const readDiagnostics = lastRead === null
         ? 'result read was never attempted successfully after the file probe'
         : `last result read status: ${lastRead.status}\nstdout:\n${lastRead.stdout ?? ''}\nstderr:\n${lastRead.stderr ?? ''}`;
-    const parseDiagnostics = lastParseError is null
+    const parseDiagnostics = lastParseError === null
         ? ''
         : `\nlast JSON parse error:\n${lastParseError.stack ?? lastParseError}`;
     throw new Error(`Android layout probe timed out.\nam start:\n${launchOutput}\n${readDiagnostics}${parseDiagnostics}\nlogcat:\n${logcat.stdout ?? ''}\n${logcat.stderr ?? ''}`);
