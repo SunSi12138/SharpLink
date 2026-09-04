@@ -26,15 +26,12 @@ internal static class SharpLinkGeneratedDependencyBinding
         // The generated manifest already records the compile-time dependency identity. Resolve that
         // identity through the owner's load context so the result stays bound to the exact runtime
         // assembly generation without depending on Assembly.GetReferencedAssemblies(), whose metadata
-        // view is not preserved by trimming/NativeAOT.
+        // view is not preserved by trimming/NativeAOT. Delegate loaded-assembly reuse to the ALC binder
+        // as well: AssemblyName.ReferenceMatchesDefinition compares only the simple name and would let
+        // an incompatible already-loaded version/culture/public-key identity satisfy this dependency.
         var loadContext = AssemblyLoadContext.GetLoadContext(ownerAssembly);
         if (loadContext is null)
             return null;
-        foreach (var loaded in loadContext.Assemblies)
-        {
-            if (AssemblyName.ReferenceMatchesDefinition(loaded.GetName(), requested))
-                return loaded;
-        }
 
         try
         {
