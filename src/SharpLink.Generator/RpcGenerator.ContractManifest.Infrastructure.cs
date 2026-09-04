@@ -272,6 +272,10 @@ internal static class __SharpLinkContractManifest
         public long Id { get; set; }
         public string Shape { get; set; } = string.Empty;
         public string Fingerprint { get; set; } = string.Empty;
+        public bool Cancellable { get; set; }
+        public bool Idempotent { get; set; }
+        public bool HasTimeout { get; set; }
+        public long? TimeoutTicks { get; set; }
         public List<ContractManifestValue> Request { get; set; } = [];
         public ContractManifestValue Response { get; set; } = new();
         [JsonIgnore] public Location? SourceLocation { get; set; }
@@ -292,6 +296,7 @@ internal static class __SharpLinkContractManifest
     {
         public string Name { get; set; } = string.Empty;
         public string Fingerprint { get; set; } = string.Empty;
+        public string Shape { get; set; } = string.Empty;
         public List<ContractManifestMember> Members { get; set; } = [];
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
@@ -313,6 +318,7 @@ internal static class __SharpLinkContractManifest
         public string? CodecHash { get; set; }
         public bool Nullable { get; set; }
         public bool Required { get; set; }
+        public bool RejectNull { get; set; }
         public bool ExplicitId { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
