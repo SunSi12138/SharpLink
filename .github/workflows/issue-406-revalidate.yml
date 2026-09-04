@@ -45,10 +45,25 @@ jobs:
           path.write_text(text.replace(old, new, 1))
           PY
           python3 /tmp/tmp-issue-406-production-cleanup.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('eng/maintainability/baseline.json')
+          data = json.loads(path.read_text())
+          obsolete = {
+              'src/SharpLink.Client/SharpLinkClient.Interceptors.cs',
+              'src/SharpLink.Server/SharpLinkServer.Interceptors.cs',
+          }
+          before = len(data['allowances'])
+          data['allowances'] = [a for a in data['allowances'] if a.get('path') not in obsolete]
+          if before - len(data['allowances']) != 2:
+              raise SystemExit('expected exactly two interceptor maintainability allowances to remove')
+          path.write_text(json.dumps(data, indent=2) + '\n')
+          PY
           git diff --check
-          git diff --binary -- CHANGELOG.md src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs > /tmp/issue406-production.patch
+          git diff --binary -- CHANGELOG.md eng/maintainability/baseline.json src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs > /tmp/issue406-production.patch
           echo '=== production diff stat ==='
-          git diff --stat -- CHANGELOG.md src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs
+          git diff --stat -- CHANGELOG.md eng/maintainability/baseline.json src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs
           echo '=== legacy continuation tokens (must be empty) ==='
           ! git grep -n -E 'ClientInterceptorContinuation|ClientContinuationState|ServerPipelineFacts|ServerInterceptorContinuation|ServerContinuationState|JoinAndReturnAsync' -- src/SharpLink.Client/SharpLinkClient.Interceptors.cs src/SharpLink.Server/SharpLinkServer.Interceptors.cs
       - name: Upload production patch
