@@ -657,6 +657,20 @@ internal sealed partial class SharpLinkServer
                 incoming.OwnerAssembly,
                 artifact: "Dependency");
         }
+        if (incoming is ISharpLinkReferencedCodecDependencyManifest referencedManifest)
+        {
+            foreach (var dependency in referencedManifest.ReferencedCodecDependencies)
+            {
+                var dependencyAssembly = dependency.TargetType.Assembly;
+                if (ReferenceEquals(dependencyAssembly, incoming.OwnerAssembly) || available.Contains(dependencyAssembly))
+                    continue;
+                return CreateError(
+                    SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
+                    $"Referenced generated Codec dependency '{dependency.TargetType.FullName}' must be owned by the exact registered and running Assembly generation '{dependencyAssembly.FullName}' before registration.",
+                    incoming.OwnerAssembly,
+                    artifact: "Dependency");
+            }
+        }
         return null;
     }
 
