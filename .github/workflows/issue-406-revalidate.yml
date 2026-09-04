@@ -1,0 +1,86 @@
+name: Issue 406 revalidate production shape
+
+on:
+  push:
+    branches:
+      - tmp/issue-406-revalidate
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Materialize production implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=30 origin tmp/issue-406-semantic-option2:refs/remotes/origin/tmp/issue-406-semantic-option2
+          git fetch --depth=10 origin tmp/issue-406-production-stage:refs/remotes/origin/tmp/issue-406-production-stage
+          for script in tmp-issue-406-option2.py tmp-issue-406-option2-fix.py tmp-issue-406-option2-server-context.py; do
+            git show "refs/remotes/origin/tmp/issue-406-semantic-option2:eng/$script" > "/tmp/$script"
+          done
+          git show refs/remotes/origin/tmp/issue-406-production-stage:eng/tmp-issue-406-production-cleanup.py > /tmp/tmp-issue-406-production-cleanup.py
+          python3 /tmp/tmp-issue-406-option2.py
+          python3 /tmp/tmp-issue-406-option2-fix.py
+          python3 /tmp/tmp-issue-406-option2-server-context.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/tmp-issue-406-production-cleanup.py')
+          text = path.read_text()
+          old = "    '### Changed\\n\\n',\n    '### Changed\\n\\n'"
+          new = "    '## [Unreleased]\\n\\n### Changed\\n\\n',\n    '## [Unreleased]\\n\\n### Changed\\n\\n'"
+          if text.count(old) != 1:
+              raise SystemExit(f'cleanup changelog anchor patch expected once, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          python3 /tmp/tmp-issue-406-production-cleanup.py
+          git diff --check
+          git diff --binary -- CHANGELOG.md src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs > /tmp/issue406-production.patch
+          echo '=== production diff stat ==='
+          git diff --stat -- CHANGELOG.md src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs
+          echo '=== legacy continuation tokens (must be empty) ==='
+          ! git grep -n -E 'ClientInterceptorContinuation|ClientContinuationState|ServerPipelineFacts|ServerInterceptorContinuation|ServerContinuationState|JoinAndReturnAsync' -- src/SharpLink.Client/SharpLinkClient.Interceptors.cs src/SharpLink.Server/SharpLinkServer.Interceptors.cs
+      - name: Upload production patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue406-production-patch
+          path: /tmp/issue406-production.patch
+          if-no-files-found: error
+          retention-days: 3
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+      - name: Project reference boundary guard
+        run: python3 eng/check-project-reference-boundaries.py
+      - name: Verify formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+      - name: Maintainability debt gate tests
+        run: python3 eng/test-verify-maintainability.py
+      - name: Maintainability debt gate
+        run: bash eng/check-maintainability.sh
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Verify generated assembly dependencies
+        run: ./eng/verify-generated-assembly-dependencies.sh
+      - name: Unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+      - name: Generator tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+      - name: Load test tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+      - name: Integration tests
+        run: dotnet test --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release --no-build
+      - name: NativeAOT transport and topology smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
