@@ -1,0 +1,210 @@
+name: Issue 406 option 2 async shapes v2
+
+on:
+  push:
+    branches:
+      - tmp/issue-406-option2-shapes2
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Prepare same-runner baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin a34f26f3c6e4b4209d5a23858a4b3254f96b1147
+          git worktree add /tmp/issue406-shape-base a34f26f3c6e4b4209d5a23858a4b3254f96b1147
+          cat >/tmp/Issue406ShapeBenchmarks.cs <<'CS'
+          using System;
+          using System.Linq;
+          using System.Threading.Tasks;
+          using BenchmarkDotNet.Attributes;
+          using BenchmarkDotNet.Engines;
+          using SharpLink.Abstractions;
+
+          namespace SharpLink.Benchmarks;
+
+          [MemoryDiagnoser]
+          [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 2, invocationCount: 256, iterationCount: 4)]
+          public class Issue406AsyncShapeBenchmarks
+          {
+              private BenchmarkEnvironment _env = null!;
+
+              [Params("Client", "Server")]
+              public string Side { get; set; } = null!;
+
+              [Params(1, 3, 8)]
+              public int Depth { get; set; }
+
+              [Params("Sync", "Before", "After", "Both")]
+              public string Mode { get; set; } = null!;
+
+              [GlobalSetup]
+              public async Task Setup()
+              {
+                  var clients = Enumerable.Range(0, Depth).Select(_ => CreateClient(Mode)).ToArray();
+                  var servers = Enumerable.Range(0, Depth).Select(_ => CreateServer(Mode)).ToArray();
+                  _env = await BenchmarkEnvironment.CreateAsync(
+                      configureBuiltServer: server => server.ReplaceInterceptors(
+                          Side == "Server" ? servers : Array.Empty<ISharpLinkServerInterceptor>()),
+                      configureBuiltClient: client => client.ReplaceInterceptors(
+                          Side == "Client" ? clients : Array.Empty<ISharpLinkClientInterceptor>()));
+              }
+
+              [GlobalCleanup]
+              public async Task Cleanup() => await _env.DisposeAsync();
+
+              [Benchmark]
+              public ValueTask<int> Rpc_Add() => _env.Rpc.AddAsync(10, 20);
+
+              private static ISharpLinkClientInterceptor CreateClient(string mode) => mode switch
+              {
+                  "Sync" => new ClientSync(),
+                  "Before" => new ClientBefore(),
+                  "After" => new ClientAfter(),
+                  _ => new ClientBoth()
+              };
+
+              private static ISharpLinkServerInterceptor CreateServer(string mode) => mode switch
+              {
+                  "Sync" => new ServerSync(),
+                  "Before" => new ServerBefore(),
+                  "After" => new ServerAfter(),
+                  _ => new ServerBoth()
+              };
+
+              private sealed class ClientSync : ISharpLinkClientInterceptor
+              {
+                  public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(SharpLinkClientInvocationContext c, SharpLinkClientInvocationDelegate n) => n(c);
+              }
+              private sealed class ClientBefore : ISharpLinkClientInterceptor
+              {
+                  public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(SharpLinkClientInvocationContext c, SharpLinkClientInvocationDelegate n)
+                  { await Task.Yield(); return await n(c); }
+              }
+              private sealed class ClientAfter : ISharpLinkClientInterceptor
+              {
+                  public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(SharpLinkClientInvocationContext c, SharpLinkClientInvocationDelegate n)
+                  { var r = await n(c); await Task.Yield(); return r; }
+              }
+              private sealed class ClientBoth : ISharpLinkClientInterceptor
+              {
+                  public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(SharpLinkClientInvocationContext c, SharpLinkClientInvocationDelegate n)
+                  { await Task.Yield(); var r = await n(c); await Task.Yield(); return r; }
+              }
+
+              private sealed class ServerSync : ISharpLinkServerInterceptor
+              {
+                  public ValueTask InvokeAsync(SharpLinkServerInvocationContext c, SharpLinkServerInvocationDelegate n) => n(c);
+              }
+              private sealed class ServerBefore : ISharpLinkServerInterceptor
+              {
+                  public async ValueTask InvokeAsync(SharpLinkServerInvocationContext c, SharpLinkServerInvocationDelegate n)
+                  { await Task.Yield(); await n(c); }
+              }
+              private sealed class ServerAfter : ISharpLinkServerInterceptor
+              {
+                  public async ValueTask InvokeAsync(SharpLinkServerInvocationContext c, SharpLinkServerInvocationDelegate n)
+                  { await n(c); await Task.Yield(); }
+              }
+              private sealed class ServerBoth : ISharpLinkServerInterceptor
+              {
+                  public async ValueTask InvokeAsync(SharpLinkServerInvocationContext c, SharpLinkServerInvocationDelegate n)
+                  { await Task.Yield(); await n(c); await Task.Yield(); }
+              }
+          }
+
+          [MemoryDiagnoser]
+          [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 2, iterationCount: 6)]
+          public class Issue406PublicationBenchmarks
+          {
+              private BenchmarkEnvironment _env = null!;
+              private ISharpLinkClientInterceptor[] _clients = null!;
+              private ISharpLinkServerInterceptor[] _servers = null!;
+              private Action _replace = null!;
+
+              [Params("Client", "Server")]
+              public string Side { get; set; } = null!;
+
+              [Params(0, 1, 3, 8)]
+              public int Depth { get; set; }
+
+              [GlobalSetup]
+              public async Task Setup()
+              {
+                  _clients = Enumerable.Range(0, Depth).Select(static _ => (ISharpLinkClientInterceptor)new ClientPass()).ToArray();
+                  _servers = Enumerable.Range(0, Depth).Select(static _ => (ISharpLinkServerInterceptor)new ServerPass()).ToArray();
+                  Action? replace = null;
+                  _env = await BenchmarkEnvironment.CreateAsync(
+                      configureBuiltServer: server =>
+                      {
+                          if (Side == "Server") replace = () => server.ReplaceInterceptors(_servers);
+                      },
+                      configureBuiltClient: client =>
+                      {
+                          if (Side == "Client") replace = () => client.ReplaceInterceptors(_clients);
+                      });
+                  _replace = replace ?? throw new InvalidOperationException("Replacement callback was not captured.");
+              }
+
+              [GlobalCleanup]
+              public async Task Cleanup() => await _env.DisposeAsync();
+
+              [Benchmark]
+              public void ReplaceGeneration() => _replace();
+
+              private sealed class ClientPass : ISharpLinkClientInterceptor
+              {
+                  public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(SharpLinkClientInvocationContext c, SharpLinkClientInvocationDelegate n) => n(c);
+              }
+              private sealed class ServerPass : ISharpLinkServerInterceptor
+              {
+                  public ValueTask InvokeAsync(SharpLinkServerInvocationContext c, SharpLinkServerInvocationDelegate n) => n(c);
+              }
+          }
+          CS
+          cp /tmp/Issue406ShapeBenchmarks.cs /tmp/issue406-shape-base/test/SharpLink.Benchmarks/Issue406ShapeBenchmarks.cs
+          cp /tmp/Issue406ShapeBenchmarks.cs test/SharpLink.Benchmarks/Issue406ShapeBenchmarks.cs
+          python3 eng/tmp-issue-406-option2.py
+          python3 eng/tmp-issue-406-option2-fix.py
+          python3 eng/tmp-issue-406-option2-server-context.py
+          git diff --check
+      - name: Build baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore /tmp/issue406-shape-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build /tmp/issue406-shape-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+      - name: Run baseline async shapes
+        working-directory: /tmp/issue406-shape-base
+        run: dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*Issue406AsyncShapeBenchmarks*' | tee /tmp/issue406-shape-baseline.log
+      - name: Run candidate async shapes
+        run: dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*Issue406AsyncShapeBenchmarks*' | tee /tmp/issue406-shape-candidate.log
+      - name: Run baseline publication
+        working-directory: /tmp/issue406-shape-base
+        run: dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*Issue406PublicationBenchmarks*' | tee /tmp/issue406-pub-baseline.log
+      - name: Run candidate publication
+        run: dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*Issue406PublicationBenchmarks*' | tee /tmp/issue406-pub-candidate.log
+      - name: Print summary rows
+        if: always()
+        shell: bash
+        run: |
+          echo '=== ASYNC BASELINE ==='; grep -E '^\| Rpc_Add' /tmp/issue406-shape-baseline.log || true
+          echo '=== ASYNC CANDIDATE ==='; grep -E '^\| Rpc_Add' /tmp/issue406-shape-candidate.log || true
+          echo '=== PUBLICATION BASELINE ==='; grep -E '^\| ReplaceGeneration' /tmp/issue406-pub-baseline.log || true
+          echo '=== PUBLICATION CANDIDATE ==='; grep -E '^\| ReplaceGeneration' /tmp/issue406-pub-candidate.log || true
