@@ -49,6 +49,13 @@ public partial class RpcGenerator
             includeContracts: true);
         var contractPolicy = contractPolicyState.FinalizeResolvedCodecCandidates(contractPolicyGraph);
         var codecHashes = contractPolicyState.BuildFinalCodecHashes(contractPolicyGraph);
+        var referencedCodecHashes = standaloneHashes
+            .Concat(codecHashes)
+            .Where(static hash => hash.IsReferenced)
+            .GroupBy(static hash => hash.TypeName, StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .OrderBy(static hash => hash.TypeName, StringComparer.Ordinal)
+            .ToImmutableArray();
         var unsafeBlitAutoLayoutDiagnostics =
             DtoAnalysisState.BuildUnsafeBlitAutoLayoutDiagnostics(contractPolicyGraph);
         var unsafeBlitRequirements = BuildUnsafeBlitRequirements(standaloneGraph, contractPolicyGraph);
@@ -148,6 +155,7 @@ public partial class RpcGenerator
             enums)
         {
             CodecHashes = codecHashes,
+            ReferencedCodecHashes = referencedCodecHashes,
             UnsafeBlitRequirements = unsafeBlitRequirements,
             UnsafeBlitAutoLayoutDiagnostics = unsafeBlitAutoLayoutDiagnostics,
             AssemblyLogicalIdentity = compilation.Assembly.Identity.Name
