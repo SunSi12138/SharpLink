@@ -1,0 +1,125 @@
+name: Issue 406 option 2 real RPC benchmark
+
+on:
+  push:
+    branches:
+      - tmp/issue-406-semantic-option2
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Prepare same-runner baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin a34f26f3c6e4b4209d5a23858a4b3254f96b1147
+          git worktree add /tmp/issue406-base a34f26f3c6e4b4209d5a23858a4b3254f96b1147
+          cat >/tmp/Issue406RealRpcBenchmarks.cs <<'CS'
+          using BenchmarkDotNet.Attributes;
+          using BenchmarkDotNet.Engines;
+          using SharpLink.Abstractions;
+
+          namespace SharpLink.Benchmarks;
+
+          [MemoryDiagnoser]
+          [SimpleJob(
+              RunStrategy.Throughput,
+              launchCount: 1,
+              warmupCount: 2,
+              invocationCount: 1024,
+              iterationCount: 5)]
+          public class Issue406RealRpcBenchmarks
+          {
+              private BenchmarkEnvironment _env = null!;
+
+              [Params("Client", "Server")]
+              public string Side { get; set; } = null!;
+
+              [Params(0, 1, 3, 8)]
+              public int Depth { get; set; }
+
+              [GlobalSetup]
+              public async Task Setup()
+              {
+                  var clientInterceptors = Enumerable.Range(0, Depth)
+                      .Select(static _ => (ISharpLinkClientInterceptor)new ClientPassThrough())
+                      .ToArray();
+                  var serverInterceptors = Enumerable.Range(0, Depth)
+                      .Select(static _ => (ISharpLinkServerInterceptor)new ServerPassThrough())
+                      .ToArray();
+
+                  _env = await BenchmarkEnvironment.CreateAsync(
+                      configureBuiltServer: server => server.ReplaceInterceptors(
+                          Side == "Server" ? serverInterceptors : Array.Empty<ISharpLinkServerInterceptor>()),
+                      configureBuiltClient: client => client.ReplaceInterceptors(
+                          Side == "Client" ? clientInterceptors : Array.Empty<ISharpLinkClientInterceptor>()));
+              }
+
+              [GlobalCleanup]
+              public async Task Cleanup() => await _env.DisposeAsync();
+
+              [Benchmark]
+              public ValueTask<int> Rpc_Add() => _env.Rpc.AddAsync(10, 20);
+
+              private sealed class ClientPassThrough : ISharpLinkClientInterceptor
+              {
+                  public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+                      SharpLinkClientInvocationContext context,
+                      SharpLinkClientInvocationDelegate next)
+                      => next(context);
+              }
+
+              private sealed class ServerPassThrough : ISharpLinkServerInterceptor
+              {
+                  public ValueTask InvokeAsync(
+                      SharpLinkServerInvocationContext context,
+                      SharpLinkServerInvocationDelegate next)
+                      => next(context);
+              }
+          }
+          CS
+          cp /tmp/Issue406RealRpcBenchmarks.cs /tmp/issue406-base/test/SharpLink.Benchmarks/Issue406RealRpcBenchmarks.cs
+          cp /tmp/Issue406RealRpcBenchmarks.cs test/SharpLink.Benchmarks/Issue406RealRpcBenchmarks.cs
+          python3 eng/tmp-issue-406-option2.py
+          python3 eng/tmp-issue-406-option2-fix.py
+          git diff --check
+      - name: Build baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore /tmp/issue406-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build /tmp/issue406-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+      - name: Run baseline
+        shell: bash
+        working-directory: /tmp/issue406-base
+        run: |
+          set -euo pipefail
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*Issue406RealRpcBenchmarks*' | tee /tmp/issue406-baseline.log
+      - name: Run candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*Issue406RealRpcBenchmarks*' | tee /tmp/issue406-candidate.log
+      - name: Print comparison rows
+        if: always()
+        shell: bash
+        run: |
+          echo '=== BASELINE SUMMARY ==='
+          grep -E '^\| Rpc_Add' /tmp/issue406-baseline.log || true
+          echo '=== CANDIDATE SUMMARY ==='
+          grep -E '^\| Rpc_Add' /tmp/issue406-candidate.log || true
