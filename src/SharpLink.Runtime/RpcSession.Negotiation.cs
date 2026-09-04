@@ -76,7 +76,7 @@ internal sealed partial class RpcSession
                 $"Negotiated protocol minor version {options.ProtocolMinorVersion} exceeds the local " +
                 $"version {ProtocolV2Constants.MinorVersion}.");
         }
-        if ((options.Capabilities & ~RpcSessionProtocolRules.KnownCapabilities) != 0)
+        if ((options.Capabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0)
             throw NegotiationViolation("Negotiated capabilities contain unknown bits.");
         if (options.MaxFramePayloadBytes < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
             options.MaxFramePayloadBytes > RuntimeContext.Protocol.MaxFramePayloadBytes)

@@ -62,6 +62,8 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 3: protocol health check
 - bit 4: cancellation reason
 
+当前 wire generation 只接受 `minor 5`（`MinimumCompatibleMinorVersion == MinorVersion == 5`）；minor 因此只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
+
 minor 4 的 `HandshakeRequest` 在三个固定限制字段后编码：
 
 ```text
