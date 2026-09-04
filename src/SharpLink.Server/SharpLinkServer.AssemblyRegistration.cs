@@ -271,6 +271,17 @@ internal sealed partial class SharpLinkServer
                     }
                     else
                     {
+                        var dependencyError = ValidateDependencies(
+                            manifest!,
+                            _dynamicModules.Values
+                                .Where(module => !ReferenceEquals(module, oldModule))
+                                .ToArray());
+                        if (dependencyError is not null)
+                        {
+                            rollbackError = dependencyError;
+                            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
+                        }
+
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
