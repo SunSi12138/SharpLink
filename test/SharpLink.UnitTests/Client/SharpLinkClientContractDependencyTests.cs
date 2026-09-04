@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using SharpLink.Abstractions;
 using SharpLink.Client;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 namespace SharpLink.UnitTests.Client;
@@ -19,6 +20,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task DynamicDependencyValidationShouldIncludeContractDependencies()
     {
         await using var client = SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
@@ -45,6 +47,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task ClientUnregisterShouldProtectContractDependencies()
     {
         await using var client = SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
@@ -97,6 +100,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task StaleApi4DescriptorAbiShouldBeRejectedBeforeManifestActivation()
     {
         await using var client = SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
