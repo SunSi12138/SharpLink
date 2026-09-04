@@ -20,7 +20,7 @@
 
 深入资料：[架构总览](architecture.md)（[Generator](architecture-generator.md) / [Runtime](architecture-runtime.md) / [Client](architecture-client.md) / [Server](architecture-server.md)）、[生产项目引用边界](project-reference-boundaries.md)、[测试项目引用边界](test-project-reference-boundaries.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
 
-工程与 CI 资料：[CI validation tiers](ci-validation-tiers.md)、[PR Fast gate](pr-fast.md)、[Phase 0 decode performance evidence](phase0-decode-performance.md)。
+工程与 CI 资料：[ADR 约定](adr/README.md)、[CI validation tiers](ci-validation-tiers.md)、[PR Fast gate](pr-fast.md)、[Phase 0 decode performance evidence](phase0-decode-performance.md)。
 
 ## 特性与可运行证据
 
