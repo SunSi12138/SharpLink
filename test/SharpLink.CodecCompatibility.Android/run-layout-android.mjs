@@ -18,12 +18,32 @@ function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 async function waitForResult(launchOutput) {
     const deadline = Date.now() + 120_000;
+    let lastRead = null;
+    let lastParseError = null;
     while (Date.now() < deadline) {
-        if (adbTry(['shell','run-as',packageName,'test','-f',resultFile]).status === 0) return adb(['shell','run-as',packageName,'cat',resultFile]);
+        if (adbTry(['shell','run-as',packageName,'test','-f',resultFile]).status === 0) {
+            const read = adbTry(['shell','run-as',packageName,'cat',resultFile]);
+            lastRead = read;
+            if (read.status === 0) {
+                const text = read.stdout ?? '';
+                try {
+                    JSON.parse(text);
+                    return text;
+                } catch (error) {
+                    lastParseError = error;
+                }
+            }
+        }
         await delay(250);
     }
     const logcat = adbTry(['logcat','-d','-t','2000']);
-    throw new Error(`Android layout probe timed out.\nam start:\n${launchOutput}\nlogcat:\n${logcat.stdout ?? ''}\n${logcat.stderr ?? ''}`);
+    const readDiagnostics = lastRead is null
+        ? 'result read was never attempted successfully after the file probe'
+        : `last result read status: ${lastRead.status}\nstdout:\n${lastRead.stdout ?? ''}\nstderr:\n${lastRead.stderr ?? ''}`;
+    const parseDiagnostics = lastParseError is null
+        ? ''
+        : `\nlast JSON parse error:\n${lastParseError.stack ?? lastParseError}`;
+    throw new Error(`Android layout probe timed out.\nam start:\n${launchOutput}\n${readDiagnostics}${parseDiagnostics}\nlogcat:\n${logcat.stdout ?? ''}\n${logcat.stderr ?? ''}`);
 }
 
 async function run(mode, producerRoot, outputPath, profile, commit, sdk, runtimeFamily) {
