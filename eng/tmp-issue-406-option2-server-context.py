@@ -30,6 +30,11 @@ server_generation = '''namespace SharpLink.Server;\n\ninternal sealed partial cl
 Path('src/SharpLink.Server/SharpLinkServer.InterceptorGeneration.cs').write_text(server_generation)
 
 server = 'src/SharpLink.Server/SharpLinkServer.Interceptors.cs'
+# The first prototype temporarily stores ServerPipelineFacts in the invocation context.
+# This optimized candidate bypasses that fallback entirely, so remove its dead assignment
+# instead of keeping an extra object field on every intercepted Server invocation.
+replace_once(server, '                context.InterceptorPipelineState = this;\n', '')
+
 old_zero = '''            await new ServerPipelineFacts(\n                interceptors,\n                stub,\n                service,\n                session,\n                generatedBridge,\n                methodId,\n                requestId,\n                ReadOnlySequence<byte>.Empty,\n                output,\n                _runtimeContext.TimeProvider,\n                cancellationToken).InvokeAsync(context).ConfigureAwait(false);'''
 new_zero = '''            await InvokeComposedServerInterceptorsAsync(\n                interceptors,\n                stub,\n                service,\n                generatedBridge,\n                methodId,\n                requestId,\n                ReadOnlySequence<byte>.Empty,\n                output,\n                cancellationToken,\n                context).ConfigureAwait(false);'''
 replace_once(server, old_zero, new_zero)
