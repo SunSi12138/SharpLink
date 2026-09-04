@@ -256,6 +256,10 @@ public partial class RpcGenerator
                     Id = method.Hash,
                     Shape = GetMethodKind(method),
                     Fingerprint = method.Fingerprint,
+                    Cancellable = method.HasCancellationToken,
+                    Idempotent = method.IsIdempotent,
+                    HasTimeout = method.HasTimeoutAttribute,
+                    TimeoutTicks = method.TimeoutTicks,
                     SourceLocation = method.Location
                 };
                 foreach (var parameter in method.Parameters.Where(static parameter =>
@@ -309,6 +313,7 @@ public partial class RpcGenerator
             {
                 Name = RemoveGlobalPrefix(codec.TypeName),
                 Fingerprint = codec.SchemaId,
+                Shape = codec.IsReferenceType ? "reference" : "value",
                 SourceLocation = codec.Location
             };
             foreach (var member in codec.Members.OrderBy(static item => item.FieldId))
@@ -322,6 +327,7 @@ public partial class RpcGenerator
                     CodecHash = GetContractCodecHash(member.TypeName, contractCodecHashes),
                     Nullable = member.Nullable,
                     Required = member.Required,
+                    RejectNull = member.Required && member.NonNullableReference,
                     ExplicitId = member.HasExplicitId,
                     SourceLocation = member.Location
                 });
