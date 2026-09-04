@@ -24,6 +24,7 @@ jobs:
       - name: Apply real source prototype in runner workspace
         run: |
           python3 eng/tmp-issue-406-option2.py
+          python3 eng/tmp-issue-406-option2-fix.py
           git diff --check
           git status --short
           git diff --stat
