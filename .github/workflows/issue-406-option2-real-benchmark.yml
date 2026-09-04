@@ -98,6 +98,7 @@ jobs:
           cp /tmp/Issue406RealRpcBenchmarks.cs test/SharpLink.Benchmarks/Issue406RealRpcBenchmarks.cs
           python3 eng/tmp-issue-406-option2.py
           python3 eng/tmp-issue-406-option2-fix.py
+          python3 eng/tmp-issue-406-option2-server-context.py
           git diff --check
       - name: Build baseline and candidate
         shell: bash
