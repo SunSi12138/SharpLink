@@ -23,7 +23,6 @@ internal sealed partial class SharpLinkClient
                 TaskCreationOptions.RunContinuationsAsynchronously);
             operation = completion.Task;
             _unregisterOperations.Add(assembly, operation);
-            module.TryBeginDraining();
             _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
             if (State != SharpLinkConnectionState.Draining)
             {
@@ -41,6 +40,7 @@ internal sealed partial class SharpLinkClient
         SharpLinkDynamicModule module,
         TimeSpan gracefulTimeout)
     {
+        module.TryBeginDraining();
         var drainTask = module.WaitForDrainAsync();
         if (!drainTask.IsCompleted)
         {
