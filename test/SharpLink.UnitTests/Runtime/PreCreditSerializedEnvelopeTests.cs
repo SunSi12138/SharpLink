@@ -105,7 +105,7 @@ public class PreCreditSerializedEnvelopeTests
     {
         try
         {
-            await task;
+            await task.WaitAsync(TimeSpan.FromSeconds(10));
         }
         catch (Exception exception) when (ReferenceEquals(exception, expected))
         {
