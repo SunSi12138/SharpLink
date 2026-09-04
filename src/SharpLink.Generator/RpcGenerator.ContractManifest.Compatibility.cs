@@ -166,6 +166,18 @@ public partial class RpcGenerator
                         $"RPC shape changed from {oldMethod.Shape} to {newMethod.Shape}",
                         "add a new method for the new Unary/Streaming shape"));
                 }
+                if (oldMethod.Cancellable != newMethod.Cancellable ||
+                    oldMethod.Idempotent != newMethod.Idempotent ||
+                    oldMethod.HasTimeout != newMethod.HasTimeout ||
+                    oldMethod.TimeoutTicks != newMethod.TimeoutTicks)
+                {
+                    diagnostics.Add(Change(
+                        ContractCompatibilityKind.WireType,
+                        newMethod.SourceLocation,
+                        $"{newContract.Name}.{newMethod.Name}",
+                        $"method behavior changed from cancellable={oldMethod.Cancellable}/idempotent={oldMethod.Idempotent}/timeout={oldMethod.HasTimeout}:{oldMethod.TimeoutTicks} to cancellable={newMethod.Cancellable}/idempotent={newMethod.Idempotent}/timeout={newMethod.HasTimeout}:{newMethod.TimeoutTicks}",
+                        "restore the previous cancellation, idempotency, and normalized timeout semantics or add a new method route"));
+                }
                 CompareValues(oldMethod.Request, newMethod.Request,
                     $"{newContract.Name}.{newMethod.Name} request", newMethod.SourceLocation, diagnostics);
                 CompareValues([oldMethod.Response], [newMethod.Response],
@@ -178,6 +190,15 @@ public partial class RpcGenerator
         {
             if (!currentDtos.TryGetValue(oldDto.Name, out var newDto))
                 continue;
+            if (!string.Equals(oldDto.Shape, newDto.Shape, StringComparison.Ordinal))
+            {
+                diagnostics.Add(Change(
+                    ContractCompatibilityKind.WireType,
+                    newDto.SourceLocation,
+                    newDto.Name,
+                    $"DTO envelope changed from {oldDto.Shape} to {newDto.Shape}",
+                    "restore the previous reference/value DTO shape or publish a new payload type"));
+            }
             var newById = newDto.Members.ToDictionary(static item => item.Id);
             var newByName = newDto.Members.ToDictionary(static item => item.Name, StringComparer.Ordinal);
             var matchedNewIds = new HashSet<uint>();
@@ -196,6 +217,15 @@ public partial class RpcGenerator
                             $"{newDto.Name}.{newMember.Name}",
                             $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType}/{oldMember.CodecHash} to {newMember.Type}/{newMember.WireType}/{newMember.CodecHash}",
                             "restore the old wire type or semantic Codec identity, or add a new optional member ID"));
+                    }
+                    if (oldMember.RejectNull != newMember.RejectNull)
+                    {
+                        diagnostics.Add(Change(
+                            ContractCompatibilityKind.WireType,
+                            newMember.SourceLocation,
+                            $"{newDto.Name}.{newMember.Name}",
+                            $"required-reference null rejection changed from {oldMember.RejectNull} to {newMember.RejectNull}",
+                            "restore the previous effective required-reference nullability contract or publish a new payload type"));
                     }
                     if (!oldMember.Required && newMember.Required)
                     {
@@ -261,13 +291,6 @@ public partial class RpcGenerator
             }
         }
 
-        var directlyDescribedCodecTypes = new HashSet<string>(
-            baseline.Contracts
-                .SelectMany(static contract => contract.Methods)
-                .SelectMany(static method => method.Request.Append(method.Response))
-                .Select(static value => value.Type)
-                .Concat(baseline.Dtos.SelectMany(static dto => dto.Members).Select(static member => member.Type)),
-            StringComparer.Ordinal);
         var currentCodecs = current.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
         foreach (var oldCodec in baseline.Codecs)
         {
@@ -284,8 +307,6 @@ public partial class RpcGenerator
                 string.Equals(newCodec.Kind, "Referenced", StringComparison.Ordinal) ||
                 string.Equals(newCodec.Kind, "Final", StringComparison.Ordinal);
             if (!identityBound || string.Equals(oldCodec.CodecHash, newCodec.CodecHash, StringComparison.Ordinal))
-                continue;
-            if (directlyDescribedCodecTypes.Contains(oldCodec.Type))
                 continue;
 
             diagnostics.Add(Change(
