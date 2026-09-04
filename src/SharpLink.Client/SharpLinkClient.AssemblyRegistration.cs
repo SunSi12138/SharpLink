@@ -237,6 +237,16 @@ internal sealed partial class SharpLinkClient
                                 newAssembly);
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                         }
+                        var dependencyError = ValidateDependencies(
+                            manifest!,
+                            _dynamicModules.Values
+                                .Where(module => !ReferenceEquals(module, oldModule))
+                                .ToArray());
+                        if (dependencyError is not null)
+                        {
+                            rollbackError = dependencyError;
+                            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
+                        }
 
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
