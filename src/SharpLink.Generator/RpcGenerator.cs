@@ -347,6 +347,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 codecs,
                 contractCodecs,
                 codecHashes,
+                value.Right.ReferencedCodecHashes,
                 value.Right.AssemblyLogicalIdentity);
             if (!string.IsNullOrEmpty(code))
             {
