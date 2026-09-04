@@ -23,22 +23,31 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         context.PublishGeneratedCodecs(providerRegistration.Codecs, providerRegistration);
         context.AdoptGeneratedManifest(providerRegistration);
 
+        var localPayloadCodec = RpcGeneratedCodecResolver
+            .GetProvider(context, providerManifest.OwnerAssembly)
+            .GetCodec<ReferencedPayload>() as ReferencedPayloadCodec;
+        AssertFrozenOwnerGraph(localPayloadCodec, "provider manifest local resolution");
+
         var consumerManifest = new ConsumerManifest(typeof(IContractA).Assembly);
         var consumerRegistration = context.PrepareGeneratedManifest(consumerManifest);
         context.AdoptGeneratedManifest(consumerRegistration);
 
-        var payloadCodec = RpcGeneratedCodecResolver
+        var referencedPayloadCodec = RpcGeneratedCodecResolver
             .GetProvider(context, consumerManifest.OwnerAssembly)
             .GetCodec<ReferencedPayload>() as ReferencedPayloadCodec;
+        AssertFrozenOwnerGraph(referencedPayloadCodec, "referenced consumer resolution");
+    }
 
+    private static void AssertFrozenOwnerGraph(ReferencedPayloadCodec? payloadCodec, string path)
+    {
         Ensure(payloadCodec is not null,
-            "the consumer must resolve the exact referenced provider registration");
+            $"{path} must resolve the provider-owned generated payload registration");
         Ensure(payloadCodec!.Child is ReferencedChildCodec,
-            "the referenced payload factory must resolve its generated child through the provider manifest's frozen global graph, not an endpoint AddCodec override");
+            $"{path} must resolve the generated child through the provider manifest's frozen global graph, not an endpoint AddCodec override");
         Ensure(payloadCodec.FallbackChild is not EndpointFallbackChildCodec,
-            "the referenced payload factory must resolve unmanaged fallback semantics from the provider manifest's frozen graph, not endpoint UseCodecResolver state");
+            $"{path} must resolve unmanaged fallback semantics from the provider manifest's frozen graph, not endpoint UseCodecResolver state");
         Ensure(payloadCodec.FallbackChild.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
-            "the provider-owned fallback child must use the compile-time unmanaged fallback strategy");
+            $"{path} must use the compile-time unmanaged fallback strategy");
     }
 
     private sealed class ReferencedPayload { }
