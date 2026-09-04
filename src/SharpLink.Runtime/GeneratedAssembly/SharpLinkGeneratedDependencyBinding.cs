@@ -26,22 +26,57 @@ internal static class SharpLinkGeneratedDependencyBinding
         // The generated manifest already records the compile-time dependency identity. Resolve that
         // identity through the owner's load context so the result stays bound to the exact runtime
         // assembly generation without depending on Assembly.GetReferencedAssemblies(), whose metadata
-        // view is not preserved by trimming/NativeAOT. Delegate loaded-assembly reuse to the ALC binder
-        // as well: AssemblyName.ReferenceMatchesDefinition compares only the simple name and would let
-        // an incompatible already-loaded version/culture/public-key identity satisfy this dependency.
+        // view is not preserved by trimming/NativeAOT. Delegate loaded-assembly reuse to the ALC binder,
+        // then verify every identity component that the dependency string actually specified: a custom
+        // ALC can return an already-loaded same-name assembly even when its version is incompatible.
         var loadContext = AssemblyLoadContext.GetLoadContext(ownerAssembly);
         if (loadContext is null)
             return null;
 
         try
         {
-            return loadContext.LoadFromAssemblyName(requested);
+            var resolved = loadContext.LoadFromAssemblyName(requested);
+            return MatchesRequestedIdentity(requested, resolved.GetName(), dependencyIdentity)
+                ? resolved
+                : null;
         }
         catch (Exception exception) when (
             exception is FileNotFoundException or FileLoadException or BadImageFormatException)
         {
             return null;
         }
+    }
+
+    private static bool MatchesRequestedIdentity(
+        AssemblyName requested,
+        AssemblyName resolved,
+        string dependencyIdentity)
+    {
+        if (!string.Equals(requested.Name, resolved.Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (requested.Version is not null && requested.Version != resolved.Version)
+            return false;
+        if (dependencyIdentity.Contains("Culture=", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(
+                requested.CultureName ?? string.Empty,
+                resolved.CultureName ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        if (dependencyIdentity.Contains("PublicKeyToken=", StringComparison.OrdinalIgnoreCase) &&
+            !PublicKeyTokensEqual(requested.GetPublicKeyToken(), resolved.GetPublicKeyToken()))
+        {
+            return false;
+        }
+        return true;
+    }
+
+    private static bool PublicKeyTokensEqual(byte[]? left, byte[]? right)
+    {
+        left ??= [];
+        right ??= [];
+        return left.AsSpan().SequenceEqual(right);
     }
 
     internal static bool Matches(
