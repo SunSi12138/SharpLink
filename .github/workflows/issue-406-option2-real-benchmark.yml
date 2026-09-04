@@ -28,6 +28,9 @@ jobs:
           git fetch --depth=1 origin a34f26f3c6e4b4209d5a23858a4b3254f96b1147
           git worktree add /tmp/issue406-base a34f26f3c6e4b4209d5a23858a4b3254f96b1147
           cat >/tmp/Issue406RealRpcBenchmarks.cs <<'CS'
+          using System;
+          using System.Linq;
+          using System.Threading.Tasks;
           using BenchmarkDotNet.Attributes;
           using BenchmarkDotNet.Engines;
           using SharpLink.Abstractions;
