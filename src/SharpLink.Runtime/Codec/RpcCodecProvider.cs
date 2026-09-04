@@ -90,7 +90,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                 if (currentRegistration is not null)
                 {
                     var replacement = new ResolvedCodec(
-                        currentRegistration.GetCodec(this),
+                        currentRegistration.GetCodec(),
                         currentRegistration,
                         snapshot.Identity,
                         isExplicit: false,
@@ -117,7 +117,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
             if (currentRegistration is not null)
             {
                 var generated = new ResolvedCodec(
-                    currentRegistration.GetCodec(this),
+                    currentRegistration.GetCodec(),
                     currentRegistration,
                     snapshot.Identity,
                     isExplicit: false,
@@ -323,12 +323,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         get
         {
             ThrowIfDisposed();
-            if (!HasContractCodecs)
-                return BaseProvider;
             var existing = Volatile.Read(ref _contractCodecProvider);
             if (existing is not null)
                 return existing;
-            var created = new RpcManifestCodecProvider(this, BaseProvider);
+            var created = new RpcManifestCodecProvider(
+                this,
+                BaseProvider,
+                RpcGeneratedCodecResolutionScope.Contract);
             return Interlocked.CompareExchange(ref _contractCodecProvider, created, null) ?? created;
         }
     }
@@ -375,8 +376,12 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             }
 
             var ownerBox = new OwnerBox();
-            var publishedCodecs = CreateRegistrations(manifest.Codecs);
-            var contractCodecs = CreateRegistrations(manifest.ContractCodecs);
+            var publishedCodecs = CreateRegistrations(
+                manifest.Codecs,
+                RpcGeneratedCodecResolutionScope.Global);
+            var contractCodecs = CreateRegistrations(
+                manifest.ContractCodecs,
+                RpcGeneratedCodecResolutionScope.Contract);
             var registration = new RpcGeneratedManifestRegistration(
                 manifest,
                 contractCodecs,
@@ -384,25 +389,31 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                 provider,
                 [.. scopes]);
             ownerBox.Value = registration;
+
+            foreach (var codecRegistration in publishedCodecs.Values)
+                codecRegistration.PrepareAdapterCodec();
+            foreach (var codecRegistration in contractCodecs.Values)
+                codecRegistration.PrepareAdapterCodec();
+
             return registration;
 
             Dictionary<Type, RpcGeneratedCodecRegistration> CreateRegistrations(
-                IReadOnlyList<IRpcGeneratedCodecFactory> factories)
+                IReadOnlyList<IRpcGeneratedCodecFactory> factories,
+                RpcGeneratedCodecResolutionScope resolutionScope)
             {
                 var registrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
                 foreach (var factory in factories.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
                 {
-                    IRpcCodec? preparedCodec = null;
-                    if (factory.AdapterId is not null)
-                    {
-                        var scope = scopeByAdapterId[factory.AdapterId].Scope;
-                        preparedCodec = factory.Create(provider, scope) ?? throw new InvalidOperationException(
-                            $"Generated Codec factory for '{factory.TargetType.FullName}' returned null.");
-                        ValidateCodec(factory, preparedCodec);
-                    }
+                    var adapterScope = factory.AdapterId is null
+                        ? null
+                        : scopeByAdapterId[factory.AdapterId].Scope;
                     if (!registrations.TryAdd(
                             factory.TargetType,
-                            new RpcGeneratedCodecRegistration(ownerBox, factory, preparedCodec)))
+                            new RpcGeneratedCodecRegistration(
+                                ownerBox,
+                                factory,
+                                adapterScope,
+                                resolutionScope)))
                     {
                         throw new InvalidOperationException(
                             $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}' in one binding scope.");
@@ -503,27 +514,60 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 internal sealed class RpcGeneratedCodecRegistration
 {
     private readonly RpcGeneratedManifestRegistration.OwnerBox _owner;
-    private readonly IRpcCodec? _preparedCodec;
+    private readonly IRpcCodecAdapterScope? _adapterScope;
+    private readonly RpcGeneratedCodecResolutionScope _resolutionScope;
+    private IRpcCodec? _preparedCodec;
 
     internal RpcGeneratedCodecRegistration(
         RpcGeneratedManifestRegistration.OwnerBox owner,
         IRpcGeneratedCodecFactory factory,
-        IRpcCodec? preparedCodec)
+        IRpcCodecAdapterScope? adapterScope,
+        RpcGeneratedCodecResolutionScope resolutionScope)
     {
         _owner = owner;
         Factory = factory;
-        _preparedCodec = preparedCodec;
+        _adapterScope = adapterScope;
+        _resolutionScope = resolutionScope;
     }
 
     internal RpcGeneratedManifestRegistration Owner => _owner.Value;
     internal IRpcGeneratedCodecFactory Factory { get; }
 
-    internal IRpcCodec GetCodec(IRpcCodecProvider provider)
+    internal void PrepareAdapterCodec()
+    {
+        if (_adapterScope is null)
+            return;
+        Owner.ThrowIfDisposed();
+        var codec = Factory.Create(GetOwnerProvider(), _adapterScope) ?? throw new InvalidOperationException(
+            $"Generated Codec factory for '{Factory.TargetType.FullName}' returned null.");
+        ValidateCodec(codec);
+        Volatile.Write(ref _preparedCodec, codec);
+    }
+
+    internal IRpcCodec GetCodec()
     {
         Owner.ThrowIfDisposed();
-        var codec = _preparedCodec ?? Factory.Create(provider, adapterScope: null);
+        var codec = Volatile.Read(ref _preparedCodec);
+        if (codec is null)
+        {
+            codec = Factory.Create(GetOwnerProvider(), adapterScope: null) ?? throw new InvalidOperationException(
+                $"Generated Codec factory for '{Factory.TargetType.FullName}' returned null.");
+            ValidateCodec(codec);
+        }
         Owner.ThrowIfDisposed();
         return codec;
+    }
+
+    private IRpcCodecProvider GetOwnerProvider()
+        => RpcGeneratedCodecResolver.GetProvider(Owner, _resolutionScope);
+
+    private void ValidateCodec(IRpcCodec codec)
+    {
+        if (!Factory.IsCompatibleCodec(codec))
+        {
+            throw new InvalidOperationException(
+                $"Codec returned for '{Factory.TargetType.FullName}' implements an incompatible IRpcCodec<T>.");
+        }
     }
 }
 
