@@ -25,6 +25,7 @@ jobs:
         run: |
           python3 eng/tmp-issue-406-option2.py
           python3 eng/tmp-issue-406-option2-fix.py
+          python3 eng/tmp-issue-406-option2-server-context.py
           git diff --check
           git status --short
           git diff --stat
