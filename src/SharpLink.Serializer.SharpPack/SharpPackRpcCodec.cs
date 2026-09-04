@@ -9,7 +9,6 @@ using SharpPack;
 [assembly: RpcCodecAdapterRegistration(
     typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter),
     SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter.AdapterIdentity,
-    SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter.WireFormatIdentity,
     SelectorAttributeType = typeof(SharpPackableAttribute))]
 
 namespace SharpLink.Serializer.SharpPack;
@@ -30,19 +29,14 @@ public static class SharpPackRpcCodec
 
 /// <summary>SharpPack integration selected by generated Manifest metadata.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
+[RpcCodecSemanticIdentity(0x3fd7540d55dfa977UL, 0xbb67b4932c1a5249UL)]
 public sealed class SharpPackRpcCodecAdapter : IRpcCodecAdapter
 {
     /// <summary>The stable Adapter implementation identity.</summary>
     public const string AdapterIdentity = "sharplink.serializer.sharppack/v1";
 
-    /// <summary>The MemoryPack-compatible wire-format identity.</summary>
-    public const string WireFormatIdentity = "memorypack-binary/v1";
-
     /// <inheritdoc />
     public string AdapterId => AdapterIdentity;
-
-    /// <inheritdoc />
-    public string WireFormatId => WireFormatIdentity;
 
     /// <inheritdoc />
     public IRpcCodecAdapterScope CreateScope() => new SharpPackRpcCodecAdapterScope();

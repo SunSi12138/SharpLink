@@ -262,18 +262,8 @@ internal sealed partial class SharpLinkClient :
         if (modules.Length == 1)
             return [modules[0].Assembly];
 
-        var identities = new string[modules.Length];
-        var dependencies = new string[modules.Length][];
-        for (var index = 0; index < modules.Length; index++)
-        {
-            var manifest = modules[index].Manifest;
-            identities[index] = manifest.OwnerAssembly.FullName ??
-                                manifest.OwnerAssembly.GetName().Name ??
-                                string.Empty;
-            dependencies[index] = EnumerateManifestDependencies(manifest).ToArray();
-        }
-
-        var order = GetShutdownDependencyOrder(identities, dependencies);
+        var manifests = modules.Select(static module => module.Manifest).ToArray();
+        var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
         var assemblies = new Assembly[order.Length];
         for (var index = 0; index < order.Length; index++)
             assemblies[index] = modules[order[index]].Assembly;

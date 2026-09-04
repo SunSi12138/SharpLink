@@ -9,13 +9,13 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task ContractOnlyCustomCodecShouldBeOwnedWithoutChangingStandaloneCustomCodecPublication()
     {
-        var contractSource = AddAssemblyAttribute(BuildSource("""
+        var contractSource = AddAssemblyAttribute(UseCurrentIdentitySdk(BuildSource("""
 public sealed class ContractOnlyPayload
 {
     public int Value { get; set; }
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("contract-only-wire/v1", "contract-only-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3001UL, 0x4001UL)]
 public sealed class ContractOnlyPayloadCodec : SharpLink.Abstractions.IRpcCodec<ContractOnlyPayload>
 {
 }
@@ -25,7 +25,7 @@ public interface IContractOnlyCodecService : SharpLink.Sdk.IService
 {
     ValueTask<ContractOnlyPayload> Echo(ContractOnlyPayload value, CancellationToken cancellationToken);
 }
-"""),
+""")),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(ContractOnlyPayload), typeof(ContractOnlyPayloadCodec))]");
 
         var contractManifest = RunGeneratorAndGetSources(contractSource)
@@ -36,7 +36,7 @@ public interface IContractOnlyCodecService : SharpLink.Sdk.IService
         Ensure(contractSections.Contract.Contains(".Factory(),", StringComparison.Ordinal),
             "a Contract-only explicit custom Codec must be published in the assembly-owned Contract Codec table");
 
-        var standaloneSource = BuildSource("""
+        var standaloneSource = UseCurrentIdentitySdk(BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
 [SharpLink.Sdk.RpcCodec(typeof(StandalonePayloadCodec))]
 public sealed class StandalonePayload
@@ -44,11 +44,11 @@ public sealed class StandalonePayload
     public int Value { get; set; }
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("standalone-wire/v1", "standalone-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x3002UL, 0x4002UL)]
 public sealed class StandalonePayloadCodec : SharpLink.Abstractions.IRpcCodec<StandalonePayload>
 {
 }
-""");
+"""));
 
         var standaloneManifest = RunGeneratorAndGetSources(standaloneSource)
             .Single(static text => text.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
@@ -63,7 +63,7 @@ public sealed class StandalonePayloadCodec : SharpLink.Abstractions.IRpcCodec<St
     [Test]
     public Task GeneratedManifestShouldKeepOrdinaryCustomCodecHelpersOutOfModuleDependencies()
     {
-        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
+        var sdk = CreateMetadataReference("SharpLink.Sdk", UseCurrentIdentitySdk(BuildSource(string.Empty)));
         var payload = CreateMetadataReference(
             "ReviewPayloads",
             "namespace ReviewPayloads { public sealed class Payload { public int Value { get; set; } } }");
@@ -76,7 +76,7 @@ using SharpLink.Sdk;
 
 namespace ReviewPayloadCodecs
 {
-    [RpcCodecImplementation("review-payload-wire/v1", "review-payload-schema/v1")]
+    [RpcCodecSemanticIdentity(0x3003UL, 0x4003UL)]
     public sealed class PayloadCodec : IRpcCodec<Payload>
     {
     }

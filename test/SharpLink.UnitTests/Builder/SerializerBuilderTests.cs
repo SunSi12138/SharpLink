@@ -159,8 +159,7 @@ public class SerializerBuilderTests
     private sealed class TaggedCodecFactory : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(Payload);
-        public string SchemaId => "generated-test-v1";
-        public string WireFormatId => "sharplink-native/v1";
+        public RpcHash128 CodecHash => new(0x73657269616c697aUL, 0x65722d636f646563UL);
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -176,6 +175,7 @@ public class SerializerBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(TaggedManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x73657269616c697aUL, 0x65722d6d616e6966UL);
         public string CompileTimeDescriptor => "tagged-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];

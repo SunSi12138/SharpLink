@@ -36,7 +36,7 @@ internal record RpcMethodModel(
     bool IsOneWay,
     bool HasCancellationToken,
     bool HasTimeoutAttribute,
-    double? TimeoutSeconds,
+    long? TimeoutTicks,
     bool IsIdempotent,
     long Hash,
     EquatableArray<RpcParameterModel> Parameters,
@@ -204,195 +204,19 @@ internal sealed record GeneratedCodecModel(
     Location? Location)
 {
     public bool ElementIsString { get; init; }
+    public ulong CodecHashHigh { get; init; }
+    public ulong CodecHashLow { get; init; }
 }
 
-internal enum DtoDiagnosticKind
-{
-    Unsupported,
-    Cycle,
-    MemberIdCollision,
-    Constructor,
-    Depth,
-    AdapterRegistrationInvalid,
-    AdapterTypeInvalid,
-    SelectorConflict,
-    AdapterSelectionConflict,
-    AdapterBindingInvalid,
-    AdapterTargetInvalid,
-    AdapterIdentityConflict,
-    BuiltinAdapterOverride,
-    CustomCodecBindingInvalid,
-    CustomCodecTargetInvalid,
-    CustomCodecTypeInvalid,
-    CustomCodecIdentityInvalid,
-    CustomCodecSelectionConflict,
-    BuiltinCustomCodecOverride
-}
-
-internal readonly record struct DtoDiagnosticModel(
-    DtoDiagnosticKind Kind,
+internal readonly record struct GeneratedCodecHashModel(
     string TypeName,
-    string Detail,
-    Location? Location);
+    ulong High,
+    ulong Low,
+    bool IsReferenced = false);
 
-internal sealed record DtoGenerationResult(
-    ImmutableArray<GeneratedCodecModel> Codecs,
-    ImmutableArray<GeneratedCodecModel> ContractCodecs,
-    ImmutableArray<string> FinalCodecBoundTypes,
-    ImmutableArray<DtoDiagnosticModel> Diagnostics,
-    ImmutableArray<GeneratedEnumModel> Enums);
-
-internal sealed record GeneratedEnumModel(
+internal readonly record struct GeneratedUnsafeBlitRequirementModel(
     string TypeName,
-    string UnderlyingType,
-    Location? Location);
+    int NativePointerWidth,
+    bool RequiresDateTimeOffsetRawAbi);
 
-internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerationResult>
-{
-    internal static DtoGenerationResultComparer Instance { get; } = new();
-
-    public bool Equals(DtoGenerationResult? x, DtoGenerationResult? y)
-    {
-        if (ReferenceEquals(x, y))
-            return true;
-        if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
-            x.ContractCodecs.Length != y.ContractCodecs.Length ||
-            x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||
-            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
-        {
-            return false;
-        }
-        for (var index = 0; index < x.Codecs.Length; index++)
-        {
-            if (!CodecEquals(x.Codecs[index], y.Codecs[index]))
-                return false;
-        }
-        for (var index = 0; index < x.ContractCodecs.Length; index++)
-        {
-            if (!CodecEquals(x.ContractCodecs[index], y.ContractCodecs[index]))
-                return false;
-        }
-        if (!x.FinalCodecBoundTypes.SequenceEqual(y.FinalCodecBoundTypes, StringComparer.Ordinal))
-            return false;
-        for (var index = 0; index < x.Diagnostics.Length; index++)
-        {
-            var left = x.Diagnostics[index];
-            var right = y.Diagnostics[index];
-            if (left.Kind != right.Kind ||
-                !string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-                !string.Equals(left.Detail, right.Detail, StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-        for (var index = 0; index < x.Enums.Length; index++)
-        {
-            var left = x.Enums[index];
-            var right = y.Enums[index];
-            if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-                !string.Equals(left.UnderlyingType, right.UnderlyingType, StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public int GetHashCode(DtoGenerationResult obj)
-    {
-        var hash = 17;
-        foreach (var codec in obj.Codecs)
-        {
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
-        }
-        foreach (var codec in obj.ContractCodecs)
-        {
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
-        }
-        foreach (var type in obj.FinalCodecBoundTypes)
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(type));
-        foreach (var diagnostic in obj.Diagnostics)
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.Detail));
-        foreach (var item in obj.Enums)
-        {
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(item.TypeName));
-            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(item.UnderlyingType));
-        }
-        return hash;
-    }
-
-    private static bool CodecEquals(GeneratedCodecModel left, GeneratedCodecModel right)
-    {
-        if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-            !string.Equals(left.CodecName, right.CodecName, StringComparison.Ordinal) ||
-            !string.Equals(left.SchemaId, right.SchemaId, StringComparison.Ordinal) ||
-            left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
-            !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
-            !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
-            !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
-            !string.Equals(left.CustomCodecType, right.CustomCodecType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
-            !string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal) ||
-            !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
-            !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
-            left.Members.Length != right.Members.Length)
-        {
-            return false;
-        }
-        for (var index = 0; index < left.Members.Length; index++)
-        {
-            var first = left.Members[index];
-            var second = right.Members[index];
-            if (first with { Location = null } != second with { Location = null })
-                return false;
-        }
-        return true;
-    }
-}
-
-internal static class Hashing
-{
-    private const ulong FnvPrime = 1099511628211;
-    private const ulong FnvOffsetBasis = 14695981039346656037;
-
-    public static long GetMethodHash(string mName, string[] pNames)
-    {
-        var cleanP = string.Join(",", pNames).Replace("global::", "").Replace(" ", "");
-        return (long)Hash($"{mName}({cleanP})");
-    }
-
-    public static long GetInterfaceHash(string iName)
-    {
-        return (long)Hash(iName.Replace("global::", "").Replace(" ", ""));
-    }
-
-    public static string GetIdentifierHash(string value)
-        => Hash(value).ToString("x16", CultureInfo.InvariantCulture);
-
-    public static string GetSha256(string value)
-    {
-        using (var sha = System.Security.Cryptography.SHA256.Create())
-        {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-            var hash = sha.ComputeHash(bytes);
-            var result = new StringBuilder(hash.Length * 2);
-            for (var index = 0; index < hash.Length; index++)
-                result.Append(hash[index].ToString("x2", CultureInfo.InvariantCulture));
-            return result.ToString();
-        }
-    }
-
-    private static ulong Hash(string s)
-    {
-        ulong hash = FnvOffsetBasis;
-        foreach (var c in s)
-        {
-            hash ^= c;
-            hash *= FnvPrime;
-        }
-        return hash;
-    }
-}
+internal readonly record struct RpcHashValue(ulong High, ulong Low);

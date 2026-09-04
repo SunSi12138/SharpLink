@@ -14,7 +14,7 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 ## 原生 Codec
 
-内置 Codec 覆盖常用 primitive、enum、string、时间/标识类型、数组、List、Memory、nullable、tuple、受支持不可变集合和由 `[RpcSerializable]`/`[RpcMember]` 描述的 DTO。编码有明确 null 标记、长度上限和完整消费检查；尾随字节、非法 UTF-8、非规范整数或 required/nullability 违反会作为 `DataLoss`。
+内置 Codec 覆盖常用 primitive、enum、string、时间/标识类型、数组、List、Memory、nullable、tuple、受支持不可变集合和由 `[RpcSerializable]`/`[RpcMember]` 描述的 DTO。编码有明确 null 标记、长度上限和完整消费检查；尾随字节、非法 UTF-16LE 字节长度、非规范整数或 required/nullability 违反会作为 `DataLoss`。
 
 其中一小组类型属于 **Framework wire primitive**：SharpLink 直接定义并拥有其固定 wire semantic，因此它们不是可配置 Codec policy surface。当前包括 primitive numerics、`bool`、`char`、`string`、`Guid`、SharpLink 明确定义固定 wire semantic 的时间/标识 scalar、enum，以及作为 protocol bytes primitive 的 `byte[]`。这些类型不能通过 `RpcCodec`、`RpcCodecAdapter` 或 `RpcCodecRoute` 重绑定。
 
@@ -22,21 +22,23 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 当一个值类型没有命中共享内置 Codec、显式/生成 Codec 或 resolver，且其运行时表示不包含 managed reference 时，Runtime 可以回退到 `UnsafeBlitCodec<T>`，直接把 `Unsafe.SizeOf<T>()` 范围内的 managed representation 写入 payload。这个原始表示包含结构体 padding；它既不是 canonical field-wise 编码，也不能把普通 `new`/`default` 后的 padding 为零当作跨运行时安全保证。涉及 unsafe/native/uninitialized 来源或机密边界时，可靠的支持路径是为该 **user-defined payload type** 显式绑定 field-wise/non-raw representation 的自定义 Codec/Adapter，而不是依赖调用方先清 padding 后再经过可能发生的 struct copy。完整边界见 [UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)；跨运行时 ABI/兼容性范围见 [UnsafeBlit 兼容性](codec-compatibility.md)。这里描述的是 RPC payload Codec，不改变 SharpLink 自身协议 framing 字段的编码。
 
+NativeAOT 不会在运行时重新反射 UnsafeBlit payload 的字段图。Generator 从最终 `FinalUnsafeBlitCodecPlan` 直接发布 native-pointer width 与 framework raw-ABI requirement；Runtime 只验证这份 resolved metadata。没有 source-generated ABI metadata 的任意 unmanaged fallback 在 NativeAOT 下 fail-closed，JIT runtime 则保留运行时字段图检查。
+
 DTO 演进规则：
 
 - 字段 id 是 wire identity；发布后不要重用或改变含义。
 - 新增可选字段通常兼容；删除字段前确认所有对端已停止发送。
 - required、nullable、wire type 或嵌套 schema 变化可能不兼容。
-- 当前 Generator Manifest 仍沿用 `SchemaId` / `WireFormatId` 作为既有 generated registration 与 baseline infrastructure；#386 只负责确定 assembly-owned final Codec graph，不把这些字符串扩展成新的 per-type compatibility model。后续 #396 会以 fixed-width `CodecHash` / `RpcAssemblyHash` 替换长期 identity 模型并执行 assembly-level exact equality。
+- 当前 Phase 1 identity 模型由最终 Codec graph 上的 fixed-width `CodecHash`、方法/契约 hash 与 `RpcAssemblyHash` 组成；dispatch route ID 只负责路由，不承担 wire compatibility identity。远端 assembly hash 发布与 bind-time exact equality 仍属于 #396 后续阶段。
 
 ## 自定义 Codec
 
-Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定。当前 dev 仍要求 Codec 用 `RpcCodecImplementation` 提供 legacy wire/schema registration identity；这不是 #386 新定义的长期 compatibility API，后续由 #396 的 hash identity 模型替换：
+Generated RPC 的 Codec 由 Contract assembly 在编译期拥有并冻结。对非 Framework wire primitive 的闭合 CLR 类型，手写 `IRpcCodec<T>` 只通过 `RpcCodec` 精确绑定。Opaque custom Codec 必须用 `[RpcCodecSemanticIdentity(high, low)]` 声明其 wire semantic identity；最终 `CodecHash` 将这份显式 identity 纳入方法、契约与 `RpcAssemblyHash`。只要编码含义或兼容性发生变化，就必须 bump semantic identity：
 
 ```csharp
 [assembly: RpcCodec(typeof(MyType), typeof(MyTypeCodec))]
 
-[RpcCodecImplementation("my-type/v1", "my-type-schema/v1")]
+[RpcCodecSemanticIdentity(0x0123456789ABCDEF, 0xFEDCBA9876543210)]
 public sealed class MyTypeCodec : IRpcCodec<MyType>
 {
     // ...
@@ -55,7 +57,11 @@ public sealed class MyTypeCodec : IRpcCodec<MyType>
 
 ## Codec Adapter 与 SharpPack
 
-`IRpcCodecAdapter` 用于由 Generator 生成闭合工厂，再由 Runtime Context 创建隔离 scope。当前 `AdapterId` / `WireFormatId` / `SchemaId` 仍参与既有 registration validation；#396 会把稳定 identity 收敛为 fixed-width hash，而 #386 只负责 Adapter 的最终选择与 lifecycle ownership。
+`IRpcCodecAdapter` 用于由 Generator 生成闭合工厂，再由 Runtime Context 创建隔离 scope。用于 generated RPC 的 Adapter 实现必须声明 `[RpcCodecSemanticIdentity(high, low)]`。对一个闭合目标类型 `T`，最终 Adapter `CodecHash` 把这份显式的 Adapter semantic identity 与 `T` 的 canonical type identity 组合成一个 **opaque compatibility boundary**；Generator 不会遍历 `T` 的字段、属性或 DTO member graph 去猜测第三方 serializer 的 wire schema。
+
+因此，仅修改 Adapter 目标类型的 CLR 成员不会自动改变该 Adapter 的 `CodecHash`。当 Adapter 的实际编码、解码、schema evolution 规则或任何会改变 wire compatibility 的行为发生变化时，Adapter 作者必须显式 bump `[RpcCodecSemanticIdentity]`。反过来，保留同一 semantic identity 就是在声明这些 closed Adapter Codec 仍然 wire-compatible。不同目标类型即使使用同一个 Adapter，也会因为 canonical target type identity 不同而得到不同的 closed `CodecHash`。
+
+`AdapterId` 继续负责 Adapter 注册/选择和 Runtime scope ownership；它不是目标成员图的替代 schema hash。不要通过反射目标类型布局或字段集合来推导 Adapter wire identity，因为 Adapter 可以忽略、重命名、转换或以完全不同的 schema 编码这些成员。
 
 官方复杂对象图扩展是 `SharpLink.Serializer.SharpPack`。用 `[RpcCodecAdapter(typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]` 或项目约定把类型交给 SharpPack；每个 Runtime Context × Manifest × AdapterId 拥有独立 scope，不使用进程级默认 formatter slot。动态模块排空后，Codec、Adapter scope 和 collectible ALC 才能一起释放。
 

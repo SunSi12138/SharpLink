@@ -64,3 +64,4 @@
  SHARPLINK061 | SharpLink.Generator | Error | Custom RPC Codec wire/schema identity is invalid
  SHARPLINK062 | SharpLink.Generator | Error | RPC payload selects multiple different Custom Codecs
  SHARPLINK063 | SharpLink.Generator | Error | Custom Codec attempts to replace a built-in Codec
+ SHARPLINK064 | SharpLink.Generator | Info | Implicit UnsafeBlit payload contains source-defined AutoLayout

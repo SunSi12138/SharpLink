@@ -83,6 +83,28 @@ public class RpcManifestCodecProviderTests
     }
 
     [Test]
+    public void ManifestScopedProviderShouldApplyUnsafeBlitPlatformGuard()
+    {
+        var ownerAssembly = typeof(IContractA).Assembly;
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(
+            new ContractCodecManifest(ownerAssembly, new NamedContractCodec("guard"), "unsafe-blit-guard"));
+        context.AdoptGeneratedManifest(registration);
+        var ownerProvider = RpcGeneratedCodecResolver.GetProvider(context, ownerAssembly);
+
+        try
+        {
+            _ = ownerProvider.GetCodec<System.Numerics.Vector<int>>();
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        throw new Exception("Contract-scoped Codec resolution must apply the UnsafeBlit platform guard.");
+    }
+
+    [Test]
     public void CustomRuntimeMustExposeContractCodecResolution()
     {
         try
@@ -175,12 +197,10 @@ public class RpcManifestCodecProviderTests
         public List<Point>? Deserialize(in ReadOnlySequence<byte> buffer) => [];
     }
 
-    private sealed class NativeFactory<T>(Func<IRpcCodecProvider, IRpcCodec<T>> create, string schemaId)
-        : IRpcGeneratedCodecFactory
+    private sealed class NativeFactory<T>(Func<IRpcCodecProvider, IRpcCodec<T>> create)
+        : ITestGeneratedCodecFactory
     {
         public Type TargetType => typeof(T);
-        public string SchemaId { get; } = schemaId;
-        public string WireFormatId => "sharplink-native/v1";
         public string? AdapterId => null;
         public IRpcCodecAdapter? Adapter => null;
 
@@ -197,7 +217,6 @@ public class RpcManifestCodecProviderTests
     private sealed class PointAdapter(RoutedPointCodec codec) : IRpcCodecAdapter
     {
         public string AdapterId => "nested-point-route/v1";
-        public string WireFormatId => "nested-point-wire/v1";
         public IRpcCodecAdapterScope CreateScope() => new PointScope(codec);
     }
 
@@ -213,11 +232,9 @@ public class RpcManifestCodecProviderTests
         }
     }
 
-    private sealed class RoutedPointFactory(PointAdapter adapter) : IRpcGeneratedCodecFactory
+    private sealed class RoutedPointFactory(PointAdapter adapter) : ITestGeneratedCodecFactory
     {
         public Type TargetType => typeof(Point);
-        public string SchemaId => "nested-point-route";
-        public string WireFormatId => adapter.WireFormatId;
         public string? AdapterId => adapter.AdapterId;
         public IRpcCodecAdapter? Adapter => adapter;
 
@@ -240,14 +257,14 @@ public class RpcManifestCodecProviderTests
         public NoRouteValue Deserialize(in ReadOnlySequence<byte> buffer) => default;
     }
 
-    private sealed class NoRouteManifest : ISharpLinkGeneratedAssemblyManifest
+    private sealed class NoRouteManifest : ITestGeneratedManifest
     {
         internal NoRouteManifest(Assembly ownerAssembly)
         {
             OwnerAssembly = ownerAssembly;
             Codecs =
             [
-                new NativeFactory<NoRouteValue>(static _ => new GeneratedNoRouteCodec(), "no-route-generated")
+                new NativeFactory<NoRouteValue>(static _ => new GeneratedNoRouteCodec())
             ];
         }
 
@@ -262,7 +279,7 @@ public class RpcManifestCodecProviderTests
         public IReadOnlyList<string> Dependencies => [];
     }
 
-    private sealed class PreviousApiManifest(Assembly ownerAssembly) : ISharpLinkGeneratedAssemblyManifest
+    private sealed class PreviousApiManifest(Assembly ownerAssembly) : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api - 1;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
@@ -282,19 +299,19 @@ public class RpcManifestCodecProviderTests
         public ContractValue Deserialize(in ReadOnlySequence<byte> buffer) => default;
     }
 
-    private sealed class ContractCodecManifest(Assembly ownerAssembly, NamedContractCodec codec, string schemaId)
-        : ISharpLinkGeneratedAssemblyManifest
+    private sealed class ContractCodecManifest(Assembly ownerAssembly, NamedContractCodec codec, string descriptor)
+        : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "contract-codec-test";
         public Assembly OwnerAssembly { get; } = ownerAssembly;
-        public string CompileTimeDescriptor => schemaId;
+        public string CompileTimeDescriptor => descriptor;
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } =
-            [new NativeFactory<ContractValue>(_ => codec, schemaId)];
+            [new NativeFactory<ContractValue>(_ => codec)];
         public IReadOnlyList<string> Dependencies => [];
     }
 
@@ -316,15 +333,15 @@ public class RpcManifestCodecProviderTests
         public void Return(IRpcByteBufferWriter writer) { }
     }
 
-    private sealed class NestedRouteManifest : ISharpLinkGeneratedAssemblyManifest
+    private sealed class NestedRouteManifest : ITestGeneratedManifest
     {
         internal NestedRouteManifest(Assembly ownerAssembly, RoutedPointCodec routedPoint)
         {
             OwnerAssembly = ownerAssembly;
             ContractCodecs =
             [
-                new NativeFactory<Envelope>(static provider => new EnvelopeCodec(provider), "nested-envelope-native"),
-                new NativeFactory<List<Point>>(static provider => new PointListCodec(provider), "nested-list-native"),
+                new NativeFactory<Envelope>(static provider => new EnvelopeCodec(provider)),
+                new NativeFactory<List<Point>>(static provider => new PointListCodec(provider)),
                 new RoutedPointFactory(new PointAdapter(routedPoint))
             ];
         }

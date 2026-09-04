@@ -369,6 +369,7 @@ public class SharpLinkClientTimeBudgetTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(SharpLinkClientTimeBudgetTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x74696d652d627564UL, 0x6765742d74657374UL);
         public string CompileTimeDescriptor => "test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];

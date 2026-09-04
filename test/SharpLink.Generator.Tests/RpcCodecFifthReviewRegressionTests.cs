@@ -9,13 +9,14 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task CanonicalTupleAliasBindingsShouldDiagnoseConflictingAdapters()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildSource("""
 [SharpLink.Sdk.RpcContract]
 public interface IAliasConflictContract : SharpLink.Sdk.IService
 {
     ValueTask<List<(int X, int Y)>> Echo(List<(int X, int Y)> value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(1UL, 1UL)]
 public sealed class AliasAdapterA : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "alias-a/v1";
@@ -23,15 +24,16 @@ public sealed class AliasAdapterA : SharpLink.Abstractions.IRpcCodecAdapter
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(2UL, 2UL)]
 public sealed class AliasAdapterB : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "alias-b/v1";
     public string WireFormatId => "alias-b-wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AliasAdapterA), \"alias-a/v1\", \"alias-a-wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AliasAdapterB), \"alias-b/v1\", \"alias-b-wire/v1\")]",
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AliasAdapterA), \"alias-a/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(AliasAdapterB), \"alias-b/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(List<(int X, int Y)>), typeof(AliasAdapterA))]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(List<ValueTuple<int, int>>), typeof(AliasAdapterB))]");
 
@@ -44,8 +46,8 @@ public sealed class AliasAdapterB : SharpLink.Abstractions.IRpcCodecAdapter
     [Test]
     public Task CanonicalTupleAliasCustomCodecShouldValidateAgainstClrIdentity()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
-[SharpLink.Sdk.RpcCodecImplementation("alias-custom-wire/v1", "alias-custom-schema/v1")]
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildSource("""
+[SharpLink.Sdk.RpcCodecSemanticIdentity(3UL, 3UL)]
 public sealed class AliasCustomCodec : SharpLink.Abstractions.IRpcCodec<List<(int X, int Y)>>
 {
 }
@@ -55,7 +57,7 @@ public interface IAliasCustomContract : SharpLink.Sdk.IService
 {
     ValueTask<List<(int X, int Y)>> Echo(List<(int X, int Y)> value, CancellationToken cancellationToken);
 }
-"""),
+""")),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(List<ValueTuple<int, int>>), typeof(AliasCustomCodec))]");
 
         var diagnostics = RunGenerator(source);
@@ -70,11 +72,11 @@ public interface IAliasCustomContract : SharpLink.Sdk.IService
     [Test]
     public Task CanonicalTupleAliasBindingsShouldDiagnoseConflictingCustomCodecs()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
-[SharpLink.Sdk.RpcCodecImplementation("alias-custom-a/v1", "alias-custom-a-schema/v1")]
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildSource("""
+[SharpLink.Sdk.RpcCodecSemanticIdentity(4UL, 4UL)]
 public sealed class AliasCustomCodecA : SharpLink.Abstractions.IRpcCodec<List<(int X, int Y)>> { }
 
-[SharpLink.Sdk.RpcCodecImplementation("alias-custom-b/v1", "alias-custom-b-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(5UL, 5UL)]
 public sealed class AliasCustomCodecB : SharpLink.Abstractions.IRpcCodec<List<ValueTuple<int, int>>> { }
 
 [SharpLink.Sdk.RpcContract]
@@ -82,7 +84,7 @@ public interface IAliasCustomConflictContract : SharpLink.Sdk.IService
 {
     ValueTask<List<(int X, int Y)>> Echo(List<(int X, int Y)> value, CancellationToken cancellationToken);
 }
-"""),
+""")),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(List<(int X, int Y)>), typeof(AliasCustomCodecA))]",
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(List<ValueTuple<int, int>>), typeof(AliasCustomCodecB))]");
 

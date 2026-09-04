@@ -9,7 +9,7 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task FrameworkPrimitiveElementBindingShouldBeRejectedWithoutChangingCompositeDefaults()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildSource("""
 [SharpLink.Sdk.RpcContract]
 public interface IBuiltinCompositeContract : SharpLink.Sdk.IService
 {
@@ -19,14 +19,15 @@ public interface IBuiltinCompositeContract : SharpLink.Sdk.IService
     ValueTask<int?> EchoNullable(int? value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x7001UL, 0x8001UL)]
 public sealed class CompositeIntAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "composite-int/v1";
     public string WireFormatId => "composite-int-wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(CompositeIntAdapter), \"composite-int/v1\", \"composite-int-wire/v1\")]",
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(CompositeIntAdapter), \"composite-int/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(CompositeIntAdapter))]");
 
         var diagnostics = RunGenerator(source);
@@ -41,7 +42,7 @@ public sealed class CompositeIntAdapter : SharpLink.Abstractions.IRpcCodecAdapte
     [Test]
     public Task OpaqueContractCodecShouldStopFinalGraphTraversal()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
 public sealed class StandaloneIntEnvelope
 {
@@ -53,7 +54,7 @@ public sealed class OpaqueEnvelope
     public int Value { get; set; }
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("opaque-envelope-wire/v1", "opaque-envelope-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x7002UL, 0x8002UL)]
 public sealed class OpaqueEnvelopeCodec : SharpLink.Abstractions.IRpcCodec<OpaqueEnvelope>
 {
 }
@@ -64,15 +65,16 @@ public interface IOpaqueEnvelopeContract : SharpLink.Sdk.IService
     ValueTask<OpaqueEnvelope> Echo(OpaqueEnvelope value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x7003UL, 0x8003UL)]
 public sealed class UnrelatedIntAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "unrelated-int/v1";
     public string WireFormatId => "unrelated-int-wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
-"""),
+""")),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(OpaqueEnvelope), typeof(OpaqueEnvelopeCodec))]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(UnrelatedIntAdapter), \"unrelated-int/v1\", \"unrelated-int-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(UnrelatedIntAdapter), \"unrelated-int/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(UnrelatedIntAdapter))]");
 
         var diagnostics = RunGenerator(source);

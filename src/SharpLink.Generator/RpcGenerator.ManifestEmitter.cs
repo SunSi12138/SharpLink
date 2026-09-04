@@ -2,12 +2,15 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v3";
+    private const string GeneratedAbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v4";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
-        ImmutableArray<GeneratedCodecModel> contractCodecs)
+        ImmutableArray<GeneratedCodecModel> contractCodecs,
+        ImmutableArray<GeneratedCodecHashModel> codecHashes,
+        ImmutableArray<GeneratedCodecHashModel> referencedCodecHashes,
+        string assemblyLogicalIdentity)
     {
         var contracts = GetContractModels(interfaces);
         var serviceModels = GetServiceModels(services);
@@ -15,6 +18,7 @@ public partial class RpcGenerator
             return string.Empty;
 
         var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs, contractCodecs);
+        var rpcIdentity = BuildRpcAssemblyIdentity(assemblyLogicalIdentity, contracts, codecHashes);
         // Module dependencies come from generated artifacts and the finalized Codec graph. Contract
         // signature CLR references alone are not evidence that the referenced assembly publishes a
         // SharpLink generated manifest and therefore must not become dynamic-module dependencies.
@@ -29,6 +33,9 @@ public partial class RpcGenerator
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static dependency => dependency, StringComparer.Ordinal)
             .ToArray();
+        var referencedCodecDependencies = referencedCodecHashes
+            .OrderBy(static codecHash => codecHash.TypeName, StringComparer.Ordinal)
+            .ToArray();
         var compileTimeDescriptor = BuildCompileTimeDescriptor(contracts, serviceModels, codecs, contractCodecs);
 
         var sb = new StringBuilder();
@@ -41,12 +48,19 @@ public partial class RpcGenerator
         sb.AppendLine("using SharpLink.Abstractions;");
         sb.AppendLine("using SharpLink.Sdk;");
         sb.AppendLine();
+        foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
+        {
+            sb.AppendLine(
+                $"[assembly: SharpLinkGeneratedCodecIdentityAttribute(typeof({codec.TypeName}), {codec.CodecHashHigh.ToString(InvariantCulture)}UL, {codec.CodecHashLow.ToString(InvariantCulture)}UL)]");
+        }
+        if (!codecs.IsDefaultOrEmpty)
+            sb.AppendLine();
         sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 4, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
         sb.AppendLine("[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]");
-        sb.AppendLine($"public sealed partial class {manifestTypeName} : ISharpLinkGeneratedAssemblyManifest");
+        sb.AppendLine($"public sealed partial class {manifestTypeName} : ISharpLinkGeneratedAssemblyManifest, ISharpLinkReferencedCodecDependencyManifest");
         sb.AppendLine("{");
         sb.AppendLine($"    public const string CompileTimeDescriptor = \"{EscapeString(compileTimeDescriptor)}\";");
         sb.AppendLine($"    public static readonly {manifestTypeName} Instance = new();");
@@ -58,9 +72,11 @@ public partial class RpcGenerator
         sb.AppendLine("    public int ProtocolVersion => 2;");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");
+        sb.AppendLine($"    public RpcHash128 RpcAssemblyHash => new RpcHash128({rpcIdentity.AssemblyHash.High.ToString(InvariantCulture)}UL, {rpcIdentity.AssemblyHash.Low.ToString(InvariantCulture)}UL);");
         sb.AppendLine("    string ISharpLinkGeneratedAssemblyManifest.CompileTimeDescriptor => CompileTimeDescriptor;");
         sb.AppendLine();
         AppendContractArtifactFactories(sb, contracts);
+        AppendIdentifiedCodecFactory(sb);
         AppendContractManifestArray(sb, contracts);
         AppendServiceManifestArray(sb, serviceModels);
         AppendCodecManifestArray(sb, codecs);
@@ -75,18 +91,29 @@ public partial class RpcGenerator
         foreach (var dependency in contractDependencies)
             sb.AppendLine($"        \"{EscapeString(dependency)}\",");
         sb.AppendLine("    };");
+        sb.AppendLine("    private static readonly SharpLinkReferencedCodecDependency[] __referencedCodecDependencies = new SharpLinkReferencedCodecDependency[]");
+        sb.AppendLine("    {");
+        foreach (var dependency in referencedCodecDependencies)
+        {
+            sb.AppendLine("        new SharpLinkReferencedCodecDependency(");
+            sb.AppendLine($"            typeof({dependency.TypeName}),");
+            sb.AppendLine($"            new RpcHash128({dependency.High.ToString(InvariantCulture)}UL, {dependency.Low.ToString(InvariantCulture)}UL)),");
+        }
+        sb.AppendLine("    };");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedContractDescriptor> __readOnlyContracts = Array.AsReadOnly(__contracts);");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedServiceDescriptor> __readOnlyServices = Array.AsReadOnly(__services);");
         sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyCodecs = Array.AsReadOnly(__codecs);");
         sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyContractCodecs = Array.AsReadOnly(__contractCodecs);");
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyContractDependencies = Array.AsReadOnly(__contractDependencies);");
+        sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkReferencedCodecDependency> __readOnlyReferencedCodecDependencies = Array.AsReadOnly(__referencedCodecDependencies);");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => __readOnlyContractCodecs;");
         sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");
         sb.AppendLine("    public IReadOnlyList<string> ContractDependencies => __readOnlyContractDependencies;");
+        sb.AppendLine("    public IReadOnlyList<SharpLinkReferencedCodecDependency> ReferencedCodecDependencies => __readOnlyReferencedCodecDependencies;");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("internal static class __SharpLinkGeneratedAssemblyManifestInitializer");
@@ -110,6 +137,29 @@ public partial class RpcGenerator
             sb.AppendLine($"        => new __Stub_{identity}(codecs);");
             sb.AppendLine();
         }
+    }
+
+    private static void AppendIdentifiedCodecFactory(StringBuilder sb)
+    {
+        sb.AppendLine("    private sealed class __SharpLinkIdentifiedCodecFactory : IRpcGeneratedCodecFactory");
+        sb.AppendLine("    {");
+        sb.AppendLine("        private readonly IRpcGeneratedCodecFactory __inner;");
+        sb.AppendLine();
+        sb.AppendLine("        internal __SharpLinkIdentifiedCodecFactory(IRpcGeneratedCodecFactory inner, ulong hashHigh, ulong hashLow)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            __inner = inner ?? throw new ArgumentNullException(nameof(inner));");
+        sb.AppendLine("            CodecHash = new RpcHash128(hashHigh, hashLow);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        public Type TargetType => __inner.TargetType;");
+        sb.AppendLine("        public RpcHash128 CodecHash { get; }");
+        sb.AppendLine("        public string? AdapterId => __inner.AdapterId;");
+        sb.AppendLine("        public IRpcCodecAdapter? Adapter => __inner.Adapter;");
+        sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
+        sb.AppendLine("            => __inner.Create(provider, adapterScope);");
+        sb.AppendLine("        public bool IsCompatibleCodec(IRpcCodec codec) => __inner.IsCompatibleCodec(codec);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
     }
 
     private static void AppendContractManifestArray(StringBuilder sb, RpcInterfaceModel[] contracts)
@@ -174,7 +224,7 @@ public partial class RpcGenerator
         sb.AppendLine("    private static readonly IRpcGeneratedCodecFactory[] __codecs = new IRpcGeneratedCodecFactory[]");
         sb.AppendLine("    {");
         foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.AppendLine($"        new {codec.CodecName}.Factory(),");
+            AppendIdentifiedCodecFactoryRegistration(sb, codec);
         sb.AppendLine("    };");
     }
 
@@ -185,9 +235,13 @@ public partial class RpcGenerator
         sb.AppendLine("    private static readonly IRpcGeneratedCodecFactory[] __contractCodecs = new IRpcGeneratedCodecFactory[]");
         sb.AppendLine("    {");
         foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.AppendLine($"        new {codec.CodecName}.Factory(),");
+            AppendIdentifiedCodecFactoryRegistration(sb, codec);
         sb.AppendLine("    };");
     }
+
+    private static void AppendIdentifiedCodecFactoryRegistration(StringBuilder sb, GeneratedCodecModel codec)
+        => sb.AppendLine(
+            $"        new __SharpLinkIdentifiedCodecFactory(new {codec.CodecName}.Factory(), {codec.CodecHashHigh.ToString(InvariantCulture)}UL, {codec.CodecHashLow.ToString(InvariantCulture)}UL),");
 
     private static string BuildCompileTimeDescriptor(
         RpcInterfaceModel[] contracts,
@@ -201,9 +255,9 @@ public partial class RpcGenerator
         foreach (var service in services)
             sb.Append("S:").Append(service.Interface.Hash).Append(':').Append(service.ServiceFullName).Append(':').Append(service.Lifetime).Append(';');
         foreach (var codec in codecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.Append("D:").Append(codec.TypeName).Append(':').Append(codec.SchemaId).Append(';');
+            sb.Append("D:").Append(codec.TypeName).Append(':').Append(new RpcHashValue(codec.CodecHashHigh, codec.CodecHashLow).ToHex()).Append(';');
         foreach (var codec in contractCodecs.OrderBy(static codec => codec.TypeName, StringComparer.Ordinal))
-            sb.Append("K:").Append(codec.TypeName).Append(':').Append(codec.SchemaId).Append(';');
+            sb.Append("K:").Append(codec.TypeName).Append(':').Append(new RpcHashValue(codec.CodecHashHigh, codec.CodecHashLow).ToHex()).Append(';');
         return sb.ToString();
     }
 

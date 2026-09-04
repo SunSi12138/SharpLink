@@ -12,27 +12,65 @@ public partial class RpcGenerator
             contractMode: false,
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
-        var standalone = standaloneState.AnalyzeWithFinalCodecBindings();
+        _ = standaloneState.AnalyzeWithFinalCodecBindings();
+        var standaloneGraph = standaloneState.ResolveFinalCodecGraph(
+            includeSerializable: true,
+            includeContracts: false);
+        var standalone = standaloneState.FinalizeResolvedCodecCandidates(standaloneGraph);
+        var standaloneHashes = standaloneState.BuildFinalCodecHashes(standaloneGraph);
+        var standaloneCodecs = AttachCodecHashes(standalone.Codecs, standaloneGraph, standaloneHashes);
+
         var contractDefaultState = new DtoAnalysisState(
             compilation,
             cancellationToken,
             contractMode: true,
             applyCodecPolicy: true,
             selectorOnlyContractDefault: true);
-        var contractDefault = contractDefaultState.AnalyzeWithFinalCodecBindings();
+        _ = contractDefaultState.AnalyzeWithFinalCodecBindings();
+        var contractDefaultGraph = contractDefaultState.ResolveFinalCodecGraph(
+            includeSerializable: false,
+            includeContracts: true);
+        var contractDefault = contractDefaultState.FinalizeResolvedCodecCandidates(contractDefaultGraph);
+        var contractDefaultHashes = contractDefaultState.BuildFinalCodecHashes(contractDefaultGraph);
+        var contractDefaultCodecs = AttachCodecHashes(
+            contractDefault.Codecs,
+            contractDefaultGraph,
+            contractDefaultHashes);
+
         var contractPolicyState = new DtoAnalysisState(
             compilation,
             cancellationToken,
             contractMode: true,
             applyCodecPolicy: true,
             selectorOnlyContractDefault: false);
-        var contractPolicy = contractPolicyState.AnalyzeWithFinalCodecBindings();
+        _ = contractPolicyState.AnalyzeWithFinalCodecBindings();
+        var contractPolicyGraph = contractPolicyState.ResolveFinalCodecGraph(
+            includeSerializable: false,
+            includeContracts: true);
+        var contractPolicy = contractPolicyState.FinalizeResolvedCodecCandidates(contractPolicyGraph);
+        var codecHashes = contractPolicyState.BuildFinalCodecHashes(contractPolicyGraph);
+        var referencedCodecHashes = standaloneHashes
+            .Concat(codecHashes)
+            .Where(static hash => hash.IsReferenced)
+            .GroupBy(static hash => hash.TypeName, StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .OrderBy(static hash => hash.TypeName, StringComparer.Ordinal)
+            .ToImmutableArray();
+        var unsafeBlitAutoLayoutDiagnostics =
+            DtoAnalysisState.BuildUnsafeBlitAutoLayoutDiagnostics(contractPolicyGraph);
+        var unsafeBlitRequirements = BuildUnsafeBlitRequirements(standaloneGraph, contractPolicyGraph);
+        var contractPolicyCodecs = AttachCodecHashes(
+            contractPolicy.Codecs,
+            contractPolicyGraph,
+            codecHashes);
 
-        var currentContractTypes = contractPolicyState.GetCurrentContractReachableTypeNames();
-        var currentContractDefaultCodecs = contractDefault.Codecs
+        var currentContractTypes = new HashSet<string>(
+            contractPolicyGraph.Plans.Keys,
+            StringComparer.Ordinal);
+        var currentContractDefaultCodecs = contractDefaultCodecs
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
-        var currentContractPolicyCodecs = contractPolicy.Codecs
+        var currentContractPolicyCodecs = contractPolicyCodecs
             .Where(codec => currentContractTypes.Contains(codec.TypeName))
             .ToImmutableArray();
         var contractOwnedPolicyRoots = new HashSet<string>(
@@ -40,24 +78,37 @@ public partial class RpcGenerator
             StringComparer.Ordinal);
 
         var standaloneTypes = new HashSet<string>(
-            standalone.Codecs.Select(static codec => codec.TypeName),
+            standaloneGraph.Plans.Keys,
             StringComparer.Ordinal);
-        var defaultByType = currentContractDefaultCodecs
-            .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var policyByType = currentContractPolicyCodecs
-            .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var globalExcludedTypes = new HashSet<string>(
-            contractOwnedPolicyRoots.Where(type =>
-                !standaloneTypes.Contains(type) &&
-                policyByType.TryGetValue(type, out var policyCodec) &&
-                (!defaultByType.TryGetValue(type, out var defaultCodec) ||
-                 !HasSameFinalCodecBinding(defaultCodec, policyCodec))),
+        var defaultHashByType = contractDefaultHashes.ToDictionary(
+            static hash => hash.TypeName,
+            static hash => new RpcHashValue(hash.High, hash.Low),
             StringComparer.Ordinal);
-        ExpandReverseCodecDependencyClosure(currentContractDefaultCodecs, globalExcludedTypes);
+        var policyHashByType = codecHashes.ToDictionary(
+            static hash => hash.TypeName,
+            static hash => new RpcHashValue(hash.High, hash.Low),
+            StringComparer.Ordinal);
+        var globalExcludedTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var policyRoot in contractOwnedPolicyRoots)
+        {
+            if (standaloneTypes.Contains(policyRoot) ||
+                !contractPolicyGraph.Plans.TryGetValue(policyRoot, out var policyPlan) ||
+                !RequiresGeneratedFactory(policyPlan))
+            {
+                continue;
+            }
+
+            if (!contractDefaultGraph.Plans.TryGetValue(policyRoot, out var defaultPlan) ||
+                !HasSameResolvedFactoryBinding(defaultPlan, policyPlan, defaultHashByType, policyHashByType))
+            {
+                globalExcludedTypes.Add(policyRoot);
+            }
+        }
+        ExpandReverseCodecDependencyClosure(contractDefaultGraph, globalExcludedTypes);
         var globalByType = currentContractDefaultCodecs
             .Where(codec => !globalExcludedTypes.Contains(codec.TypeName))
             .ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        foreach (var codec in standalone.Codecs)
+        foreach (var codec in standaloneCodecs)
             globalByType[codec.TypeName] = codec;
         var globalCodecs = globalByType.Values
             .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
@@ -66,10 +117,14 @@ public partial class RpcGenerator
         var contractCodecs = SelectOwnedContractCodecs(
             currentContractDefaultCodecs,
             currentContractPolicyCodecs,
+            contractDefaultGraph,
+            contractPolicyGraph,
+            defaultHashByType,
+            policyHashByType,
             contractOwnedPolicyRoots);
-        var finalCodecBoundTypes = currentContractPolicyCodecs
-            .Select(static codec => codec.TypeName)
-            .Distinct(StringComparer.Ordinal)
+        var finalCodecBoundTypes = contractPolicyGraph.Plans.Values
+            .Where(RequiresGeneratedFactory)
+            .Select(static plan => plan.TypeName)
             .OrderBy(static type => type, StringComparer.Ordinal)
             .ToImmutableArray();
 
@@ -79,9 +134,9 @@ public partial class RpcGenerator
             .Select(static group => group.First())
             .ToImmutableArray();
         var codecOwnedEnumTypes = new HashSet<string>(
-            currentContractPolicyCodecs
-                .Where(static codec => codec.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
-                .Select(static codec => codec.TypeName),
+            contractPolicyGraph.Plans.Values
+                .Where(static plan => plan is FinalCustomCodecPlan or FinalAdapterCodecPlan)
+                .Select(static plan => plan.TypeName),
             StringComparer.Ordinal);
         var enums = standalone.Enums
             .Concat(contractDefault.Enums.Where(item => currentContractTypes.Contains(item.TypeName)))
@@ -97,8 +152,135 @@ public partial class RpcGenerator
             contractCodecs,
             finalCodecBoundTypes,
             diagnostics,
-            enums);
+            enums)
+        {
+            CodecHashes = codecHashes,
+            ReferencedCodecHashes = referencedCodecHashes,
+            UnsafeBlitRequirements = unsafeBlitRequirements,
+            UnsafeBlitAutoLayoutDiagnostics = unsafeBlitAutoLayoutDiagnostics,
+            AssemblyLogicalIdentity = compilation.Assembly.Identity.Name
+        };
     }
+
+    private static ImmutableArray<GeneratedCodecModel> AttachCodecHashes(
+        ImmutableArray<GeneratedCodecModel> codecs,
+        FinalCodecGraph graph,
+        ImmutableArray<GeneratedCodecHashModel> hashes)
+    {
+        var codecByType = codecs.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+        var hashByType = hashes.ToDictionary(static item => item.TypeName, StringComparer.Ordinal);
+        return graph.Plans.Values
+            .Where(RequiresGeneratedFactory)
+            .OrderBy(static plan => plan.TypeName, StringComparer.Ordinal)
+            .Select(plan =>
+            {
+                if (!codecByType.TryGetValue(plan.TypeName, out var codec))
+                {
+                    throw new InvalidOperationException(
+                        $"Final Codec plan '{plan.TypeName}' requires a generated factory but candidate analysis produced none.");
+                }
+                codec = ApplyResolvedEmissionPlan(plan, codec);
+                if (!MatchesGeneratedFactoryPlan(plan, codec))
+                {
+                    throw new InvalidOperationException(
+                        $"Final Codec plan '{plan.TypeName}' does not match generated factory candidate kind '{codec.Kind}'.");
+                }
+                if (!hashByType.TryGetValue(plan.TypeName, out var hash))
+                {
+                    throw new InvalidOperationException(
+                        $"Final Codec graph is missing deterministic identity for generated Codec '{plan.TypeName}'.");
+                }
+                return codec with
+                {
+                    CodecHashHigh = hash.High,
+                    CodecHashLow = hash.Low
+                };
+            })
+            .ToImmutableArray();
+    }
+
+    private static GeneratedCodecModel ApplyResolvedEmissionPlan(
+        FinalCodecPlan plan,
+        GeneratedCodecModel codec)
+    {
+        if (plan is not FinalGeneratedDtoCodecPlan dto)
+            return codec;
+
+        var resolvedByField = dto.Members.ToDictionary(static member => member.FieldId);
+        var changed = false;
+        var members = codec.Members.Select(member =>
+        {
+            if (!resolvedByField.TryGetValue(member.FieldId, out var resolved) ||
+                resolved.Kind == member.Kind)
+            {
+                return member;
+            }
+
+            changed = true;
+            return resolved.WireStrategy == FinalDtoMemberWireStrategy.ChildCodec
+                ? member with
+                {
+                    Kind = GeneratedMemberKind.Complex,
+                    FixedTypeName = null,
+                    FixedSize = 0,
+                    EnumUnderlyingType = null
+                }
+                : member with { Kind = resolved.Kind };
+        }).ToImmutableArray();
+
+        if (!changed)
+            return codec;
+
+        var schema = new StringBuilder(codec.TypeName);
+        foreach (var member in members)
+        {
+            schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName)
+                .Append(':').Append(member.Kind).Append(':').Append(member.Required);
+            if (member.Nullable)
+                schema.Append(":nullable");
+        }
+        return codec with
+        {
+            Members = members,
+            SchemaId = GetResolvedSchemaId(codec.TypeName, schema.ToString())
+        };
+    }
+
+    private static string GetResolvedSchemaId(string typeName, string schema)
+    {
+        const ulong offset = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        var hash = offset;
+        foreach (var character in schema)
+        {
+            hash ^= character;
+            hash *= prime;
+        }
+        return typeName + ":" + hash.ToString("X16", InvariantCulture);
+    }
+
+    private static bool RequiresGeneratedFactory(FinalCodecPlan plan)
+        => plan is FinalGeneratedDtoCodecPlan or
+            FinalCustomCodecPlan or
+            FinalAdapterCodecPlan or
+            FinalCollectionCodecPlan { WireStrategy: FinalCollectionWireStrategy.ChildCodec };
+
+    private static bool MatchesGeneratedFactoryPlan(FinalCodecPlan plan, GeneratedCodecModel codec)
+        => plan switch
+        {
+            FinalGeneratedDtoCodecPlan => codec.Kind == GeneratedCodecKind.Dto,
+            FinalCustomCodecPlan custom =>
+                codec.Kind == GeneratedCodecKind.Custom &&
+                string.Equals(codec.CustomCodecType, custom.CodecTypeName, StringComparison.Ordinal),
+            FinalAdapterCodecPlan adapter =>
+                codec.Kind == GeneratedCodecKind.Adapter &&
+                string.Equals(codec.AdapterType, adapter.AdapterTypeName, StringComparison.Ordinal) &&
+                string.Equals(codec.AdapterId, adapter.AdapterId, StringComparison.Ordinal),
+            FinalCollectionCodecPlan collection =>
+                collection.WireStrategy == FinalCollectionWireStrategy.ChildCodec &&
+                codec.Kind == collection.CollectionKind,
+            _ => false
+        };
 
     private static bool ContainsRpcContract(INamespaceSymbol namespaceSymbol)
     {
@@ -116,19 +298,19 @@ public partial class RpcGenerator
     }
 
     private static void ExpandReverseCodecDependencyClosure(
-        ImmutableArray<GeneratedCodecModel> codecs,
+        FinalCodecGraph graph,
         HashSet<string> scopedTypes)
     {
         bool changed;
         do
         {
             changed = false;
-            foreach (var codec in codecs)
+            foreach (var plan in graph.Plans.Values)
             {
-                if (scopedTypes.Contains(codec.TypeName))
+                if (!RequiresGeneratedFactory(plan) || scopedTypes.Contains(plan.TypeName))
                     continue;
-                if (GetCodecDependencies(codec).Any(scopedTypes.Contains))
-                    changed |= scopedTypes.Add(codec.TypeName);
+                if (DtoAnalysisState.GetFinalCodecPlanDependencies(plan).Any(scopedTypes.Contains))
+                    changed |= scopedTypes.Add(plan.TypeName);
             }
         }
         while (changed);
@@ -137,48 +319,49 @@ public partial class RpcGenerator
     private static ImmutableArray<GeneratedCodecModel> SelectOwnedContractCodecs(
         ImmutableArray<GeneratedCodecModel> contractDefault,
         ImmutableArray<GeneratedCodecModel> contractPolicy,
+        FinalCodecGraph defaultGraph,
+        FinalCodecGraph policyGraph,
+        IReadOnlyDictionary<string, RpcHashValue> defaultHashes,
+        IReadOnlyDictionary<string, RpcHashValue> policyHashes,
         IReadOnlyCollection<string> policyRoots)
     {
         var defaultByType = contractDefault.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
-        var policyTypes = new HashSet<string>(
-            contractPolicy.Select(static codec => codec.TypeName),
+        var policyByType = contractPolicy.ToDictionary(static codec => codec.TypeName, StringComparer.Ordinal);
+        var policyFactoryTypes = new HashSet<string>(
+            policyGraph.Plans.Values.Where(RequiresGeneratedFactory).Select(static plan => plan.TypeName),
             StringComparer.Ordinal);
         var scopedTypes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var policyRoot in policyRoots)
         {
-            if (policyTypes.Contains(policyRoot))
+            if (policyFactoryTypes.Contains(policyRoot))
                 scopedTypes.Add(policyRoot);
         }
 
-        foreach (var codec in contractPolicy)
+        foreach (var policyPlan in policyGraph.Plans.Values.Where(RequiresGeneratedFactory))
         {
-            if (!defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) ||
-                !HasSameFinalCodecBinding(defaultCodec, codec))
+            if (!defaultGraph.Plans.TryGetValue(policyPlan.TypeName, out var defaultPlan) ||
+                !HasSameResolvedFactoryBinding(defaultPlan, policyPlan, defaultHashes, policyHashes))
             {
-                scopedTypes.Add(codec.TypeName);
+                scopedTypes.Add(policyPlan.TypeName);
             }
         }
 
-        bool changed;
-        do
-        {
-            changed = false;
-            foreach (var codec in contractPolicy)
-            {
-                if (scopedTypes.Contains(codec.TypeName))
-                    continue;
-                if (GetCodecDependencies(codec).Any(scopedTypes.Contains))
-                    changed |= scopedTypes.Add(codec.TypeName);
-            }
-        }
-        while (changed);
+        ExpandReverseCodecDependencyClosure(policyGraph, scopedTypes);
 
-        return contractPolicy
-            .Where(codec => scopedTypes.Contains(codec.TypeName))
-            .Select(codec =>
+        return scopedTypes
+            .OrderBy(static type => type, StringComparer.Ordinal)
+            .Select(type =>
             {
-                if (defaultByType.TryGetValue(codec.TypeName, out var defaultCodec) &&
-                    HasSameFinalCodecBinding(defaultCodec, codec))
+                if (!policyByType.TryGetValue(type, out var codec))
+                {
+                    throw new InvalidOperationException(
+                        $"Resolved contract-owned Codec plan '{type}' requires a generated factory but candidate analysis produced none.");
+                }
+
+                if (defaultByType.TryGetValue(type, out var defaultCodec) &&
+                    defaultGraph.Plans.TryGetValue(type, out var defaultPlan) &&
+                    policyGraph.Plans.TryGetValue(type, out var policyPlan) &&
+                    HasSameResolvedFactoryBinding(defaultPlan, policyPlan, defaultHashes, policyHashes))
                 {
                     return codec with { CodecName = defaultCodec.CodecName };
                 }
@@ -186,37 +369,36 @@ public partial class RpcGenerator
                 return codec with
                 {
                     CodecName = "__SharpLinkGeneratedContractPolicyCodec_" +
-                                Hashing.GetIdentifierHash("contract-policy|" + codec.TypeName)
+                                Hashing.GetIdentifierHash("contract-policy|" + type)
                 };
             })
-            .OrderBy(static codec => codec.TypeName, StringComparer.Ordinal)
             .ToImmutableArray();
     }
 
-    private static bool HasSameFinalCodecBinding(GeneratedCodecModel left, GeneratedCodecModel right)
+    private static bool HasSameResolvedFactoryBinding(
+        FinalCodecPlan left,
+        FinalCodecPlan right,
+        IReadOnlyDictionary<string, RpcHashValue> leftHashes,
+        IReadOnlyDictionary<string, RpcHashValue> rightHashes)
     {
-        if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-            left.Kind != right.Kind ||
-            left.IsReferenceType != right.IsReferenceType ||
-            !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
-            !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
-            !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
-            !string.Equals(left.CustomCodecType, right.CustomCodecType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
-            !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
-            !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
-            left.Members.Length != right.Members.Length)
+        if (left.Kind != right.Kind ||
+            !string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+            !leftHashes.TryGetValue(left.TypeName, out var leftHash) ||
+            !rightHashes.TryGetValue(right.TypeName, out var rightHash) ||
+            leftHash != rightHash)
         {
             return false;
         }
 
-        for (var index = 0; index < left.Members.Length; index++)
+        return (left, right) switch
         {
-            if (left.Members[index] with { Location = null } != right.Members[index] with { Location = null })
-                return false;
-        }
-        return true;
+            (FinalCustomCodecPlan leftCustom, FinalCustomCodecPlan rightCustom) =>
+                string.Equals(leftCustom.CodecTypeName, rightCustom.CodecTypeName, StringComparison.Ordinal),
+            (FinalAdapterCodecPlan leftAdapter, FinalAdapterCodecPlan rightAdapter) =>
+                string.Equals(leftAdapter.AdapterTypeName, rightAdapter.AdapterTypeName, StringComparison.Ordinal) &&
+                string.Equals(leftAdapter.AdapterId, rightAdapter.AdapterId, StringComparison.Ordinal),
+            _ => true
+        };
     }
 
     private sealed partial class DtoAnalysisState
@@ -257,10 +439,7 @@ public partial class RpcGenerator
             => GetTypeName(type);
 
         private static bool HasSameCanonicalPolicyTarget(ITypeSymbol left, ITypeSymbol right)
-            => string.Equals(
-                GetCanonicalPolicyTargetIdentity(left),
-                GetCanonicalPolicyTargetIdentity(right),
-                StringComparison.Ordinal);
+            => string.Equals(GetCanonicalPolicyTargetIdentity(left), GetCanonicalPolicyTargetIdentity(right), StringComparison.Ordinal);
 
         private void CollectCanonicalAssemblyCustomCodecBindings()
         {
@@ -279,20 +458,16 @@ public partial class RpcGenerator
                 }
                 if (HasTypeParameter(target))
                 {
-                    Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target,
-                        "custom Codec target must be a closed type", location);
+                    Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target, "custom Codec target must be a closed type", location);
                     continue;
                 }
-
                 target = NormalizeAdapterTarget(target);
                 if (IsFrameworkWirePrimitive(target))
                 {
                     Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
-                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required",
-                        location);
+                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required", location);
                     continue;
                 }
-
                 AddCanonicalCustomCodecBinding(target, codec, location);
             }
         }
@@ -307,46 +482,32 @@ public partial class RpcGenerator
                     "the target is explicitly bound to multiple custom Codec implementations", location);
                 return;
             }
-
             var registration = ValidateCustomCodecWithCanonicalTarget(codec, target, location);
             if (registration is null)
                 return;
-
             _customCodecBindings[target] = registration;
             _canonicalCustomCodecBindings[identity] = registration;
             if (_contractMode)
                 _contractOwnedPolicyRoots.Add(identity);
         }
 
-        private CustomCodecRegistration? ValidateCustomCodecWithCanonicalTarget(
-            ITypeSymbol codecType,
-            ITypeSymbol targetType,
-            Location location)
+        private CustomCodecRegistration? ValidateCustomCodecWithCanonicalTarget(ITypeSymbol codecType, ITypeSymbol targetType, Location location)
         {
             if (codecType is not INamedTypeSymbol named)
             {
-                Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType,
-                    "custom Codec must be a closed, public sealed type", location);
+                Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType, "custom Codec must be a closed, public sealed type", location);
                 return null;
             }
-
-            if (HasTypeParameter(named) ||
-                !IsEffectivelyPublic(named) ||
-                !named.IsSealed ||
-                !named.InstanceConstructors.Any(static constructor =>
-                    constructor.DeclaredAccessibility == Accessibility.Public &&
-                    constructor.Parameters.Length == 0))
+            if (HasTypeParameter(named) || !IsEffectivelyPublic(named) || !named.IsSealed ||
+                !named.InstanceConstructors.Any(static constructor => constructor.DeclaredAccessibility == Accessibility.Public && constructor.Parameters.Length == 0))
             {
                 Report(DtoDiagnosticKind.CustomCodecTypeInvalid, codecType,
                     "custom Codec must be a public sealed type with a public parameterless constructor", location);
                 return null;
             }
-
             var implementsTargetCodec = named.AllInterfaces.Any(item =>
-                item.Name == "IRpcCodec" &&
-                item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
-                item is INamedTypeSymbol { IsGenericType: true } generic &&
-                generic.TypeArguments.Length == 1 &&
+                item.Name == "IRpcCodec" && item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions" &&
+                item is INamedTypeSymbol { IsGenericType: true } generic && generic.TypeArguments.Length == 1 &&
                 HasSameCanonicalPolicyTarget(generic.TypeArguments[0], targetType));
             if (!implementsTargetCodec)
             {
@@ -354,22 +515,13 @@ public partial class RpcGenerator
                     $"custom Codec must implement IRpcCodec<{GetTypeName(targetType)}>", location);
                 return null;
             }
-
-            var codecIdentity = named.GetAttributes().FirstOrDefault(static attribute =>
-                IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecImplementationAttribute"));
-            if (codecIdentity is null ||
-                codecIdentity.ConstructorArguments.Length != 2 ||
-                codecIdentity.ConstructorArguments[0].Value is not string wireFormatId ||
-                codecIdentity.ConstructorArguments[1].Value is not string schemaId ||
-                !IsStableIdentity(wireFormatId) ||
-                !IsStableIdentity(schemaId))
+            if (!HasValidOpaqueSemanticIdentity(named))
             {
                 Report(DtoDiagnosticKind.CustomCodecIdentityInvalid, codecType,
-                    "custom Codec must declare stable ASCII WireFormatId and SchemaId via [RpcCodecImplementation]", location);
+                    "custom Codec must declare a non-zero fixed semantic identity via [RpcCodecSemanticIdentity(high, low)]", location);
                 return null;
             }
-
-            return new CustomCodecRegistration(named, wireFormatId, schemaId, location);
+            return new CustomCodecRegistration(named, location);
         }
 
         private void CollectCanonicalAssemblyBindings()
@@ -378,8 +530,7 @@ public partial class RpcGenerator
                          .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute")))
             {
                 var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
-                if (attribute.ConstructorArguments.Length != 2 ||
-                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                if (attribute.ConstructorArguments.Length != 2 || attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
                     attribute.ConstructorArguments[1].Value is not INamedTypeSymbol adapter)
                 {
                     Report(DtoDiagnosticKind.AdapterBindingInvalid, _compilation.Assembly,
@@ -388,20 +539,16 @@ public partial class RpcGenerator
                 }
                 if (HasTypeParameter(target))
                 {
-                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target,
-                        "Adapter target must be a closed type", location);
+                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target, "Adapter target must be a closed type", location);
                     continue;
                 }
-
                 target = NormalizeAdapterTarget(target);
                 if (IsFrameworkWirePrimitive(target))
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
-                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required",
-                        location);
+                        "SharpLink framework wire primitive types have fixed wire semantics and cannot be rebound; wrap the value in a user-defined payload type if a custom wire representation is required", location);
                     continue;
                 }
-
                 AddCanonicalAssemblyBinding(target, new ExplicitBindingCandidate(adapter, location));
             }
         }
@@ -414,15 +561,12 @@ public partial class RpcGenerator
                 if (!SymbolEqualityComparer.Default.Equals(existing.ImplementationType, candidate.ImplementationType))
                 {
                     Report(DtoDiagnosticKind.AdapterSelectionConflict, target,
-                        "the target is explicitly bound to multiple different Codec Adapters",
-                        candidate.Location);
+                        "the target is explicitly bound to multiple different Codec Adapters", candidate.Location);
                     return;
                 }
-
                 _assemblyBindings[target] = existing;
                 return;
             }
-
             _assemblyBindings[target] = candidate;
             _canonicalAssemblyBindings[identity] = candidate;
         }
@@ -431,196 +575,126 @@ public partial class RpcGenerator
         {
             if (_canonicalAssemblyBindings.Count == 0 && _canonicalCustomCodecBindings.Count == 0)
                 return;
-
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
-
             foreach (var reachableType in reachable.Values)
             {
                 var lookupType = NormalizeAdapterTarget(reachableType);
                 var identity = GetCanonicalPolicyTargetIdentity(lookupType);
-                if (!_assemblyBindings.ContainsKey(lookupType) &&
-                    _canonicalAssemblyBindings.TryGetValue(identity, out var adapterBinding))
-                {
+                if (!_assemblyBindings.ContainsKey(lookupType) && _canonicalAssemblyBindings.TryGetValue(identity, out var adapterBinding))
                     _assemblyBindings[lookupType] = adapterBinding;
-                }
-                if (!_customCodecBindings.ContainsKey(lookupType) &&
-                    _canonicalCustomCodecBindings.TryGetValue(identity, out var customBinding))
-                {
+                if (!_customCodecBindings.ContainsKey(lookupType) && _canonicalCustomCodecBindings.TryGetValue(identity, out var customBinding))
                     _customCodecBindings[lookupType] = customBinding;
-                }
             }
         }
 
         internal DtoAnalysisPassResult AnalyzeWithFinalCodecBindings()
         {
             _ = Analyze();
-            PromoteSelectedFixedMembersToCodecBindings();
-            NormalizeGeneratedModuleDependencies();
+            RejectRuntimeSizedUnsafeBlitTypes();
+            return SnapshotAnalysisResult();
+        }
+
+        internal DtoAnalysisPassResult FinalizeResolvedCodecCandidates(FinalCodecGraph graph)
+        {
+            NormalizeGeneratedModuleDependencies(graph);
+            return SnapshotAnalysisResult();
+        }
+
+        private DtoAnalysisPassResult SnapshotAnalysisResult()
+        {
+            var finalizedCodecs = FilterFailedCodecClosure(
+                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray());
             return new DtoAnalysisPassResult(
-                _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
+                finalizedCodecs,
                 _diagnostics.ToImmutableArray(),
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
         }
 
-        internal HashSet<string> GetCurrentContractReachableTypeNames()
+        private void RejectRuntimeSizedUnsafeBlitTypes()
         {
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: false,
-                includeContracts: true);
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, reachable, seen, 0);
-            return new HashSet<string>(reachable.Keys, StringComparer.Ordinal);
-        }
-
-        private void PromoteSelectedFixedMembersToCodecBindings()
-        {
-            if (!_applyCodecPolicy || _models.Count == 0)
-                return;
-
-            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
-
-            var reachable = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
-            foreach (var root in roots.Values)
-                CollectFinalBindingTypes(root, reachable, seen, 0);
-
-            var dtoModels = _models.Values
-                .Where(static model => model.Kind == GeneratedCodecKind.Dto)
-                .ToArray();
-            foreach (var model in dtoModels)
+            foreach (var type in reachable.Values)
             {
-                if (!reachable.TryGetValue(model.TypeName, out var type) || type is not INamedTypeSymbol named)
+                var typeName = GetTypeName(type);
+                if (HasCodecPolicyCandidate(type) ||
+                    HasReferencedGeneratedCodecIdentityCandidate(type))
+                {
+                    // Referenced generated Codec metadata is only a candidate here.
+                    // ResolveFinalCodecPlan owns its ABI/hash validation and final selection.
                     continue;
-
-                var memberSymbols = GetSerializableMembers(named)
-                    .ToDictionary(static member => member.Name, StringComparer.Ordinal);
-                var members = model.Members.ToArray();
-                var changed = false;
-                for (var index = 0; index < members.Length; index++)
-                {
-                    var member = members[index];
-                    if (member.Kind is not (GeneratedMemberKind.Fixed or GeneratedMemberKind.NullableFixed or GeneratedMemberKind.String) ||
-                        !memberSymbols.TryGetValue(member.Name, out var memberSymbol))
-                    {
-                        continue;
-                    }
-
-                    var memberType = GetMemberType(memberSymbol);
-                    if (!HasSelectedMemberCodec(memberType))
-                        continue;
-
-                    Visit(memberType, [], 0);
-                    members[index] = member with
-                    {
-                        Kind = GeneratedMemberKind.Complex,
-                        FixedTypeName = null,
-                        FixedSize = 0,
-                        EnumUnderlyingType = null
-                    };
-                    changed = true;
                 }
-
-                if (!changed)
+                if (!type.IsUnmanagedType || !IsRuntimeSizedUnsafeBlitType(type))
                     continue;
-
-                var finalizedMembers = members.ToImmutableArray();
-                var schema = new StringBuilder(model.TypeName);
-                foreach (var member in finalizedMembers)
-                {
-                    schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName)
-                        .Append(':').Append(member.Kind).Append(':').Append(member.Required);
-                    if (member.Nullable)
-                        schema.Append(":nullable");
-                }
-                _models[model.TypeName] = model with
-                {
-                    Members = finalizedMembers,
-                    SchemaId = GetSchemaId(model.TypeName, schema.ToString())
-                };
+                Report(DtoDiagnosticKind.Unsupported, type,
+                    "runtime-sized intrinsic unmanaged types such as System.Numerics.Vector<T> cannot use UnsafeBlit; register an explicit typed Codec or Codec Adapter");
+                _failed.Add(typeName);
             }
         }
 
-        private bool HasSelectedCompositeCodecDependency(ITypeSymbol type)
-        {
-            if (!TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
-                return false;
+        private bool IsRuntimeSizedUnsafeBlitType(ITypeSymbol type)
+            => IsRuntimeSizedUnsafeBlitType(type, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
 
-            return (elementType is not null && HasSelectedMemberCodec(elementType)) ||
-                   (keyType is not null && HasSelectedMemberCodec(keyType)) ||
-                   (valueType is not null && HasSelectedMemberCodec(valueType));
+        private bool IsRuntimeSizedUnsafeBlitType(ITypeSymbol type, HashSet<ITypeSymbol> seen)
+        {
+            var vectorDefinition = _compilation.GetTypeByMetadataName("System.Numerics.Vector`1");
+            if (vectorDefinition is not null && type is INamedTypeSymbol vector &&
+                SymbolEqualityComparer.Default.Equals(vector.OriginalDefinition, vectorDefinition))
+            {
+                return true;
+            }
+            if (!type.IsUnmanagedType || type is not INamedTypeSymbol named || !seen.Add(type))
+                return false;
+            foreach (var field in named.GetMembers().OfType<IFieldSymbol>().Where(static field => !field.IsStatic && !field.IsConst))
+            {
+                if (IsRuntimeSizedUnsafeBlitType(field.Type, seen))
+                    return true;
+            }
+            return false;
         }
 
-        private bool HasSelectedMemberCodec(ITypeSymbol memberType)
-        {
-            if (IsFrameworkWirePrimitive(memberType))
-                return false;
-            if (TrySelectCustomCodec(memberType, out var customCodec))
-                return customCodec is not null;
-
-            AdapterRegistration? selected = null;
-            var hasSelection = _contractMode
-                ? TrySelectContractCodecOverride(memberType, out selected)
-                : TrySelectAdapter(memberType, out selected);
-            return hasSelection && selected is not null;
-        }
-
-        private void NormalizeGeneratedModuleDependencies()
+        private void NormalizeGeneratedModuleDependencies(FinalCodecGraph graph)
         {
             if (_models.Count == 0)
                 return;
 
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
-            CollectCurrentAssemblyRoots(
-                _compilation.Assembly.GlobalNamespace,
-                roots,
-                includeSerializable: !_contractMode,
-                includeContracts: _contractMode);
+            CollectCurrentAssemblyRoots(_compilation.Assembly.GlobalNamespace, roots, includeSerializable: !_contractMode, includeContracts: _contractMode);
             var symbolsByType = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var root in roots.Values)
                 CollectFinalBindingTypes(root, symbolsByType, seen, 0);
 
-            var localFactoryTypes = new HashSet<string>(_models.Keys, StringComparer.Ordinal);
-            foreach (var model in _models.Values.ToArray())
+            var localFactoryTypes = new HashSet<string>(
+                graph.Plans.Values.Where(RequiresGeneratedFactory).Select(static plan => plan.TypeName),
+                StringComparer.Ordinal);
+            foreach (var plan in graph.Plans.Values.Where(RequiresGeneratedFactory))
             {
-                if (model.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+                if (!_models.TryGetValue(plan.TypeName, out var model))
+                    continue;
+                if (plan is FinalCustomCodecPlan or FinalAdapterCodecPlan)
                 {
-                    _models[model.TypeName] = model with
-                    {
-                        AssemblyDependencies = ImmutableArray<string>.Empty
-                    };
+                    _models[plan.TypeName] = model with { AssemblyDependencies = ImmutableArray<string>.Empty };
                     continue;
                 }
 
                 var dependencies = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var dependencyTypeName in GetCodecDependencies(model))
+                foreach (var dependencyTypeName in GetFinalCodecPlanDependencies(plan))
                 {
                     if (localFactoryTypes.Contains(dependencyTypeName) ||
-                        !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType) ||
-                        IsBuiltin(dependencyType))
+                        !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType))
                     {
                         continue;
                     }
-
                     var assembly = dependencyType.ContainingAssembly;
                     if (assembly is not null &&
                         !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) &&
@@ -629,12 +703,9 @@ public partial class RpcGenerator
                         dependencies.Add(assembly.Identity.ToString());
                     }
                 }
-
-                _models[model.TypeName] = model with
+                _models[plan.TypeName] = model with
                 {
-                    AssemblyDependencies = dependencies
-                        .OrderBy(static identity => identity, StringComparer.Ordinal)
-                        .ToImmutableArray()
+                    AssemblyDependencies = dependencies.OrderBy(static identity => identity, StringComparer.Ordinal).ToImmutableArray()
                 };
             }
         }
@@ -647,8 +718,13 @@ public partial class RpcGenerator
         {
             if (depth > MaximumDepth || !seen.Add(type))
                 return;
-            reachable[GetTypeName(type)] = type;
-
+            var typeName = GetTypeName(type);
+            reachable[typeName] = type;
+            if (_models.TryGetValue(typeName, out var finalModel) &&
+                finalModel.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+            {
+                return;
+            }
             if (type is IArrayTypeSymbol array)
             {
                 CollectFinalBindingTypes(array.ElementType, reachable, seen, depth + 1);
@@ -656,17 +732,13 @@ public partial class RpcGenerator
             }
             if (TryGetCollection(type, out _, out var elementType, out var keyType, out var valueType))
             {
-                if (elementType is not null)
-                    CollectFinalBindingTypes(elementType, reachable, seen, depth + 1);
-                if (keyType is not null)
-                    CollectFinalBindingTypes(keyType, reachable, seen, depth + 1);
-                if (valueType is not null)
-                    CollectFinalBindingTypes(valueType, reachable, seen, depth + 1);
+                if (elementType is not null) CollectFinalBindingTypes(elementType, reachable, seen, depth + 1);
+                if (keyType is not null) CollectFinalBindingTypes(keyType, reachable, seen, depth + 1);
+                if (valueType is not null) CollectFinalBindingTypes(valueType, reachable, seen, depth + 1);
                 return;
             }
             if (type is not INamedTypeSymbol named || IsThirdPartyType(type))
                 return;
-
             foreach (var member in GetSerializableMembers(named))
                 CollectFinalBindingTypes(GetMemberType(member), reachable, seen, depth + 1);
         }

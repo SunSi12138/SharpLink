@@ -14,8 +14,7 @@ using SharpLink.Server;
 
 [assembly: RpcCodecAdapterRegistration(
     typeof(SharpLink.PreCreditAotSmoke.PreCreditPayloadCodecAdapter),
-    "sharplink.precredit-aot.unsized",
-    "sharplink.precredit-aot.unsized.v1")]
+    "sharplink.precredit-aot.unsized")]
 
 namespace SharpLink.PreCreditAotSmoke;
 
@@ -191,11 +190,10 @@ public sealed class PreCreditAotService : IPreCreditAotService
 [RpcCodecAdapter(typeof(PreCreditPayloadCodecAdapter))]
 public readonly record struct PreCreditPayload(int Sequence);
 
+[RpcCodecSemanticIdentity(0x5937fbbdf810875fUL, 0xea08c7aeef8cbe0fUL)]
 public sealed class PreCreditPayloadCodecAdapter : IRpcCodecAdapter
 {
     public string AdapterId => "sharplink.precredit-aot.unsized";
-
-    public string WireFormatId => "sharplink.precredit-aot.unsized.v1";
 
     public IRpcCodecAdapterScope CreateScope() => new Scope();
 

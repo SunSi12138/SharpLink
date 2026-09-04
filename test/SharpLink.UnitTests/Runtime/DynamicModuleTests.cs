@@ -250,7 +250,7 @@ public class DynamicModuleTests
             throw new Exception(message);
     }
 
-    private sealed class EmptyManifest : ISharpLinkGeneratedAssemblyManifest
+    private sealed class EmptyManifest : ITestGeneratedManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;

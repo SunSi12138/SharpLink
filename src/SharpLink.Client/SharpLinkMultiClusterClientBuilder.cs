@@ -282,7 +282,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
             }
             if (!assemblyOwners.TryAdd(route.ContractAssembly, cluster))
                 continue;
-            AddManifestClosure(contractManifest, cluster, manifestsByCluster, manifestsByAssembly, includeContractPolicyDependencies: true);
+            AddManifestClosure(contractManifest, route.Cluster, manifestsByCluster, manifestsByAssembly, includeContractPolicyDependencies: true);
         }
 
         if (manifestsByCluster[cluster].Values.All(static manifest => manifest.Contracts.Count == 0) &&
@@ -596,6 +596,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         public int ProtocolVersion => source.ProtocolVersion;
         public string GeneratorVersion => source.GeneratorVersion;
         public Assembly OwnerAssembly => source.OwnerAssembly;
+        public RpcHash128 RpcAssemblyHash => source.RpcAssemblyHash;
         public string CompileTimeDescriptor => source.CompileTimeDescriptor;
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];

@@ -107,13 +107,14 @@ public class StaticContractCodecProviderRegressionTests
                     [],
                     static _ => new ContractBService())
             ];
-            _contractCodecs = [new CustomFactory(SharedCodec, "test/assembly-shared")];
+            _contractCodecs = [new CustomFactory(SharedCodec)];
         }
 
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(IContractA).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x7374617469632d63UL, 0x6f6465632d6f776eUL);
         public string CompileTimeDescriptor => "test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => _contracts;
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => _services;
@@ -125,12 +126,11 @@ public class StaticContractCodecProviderRegressionTests
         internal IRpcCodec<SharedPayload>? CapturedA { get; private set; }
         internal IRpcCodec<SharedPayload>? CapturedB { get; private set; }
 
-        private sealed class CustomFactory(IRpcCodec<SharedPayload> codec, string schemaId)
+        private sealed class CustomFactory(IRpcCodec<SharedPayload> codec)
             : IRpcGeneratedCodecFactory
         {
             public Type TargetType => typeof(SharedPayload);
-            public string SchemaId => schemaId;
-            public string WireFormatId => "test/shared-payload/v1";
+            public RpcHash128 CodecHash => new(0x617373656d626c79UL, 0x2d7368617265642dUL);
             public string? AdapterId => null;
             public IRpcCodecAdapter? Adapter => null;
 

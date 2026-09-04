@@ -143,8 +143,8 @@ internal sealed partial class SharpLinkServer
                 else
                     nextFactories[codecType] = replacement;
             }
-            Volatile.Write(ref _services, nextServices);
             _runtimeContext.PublishGeneratedCodecs(nextFactories);
+            Volatile.Write(ref _services, nextServices);
             _dynamicModules.Remove(assembly);
             _registryGeneration++;
         }
@@ -229,10 +229,12 @@ internal sealed partial class SharpLinkServer
         lock (_registryGate)
             modules = [.. _dynamicModules];
 
+        var manifests = modules.Select(static pair => pair.Value.Manifest).ToArray();
+        var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
         List<Exception>? failures = null;
-        for (var index = 0; index < modules.Length; index++)
+        for (var index = 0; index < order.Length; index++)
         {
-            var pair = modules[index];
+            var pair = modules[order[index]];
             try
             {
                 pair.Value.TryBeginDraining();
@@ -253,12 +255,13 @@ internal sealed partial class SharpLinkServer
 
     private void EnsureNoDynamicDependants(SharpLinkDynamicModule module)
     {
-        var identity = module.Manifest.OwnerAssembly.FullName;
+        var ownerAssembly = module.Manifest.OwnerAssembly;
+        var identity = ownerAssembly.FullName;
         foreach (var candidate in _dynamicModules.Values)
         {
             if (ReferenceEquals(candidate, module))
                 continue;
-            if (ManifestDependsOn(candidate.Manifest, identity))
+            if (ManifestDependsOn(candidate.Manifest, ownerAssembly))
             {
                 throw new InvalidOperationException(
                     $"Assembly '{identity}' cannot be unregistered while '{candidate.Manifest.OwnerAssembly.FullName}' depends on it.");

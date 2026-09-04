@@ -197,7 +197,7 @@ public partial class RpcGenerator
 
         private void AddAdapterModel(ITypeSymbol type, string typeName, AdapterRegistration adapter)
         {
-            var schema = $"adapter|{adapter.AdapterId}|{GetTypeName(adapter.AdapterType)}|{adapter.WireFormatId}";
+            var schema = $"adapter|{adapter.AdapterId}|{GetTypeName(adapter.AdapterType)}";
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
                 GetCodecName(typeName, _contractMode),
@@ -212,14 +212,15 @@ public partial class RpcGenerator
                 null,
                 GetTypeName(adapter.AdapterType),
                 adapter.AdapterId,
-                adapter.WireFormatId,
+                string.Empty,
                 GetAssemblyDependencies([type]),
                 type.Locations.FirstOrDefault());
         }
 
         private bool IsRouteEligible(ITypeSymbol type)
         {
-            if (IsFrameworkWirePrimitive(type) ||
+            if (type.TypeKind is TypeKind.Dynamic or TypeKind.Pointer or TypeKind.FunctionPointer ||
+                IsFrameworkWirePrimitive(type) ||
                 (_assemblyRoutes.Count == 0 && _conflictingRouteScopes.Count == 0))
             {
                 return false;

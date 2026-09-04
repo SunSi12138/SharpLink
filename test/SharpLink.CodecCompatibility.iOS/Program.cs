@@ -33,8 +33,12 @@ public static class Application
             var sdk = Environment.GetEnvironmentVariable("SHARPLINK_SDK_VERSION") ?? "unknown";
             var targetFramework = Environment.GetEnvironmentVariable("SHARPLINK_TARGET_FRAMEWORK")
                 ?? "net10.0-ios/iossimulator";
+            var isExperimentalCoreClr = targetFramework.StartsWith("net11.0-ios", StringComparison.OrdinalIgnoreCase);
+            var expectedRuntimeFamily = isExperimentalCoreClr ? "CoreCLR" : "Mono";
+            var expectedCompilationMode = isExperimentalCoreClr ? null : "Interpreter";
 
-            Console.WriteLine($"SharpLink codec probe starting from Main: mode={mode}, target={targetFramework}.");
+            Console.WriteLine(
+                $"SharpLink codec probe starting from Main: mode={mode}, target={targetFramework}, runtime={expectedRuntimeFamily}.");
 
             string result;
             if (string.Equals(mode, "produce", StringComparison.Ordinal))
@@ -43,7 +47,8 @@ public static class Application
                     commit,
                     sdk,
                     targetFramework,
-                    expectedCompilationMode: "Interpreter",
+                    expectedCompilationMode: expectedCompilationMode,
+                    expectedRuntimeFamily: expectedRuntimeFamily,
                     executionEnvironmentOverride: "simulator");
             }
             else if (string.Equals(mode, "verify", StringComparison.Ordinal))
@@ -54,7 +59,8 @@ public static class Application
                     commit,
                     sdk,
                     targetFramework,
-                    expectedCompilationMode: "Interpreter",
+                    expectedCompilationMode: expectedCompilationMode,
+                    expectedRuntimeFamily: expectedRuntimeFamily,
                     executionEnvironmentOverride: "simulator");
             }
             else

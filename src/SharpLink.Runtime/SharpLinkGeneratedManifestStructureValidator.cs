@@ -10,6 +10,11 @@ internal static class SharpLinkGeneratedManifestStructureValidator
 
         var ownerAssembly = manifest.OwnerAssembly ??
             throw new InvalidOperationException("Generated manifest has no owner assembly.");
+        if (manifest.RpcAssemblyHash.IsEmpty)
+        {
+            throw new InvalidOperationException(
+                $"Generated manifest '{ownerAssembly.FullName}' has no deterministic RPC assembly identity.");
+        }
         var contracts = manifest.Contracts ??
             throw new InvalidOperationException($"Generated manifest '{ownerAssembly.FullName}' has a null Contract table.");
         var codecs = manifest.Codecs ??
@@ -60,10 +65,10 @@ internal static class SharpLinkGeneratedManifestStructureValidator
             var targetType = factory.TargetType ??
                 throw new InvalidOperationException(
                     $"Generated manifest '{ownerAssembly.FullName}' contains a Codec factory without a target Type in the {scope} graph.");
-            if (string.IsNullOrWhiteSpace(factory.SchemaId) || string.IsNullOrWhiteSpace(factory.WireFormatId))
+            if (factory.CodecHash.IsEmpty)
             {
                 throw new InvalidOperationException(
-                    $"Generated manifest '{ownerAssembly.FullName}' contains incomplete Codec identity for '{targetType.FullName}' in the {scope} graph.");
+                    $"Generated manifest '{ownerAssembly.FullName}' contains no deterministic CodecHash for '{targetType.FullName}' in the {scope} graph.");
             }
             if (!targets.Add(targetType))
             {

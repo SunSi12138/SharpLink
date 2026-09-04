@@ -56,7 +56,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal API 4 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 4, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-2.0-api4-rpcchannel-codec-provider-v3", StringComparison.Ordinal),
+               manifest.Contains("sharplink-2.0-api4-rpcchannel-codec-provider-v4", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -414,9 +414,9 @@ public interface IResponseFingerprintContract : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DtoMemberNullabilityMustParticipateInRuntimeCodecSchemaIdentity()
+    public Task OptionalDtoMemberNullabilityAnnotationShouldNotPerturbRuntimeCodecHash()
     {
-        var required = BuildSource("""
+        var nonNullable = BuildSource("""
 #nullable enable
 [SharpLink.Sdk.RpcContract]
 public interface IDtoSchemaContract : SharpLink.Sdk.IService
@@ -425,7 +425,7 @@ public interface IDtoSchemaContract : SharpLink.Sdk.IService
 }
 public sealed class Payload { public string Name { get; set; } = string.Empty; }
 """);
-        var optional = BuildSource("""
+        var nullable = BuildSource("""
 #nullable enable
 [SharpLink.Sdk.RpcContract]
 public interface IDtoSchemaContract : SharpLink.Sdk.IService
@@ -435,10 +435,10 @@ public interface IDtoSchemaContract : SharpLink.Sdk.IService
 public sealed class Payload { public string? Name { get; set; } }
 """);
 
-        var requiredSchema = GetFirstGeneratedCodecSchema(required);
-        var optionalSchema = GetFirstGeneratedCodecSchema(optional);
-        Ensure(!string.Equals(requiredSchema, optionalSchema, StringComparison.Ordinal),
-            "required and nullable DTO members must not publish the same runtime Codec schema");
+        var nonNullableHash = GetFirstGeneratedCodecHash(nonNullable);
+        var nullableHash = GetFirstGeneratedCodecHash(nullable);
+        Ensure(string.Equals(nonNullableHash, nullableHash, StringComparison.Ordinal),
+            "optional nullable annotations must not change runtime CodecHash when generated null behavior is identical");
         return Task.CompletedTask;
     }
 
@@ -828,22 +828,22 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DirectStringDtosShouldCacheExactUtf8SizesAndPreReserveOnce()
+    public Task DirectStringDtosShouldCacheExactUtf16SizesAndPreReserveOnce()
     {
         var source = BuildDirectStringDtoSource(1, 4, 16, 64);
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
 
-        Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf8") == 1,
-            "one assembly-private UTF-8 helper must be shared by all eligible generated Codecs");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 85,
-            "each direct string must be counted once in the direct reservation path");
-        Ensure(CountOccurrences(generated, "StrictEncoding.GetByteCount(") == 1,
-            "the known-size write helper must never traverse UTF-16 again");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 85,
+        Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf16") == 1,
+            "one assembly-private UTF-16 helper must be shared by all eligible generated Codecs");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__string_") == 85,
+            "each direct string must compute its exact UTF-16 byte count once in the direct reservation path");
+        Ensure(CountOccurrences(generated, "checked(value.Length * sizeof(char))") == 1,
+            "the known-size helper must compute UTF-16 bytes in O(1) without an encoding traversal");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(writer, __string_") == 85,
             "each direct string must reuse its cached value and byte count in the direct write path");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__snapshot.__string_") == 85,
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_") == 85,
             "each direct string must be captured once for the snapshot sizing path");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(buffer, __snapshot.__string_") == 85,
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(buffer, __snapshot.__string_") == 85,
             "each direct string must reuse its snapshot value and byte count in the sized write path");
         Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 4,
             "each eligible DTO must gate whole-payload reservation on the SharpLink packet writer");
@@ -854,12 +854,13 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(CountOccurrences(generated, "var __encodedSize =") == 4,
             "each eligible DTO must compute one checked encoded size");
         Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Field", StringComparison.Ordinal),
-            "eligible DTOs must not call the byte-counting public string primitive after pre-sizing");
-        Ensure(generated.Contains("new global::System.Text.UTF8Encoding(false, true)", StringComparison.Ordinal),
-            "the generated helper must preserve strict UTF-8 encoder semantics");
-        Ensure(generated.Contains("global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian", StringComparison.Ordinal) &&
-               generated.Contains("var payload = writer.GetSpan(byteCount);", StringComparison.Ordinal),
-            "known-size writes must preserve the little-endian prefix and separate payload request");
+            "eligible DTOs must not call the public string primitive after pre-sizing");
+        Ensure(!generated.Contains("UTF8Encoding", StringComparison.Ordinal) &&
+               !generated.Contains("StrictEncoding.GetByteCount", StringComparison.Ordinal),
+            "generated DTO string sizing must not transcode or traverse UTF-8");
+        Ensure(generated.Contains("global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian", StringComparison.Ordinal) &&
+               generated.Contains("value.AsSpan().CopyTo(global::System.Runtime.InteropServices.MemoryMarshal.Cast<byte, char>(payload));", StringComparison.Ordinal),
+            "known-size writes must preserve the Int32 little-endian prefix and raw UTF-16 code-unit payload");
         return Task.CompletedTask;
     }
 
@@ -882,7 +883,7 @@ public sealed class NestedPayload
 """);
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
+        Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf16", StringComparison.Ordinal) &&
                generated.Contains("out var __exactSize", StringComparison.Ordinal) &&
                generated.Contains("IRpcSizedCodec", StringComparison.Ordinal) &&
                generated.Contains("IRpcSizedCodecSnapshot", StringComparison.Ordinal) &&
@@ -953,7 +954,7 @@ internal sealed class InternalService : IInternalService
         var ordinary = CreateMetadataReference(
             "OrdinaryDependency",
             "namespace OrdinaryDependency { public sealed class OrdinaryType { } }");
-        const string consumer = "namespace Consumer { internal sealed class Marker { } }";
+        const string consumer = "namespace Consumer { internal sealed class Marker; }";
 
         var first = GetReferencedManifestBootstrap(
             RunGeneratorAndGetSources(consumer, infrastructure, zeta, ordinary, legacy, malformed, alpha));
@@ -1962,7 +1963,11 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         Ensure(generated.Contains("public Type TargetType => typeof(global::Graph);", StringComparison.Ordinal),
             "Adapter factory target type");
         Ensure(generated.Contains("fake.adapter/v1", StringComparison.Ordinal), "Adapter ID");
-        Ensure(generated.Contains("fake-wire/v1", StringComparison.Ordinal), "Wire Format ID");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "Adapter factory CodecHash");
+        Ensure(!generated.Contains("SchemaId =>", StringComparison.Ordinal) &&
+               !generated.Contains("WireFormatId =>", StringComparison.Ordinal),
+            "Adapter factory must not emit legacy schema/wire identities");
         Ensure(!generated.Contains("FakeAdapter, Version=", StringComparison.Ordinal),
             "Adapter implementation assemblies are normal runtime references, not dynamic Manifest dependencies");
         Ensure(!generated.Contains("MakeGenericType", StringComparison.Ordinal), "no MakeGenericType");
@@ -2279,18 +2284,6 @@ public abstract class AdapterBase : SharpLink.Abstractions.IRpcCodecAdapter
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"shared/v1\", \"wire/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SecondAdapter), \"shared/v1\", \"wire/v1\")]");
         EnsureHasRuleContaining(sameIdDifferentType, "SHARPLINK048", "Adapter ID 'shared/v1'");
-
-        var sameIdDifferentWire = AddAssemblyAttributes(BuildSource("""
-public sealed class FirstAdapter : SharpLink.Abstractions.IRpcCodecAdapter
-{
-    public string AdapterId => "shared/v1";
-    public string WireFormatId => "wire/v1";
-    public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
-}
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"shared/v1\", \"wire/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FirstAdapter), \"shared/v1\", \"other-wire/v1\")]");
-        EnsureHasRuleContaining(sameIdDifferentWire, "SHARPLINK048", "same Adapter type");
         return Task.CompletedTask;
     }
 
@@ -2392,8 +2385,8 @@ public sealed class InstalledAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("IRpcCodec<global::NativePayload>", StringComparison.Ordinal),
             "supported DTO retains its native generated Codec");
-        Ensure(generated.Contains("WireFormatId => \"sharplink-native/v1\"", StringComparison.Ordinal),
-            "supported DTO retains the native wire identity");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "supported DTO publishes deterministic native CodecHash");
         Ensure(!generated.Contains("CreateCodec<global::NativePayload>()", StringComparison.Ordinal),
             "installed Adapter is not an automatic fallback");
         Ensure(!generated.Contains("installed-wire/v1", StringComparison.Ordinal),
@@ -2472,7 +2465,10 @@ public interface IGraphService : SharpLink.Sdk.IService
         Ensure(generated.Contains("CreateCodec<global::Graph>()", StringComparison.Ordinal),
             "registration from the transitive compilation reference closure selects the Adapter");
         Ensure(generated.Contains("metadata.adapter/v1", StringComparison.Ordinal), "metadata Adapter ID");
-        Ensure(generated.Contains("metadata-wire/v1", StringComparison.Ordinal), "metadata Wire Format ID");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "metadata Adapter CodecHash");
+        Ensure(!generated.Contains("metadata-wire/v1", StringComparison.Ordinal),
+            "legacy metadata wire identity must not be emitted");
         return Task.CompletedTask;
     }
 
@@ -2966,9 +2962,11 @@ public interface IMoneyService : SharpLink.Sdk.IService
             "custom Codec binding must emit an IRpcGeneratedCodecFactory");
         Ensure(generated.Contains("new global::MoneyCodec()", StringComparison.Ordinal),
             "custom Codec factory must construct the bound implementation directly");
-        Ensure(generated.Contains("\"money-wire/v1\"", StringComparison.Ordinal) &&
-               generated.Contains("SchemaId => \"global::Money:", StringComparison.Ordinal),
-            "custom Codec wire/schema identity must be emitted into the manifest");
+        Ensure(generated.Contains("public RpcHash128 CodecHash => new(", StringComparison.Ordinal),
+            "custom Codec factory must emit deterministic CodecHash");
+        Ensure(!generated.Contains("SchemaId =>", StringComparison.Ordinal) &&
+               !generated.Contains("WireFormatId =>", StringComparison.Ordinal),
+            "custom Codec factory must not emit legacy schema/wire identities");
         return Task.CompletedTask;
     }
 
@@ -3348,11 +3346,11 @@ namespace SharpLink.Abstractions
         return quotedLines[^1].TrimEnd(',').Trim('"');
     }
 
-    private static string GetFirstGeneratedCodecSchema(string source)
+    private static string GetFirstGeneratedCodecHash(string source)
         => string.Join("\n", RunGeneratorAndGetSources(source))
             .Split('\n')
             .Select(static line => line.Trim())
-            .First(static line => line.StartsWith("public string SchemaId =>", StringComparison.Ordinal));
+            .First(static line => line.StartsWith("public RpcHash128 CodecHash =>", StringComparison.Ordinal));
 
     private static MetadataReference CreateMetadataReference(
         string assemblyName,
@@ -3416,7 +3414,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v3")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v4")]
 
 namespace SharpLink.Generated
 {

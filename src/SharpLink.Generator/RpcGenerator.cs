@@ -302,25 +302,53 @@ public partial class RpcGenerator : IIncrementalGenerator
                     diagnostic.Detail));
             }
 
+            foreach (var diagnostic in result.UnsafeBlitAutoLayoutDiagnostics)
+            {
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    ImplicitUnsafeBlitAutoLayoutRule,
+                    diagnostic.Location,
+                    diagnostic.PayloadType,
+                    diagnostic.TypeName,
+                    diagnostic.FieldPath));
+            }
+
             if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)
             {
                 spc.AddSource(
                     "SharpLink.GeneratedCodecs.g.cs",
                     SourceText.From(GenerateCodecs(result.Codecs.AddRange(result.ContractCodecs)), Encoding.UTF8));
             }
+
+            if (!result.UnsafeBlitRequirements.IsDefaultOrEmpty)
+            {
+                spc.AddSource(
+                    "SharpLink.GeneratedUnsafeBlitRequirements.g.cs",
+                    SourceText.From(GenerateUnsafeBlitRequirements(result.UnsafeBlitRequirements), Encoding.UTF8));
+            }
         });
 
         var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
+            if (!value.Right.Diagnostics.IsDefaultOrEmpty)
+                return;
+
             var interfaces = value.Left.Left;
             var services = value.Left.Right;
             var codecs = value.Right.Codecs;
             var contractCodecs = value.Right.ContractCodecs;
+            var codecHashes = value.Right.CodecHashes;
             var contracts = GetContractModels(interfaces);
             var serviceModels = GetServiceModels(services);
 
-            var code = GenerateAssemblyManifest(interfaces, services, codecs, contractCodecs);
+            var code = GenerateAssemblyManifest(
+                interfaces,
+                services,
+                codecs,
+                contractCodecs,
+                codecHashes,
+                value.Right.ReferencedCodecHashes,
+                value.Right.AssemblyLogicalIdentity);
             if (!string.IsNullOrEmpty(code))
             {
                 var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs, contractCodecs);
@@ -350,7 +378,8 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Select(static (value, _) => new ContractManifestModels(
                 value.Left.Left.Left,
                 value.Left.Left.Right,
-                value.Left.Right.Codecs,
+                GetContractManifestCodecs(value.Left.Right),
+                value.Left.Right.CodecHashes,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider
@@ -362,6 +391,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 value.Left.Left.Interfaces,
                 value.Left.Left.Services,
                 value.Left.Left.Codecs,
+                value.Left.Left.CodecHashes,
                 value.Left.Left.Enums,
                 value.Left.Left.Unions,
                 value.Left.Right,

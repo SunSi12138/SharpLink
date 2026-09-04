@@ -13,11 +13,15 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Compile Include="../SharpLink.CodecCompatibility/AutoLayoutEvidenceFixtures.cs" Link="Shared/AutoLayoutEvidenceFixtures.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/CompatibilityPolicy.cs" Link="Shared/CompatibilityPolicy.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/Fixtures.cs" Link="Shared/Fixtures.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/Models.cs" Link="Shared/Models.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/PortableModels.cs" Link="Shared/PortableModels.cs" />
     <Compile Include="../SharpLink.CodecCompatibility/PortableProbe.cs" Link="Shared/PortableProbe.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.cs" Link="Shared/UnsafeBlitLayoutEvidence.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.Matrix.cs" Link="Shared/UnsafeBlitLayoutEvidence.Matrix.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/UnsafeBlitLayoutEvidence.StringCompatibility.cs" Link="Shared/UnsafeBlitLayoutEvidence.StringCompatibility.cs" />
   </ItemGroup>
 
   <ItemGroup>

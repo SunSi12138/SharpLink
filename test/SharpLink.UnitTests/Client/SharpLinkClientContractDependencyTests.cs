@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using SharpLink.Abstractions;
 using SharpLink.Client;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 namespace SharpLink.UnitTests.Client;
@@ -19,6 +20,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task DynamicDependencyValidationShouldIncludeContractDependencies()
     {
         await using var client = SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
@@ -45,6 +47,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task ClientUnregisterShouldProtectContractDependencies()
     {
         await using var client = SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
@@ -63,12 +66,8 @@ public sealed class SharpLinkClientContractDependencyTests
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Client unregister dependency guard was not found.");
 
-        var dependencyAssembly = AssemblyBuilder.DefineDynamicAssembly(
-            new AssemblyName("SharpLink.ContractDependency.B." + Guid.NewGuid().ToString("N")),
-            AssemblyBuilderAccess.Run);
-        var dependantAssembly = AssemblyBuilder.DefineDynamicAssembly(
-            new AssemblyName("SharpLink.ContractDependency.A." + Guid.NewGuid().ToString("N")),
-            AssemblyBuilderAccess.Run);
+        var dependencyAssembly = typeof(IService).Assembly;
+        var dependantAssembly = client.GetType().Assembly;
         var dependencyManifest = new TestManifest(dependencyAssembly, []);
         var dependantManifest = new TestManifest(
             dependantAssembly,
@@ -101,6 +100,7 @@ public sealed class SharpLinkClientContractDependencyTests
     public async Task StaleApi4DescriptorAbiShouldBeRejectedBeforeManifestActivation()
     {
         await using var client = SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();

@@ -18,12 +18,6 @@
     },
     {
       "domain": "source",
-      "path": "src/SharpLink.Generator/RpcGenerator.Analysis.cs",
-      "maxLoc": 1655,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs",
       "maxLoc": 1638,
       "reason": "Existing dev debt captured by issue #350."
@@ -81,12 +75,6 @@
       "path": "src/SharpLink.Client/SharpLinkClient.Invokers.cs",
       "maxLoc": 1100,
       "reason": "Issue #282 adds the reviewed terminal call-control telemetry invocation seam; existing invoker decomposition debt remains tracked by issue #350."
-    },
-    {
-      "domain": "source",
-      "path": "src/SharpLink.Generator/RpcGenerator.ContractManifest.cs",
-      "maxLoc": 1098,
-      "reason": "Existing dev debt captured by issue #350."
     },
     {
       "domain": "source",
@@ -266,12 +254,6 @@
       "domain": "test",
       "path": "test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.cs",
       "maxLoc": 1047,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.Generator.Tests/ContractManifestGeneratorTests.cs",
-      "maxLoc": 1040,
       "reason": "Existing dev debt captured by issue #350."
     },
     {

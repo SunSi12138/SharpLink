@@ -222,6 +222,7 @@ internal static class PortableProbe
                     : OperatingSystem.IsIOS()
                         ? "ios-runtime"
                         : "hosted-desktop");
+        var frameworkTag = DetectFrameworkTag(targetFramework);
 
         var manifest = new RuntimeManifest
         {
@@ -242,7 +243,7 @@ internal static class PortableProbe
             PointerSize = IntPtr.Size,
             IsLittleEndian = BitConverter.IsLittleEndian,
             CompilationMode = compilationMode,
-            PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
+            PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-{frameworkTag}"
         };
 
         CompatibilityPolicy.ValidateManifestFixtureRegistry(manifest);
@@ -337,7 +338,7 @@ internal static class PortableProbe
 
     private static (string Family, string Source) DetectRuntimeFamily()
     {
-        if (OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
+        if (OperatingSystem.IsBrowser())
             return ("Mono", "platform-runtime-pack");
 
         if (OperatingSystem.IsAndroid())
@@ -367,6 +368,20 @@ internal static class PortableProbe
         }
 
         return monoLoaded ? "Mono" : "CoreCLR";
+    }
+
+    private static string DetectFrameworkTag(string targetFramework)
+    {
+        var framework = targetFramework.Split('/', 2, StringSplitOptions.TrimEntries)[0];
+        var platformSeparator = framework.IndexOf('-');
+        if (platformSeparator >= 0)
+            framework = framework[..platformSeparator];
+        var versionSeparator = framework.IndexOf('.');
+        if (versionSeparator >= 0)
+            framework = framework[..versionSeparator];
+        if (!framework.StartsWith("net", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Unsupported target framework identity '{targetFramework}'.");
+        return framework.ToLowerInvariant();
     }
 
     private static string Hash(ReadOnlySpan<byte> bytes)

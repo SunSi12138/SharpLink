@@ -6,11 +6,8 @@ public interface IRpcGeneratedCodecFactory
     /// <summary>Gets the closed DTO or collection type handled by the factory.</summary>
     Type TargetType { get; }
 
-    /// <summary>Gets the deterministic schema identifier used for idempotent registration.</summary>
-    string SchemaId { get; }
-
-    /// <summary>Gets the stable binary wire-format identity.</summary>
-    string WireFormatId { get; }
+    /// <summary>Gets the deterministic identity of the finalized Codec semantics.</summary>
+    RpcHash128 CodecHash => default;
 
     /// <summary>Gets the adapter lifecycle identity, or null for adapter-free Codecs.</summary>
     string? AdapterId { get; }

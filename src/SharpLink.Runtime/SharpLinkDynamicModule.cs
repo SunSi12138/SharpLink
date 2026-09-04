@@ -316,7 +316,7 @@ internal static class SharpLinkAssemblyManifestLoader
         for (var codecIndex = 0; codecIndex < manifest.Codecs.Count; codecIndex++)
         {
             var codec = manifest.Codecs[codecIndex];
-            if (codec is null || codec.TargetType is null || string.IsNullOrWhiteSpace(codec.SchemaId))
+            if (codec is null || codec.TargetType is null || codec.CodecHash.IsEmpty)
             {
                 return Error(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
@@ -331,7 +331,7 @@ internal static class SharpLinkAssemblyManifestLoader
                     $"Manifest contains more than one Codec for '{codec.TargetType.FullName}'.",
                     assembly,
                     "Codec",
-                    incomingFingerprint: codec.SchemaId);
+                    incomingFingerprint: codec.CodecHash.ToString());
             }
         }
 

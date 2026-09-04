@@ -47,14 +47,33 @@ function collectDiagnostics(launchOutput) {
 
 async function waitForResult(launchOutput) {
     const deadline = Date.now() + 120_000;
+    let lastRead = null;
+    let lastParseError = null;
     while (Date.now() < deadline) {
         const exists = adbTry(['shell', 'run-as', packageName, 'test', '-f', resultFile]);
         if (exists.status === 0) {
-            return adb(['shell', 'run-as', packageName, 'cat', resultFile]);
+            const read = adbTry(['shell', 'run-as', packageName, 'cat', resultFile]);
+            lastRead = read;
+            if (read.status === 0) {
+                const text = read.stdout ?? '';
+                try {
+                    JSON.parse(text);
+                    return text;
+                } catch (error) {
+                    lastParseError = error;
+                }
+            }
         }
         await delay(250);
     }
-    throw new Error(`Android probe timed out waiting for app-private result file.\n${collectDiagnostics(launchOutput)}`);
+    const readDiagnostics = lastRead === null
+        ? 'result read was never attempted after the file probe succeeded'
+        : `last result read status: ${lastRead.status}\nstdout:\n${lastRead.stdout ?? ''}\nstderr:\n${lastRead.stderr ?? ''}`;
+    const parseDiagnostics = lastParseError === null
+        ? ''
+        : `\nlast JSON parse error:\n${lastParseError.stack ?? lastParseError}`;
+    throw new Error(
+        `Android probe timed out waiting for a complete app-private result file.\n${readDiagnostics}${parseDiagnostics}\n\n${collectDiagnostics(launchOutput)}`);
 }
 
 async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion, runtimeFamily) {

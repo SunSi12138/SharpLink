@@ -100,7 +100,7 @@ internal sealed partial class SharpLinkServer
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
 
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
+                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         Volatile.Write(ref _services, candidate.Services);
                         _dynamicModules.Add(assembly, module);
@@ -271,13 +271,24 @@ internal sealed partial class SharpLinkServer
                     }
                     else
                     {
+                        var dependencyError = ValidateDependencies(
+                            manifest!,
+                            _dynamicModules.Values
+                                .Where(module => !ReferenceEquals(module, oldModule))
+                                .ToArray());
+                        if (dependencyError is not null)
+                        {
+                            rollbackError = dependencyError;
+                            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
+                        }
+
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
+                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _dynamicModules.Add(newAssembly, newModule);
                         _detachedModuleServices.Add(oldModule, detachedServices);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         Volatile.Write(ref _services, candidate.Services);
                         _registryGeneration++;
@@ -385,16 +396,15 @@ internal sealed partial class SharpLinkServer
             var codec = pair.Value;
             if (nextFactories.TryGetValue(pair.Key, out var existingCodec))
             {
-                if (!string.Equals(existingCodec.Factory.SchemaId, codec.Factory.SchemaId, StringComparison.Ordinal) ||
-                    !string.Equals(existingCodec.Factory.WireFormatId, codec.Factory.WireFormatId, StringComparison.Ordinal))
+                if (existingCodec.Factory.CodecHash != codec.Factory.CodecHash)
                 {
                     error = CreateError(
                         SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
-                        $"Codec conflict for '{pair.Key.FullName}': existing schema/wire '{existingCodec.Factory.SchemaId}'/'{existingCodec.Factory.WireFormatId}', incoming schema/wire '{codec.Factory.SchemaId}'/'{codec.Factory.WireFormatId}'.",
+                        $"Codec conflict for '{pair.Key.FullName}': existing CodecHash '{existingCodec.Factory.CodecHash}', incoming CodecHash '{codec.Factory.CodecHash}'.",
                         incoming.OwnerAssembly,
                         artifact: "Codec",
-                        existingFingerprint: existingCodec.Factory.SchemaId,
-                        incomingFingerprint: codec.Factory.SchemaId);
+                        existingFingerprint: existingCodec.Factory.CodecHash.ToString(),
+                        incomingFingerprint: codec.Factory.CodecHash.ToString());
                     return default;
                 }
                 continue;
@@ -568,12 +578,13 @@ internal sealed partial class SharpLinkServer
         SharpLinkDynamicModule oldModule,
         ISharpLinkGeneratedAssemblyManifest incoming)
     {
-        var oldIdentity = oldModule.Manifest.OwnerAssembly.FullName;
+        var oldAssembly = oldModule.Manifest.OwnerAssembly;
+        var oldIdentity = oldAssembly.FullName;
         var newIdentity = incoming.OwnerAssembly.FullName;
         foreach (var candidate in _dynamicModules.Values)
         {
             if (!ReferenceEquals(candidate, oldModule) &&
-                ManifestDependsOn(candidate.Manifest, oldIdentity))
+                ManifestDependsOn(candidate.Manifest, oldAssembly))
             {
                 return CreateError(
                     SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
@@ -594,9 +605,10 @@ internal sealed partial class SharpLinkServer
             yield return dependency;
     }
 
-    private static bool ManifestDependsOn(ISharpLinkGeneratedAssemblyManifest manifest, string? identity)
-        => identity is not null && EnumerateManifestDependencies(manifest)
-            .Any(dependency => string.Equals(dependency, identity, StringComparison.Ordinal));
+    private static bool ManifestDependsOn(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        Assembly ownerAssembly)
+        => SharpLinkGeneratedDependencyBinding.ManifestDependsOn(manifest, ownerAssembly);
 
     private SharpLinkAssemblyRegistrationError? ValidateServiceDependencies(
         ISharpLinkGeneratedAssemblyManifest incoming,
@@ -630,25 +642,45 @@ internal sealed partial class SharpLinkServer
         ISharpLinkGeneratedAssemblyManifest incoming,
         SharpLinkDynamicModule[] currentModules)
     {
-        var available = new HashSet<string>(StringComparer.Ordinal);
+        var available = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
         for (var index = 0; index < _staticManifests.Count; index++)
-            available.Add(_staticManifests[index].OwnerAssembly.FullName ?? string.Empty);
+            available.Add(_staticManifests[index].OwnerAssembly);
         for (var index = 0; index < currentModules.Length; index++)
         {
             var module = currentModules[index];
             if (module.State == SharpLinkDynamicModuleState.Running)
-                available.Add(module.Manifest.OwnerAssembly.FullName ?? string.Empty);
+                available.Add(module.Manifest.OwnerAssembly);
         }
         var self = incoming.OwnerAssembly.FullName;
         foreach (var dependency in EnumerateManifestDependencies(incoming).Distinct(StringComparer.Ordinal))
         {
-            if (string.Equals(dependency, self, StringComparison.Ordinal) || available.Contains(dependency))
+            var boundAssembly = SharpLinkGeneratedDependencyBinding.Resolve(
+                incoming.OwnerAssembly,
+                dependency);
+            if (ReferenceEquals(boundAssembly, incoming.OwnerAssembly) ||
+                boundAssembly is not null && available.Contains(boundAssembly))
+            {
                 continue;
+            }
             return CreateError(
                 SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
-                $"Generated dependency '{dependency}' must be registered and running before '{self}'.",
+                $"Generated dependency '{dependency}' must resolve through '{self}' to the exact registered and running Assembly generation before registration.",
                 incoming.OwnerAssembly,
                 artifact: "Dependency");
+        }
+        if (incoming is ISharpLinkReferencedCodecDependencyManifest referencedManifest)
+        {
+            foreach (var dependency in referencedManifest.ReferencedCodecDependencies)
+            {
+                var dependencyAssembly = dependency.TargetType.Assembly;
+                if (ReferenceEquals(dependencyAssembly, incoming.OwnerAssembly) || available.Contains(dependencyAssembly))
+                    continue;
+                return CreateError(
+                    SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
+                    $"Referenced generated Codec dependency '{dependency.TargetType.FullName}' must be owned by the exact registered and running Assembly generation '{dependencyAssembly.FullName}' before registration.",
+                    incoming.OwnerAssembly,
+                    artifact: "Dependency");
+            }
         }
         return null;
     }

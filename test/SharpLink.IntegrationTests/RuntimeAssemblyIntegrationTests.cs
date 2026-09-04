@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace SharpLink.IntegrationTests;
 
-public sealed class RuntimeAssemblyIntegrationTests
+public sealed partial class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]

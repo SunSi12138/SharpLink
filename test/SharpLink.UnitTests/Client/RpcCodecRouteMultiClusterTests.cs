@@ -20,6 +20,8 @@ public sealed class RpcCodecRouteMultiClusterTests
             .Single();
         var view = (ISharpLinkGeneratedAssemblyManifest)constructor.Invoke([source]);
 
+        Ensure(view.RpcAssemblyHash == source.RpcAssemblyHash,
+            "the dependency view must preserve the source assembly semantic identity");
         Ensure(view.Codecs.Count == 0,
             "the dependency view must not republish a Contract-owned Codec globally");
         Ensure(view.ContractCodecs.Count == 0,
@@ -35,6 +37,7 @@ public sealed class RpcCodecRouteMultiClusterTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(IOrdersContract).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x72706f757465642dUL, 0x646570656e64656eUL);
         public string CompileTimeDescriptor => "dependency-view-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -46,8 +49,7 @@ public sealed class RpcCodecRouteMultiClusterTests
     private sealed class ScopedFactory : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(ScopedPayload);
-        public string SchemaId => "scoped-dependency/v1";
-        public string WireFormatId => HiddenPolicyAdapter.Instance.WireFormatId;
+        public RpcHash128 CodecHash => new(0x73636f7065642d64UL, 0x6570656e64656e63UL);
         public string? AdapterId => HiddenPolicyAdapter.Instance.AdapterId;
         public IRpcCodecAdapter? Adapter => HiddenPolicyAdapter.Instance;
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -59,7 +61,6 @@ public sealed class RpcCodecRouteMultiClusterTests
     {
         internal static readonly HiddenPolicyAdapter Instance = new();
         public string AdapterId => "hidden-dependency-policy/v1";
-        public string WireFormatId => "hidden-dependency-wire/v1";
         public IRpcCodecAdapterScope CreateScope()
             => throw new InvalidOperationException("hidden Contract policy adapter scope must not be created by a dependency view");
     }

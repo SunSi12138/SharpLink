@@ -55,12 +55,16 @@ public class IntegrationBehaviorTests
         var malformedFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
             BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset + sizeof(long)), long.MaxValue));
 
+        var paddingFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
+            payload[offset + sizeof(short)] = 0xA5);
+
         var paddingIsCanonical = field.WireType == RpcGeneratedWireType.Fixed16 && field.Length == 16 &&
                                  field.Offset + field.Length <= serialized.Length &&
                                  serialized.AsSpan(field.Offset + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0;
         Ensure(paddingIsCanonical &&
-               malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
-            "generated DateTimeOffset must clear native padding and reject invalid ticks");
+               malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss } &&
+               paddingFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "generated DateTimeOffset must emit canonical padding and reject malformed ticks or padding");
     }
 
     [Test]
@@ -99,18 +103,8 @@ public class IntegrationBehaviorTests
             new DateOnly(2026, 7, 27),
             new DateTime(2026, 7, 27, 12, 34, 56, DateTimeKind.Utc),
             new TimeOnly(12, 34, 56),
-            CreateDateTimeOffsetWithPoisonedPadding()), writer);
+            new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8))), writer);
         return writer.WrittenMemory.ToArray();
-    }
-
-    private static DateTimeOffset CreateDateTimeOffsetWithPoisonedPadding()
-    {
-        var value = new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8));
-        Span<byte> bytes = stackalloc byte[16];
-        bytes.Fill(0xA5);
-        BinaryPrimitives.WriteInt16LittleEndian(bytes, checked((short)value.Offset.TotalMinutes));
-        BinaryPrimitives.WriteInt64LittleEndian(bytes[sizeof(long)..], value.UtcTicks);
-        return System.Runtime.InteropServices.MemoryMarshal.Read<DateTimeOffset>(bytes);
     }
 
     private static (int Offset, int Length, RpcGeneratedWireType WireType) FindGeneratedSemanticField(

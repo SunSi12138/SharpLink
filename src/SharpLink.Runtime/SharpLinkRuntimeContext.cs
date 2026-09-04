@@ -30,22 +30,22 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         {
             foreach (var manifest in generatedManifests)
             {
-                var owner = PrepareGeneratedManifest(manifest);
+                var owner = PrepareGeneratedManifest(manifest, validateReferencedDependencies: false);
                 prepared.Add(owner);
                 foreach (var pair in owner.Codecs)
                 {
                     if (generatedRegistrations.TryGetValue(pair.Key, out var existing) &&
-                        (!string.Equals(existing.Factory.SchemaId, pair.Value.Factory.SchemaId, StringComparison.Ordinal) ||
-                         !string.Equals(existing.Factory.WireFormatId, pair.Value.Factory.WireFormatId, StringComparison.Ordinal)))
+                        !HasSameGeneratedCodecIdentity(existing.Factory, pair.Value.Factory))
                     {
                         throw new InvalidOperationException(
                             $"Generated Codec conflict for '{pair.Key.FullName}': " +
-                            $"schema/wire '{existing.Factory.SchemaId}'/'{existing.Factory.WireFormatId}' and " +
-                            $"'{pair.Value.Factory.SchemaId}'/'{pair.Value.Factory.WireFormatId}'.");
+                            $"identity '{DescribeGeneratedCodecIdentity(existing.Factory)}' and " +
+                            $"'{DescribeGeneratedCodecIdentity(pair.Value.Factory)}'.");
                     }
                     generatedRegistrations[pair.Key] = pair.Value;
                 }
             }
+            ValidateReferencedCodecDependencies(prepared, generatedRegistrations);
             PublishGeneratedCodecs(generatedRegistrations);
             foreach (var registration in prepared)
                 AdoptGeneratedManifest(registration);
@@ -56,6 +56,14 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         }
         Buffers = new SharpLinkBufferWriterPool(bufferPool);
     }
+
+    private static bool HasSameGeneratedCodecIdentity(
+        IRpcGeneratedCodecFactory left,
+        IRpcGeneratedCodecFactory right)
+        => left.CodecHash == right.CodecHash;
+
+    private static string DescribeGeneratedCodecIdentity(IRpcGeneratedCodecFactory factory)
+        => $"codec:{factory.CodecHash}";
 
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -103,21 +111,93 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
 
     internal RpcGeneratedManifestRegistration PrepareGeneratedManifest(
         ISharpLinkGeneratedAssemblyManifest manifest)
+        => PrepareGeneratedManifest(manifest, validateReferencedDependencies: true);
+
+    private RpcGeneratedManifestRegistration PrepareGeneratedManifest(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        bool validateReferencedDependencies)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ArgumentNullException.ThrowIfNull(manifest);
         SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(manifest);
         SharpLinkGeneratedManifestStructureValidator.Validate(manifest);
-        return RpcGeneratedManifestRegistration.Create(manifest, Codecs);
+        var registration = RpcGeneratedManifestRegistration.Create(manifest, Codecs);
+        if (!validateReferencedDependencies)
+            return registration;
+        try
+        {
+            ValidateReferencedCodecDependencies([registration], CreateGeneratedCodecSnapshot());
+            return registration;
+        }
+        catch
+        {
+            registration.Dispose();
+            throw;
+        }
     }
 
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedCodecSnapshot()
         => ((RpcCodecProvider)Codecs).CreateGeneratedRegistrationSnapshot();
 
-    internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
+    internal void PublishGeneratedCodecs(
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations,
+        RpcGeneratedManifestRegistration? pendingRegistration = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        RpcGeneratedManifestRegistration[] manifests;
+        lock (_registrationGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            manifests = [.. _manifestRegistrations];
+        }
+        ValidateReferencedCodecDependencies(manifests, registrations);
+        if (pendingRegistration is not null)
+            ValidateReferencedCodecDependencies([pendingRegistration], registrations);
         ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
+    }
+
+    private static void ValidateReferencedCodecDependencies(
+        IEnumerable<RpcGeneratedManifestRegistration> manifests,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
+    {
+        foreach (var registration in manifests)
+        {
+            if (registration.Manifest is not ISharpLinkReferencedCodecDependencyManifest dependencyManifest)
+                continue;
+            var dependencies = dependencyManifest.ReferencedCodecDependencies
+                ?? throw new InvalidOperationException(
+                    $"Generated manifest '{registration.Manifest.OwnerAssembly.FullName}' returned null referenced Codec dependencies.");
+            foreach (var dependency in dependencies)
+            {
+                if (dependency is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Generated manifest '{registration.Manifest.OwnerAssembly.FullName}' contains a null referenced Codec dependency.");
+                }
+                var targetType = dependency.TargetType ?? throw new InvalidOperationException(
+                    $"Generated manifest '{registration.Manifest.OwnerAssembly.FullName}' contains a referenced Codec dependency with no target Type.");
+                if (dependency.ExpectedCodecHash.IsEmpty)
+                {
+                    throw new InvalidOperationException(
+                        $"Generated manifest '{registration.Manifest.OwnerAssembly.FullName}' requires referenced generated Codec '{targetType.FullName}' with an empty expected CodecHash.");
+                }
+                if (!registrations.TryGetValue(targetType, out var actual))
+                {
+                    throw new InvalidOperationException(
+                        $"Generated manifest '{registration.Manifest.OwnerAssembly.FullName}' requires referenced generated Codec '{targetType.FullName}' from the exact bound runtime Type/assembly generation with expected CodecHash '{dependency.ExpectedCodecHash}', but no generated Codec is registered for that exact Type.");
+                }
+                if (!ReferenceEquals(actual.Owner.Manifest.OwnerAssembly, targetType.Assembly))
+                {
+                    throw new InvalidOperationException(
+                        $"Generated manifest '{registration.Manifest.OwnerAssembly.FullName}' requires referenced generated Codec '{targetType.FullName}' from assembly generation '{targetType.Assembly.FullName}', but the registered Codec is owned by '{actual.Owner.Manifest.OwnerAssembly.FullName}'.");
+                }
+                if (actual.Factory.CodecHash != dependency.ExpectedCodecHash)
+                {
+                    throw new InvalidOperationException(
+                        $"Generated manifest '{registration.Manifest.OwnerAssembly.FullName}' requires referenced generated Codec '{targetType.FullName}' with expected CodecHash '{dependency.ExpectedCodecHash}', but the exact registered Type has CodecHash '{actual.Factory.CodecHash}'.");
+                }
+            }
+        }
     }
 
     internal void AdoptGeneratedManifest(RpcGeneratedManifestRegistration registration)

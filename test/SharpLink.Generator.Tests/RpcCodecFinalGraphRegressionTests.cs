@@ -9,7 +9,7 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task ContractOnlyCustomChildShouldKeepGlobalCodecGraphClosed()
     {
-        var source = AddAssemblyAttribute(BuildSource("""
+        var source = AddAssemblyAttribute(UseCurrentIdentitySdk(BuildSource("""
 public sealed class GraphChild
 {
     public int Value { get; set; }
@@ -20,7 +20,7 @@ public sealed class GraphParent
     public GraphChild Child { get; set; } = new();
 }
 
-[SharpLink.Sdk.RpcCodecImplementation("graph-child-wire/v1", "graph-child-schema/v1")]
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x5001UL, 0x6001UL)]
 public sealed class GraphChildCodec : SharpLink.Abstractions.IRpcCodec<GraphChild>
 {
 }
@@ -30,7 +30,7 @@ public interface IGraphContract : SharpLink.Sdk.IService
 {
     ValueTask<GraphParent> Echo(GraphParent value, CancellationToken cancellationToken);
 }
-"""),
+""")),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(GraphChild), typeof(GraphChildCodec))]");
 
         var manifest = RunGeneratorAndGetSources(source)
@@ -50,7 +50,7 @@ public interface IGraphContract : SharpLink.Sdk.IService
     [Test]
     public Task UnrelatedContractShouldNotSuppressStandaloneBuiltinOverrideDiagnostic()
     {
-        var source = AddAssemblyAttributes(BuildSource("""
+        var source = AddAssemblyAttributes(UseCurrentIdentitySdk(BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
 public sealed class StandaloneBuiltinEnvelope
 {
@@ -63,14 +63,15 @@ public interface IUnrelatedContract : SharpLink.Sdk.IService
     ValueTask<string> Echo(string value, CancellationToken cancellationToken);
 }
 
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x5002UL, 0x6002UL)]
 public sealed class StandaloneIntAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "standalone-int/v1";
     public string WireFormatId => "standalone-int-wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
 }
-"""),
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(StandaloneIntAdapter), \"standalone-int/v1\", \"standalone-int-wire/v1\")]",
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(StandaloneIntAdapter), \"standalone-int/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(int), typeof(StandaloneIntAdapter))]");
 
         var diagnostics = RunGenerator(source);

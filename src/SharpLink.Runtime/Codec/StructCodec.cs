@@ -127,8 +127,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T : unmanaged
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool RequiresSemanticValidation()
         => typeof(T) == typeof(bool) || typeof(T) == typeof(Rune) || typeof(T) == typeof(decimal) ||
-           typeof(T) == typeof(DateOnly) || typeof(T) == typeof(DateTime) || typeof(T) == typeof(TimeOnly) ||
-           typeof(T) == typeof(DateTimeOffset);
+           typeof(T) == typeof(DateOnly) || typeof(T) == typeof(DateTime) || typeof(T) == typeof(TimeOnly);
 }
 
 internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T : unmanaged
@@ -189,8 +188,7 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T : unmanaged
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool RequiresSemanticValidation()
         => typeof(T) == typeof(bool) || typeof(T) == typeof(Rune) || typeof(T) == typeof(decimal) ||
-           typeof(T) == typeof(DateOnly) || typeof(T) == typeof(DateTime) || typeof(T) == typeof(TimeOnly) ||
-           typeof(T) == typeof(DateTimeOffset);
+           typeof(T) == typeof(DateOnly) || typeof(T) == typeof(DateTime) || typeof(T) == typeof(TimeOnly);
 }
 
 internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>> where T : unmanaged
@@ -310,7 +308,7 @@ internal sealed class DateTimeOffsetArrayCodec : IRpcCodec<DateTimeOffset[]?>
     }
 
     public DateTimeOffset[]? Deserialize(in ReadOnlySequence<byte> buffer)
-        => BlitArrayCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+        => CodecHelpers.ReadDateTimeOffsetCollection(buffer);
 }
 
 internal sealed class DateTimeOffsetListCodec : IRpcCodec<List<DateTimeOffset>?>
@@ -325,7 +323,10 @@ internal sealed class DateTimeOffsetListCodec : IRpcCodec<List<DateTimeOffset>?>
     }
 
     public List<DateTimeOffset>? Deserialize(in ReadOnlySequence<byte> buffer)
-        => BlitListCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+    {
+        var array = CodecHelpers.ReadDateTimeOffsetCollection(buffer);
+        return array is null ? null : [.. array];
+    }
 }
 
 internal sealed class DateTimeOffsetMemoryCodec : IRpcCodec<Memory<DateTimeOffset>>
@@ -339,7 +340,7 @@ internal sealed class DateTimeOffsetMemoryCodec : IRpcCodec<Memory<DateTimeOffse
     }
 
     public Memory<DateTimeOffset> Deserialize(in ReadOnlySequence<byte> buffer)
-        => BlitMemoryCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+        => CodecHelpers.ReadRequiredDateTimeOffsetCollection(buffer).AsMemory();
 }
 
 internal sealed class DateTimeOffsetReadOnlyMemoryCodec : IRpcCodec<ReadOnlyMemory<DateTimeOffset>>
@@ -353,7 +354,7 @@ internal sealed class DateTimeOffsetReadOnlyMemoryCodec : IRpcCodec<ReadOnlyMemo
     }
 
     public ReadOnlyMemory<DateTimeOffset> Deserialize(in ReadOnlySequence<byte> buffer)
-        => BlitReadOnlyMemoryCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+        => CodecHelpers.ReadRequiredDateTimeOffsetCollection(buffer);
 }
 
 internal sealed class DateTimeOffsetImmutableArrayCodec : IRpcCodec<ImmutableArray<DateTimeOffset>>
@@ -368,5 +369,8 @@ internal sealed class DateTimeOffsetImmutableArrayCodec : IRpcCodec<ImmutableArr
     }
 
     public ImmutableArray<DateTimeOffset> Deserialize(in ReadOnlySequence<byte> buffer)
-        => BlitImmutableArrayCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+    {
+        var array = CodecHelpers.ReadDateTimeOffsetCollection(buffer);
+        return array is null ? default : ImmutableArray.Create(array);
+    }
 }

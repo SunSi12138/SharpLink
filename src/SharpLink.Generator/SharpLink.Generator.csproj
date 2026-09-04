@@ -26,4 +26,9 @@
         <PackageReference Include="System.Text.Json" PrivateAssets="all" />
     </ItemGroup>
 
+    <ItemGroup>
+        <Compile Include="..\SharpLink.Shared\RpcBuiltinCollectionWireCatalog.cs"
+                 Link="Shared\RpcBuiltinCollectionWireCatalog.cs" />
+    </ItemGroup>
+
 </Project>

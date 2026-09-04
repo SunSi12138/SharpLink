@@ -8,9 +8,7 @@ namespace SharpLink.IntegrationTests;
 
 public readonly record struct MalformedHeader(int Value);
 
-[RpcCodecImplementation(
-    "sharplink-integration-malformed-header/v1",
-    "sharplink-integration-malformed-header-schema/v1")]
+[RpcCodecSemanticIdentity(0x4b166fb4cfa21e94UL, 0x915bac210ac312dbUL)]
 public sealed class MalformedHeaderCodec : IRpcCodec<MalformedHeader>
 {
     public void Serialize(in MalformedHeader value, IBufferWriter<byte> buffer)

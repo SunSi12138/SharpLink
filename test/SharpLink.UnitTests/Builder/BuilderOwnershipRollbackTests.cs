@@ -13,6 +13,9 @@ namespace SharpLink.UnitTests.Builder;
 
 public class BuilderOwnershipRollbackTests
 {
+    private static RpcHash128 SyntheticManifestHash => new(0x6275696c6465722dUL, 0x726f6c6c6261636bUL);
+    private static RpcHash128 SyntheticCodecHash => new(0x6275696c6465722dUL, 0x636f6465632d7631UL);
+
     [Test]
     public void ClientProfileFailureShouldDisposeTransportAndPreserveBothFailures()
     {
@@ -622,6 +625,7 @@ public class BuilderOwnershipRollbackTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(ThrowingRuntimeContextManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "builder-runtime-context-throw";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -632,8 +636,7 @@ public class BuilderOwnershipRollbackTests
     private sealed class ThrowingRuntimeContextCodecFactory : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(CodecValue);
-        public string SchemaId => "builder-runtime-context-throw/v1";
-        public string WireFormatId => "builder-runtime-context-wire/v1";
+        public RpcHash128 CodecHash => SyntheticCodecHash;
         public string? AdapterId => "builder-runtime-context-adapter/v1";
         public IRpcCodecAdapter Adapter { get; } = new ThrowingRuntimeContextAdapter();
 
@@ -646,7 +649,6 @@ public class BuilderOwnershipRollbackTests
     private sealed class ThrowingRuntimeContextAdapter : IRpcCodecAdapter
     {
         public string AdapterId => "builder-runtime-context-adapter/v1";
-        public string WireFormatId => "builder-runtime-context-wire/v1";
 
         public IRpcCodecAdapterScope CreateScope()
             => throw new InvalidOperationException("controlled Runtime Context construction failure");
@@ -686,6 +688,7 @@ public class BuilderOwnershipRollbackTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(RegistrationRollbackManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "builder-registration-rollback";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } =
         [

@@ -13,6 +13,8 @@ namespace SharpLink.UnitTests.Builder;
 public sealed class BuildPlanBuilderTests
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
+    private static RpcHash128 SyntheticManifestHash => new(0x6275696c642d706cUL, 0x616e2d6d616e6966UL);
+    private static RpcHash128 SyntheticCodecHash => new(0x6275696c642d706cUL, 0x616e2d636f646563UL);
 
     [Test]
     public async Task CrossTopologyConfigurationShouldFailAtTheSecondCall()
@@ -782,6 +784,7 @@ public sealed class BuildPlanBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase11-test";
         public Assembly OwnerAssembly => typeof(BuildPlanBuilderTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "phase11-empty";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -795,6 +798,7 @@ public sealed class BuildPlanBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase11-test";
         public Assembly OwnerAssembly => typeof(BuildPlanBuilderTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "phase11-incompatible";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -808,6 +812,7 @@ public sealed class BuildPlanBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase11-test";
         public Assembly OwnerAssembly => typeof(BuildPlanBuilderTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "phase11-malformed";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => null!;
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -821,6 +826,7 @@ public sealed class BuildPlanBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase11-test";
         public Assembly OwnerAssembly => typeof(BuildPlanBuilderTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "phase11-foreign-contract";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } =
         [
@@ -844,6 +850,7 @@ public sealed class BuildPlanBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "phase11-test";
         public Assembly OwnerAssembly => typeof(BuildPlanBuilderTests).Assembly;
+        public RpcHash128 RpcAssemblyHash => SyntheticManifestHash;
         public string CompileTimeDescriptor => "phase11-deferred-adapter";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -857,8 +864,7 @@ public sealed class BuildPlanBuilderTests
 
         internal int CodecCreateCount => Volatile.Read(ref _codecCreateCount);
         public Type TargetType => typeof(DeferredCodecValue);
-        public string SchemaId => "phase11-deferred-adapter/v1";
-        public string WireFormatId => "phase11-deferred-wire/v1";
+        public RpcHash128 CodecHash => SyntheticCodecHash;
         public string? AdapterId => "phase11-deferred-adapter/v1";
         public IRpcCodecAdapter Adapter { get; } = adapter;
 
@@ -877,7 +883,6 @@ public sealed class BuildPlanBuilderTests
 
         internal int ScopeCreateCount => Volatile.Read(ref _scopeCreateCount);
         public string AdapterId => "phase11-deferred-adapter/v1";
-        public string WireFormatId => "phase11-deferred-wire/v1";
 
         public IRpcCodecAdapterScope CreateScope()
         {

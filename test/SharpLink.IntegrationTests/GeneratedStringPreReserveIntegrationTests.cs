@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text;
 
 namespace SharpLink.IntegrationTests;
 
@@ -22,23 +21,23 @@ public class GeneratedStringPreReserveIntegrationTests
     [Arguments(64, 128 * 1024)]
     public void GeneratedDirectStringsShouldPreReserveOnceAndRoundTrip(
         int fieldCount,
-        int encodedBytes)
+        int minimumEncodedBytes)
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build();
 
         switch (fieldCount)
         {
             case 1:
-                VerifyBoundaryCase<PreReserveStrings1>(context, encodedBytes);
+                VerifyBoundaryCase<PreReserveStrings1>(context, minimumEncodedBytes);
                 break;
             case 4:
-                VerifyBoundaryCase<PreReserveStrings4>(context, encodedBytes);
+                VerifyBoundaryCase<PreReserveStrings4>(context, minimumEncodedBytes);
                 break;
             case 16:
-                VerifyBoundaryCase<PreReserveStrings16>(context, encodedBytes);
+                VerifyBoundaryCase<PreReserveStrings16>(context, minimumEncodedBytes);
                 break;
             case 64:
-                VerifyBoundaryCase<PreReserveStrings64>(context, encodedBytes);
+                VerifyBoundaryCase<PreReserveStrings64>(context, minimumEncodedBytes);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(fieldCount));
@@ -48,10 +47,10 @@ public class GeneratedStringPreReserveIntegrationTests
     [Test]
     public void GeneratedDirectStringsShouldPreserveBoundedWriterExhaustionThreshold()
     {
-        const int encodedBytes = 1024;
+        const int minimumEncodedBytes = 1024;
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         var codec = context.Codecs.GetCodec<PreReserveStrings1>();
-        var payload = CreatePayload<PreReserveStrings1>(encodedBytes);
+        var payload = CreatePayload<PreReserveStrings1>(minimumEncodedBytes, out var encodedBytes);
         using var pool = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions
         {
             InitialCapacity = 1024,
@@ -78,20 +77,18 @@ public class GeneratedStringPreReserveIntegrationTests
     }
 
     [Test]
-    public void GeneratedDirectStringsShouldKeepStrictEncoderFailureSemantics()
+    public void GeneratedDirectStringsShouldPreserveArbitraryUtf16CodeUnits()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         var codec = context.Codecs.GetCodec<PreReserveStrings1>();
+        var text = new string(['\uD800', 'X', '\uDC00']);
         using var writer = new PooledByteBufferWriter();
 
-        var failure = CaptureException(() => codec.Serialize(
-            new PreReserveStrings1 { Field01 = "\uD800" },
-            writer));
+        codec.Serialize(new PreReserveStrings1 { Field01 = text }, writer);
+        var decoded = codec.Deserialize(new ReadOnlySequence<byte>(writer.WrittenMemory));
 
-        Ensure(failure is EncoderFallbackException,
-            $"an isolated surrogate must still fail with EncoderFallbackException, not {failure?.GetType().Name}");
-        Ensure(writer.WrittenCount == 0,
-            "strict UTF-8 validation must complete before the generated DTO mutates the writer");
+        Ensure(decoded?.Field01 == text,
+            "generated DTO strings must preserve arbitrary .NET UTF-16 code units, including unpaired surrogates");
     }
 
     [Test]
@@ -138,11 +135,11 @@ public class GeneratedStringPreReserveIntegrationTests
             "fixed and nullable-fixed values must retain their generated wire semantics");
     }
 
-    private static void VerifyBoundaryCase<T>(SharpLinkRuntimeContext context, int encodedBytes)
+    private static void VerifyBoundaryCase<T>(SharpLinkRuntimeContext context, int minimumEncodedBytes)
         where T : class, new()
     {
         var codec = context.Codecs.GetCodec<T>();
-        var payload = CreatePayload<T>(encodedBytes);
+        var payload = CreatePayload<T>(minimumEncodedBytes, out var encodedBytes);
         using var writer = new PooledByteBufferWriter(1024);
         var tracking = new PreReserveTrackingWriter(writer);
 
@@ -150,16 +147,16 @@ public class GeneratedStringPreReserveIntegrationTests
         var decoded = codec.Deserialize(new ReadOnlySequence<byte>(writer.WrittenMemory));
 
         Ensure(writer.WrittenCount == encodedBytes,
-            $"{typeof(T).Name} must write the exact {encodedBytes}-byte wire payload");
+            $"{typeof(T).Name} must write the exact {encodedBytes}-byte UTF-16 wire payload");
         Ensure(tracking.FirstSizeHint == encodedBytes + 4,
             $"{typeof(T).Name} must request exact encoded bytes plus existing varuint request slack before writing");
         Ensure(tracking.GrowthCount == 1 && tracking.FirstGrowthWrittenCount == 0,
             $"{typeof(T).Name} must grow once before any bytes are written");
         Ensure(decoded is not null && StringPropertiesEqual(payload, decoded),
-            $"{typeof(T).Name} must round-trip every direct string, including non-ASCII UTF-8");
+            $"{typeof(T).Name} must round-trip every direct string, including non-ASCII UTF-16");
     }
 
-    private static T CreatePayload<T>(int encodedBytes) where T : class, new()
+    private static T CreatePayload<T>(int minimumEncodedBytes, out int encodedBytes) where T : class, new()
     {
         var properties = GetStringProperties(typeof(T));
         var framingBytes = 2;
@@ -167,30 +164,34 @@ public class GeneratedStringPreReserveIntegrationTests
         {
             var fieldId = property.GetCustomAttribute<RpcMemberAttribute>()!.Id;
             var key = checked(((uint)fieldId << 3) | (uint)RpcGeneratedWireType.LengthDelimited);
-            framingBytes = checked(framingBytes + GetVarUInt32Size(key) + sizeof(uint));
+            framingBytes = checked(framingBytes + GetVarUInt32Size(key) + sizeof(int));
         }
 
-        var contentBytes = encodedBytes - framingBytes;
-        Ensure(contentBytes >= properties.Length * Encoding.UTF8.GetByteCount(NonAsciiSeed),
-            "the requested boundary must leave enough content for non-ASCII data in every field");
-        var values = CreateUtf8Values(contentBytes, properties.Length);
+        var minimumContentBytes = minimumEncodedBytes - framingBytes;
+        var values = CreateUtf16Values(minimumContentBytes, properties.Length, out var contentBytes);
+        encodedBytes = checked(framingBytes + contentBytes);
         var payload = new T();
         for (var index = 0; index < properties.Length; index++)
             properties[index].SetValue(payload, values[index]);
         return payload;
     }
 
-    private static string[] CreateUtf8Values(int contentBytes, int fieldCount)
+    private static string[] CreateUtf16Values(int minimumContentBytes, int fieldCount, out int contentBytes)
     {
-        var seedBytes = Encoding.UTF8.GetByteCount(NonAsciiSeed);
+        var seedChars = NonAsciiSeed.Length;
+        var minimumChars = checked((minimumContentBytes + sizeof(char) - 1) / sizeof(char));
+        Ensure(minimumChars >= fieldCount * seedChars,
+            "the requested boundary must leave enough UTF-16 code units for non-ASCII data in every field");
+
         var values = new string[fieldCount];
-        var baseBytes = contentBytes / fieldCount;
-        var remainder = contentBytes % fieldCount;
+        var baseChars = minimumChars / fieldCount;
+        var remainder = minimumChars % fieldCount;
         for (var index = 0; index < values.Length; index++)
         {
-            var fieldBytes = baseBytes + (index < remainder ? 1 : 0);
-            values[index] = NonAsciiSeed + new string('x', fieldBytes - seedBytes);
+            var fieldChars = baseChars + (index < remainder ? 1 : 0);
+            values[index] = NonAsciiSeed + new string('x', fieldChars - seedChars);
         }
+        contentBytes = checked(minimumChars * sizeof(char));
         return values;
     }
 

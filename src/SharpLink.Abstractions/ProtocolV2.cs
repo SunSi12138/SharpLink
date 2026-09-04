@@ -13,10 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 4;
+    public const ushort MinorVersion = 5;
 
-    /// <summary>Old protocol minors used absolute wall-clock deadlines and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 4;
+    /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
+    public const ushort MinimumCompatibleMinorVersion = 5;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
