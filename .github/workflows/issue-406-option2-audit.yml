@@ -1,0 +1,38 @@
+name: Issue 406 semantic option 2 audit
+
+on:
+  push:
+    branches:
+      - tmp/issue-406-semantic-option2
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+      - name: Source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== HEAD ==='
+          git rev-parse HEAD
+          echo '=== interceptor storage/publication ==='
+          git grep -n -E '_clientInterceptors|_serverInterceptors|ReplaceInterceptors|CreateInterceptorSnapshot' -- src/SharpLink.Client src/SharpLink.Server
+          echo '=== client capture call sites ==='
+          git grep -n -C 3 'Volatile.Read(ref _clientInterceptors)' -- src/SharpLink.Client
+          echo '=== server context creation/capture ==='
+          git grep -n -C 4 -E 'CreateServerInvocationContext|Interceptors =|_serverInterceptors' -- src/SharpLink.Server src/SharpLink.Abstractions
+          echo '=== interceptor state classes ==='
+          git grep -n -E 'class ClientInterceptorState|struct ServerPipelineFacts|ClientInterceptorContinuation|ServerInterceptorContinuation|ContinuationState' -- src/SharpLink.Client/SharpLinkClient.Interceptors.cs src/SharpLink.Server/SharpLinkServer.Interceptors.cs
+          echo '=== interceptor test entrypoints ==='
+          git grep -n -E 'Duplicate|FireAndForget|AfterReturn|Replacement|Interceptor' -- test/SharpLink.IntegrationTests | head -n 220
+          echo '=== NativeAOT/smoke commands ==='
+          git grep -n -E 'NativeAOT|PublishAot|publish .*RuntimeIdentifier|nativeaot' -- .github eng test | head -n 220 || true
+          echo '=== projects ==='
+          find test -maxdepth 2 -name '*.csproj' -print | sort
