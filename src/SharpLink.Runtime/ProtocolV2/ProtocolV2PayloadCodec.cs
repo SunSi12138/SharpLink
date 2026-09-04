@@ -5,8 +5,8 @@ namespace SharpLink.Runtime;
 /// <summary>Encodes and decodes Protocol v2 control and error payloads.</summary>
 public static class ProtocolV2PayloadCodec
 {
-    private const ProtocolV2Capabilities KnownCapabilities =
-        RpcSessionProtocolRules.KnownCapabilities;
+    private const ProtocolV2Capabilities RecognizedCapabilities =
+        RpcSessionProtocolRules.RecognizedCapabilities;
     private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int HandshakeRequestFixedBytes =
         sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
@@ -102,7 +102,7 @@ public static class ProtocolV2PayloadCodec
         in ProtocolV2HandshakeResponse response)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        ValidateKnownCapabilities(response.NegotiatedCapabilities, nameof(response));
+        ValidateRecognizedCapabilities(response.NegotiatedCapabilities, nameof(response));
         ValidateOutboundCompressionSelection(response);
         ValidateLocalLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes);
@@ -147,7 +147,7 @@ public static class ProtocolV2PayloadCodec
         var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
         ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
         var negotiatedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits);
-        if ((negotiatedCapabilities & ~KnownCapabilities) != 0)
+        if ((negotiatedCapabilities & ~RecognizedCapabilities) != 0)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse negotiated unknown capabilities.");
         var response = new ProtocolV2HandshakeResponse(
             unchecked((ushort)minorBits),
@@ -160,11 +160,11 @@ public static class ProtocolV2PayloadCodec
         return response;
     }
 
-    private static void ValidateKnownCapabilities(
+    private static void ValidateRecognizedCapabilities(
         ProtocolV2Capabilities capabilities,
         string parameterName)
     {
-        if ((capabilities & ~KnownCapabilities) != 0)
+        if ((capabilities & ~RecognizedCapabilities) != 0)
             throw new ArgumentOutOfRangeException(parameterName, "Handshake capabilities contain unknown bits.");
     }
 

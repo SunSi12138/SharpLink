@@ -43,7 +43,7 @@ internal enum RpcSessionProtocolPhase : byte
 
 internal static class RpcSessionProtocolRules
 {
-    internal const ProtocolV2Capabilities KnownCapabilities =
+    internal const ProtocolV2Capabilities RecognizedCapabilities =
         ProtocolV2Capabilities.Metadata |
         ProtocolV2Capabilities.Compression |
         ProtocolV2Capabilities.FlowControl |

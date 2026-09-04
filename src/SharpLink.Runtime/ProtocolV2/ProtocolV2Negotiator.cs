@@ -45,7 +45,7 @@ internal readonly struct ProtocolV2NegotiationPolicy
         {
             throw new ArgumentOutOfRangeException(nameof(minorVersion));
         }
-        if ((supportedCapabilities & ~RpcSessionProtocolRules.KnownCapabilities) != 0)
+        if ((supportedCapabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0)
             throw new ArgumentOutOfRangeException(nameof(supportedCapabilities));
         if (maxFramePayloadBytes < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
             maxFramePayloadBytes > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
@@ -125,8 +125,11 @@ internal sealed class ProtocolV2ServerNegotiation
 /// <summary>Pure Protocol v2 offer, intersection, and response-validation rules.</summary>
 internal static class ProtocolV2Negotiator
 {
-    private const ProtocolV2Capabilities AlwaysImplementedCapabilities =
-        RpcSessionProtocolRules.KnownCapabilities & ~ProtocolV2Capabilities.Compression;
+    internal const ProtocolV2Capabilities AlwaysImplementedCapabilities =
+        ProtocolV2Capabilities.Metadata |
+        ProtocolV2Capabilities.FlowControl |
+        ProtocolV2Capabilities.HealthCheck |
+        ProtocolV2Capabilities.CancellationReason;
 
     internal static ProtocolV2NegotiationPolicy CreateImplementedPolicy(
         int maxFramePayloadBytes,
@@ -265,7 +268,7 @@ internal static class ProtocolV2Negotiator
                 SharpLinkErrorCode.Unimplemented,
                 $"Server requires unsupported protocol minor version {response.MinorVersion}.");
         }
-        if ((response.NegotiatedCapabilities & ~RpcSessionProtocolRules.KnownCapabilities) != 0)
+        if ((response.NegotiatedCapabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0)
             throw Failure(SharpLinkErrorCode.ProtocolViolation, "Server negotiated unknown capabilities.");
         if ((response.NegotiatedCapabilities & ~offer.SupportedCapabilities) != 0)
             throw Failure(SharpLinkErrorCode.ProtocolViolation, "Server negotiated a capability the client did not offer.");

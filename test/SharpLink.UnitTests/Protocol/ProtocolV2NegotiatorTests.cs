@@ -24,8 +24,8 @@ public class ProtocolV2NegotiatorTests
 
         Ensure(offer.MinorVersion == ProtocolV2Constants.MinorVersion,
             "the implemented policy must advertise the current minor version");
-        Ensure(offer.SupportedCapabilities == RpcSessionProtocolRules.KnownCapabilities,
-            "one central implemented-capability set must drive the offer");
+        Ensure(offer.SupportedCapabilities == policy.SupportedCapabilities,
+            "the client offer must publish the complete explicit local policy");
         Ensure(offer.RequiredCapabilities ==
                (ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.Compression),
             "the caller's required capabilities must remain explicit policy input");
@@ -37,6 +37,25 @@ public class ProtocolV2NegotiatorTests
             "the negotiator must carry the opaque authentication payload without interpreting it");
         Ensure(offer.CompressionProfiles.Span.SequenceEqual(new[] { "client-first", "client-second" }),
             "the client provider order must become the offer preference order");
+    }
+
+    [Test]
+    public void ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized()
+    {
+        const ProtocolV2Capabilities expected =
+            ProtocolV2Capabilities.Metadata |
+            ProtocolV2Capabilities.FlowControl |
+            ProtocolV2Capabilities.HealthCheck |
+            ProtocolV2Capabilities.CancellationReason;
+
+        Ensure(ProtocolV2Negotiator.AlwaysImplementedCapabilities == expected,
+            "endpoint implementation support must remain an explicit declaration");
+        Ensure((ProtocolV2Negotiator.AlwaysImplementedCapabilities &
+                ~RpcSessionProtocolRules.RecognizedCapabilities) == ProtocolV2Capabilities.None,
+            "every implemented capability must be recognized by the protocol boundary");
+        Ensure((ProtocolV2Negotiator.AlwaysImplementedCapabilities &
+                ProtocolV2Capabilities.Compression) == ProtocolV2Capabilities.None,
+            "compression must remain conditional on configured provider support");
     }
 
     [Test]
@@ -426,7 +445,7 @@ public class ProtocolV2NegotiatorTests
     {
         var clientProviders = Bindings("client-only", "shared");
         var serverProviders = Bindings("server-only", "shared");
-        var offeredCapabilities = RpcSessionProtocolRules.KnownCapabilities;
+        var offeredCapabilities = RpcSessionProtocolRules.RecognizedCapabilities;
         var offer = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
             offeredCapabilities,
@@ -476,11 +495,11 @@ public class ProtocolV2NegotiatorTests
         var clientProviders = Bindings("client-only", "shared");
         var serverProviders = Bindings("server-only", "shared");
         var offer = CreateOffer(
-            RpcSessionProtocolRules.KnownCapabilities,
+            RpcSessionProtocolRules.RecognizedCapabilities,
             ProtocolV2Capabilities.Metadata,
             clientProviders);
         var policy = CreatePolicy(
-            RpcSessionProtocolRules.KnownCapabilities,
+            RpcSessionProtocolRules.RecognizedCapabilities,
             serverProviders,
             maxFramePayloadBytes: 4096,
             streamReceiveWindowBytes: 1024,
