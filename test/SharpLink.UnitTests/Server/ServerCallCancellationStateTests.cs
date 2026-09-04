@@ -80,7 +80,7 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
-    public async Task DeadlineReasonShouldBePublishedBeforeInvocationCallbacksRun()
+    public void DeadlineReasonShouldBePublishedBeforeInvocationCallbacksRun()
     {
         var timeProvider = new ManualTimeProvider();
         var state = ServerCallCancellationState.Rent(
@@ -97,7 +97,9 @@ public class ServerCallCancellationStateTests
             () => observedReason.TrySetResult(state.Reason));
 
         timeProvider.Advance(TimeSpan.FromMilliseconds(25));
-        var callbackReason = await observedReason.Task;
+        Ensure(observedReason.Task.IsCompleted,
+            "manual deadline advancement must synchronously publish the invocation callback observation");
+        var callbackReason = observedReason.Task.GetAwaiter().GetResult();
 
         Ensure(callbackReason == ServerCallCancellationReason.DeadlineExceeded,
             "business cancellation callbacks must observe the published deadline reason");
