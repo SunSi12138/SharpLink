@@ -3,7 +3,6 @@ using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 using System.Buffers.Binary;
-using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO.Pipelines;
@@ -31,9 +30,9 @@ public class SharpLinkServerInvocationTests
                 "_runtimeContext",
                 BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(server)!);
-        var connections = (ConcurrentDictionary<string, ServerConnectionState>)(
+        var connections = (ServerConnectionRegistry)(
             typeof(SharpLinkServer).GetField(
-                "_connections",
+                "_connectionRegistry",
                 BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(server)!);
         var staleTransport = new TestTransportConnection();
@@ -644,8 +643,8 @@ public class SharpLinkServerInvocationTests
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
-        var connections = (ConcurrentDictionary<string, ServerConnectionState>)(
-            typeof(SharpLinkServer).GetField("_connections", BindingFlags.Instance | BindingFlags.NonPublic)!
+        var connections = (ServerConnectionRegistry)(
+            typeof(SharpLinkServer).GetField("_connectionRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(server)!);
         var unexpectedTransport = new ThrowingTransportConnection(
             "unexpected",
@@ -1321,13 +1320,14 @@ public class SharpLinkServerInvocationTests
                 stub,
                 new ThrowingService(),
                 ownsService: false);
-            typeof(SharpLinkServer).GetField(
-                    "_services",
+            var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
+                    "_serviceModuleRegistry",
                     BindingFlags.Instance | BindingFlags.NonPublic)!
-                .SetValue(Server, new Dictionary<long, ServiceRegistration>
-                {
-                    [stub.InterfaceHash] = registration
-                }.ToFrozenDictionary());
+                .GetValue(Server)!;
+            serviceRegistry.PublishServices(new Dictionary<long, ServiceRegistration>
+            {
+                [stub.InterfaceHash] = registration
+            }.ToFrozenDictionary());
             const int running = 2;
             SetServerState(Server, running);
         }

@@ -150,7 +150,7 @@ internal sealed partial class SharpLinkServer
         }
 
         List<Exception>? failures = null;
-        var connections = _connections.Values.Concat(_retiredConnections.Keys).Distinct().ToArray();
+        var connections = _connectionRegistry.SnapshotOwned();
         foreach (var connection in connections)
         {
             for (var index = 0; index < removedServices.Length; index++)

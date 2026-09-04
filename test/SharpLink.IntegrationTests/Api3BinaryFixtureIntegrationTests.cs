@@ -35,8 +35,8 @@ public sealed class Api3BinaryFixtureIntegrationTests
         var clientModulesBefore = GetSnapshotCount(harness.Client, "_dynamicModules");
         var clientProxiesBefore = GetSnapshotCount(harness.Client, "_proxies");
         var clientCodecsBefore = GetGeneratedCodecCount(harness.Client);
-        var serverModulesBefore = GetSnapshotCount(harness.Server, "_dynamicModules");
-        var serverServicesBefore = GetSnapshotCount(harness.Server, "_services");
+        var serverModulesBefore = ServerRegistryTestAccessor.DynamicModuleCount(harness.Server);
+        var serverServicesBefore = ServerRegistryTestAccessor.ServiceCount((SharpLinkServer)harness.Server);
         var serverCodecsBefore = GetGeneratedCodecCount(harness.Server);
         var multiRegistrationsBefore = GetSnapshotCount(harness.MultiClient, "_dynamicRegistrations");
         var assemblyBytes = ReadFixtureAssembly();
@@ -76,8 +76,8 @@ public sealed class Api3BinaryFixtureIntegrationTests
                GetSnapshotCount(harness.Client, "_proxies") == clientProxiesBefore &&
                GetGeneratedCodecCount(harness.Client) == clientCodecsBefore,
             "client rejection must publish no module, proxy, or Codec");
-        Ensure(GetSnapshotCount(harness.Server, "_dynamicModules") == serverModulesBefore &&
-               GetSnapshotCount(harness.Server, "_services") == serverServicesBefore &&
+        Ensure(ServerRegistryTestAccessor.DynamicModuleCount(harness.Server) == serverModulesBefore &&
+               ServerRegistryTestAccessor.ServiceCount((SharpLinkServer)harness.Server) == serverServicesBefore &&
                GetGeneratedCodecCount(harness.Server) == serverCodecsBefore,
             "server rejection must publish no module, service, or Codec");
         Ensure(GetSnapshotCount(harness.MultiClient, "_dynamicRegistrations") == multiRegistrationsBefore,

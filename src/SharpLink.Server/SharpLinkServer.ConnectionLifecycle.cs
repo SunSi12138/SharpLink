@@ -219,12 +219,12 @@ internal sealed partial class SharpLinkServer
         var id = connection.Session.Id;
         while (true)
         {
-            if (_connections.TryAdd(id, connection))
+            if (_connectionRegistry.TryAdd(id, connection))
                 return;
 
-            if (!_connections.TryGetValue(id, out var previous))
+            if (!_connectionRegistry.TryGetValue(id, out var previous))
                 continue;
-            if (!_connections.TryUpdate(id, connection, previous))
+            if (!_connectionRegistry.TryUpdate(id, connection, previous))
                 continue;
 
             await RetireConnectionAsync(previous).ConfigureAwait(false);
@@ -235,8 +235,8 @@ internal sealed partial class SharpLinkServer
     private async ValueTask DisconnectConnectionAsync(ServerConnectionState connection)
     {
         connection.MarkDraining();
-        var added = _retiredConnections.TryAdd(connection, 0);
-        _connections.TryRemove(
+        var added = _connectionRegistry.TryRetire(connection);
+        _connectionRegistry.TryRemove(
             new KeyValuePair<string, ServerConnectionState>(connection.Session.Id, connection));
         try
         {
@@ -257,7 +257,7 @@ internal sealed partial class SharpLinkServer
     private async ValueTask RetireConnectionAsync(ServerConnectionState connection)
     {
         connection.MarkDraining();
-        var added = _retiredConnections.TryAdd(connection, 0);
+        var added = _connectionRegistry.TryRetire(connection);
         try
         {
             await connection.CloseAsync().ConfigureAwait(false);
@@ -304,7 +304,7 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            _retiredConnections.TryRemove(connection, out _);
+            _connectionRegistry.CompleteRetired(connection);
         }
     }
 
@@ -316,7 +316,7 @@ internal sealed partial class SharpLinkServer
                 _heartbeatCheckInterval,
                 _runtimeContext.TimeProvider,
                 ct).ConfigureAwait(false);
-            foreach (var (id, connection) in _connections)
+            foreach (var (id, connection) in _connectionRegistry.EnumerateActiveEntries())
             {
                 var session = connection.Session;
                 if (session.TimeSinceLastActivity <= _heartbeatTimeout || !session.IsConnected)
@@ -325,7 +325,7 @@ internal sealed partial class SharpLinkServer
                 using var sessionScope = BeginSessionLogScope(_logger, session.Id);
                 LogClientHeartbeatTimeout(_logger);
 
-                if (_connections.TryGetValue(id, out var current) && ReferenceEquals(current, connection))
+                if (_connectionRegistry.TryGetValue(id, out var current) && ReferenceEquals(current, connection))
                     await DisconnectConnectionAsync(connection).ConfigureAwait(false);
             }
         }

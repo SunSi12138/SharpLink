@@ -168,9 +168,6 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
     private sealed class Harness : IAsyncDisposable
     {
-        private static readonly FieldInfo ServicesField = typeof(SharpLinkServer).GetField(
-            "_services", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("cannot find server service registry");
         private static readonly FieldInfo DynamicModuleStateField = typeof(SharpLinkDynamicModule).GetField(
             "_state", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("cannot find dynamic-module state field");
@@ -218,9 +215,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         public IDisposable RejectOneWayInboundDrainServiceCalls()
         {
             var server = (SharpLinkServer)Server;
-            var current = (FrozenDictionary<long, ServiceRegistration>)(
-                ServicesField.GetValue(server)
-                ?? throw new InvalidOperationException("server service registry is unavailable"));
+            var current = ServerRegistryTestAccessor.Services(server);
             var target = current.Single(static pair =>
                 pair.Value.ContractType == typeof(IOneWayInboundDrainService));
 
@@ -237,17 +232,14 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 module: module);
             var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             updated[target.Key] = replacement;
-            ServicesField.SetValue(server, updated.ToFrozenDictionary());
-            Thread.MemoryBarrier();
+            ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
             return new RestoreServicesScope(server, current);
         }
 
         public IDisposable HideOneWayInboundDrainMethodShape()
         {
             var server = (SharpLinkServer)Server;
-            var current = (FrozenDictionary<long, ServiceRegistration>)(
-                ServicesField.GetValue(server)
-                ?? throw new InvalidOperationException("server service registry is unavailable"));
+            var current = ServerRegistryTestAccessor.Services(server);
             var target = current.Single(static pair =>
                 pair.Value.ContractType == typeof(IOneWayInboundDrainService));
 
@@ -258,8 +250,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 ownsService: false);
             var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             updated[target.Key] = replacement;
-            ServicesField.SetValue(server, updated.ToFrozenDictionary());
-            Thread.MemoryBarrier();
+            ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
             return new RestoreServicesScope(server, current);
         }
 
@@ -340,8 +331,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 var currentServer = Interlocked.Exchange(ref _server, null);
                 if (currentServer is null)
                     return;
-                ServicesField.SetValue(currentServer, original);
-                Thread.MemoryBarrier();
+                ServerRegistryTestAccessor.PublishServices(currentServer, original);
             }
         }
     }

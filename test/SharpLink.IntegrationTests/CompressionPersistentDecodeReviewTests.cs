@@ -419,16 +419,8 @@ public class CompressionPersistentDecodeReviewTests
 
         private static long ReadAnyInterfaceHash(ISharpLinkServer server)
         {
-            var field = server.GetType().GetField(
-                "_services",
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic)
-                ?? throw new Exception("cannot find server services field");
-            var services = field.GetValue(server) ?? throw new Exception("server services are unavailable");
-            var keys = services.GetType().GetProperty("Keys")?.GetValue(services) as System.Collections.IEnumerable
-                ?? throw new Exception("cannot enumerate server service hashes");
-            foreach (var key in keys)
-                return (long)key!;
+            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
+                return key;
             throw new Exception("server has no registered service hash");
         }
     }
