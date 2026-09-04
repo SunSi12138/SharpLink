@@ -242,12 +242,10 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         params MetadataReference[] additionalReferences)
     {
         const string baselinePath = "/contracts/previous.sharplink.json";
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
-        var compilation = CSharpCompilation.Create(
+        var compilation = GeneratorTestHarness.CreateCompilation(
             "ContractManifestTestAssembly",
-            [syntaxTree],
-            GetPlatformReferences().Concat(additionalReferences),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            source,
+            additionalReferences);
         var properties = new Dictionary<string, string>(StringComparer.Ordinal);
         var additionalTexts = ImmutableArray<AdditionalText>.Empty;
         if (baseline is not null)
