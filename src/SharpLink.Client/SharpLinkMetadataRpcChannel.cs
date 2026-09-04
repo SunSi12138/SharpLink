@@ -43,6 +43,6 @@ internal sealed class SharpLinkMetadataRpcChannel(
             callMetadata ?? metadata, cancellationToken);
 
     public Task SendClientStreamAsync<T>(long requestId, ushort streamId,
-        IAsyncEnumerable<T> stream, CancellationToken cancellationToken = default)
-        => inner.SendClientStreamAsync(requestId, streamId, stream, cancellationToken);
+        IAsyncEnumerable<T> stream, IRpcCodec<T> codec, CancellationToken cancellationToken = default)
+        => inner.SendClientStreamAsync(requestId, streamId, stream, codec, cancellationToken);
 }

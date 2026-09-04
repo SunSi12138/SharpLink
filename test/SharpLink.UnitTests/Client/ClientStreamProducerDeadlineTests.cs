@@ -19,8 +19,9 @@ public class ClientStreamProducerDeadlineTests
 
         var connection = GetOnlyReadyConnection(client);
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
+        var codec = client.RuntimeContext.Codecs.GetCodec<int>();
         var operation = connection.PendingCalls.Rent(
-            client.RuntimeContext.Codecs.GetCodec<int>(),
+            codec,
             PendingCallKind.ClientStreaming,
             deadline,
             CancellationToken.None,
@@ -38,6 +39,7 @@ public class ClientStreamProducerDeadlineTests
                 requestId,
                 0,
                 producer,
+                codec,
                 producerToken));
 
         Ensure(sendFailure.Code == SharpLinkErrorCode.DeadlineExceeded,

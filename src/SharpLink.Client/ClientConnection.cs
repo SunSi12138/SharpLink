@@ -161,18 +161,6 @@ internal sealed class ClientConnection :
 
     public void EndUntrackedCall() => ReleaseAuxiliaryActiveCall();
 
-    public Task SendClientStreamAsync<T>(
-        long requestId,
-        ushort streamId,
-        IAsyncEnumerable<T> stream,
-        CancellationToken cancellationToken = default)
-        => SendClientStreamAsync(
-            requestId,
-            streamId,
-            stream,
-            Session.RuntimeContext.Codecs.GetCodec<T>(),
-            cancellationToken);
-
     public async Task SendClientStreamAsync<T>(
         long requestId,
         ushort streamId,

@@ -222,22 +222,13 @@ public interface IRpcClientStreamWriter
 /// <summary>Sends typed client stream items on the connection selected for an invocation.</summary>
 public interface IRpcClientStreamSink
 {
-    /// <summary>Sends one typed client stream and its completion frame.</summary>
-    Task SendClientStreamAsync<T>(
-        long requestId,
-        ushort streamId,
-        IAsyncEnumerable<T> stream,
-        CancellationToken cancellationToken = default);
-
     /// <summary>Sends one typed client stream using a construction-time-bound item Codec.</summary>
     Task SendClientStreamAsync<T>(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
-        CancellationToken cancellationToken = default)
-        => Task.FromException(new NotSupportedException(
-  "This client stream sink does not support construction-time-bound item Codecs."));
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Zero-allocation stream writer used by methods without client streams.</summary>

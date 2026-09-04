@@ -8,19 +8,15 @@ namespace SharpLink.UnitTests.Client;
 public class RpcClientStreamSinkTests
 {
     [Test]
-    public async Task BoundCodecOverloadShouldFailWhenSinkDoesNotHonorIt()
+    public async Task BoundCodecShouldBeRequiredBySinkContract()
     {
-        IRpcClientStreamSink sink = new LegacyOnlySink();
-        try
-        {
-            await sink.SendClientStreamAsync(1, 1, Empty(), new IntCodec());
-        }
-        catch (NotSupportedException)
-        {
-            return;
-        }
+        var codec = new IntCodec();
+        var sink = new BoundOnlySink(codec);
 
-        throw new Exception("Expected the default bound-codec overload to fail explicitly.");
+        await sink.SendClientStreamAsync(1, 1, Empty(), codec);
+
+        if (!sink.ReceivedExpectedCodec)
+            throw new Exception("the sink must receive the construction-time-bound codec");
     }
 
     private static async IAsyncEnumerable<int> Empty()
@@ -29,14 +25,20 @@ public class RpcClientStreamSinkTests
         yield break;
     }
 
-    private sealed class LegacyOnlySink : IRpcClientStreamSink
+    private sealed class BoundOnlySink(object expectedCodec) : IRpcClientStreamSink
     {
+        public bool ReceivedExpectedCodec { get; private set; }
+
         public Task SendClientStreamAsync<T>(
-  long requestId,
-  ushort streamId,
-  IAsyncEnumerable<T> stream,
-  CancellationToken cancellationToken = default)
-  => Task.CompletedTask;
+            long requestId,
+            ushort streamId,
+            IAsyncEnumerable<T> stream,
+            IRpcCodec<T> codec,
+            CancellationToken cancellationToken = default)
+        {
+            ReceivedExpectedCodec = ReferenceEquals(codec, expectedCodec);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class IntCodec : IRpcCodec<int>
