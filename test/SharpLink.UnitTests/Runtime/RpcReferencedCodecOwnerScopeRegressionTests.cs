@@ -52,10 +52,7 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
 
     private sealed class ReferencedPayload { }
     private sealed class ReferencedChild { }
-    private struct ReferencedFallbackChild
-    {
-        public int Value;
-    }
+    private readonly record struct ReferencedFallbackChild(int Value);
 
     private sealed class ReferencedChildCodec : IRpcCodec<ReferencedChild>
     {
