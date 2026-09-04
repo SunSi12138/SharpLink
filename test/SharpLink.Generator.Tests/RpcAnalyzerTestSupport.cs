@@ -214,49 +214,24 @@ namespace SharpLink.Abstractions
     private static ImmutableArray<Diagnostic> RunGenerator(
         string source,
         params MetadataReference[] additionalReferences)
-    {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
-        var compilation = CSharpCompilation.Create(
-            assemblyName: "AnalyzerTestAssembly",
-            syntaxTrees: [syntaxTree],
-            references: GetPlatformReferences().Concat(additionalReferences),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-
-        IIncrementalGenerator generator = new RpcGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
-        driver = driver.RunGenerators(compilation);
-        return driver.GetRunResult().Diagnostics;
-    }
+        => GeneratorTestHarness.Run("AnalyzerTestAssembly", source, additionalReferences).Diagnostics;
 
     private static string[] RunGeneratorAndGetSources(
         string source,
         params MetadataReference[] additionalReferences)
-    {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
-        var compilation = CSharpCompilation.Create(
-            assemblyName: "GeneratorShapeTestAssembly",
-            syntaxTrees: [syntaxTree],
-            references: GetPlatformReferences().Concat(additionalReferences),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-
-        IIncrementalGenerator generator = new RpcGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
-        driver = driver.RunGenerators(compilation);
-        return driver.GetRunResult().GeneratedTrees
+        => GeneratorTestHarness.Run("GeneratorShapeTestAssembly", source, additionalReferences)
+            .GeneratedTrees
             .Select(static tree => tree.GetText().ToString())
             .ToArray();
-    }
 
     private static void EnsureGeneratorOutputCompiles(
         string source,
         params MetadataReference[] additionalReferences)
     {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
-        var compilation = CSharpCompilation.Create(
-            assemblyName: "GeneratedBootstrapCompilationTest",
-            syntaxTrees: [syntaxTree],
-            references: GetPlatformReferences().Concat(additionalReferences),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var compilation = GeneratorTestHarness.CreateCompilation(
+            "GeneratedBootstrapCompilationTest",
+            source,
+            additionalReferences);
 
         IIncrementalGenerator generator = new RpcGenerator();
         GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
@@ -312,11 +287,10 @@ namespace SharpLink.Abstractions
         string source,
         params MetadataReference[] additionalReferences)
     {
-        var compilation = CSharpCompilation.Create(
+        var compilation = GeneratorTestHarness.CreateCompilation(
             assemblyName,
-            [CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default)],
-            GetPlatformReferences().Concat(additionalReferences),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            source,
+            additionalReferences);
 
         using var image = new MemoryStream();
         var emit = compilation.Emit(image);
@@ -503,15 +477,7 @@ namespace SharpLink.Sdk
         => text.Split(value, StringSplitOptions.None).Length - 1;
 
     private static IEnumerable<MetadataReference> GetPlatformReferences()
-    {
-        var tpa = (string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES");
-        if (string.IsNullOrWhiteSpace(tpa))
-            throw new Exception("TRUSTED_PLATFORM_ASSEMBLIES is unavailable.");
-
-        return tpa.Split(Path.PathSeparator)
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => MetadataReference.CreateFromFile(p));
-    }
+        => GeneratorTestHarness.GetPlatformReferences();
 
     private static void Ensure(bool condition, string message)
     {

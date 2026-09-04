@@ -13,6 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="Fixtures/**/*.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" />
   </ItemGroup>
 </Project>
