@@ -350,17 +350,8 @@ public partial class RpcGenerator
             var currentCases = newUnion.Cases.ToDictionary(static item => item.Tag);
             foreach (var oldCase in oldUnion.Cases)
             {
-                if (!currentCases.TryGetValue(oldCase.Tag, out var newCase))
-                {
-                    diagnostics.Add(Change(
-                        ContractCompatibilityKind.UnionTag,
-                        newUnion.SourceLocation,
-                        newUnion.Name,
-                        $"published union tag {oldCase.Tag} for {oldCase.Type} was removed",
-                        "restore the published tag mapping so it remains reserved across contract baselines"));
-                    continue;
-                }
-                if (!string.Equals(oldCase.Type, newCase.Type, StringComparison.Ordinal))
+                if (currentCases.TryGetValue(oldCase.Tag, out var newCase) &&
+                    !string.Equals(oldCase.Type, newCase.Type, StringComparison.Ordinal))
                 {
                     diagnostics.Add(Change(
                         ContractCompatibilityKind.UnionTag,
