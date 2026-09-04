@@ -9,6 +9,12 @@ public static class Program
     public static async Task Main(string[] args)
     {
         if (args.Length > 0 && string.Equals(
+            args[0], "--multicluster-router-evidence", StringComparison.Ordinal))
+        {
+            await MultiClusterRouterEvaluationEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--unsafe-blit-padding-evidence", StringComparison.Ordinal))
         {
             UnsafeBlitPaddingEvidenceRunner.Run(args[1..]);
