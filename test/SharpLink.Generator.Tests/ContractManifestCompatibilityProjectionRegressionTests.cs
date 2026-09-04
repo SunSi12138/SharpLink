@@ -92,11 +92,12 @@ public interface IProjectionService : SharpLink.Sdk.IService
         {
             var declaration = referenceType ? "sealed class" : "struct";
             return BuildSource($$"""
+#nullable enable
 [SharpLink.Sdk.RpcSerializable]
 public {{declaration}} Payload
 {
     [SharpLink.Sdk.RpcMember(1)]
-    public int Value { get; set; }
+    public string? Value { get; set; }
 }
 
 [SharpLink.Sdk.RpcContract]
