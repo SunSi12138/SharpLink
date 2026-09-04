@@ -23,29 +23,22 @@ internal static class SharpLinkGeneratedDependencyBinding
             return null;
         }
 
-        AssemblyName? reference = null;
-        foreach (var candidate in ownerAssembly.GetReferencedAssemblies())
-        {
-            if (!AssemblyName.ReferenceMatchesDefinition(candidate, requested))
-                continue;
-            reference = candidate;
-            break;
-        }
-        if (reference is null)
-            return null;
-
+        // The generated manifest already records the compile-time dependency identity. Resolve that
+        // identity through the owner's load context so the result stays bound to the exact runtime
+        // assembly generation without depending on Assembly.GetReferencedAssemblies(), whose metadata
+        // view is not preserved by trimming/NativeAOT.
         var loadContext = AssemblyLoadContext.GetLoadContext(ownerAssembly);
         if (loadContext is null)
             return null;
         foreach (var loaded in loadContext.Assemblies)
         {
-            if (AssemblyName.ReferenceMatchesDefinition(loaded.GetName(), reference))
+            if (AssemblyName.ReferenceMatchesDefinition(loaded.GetName(), requested))
                 return loaded;
         }
 
         try
         {
-            return loadContext.LoadFromAssemblyName(reference);
+            return loadContext.LoadFromAssemblyName(requested);
         }
         catch (Exception exception) when (
             exception is FileNotFoundException or FileLoadException or BadImageFormatException)
