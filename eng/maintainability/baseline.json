@@ -132,12 +132,6 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.Generator.Tests/RpcAnalyzerTests.cs",
-      "maxLoc": 3576,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs",
       "maxLoc": 2692,
       "reason": "Existing dev debt captured by issue #350."
