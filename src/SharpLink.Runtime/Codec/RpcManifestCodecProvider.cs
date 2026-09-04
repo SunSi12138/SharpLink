@@ -120,9 +120,28 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
     private IRpcCodec<T> ResolveOwned<T>(Type targetType, RpcGeneratedCodecRegistration registration)
     {
         _owner.ThrowIfDisposed();
-        var codec = _resolved.GetOrAdd(targetType, _ => registration.GetCodec(this));
+        var codec = _resolved.GetOrAdd(
+            targetType,
+            _ => registration.GetCodec(GetRegistrationProvider(registration)));
         _owner.ThrowIfDisposed();
         return Cast<T>(codec, targetType);
+    }
+
+    private static IRpcCodecProvider GetRegistrationProvider(RpcGeneratedCodecRegistration registration)
+    {
+        var owner = registration.Owner;
+        owner.ThrowIfDisposed();
+        var targetType = registration.Factory.TargetType;
+        if (owner.ContractCodecs.TryGetValue(targetType, out var contractRegistration) &&
+            ReferenceEquals(contractRegistration, registration))
+        {
+            return RpcGeneratedCodecResolver.GetProvider(owner);
+        }
+
+        // A context-global registration is part of the provider manifest's global generated graph.
+        // In particular, a referenced codec selected by another Contract must never receive that
+        // consumer Contract's policy provider while constructing its own nested dependencies.
+        return owner.BaseProvider;
     }
 
     private bool IsGeneratedDependencyAllowed(
