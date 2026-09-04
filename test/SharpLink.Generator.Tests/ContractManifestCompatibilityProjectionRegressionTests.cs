@@ -88,9 +88,12 @@ public interface IProjectionService : SharpLink.Sdk.IService
     [Test]
     public Task DtoReferenceValueEnvelopeChangeShouldFailContractBaseline()
     {
-        static string Source(string declarationKind) => BuildSource($$"""
+        static string Source(bool referenceType)
+        {
+            var declaration = referenceType ? "sealed class" : "struct";
+            return BuildSource($$"""
 [SharpLink.Sdk.RpcSerializable]
-public {{declarationKind}} Payload
+public {{declaration}} Payload
 {
     [SharpLink.Sdk.RpcMember(1)]
     public int Value { get; set; }
@@ -102,13 +105,14 @@ public interface IProjectionService : SharpLink.Sdk.IService
     ValueTask<Payload> Echo(Payload value, CancellationToken cancellationToken);
 }
 """);
+        }
 
-        var baseline = RunContractGenerator(Source("class"));
+        var baseline = RunContractGenerator(Source(referenceType: true));
         var baselineRoot = System.Text.Json.Nodes.JsonNode.Parse(baseline.Json)!.AsObject();
         Ensure(baselineRoot["dtos"]!.AsArray().Single()!["shape"]?.GetValue<string>() == "reference",
             "reference DTOs must persist their presence-framed envelope shape");
 
-        var changed = RunContractGenerator(Source("struct"), baseline.Json);
+        var changed = RunContractGenerator(Source(referenceType: false), baseline.Json);
         var changedRoot = System.Text.Json.Nodes.JsonNode.Parse(changed.Json)!.AsObject();
         Ensure(changedRoot["dtos"]!.AsArray().Single()!["shape"]?.GetValue<string>() == "value",
             "value DTOs must persist their non-presence-framed envelope shape");
@@ -146,6 +150,14 @@ public interface IProjectionService : SharpLink.Sdk.IService
     public Task IdempotencyBehaviorChangeShouldFailContractBaseline()
     {
         static string Source(bool idempotent) => BuildSource($$"""
+namespace SharpLink.Sdk
+{
+    [System.AttributeUsage(System.AttributeTargets.Method)]
+    public sealed class IdempotentAttribute : System.Attribute
+    {
+    }
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IProjectionService : SharpLink.Sdk.IService
 {
@@ -155,8 +167,16 @@ public interface IProjectionService : SharpLink.Sdk.IService
 """);
 
         var baseline = RunContractGenerator(Source(idempotent: false));
-        var changed = RunContractGenerator(Source(idempotent: true), baseline.Json);
+        var baselineMethod = System.Text.Json.Nodes.JsonNode.Parse(baseline.Json)!.AsObject()["contracts"]!
+            .AsArray().Single()!["methods"]!.AsArray().Single()!.AsObject();
+        Ensure(baselineMethod["idempotent"]?.GetValue<bool>() == false,
+            "baseline must persist non-idempotent behavior");
 
+        var changed = RunContractGenerator(Source(idempotent: true), baseline.Json);
+        var changedMethod = System.Text.Json.Nodes.JsonNode.Parse(changed.Json)!.AsObject()["contracts"]!
+            .AsArray().Single()!["methods"]!.AsArray().Single()!.AsObject();
+        Ensure(changedMethod["idempotent"]?.GetValue<bool>() == true,
+            "current manifest must persist idempotent behavior");
         Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
             "changing method idempotency behavior must fail baseline comparison");
         return Task.CompletedTask;
