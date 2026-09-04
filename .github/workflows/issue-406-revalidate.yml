@@ -60,10 +60,11 @@ jobs:
               raise SystemExit('expected exactly two interceptor maintainability allowances to remove')
           path.write_text(json.dumps(data, indent=2) + '\n')
           PY
+          rm test/SharpLink.UnitTests/InterceptorContinuationPoolTests.cs
           git diff --check
-          git diff --binary -- CHANGELOG.md eng/maintainability/baseline.json src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs > /tmp/issue406-production.patch
+          git diff --binary -- CHANGELOG.md eng/maintainability/baseline.json src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs test/SharpLink.UnitTests/InterceptorContinuationPoolTests.cs > /tmp/issue406-production.patch
           echo '=== production diff stat ==='
-          git diff --stat -- CHANGELOG.md eng/maintainability/baseline.json src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs
+          git diff --stat -- CHANGELOG.md eng/maintainability/baseline.json src test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs test/SharpLink.UnitTests/InterceptorContinuationPoolTests.cs
           echo '=== legacy continuation tokens (must be empty) ==='
           ! git grep -n -E 'ClientInterceptorContinuation|ClientContinuationState|ServerPipelineFacts|ServerInterceptorContinuation|ServerContinuationState|JoinAndReturnAsync' -- src/SharpLink.Client/SharpLinkClient.Interceptors.cs src/SharpLink.Server/SharpLinkServer.Interceptors.cs
       - name: Upload production patch
