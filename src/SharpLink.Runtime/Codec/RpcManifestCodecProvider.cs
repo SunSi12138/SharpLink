@@ -3,10 +3,17 @@ using System.Runtime.CompilerServices;
 
 namespace SharpLink.Runtime;
 
+internal enum RpcGeneratedCodecResolutionScope
+{
+    Global,
+    Contract
+}
+
 /// <summary>Resolves generated codecs using the immutable policy owned by one Contract assembly generation.</summary>
 public static class RpcGeneratedCodecResolver
 {
-    private static readonly ConditionalWeakTable<RpcGeneratedManifestRegistration, RpcManifestCodecProvider> OwnerProviders = new();
+    private static readonly ConditionalWeakTable<RpcGeneratedManifestRegistration, RpcManifestCodecProvider> ContractOwnerProviders = new();
+    private static readonly ConditionalWeakTable<RpcGeneratedManifestRegistration, RpcManifestCodecProvider> GlobalOwnerProviders = new();
 
     /// <summary>Gets the Codec provider bound to one generated Contract assembly.</summary>
     public static IRpcCodecProvider GetProvider(
@@ -34,12 +41,20 @@ public static class RpcGeneratedCodecResolver
     }
 
     internal static IRpcCodecProvider GetProvider(RpcGeneratedManifestRegistration registration)
+        => GetProvider(registration, RpcGeneratedCodecResolutionScope.Contract);
+
+    internal static IRpcCodecProvider GetProvider(
+        RpcGeneratedManifestRegistration registration,
+        RpcGeneratedCodecResolutionScope scope)
     {
         ArgumentNullException.ThrowIfNull(registration);
         registration.ThrowIfDisposed();
-        return OwnerProviders.GetValue(
+        var providers = scope == RpcGeneratedCodecResolutionScope.Contract
+            ? ContractOwnerProviders
+            : GlobalOwnerProviders;
+        return providers.GetValue(
             registration,
-            static owner => new RpcManifestCodecProvider(owner, owner.BaseProvider));
+            owner => new RpcManifestCodecProvider(owner, owner.BaseProvider, scope));
     }
 
     internal static IRpcCodecProvider GetProvider(
@@ -61,15 +76,18 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
 {
     private readonly RpcGeneratedManifestRegistration _owner;
     private readonly RpcCodecProvider? _runtimeProvider;
+    private readonly RpcGeneratedCodecResolutionScope _scope;
     private readonly ConcurrentDictionary<Type, IRpcCodec> _resolved = new();
 
     internal RpcManifestCodecProvider(
         RpcGeneratedManifestRegistration owner,
-        IRpcCodecProvider baseProvider)
+        IRpcCodecProvider baseProvider,
+        RpcGeneratedCodecResolutionScope scope = RpcGeneratedCodecResolutionScope.Contract)
     {
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
         ArgumentNullException.ThrowIfNull(baseProvider);
         _runtimeProvider = baseProvider as RpcCodecProvider;
+        _scope = scope;
     }
 
     public IRpcCodec<T> GetCodec<T>()
@@ -77,14 +95,17 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
         _owner.ThrowIfDisposed();
         var targetType = typeof(T);
 
-        // The Contract assembly compilation is the only serializer-selection authority.
-        // Endpoint runtime UseCodec/resolver state is intentionally not consulted here.
-        if (_owner.ContractCodecs.TryGetValue(targetType, out var contractRegistration))
+        // Contract-owned bindings are visible only while resolving the Contract graph. A global
+        // generated factory is frozen to the owner's global graph and must never inherit a
+        // Contract-only policy merely because the same manifest also owns one.
+        if (_scope == RpcGeneratedCodecResolutionScope.Contract &&
+            _owner.ContractCodecs.TryGetValue(targetType, out var contractRegistration))
+        {
             return ResolveOwned<T>(targetType, contractRegistration);
+        }
 
-        // Compatibility for hand-authored/older manifests whose generated defaults are published
-        // only in the owner-local global table. New generated manifests publish the complete RPC
-        // graph through ContractCodecs.
+        // Generated defaults are resolved from the owner-local global graph. Endpoint runtime
+        // AddCodec/UseCodecResolver state is intentionally not consulted here.
         if (_owner.Codecs.TryGetValue(targetType, out var ownerRegistration))
             return ResolveOwned<T>(targetType, ownerRegistration);
 
@@ -122,26 +143,9 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
         _owner.ThrowIfDisposed();
         var codec = _resolved.GetOrAdd(
             targetType,
-            _ => registration.GetCodec(GetRegistrationProvider(registration)));
+            _ => registration.GetCodec());
         _owner.ThrowIfDisposed();
         return Cast<T>(codec, targetType);
-    }
-
-    private static IRpcCodecProvider GetRegistrationProvider(RpcGeneratedCodecRegistration registration)
-    {
-        var owner = registration.Owner;
-        owner.ThrowIfDisposed();
-        var targetType = registration.Factory.TargetType;
-        if (owner.ContractCodecs.TryGetValue(targetType, out var contractRegistration) &&
-            ReferenceEquals(contractRegistration, registration))
-        {
-            return RpcGeneratedCodecResolver.GetProvider(owner);
-        }
-
-        // A context-global registration is part of the provider manifest's global generated graph.
-        // In particular, a referenced codec selected by another Contract must never receive that
-        // consumer Contract's policy provider while constructing its own nested dependencies.
-        return owner.BaseProvider;
     }
 
     private bool IsGeneratedDependencyAllowed(
