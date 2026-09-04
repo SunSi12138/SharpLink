@@ -109,6 +109,30 @@ public partial class RpcGenerator
                         GetPhysicalPlanSortKey(left.Layout),
                         GetPhysicalPlanSortKey(right.Layout));
                 });
+
+                if (canonicalFields.Length > 1)
+                {
+                    var deduplicated = new List<FinalPhysicalFieldPlan>(canonicalFields.Length);
+                    int? previousOffset = null;
+                    string? previousLayoutKey = null;
+                    var hasPrevious = false;
+                    foreach (var field in canonicalFields)
+                    {
+                        var layoutKey = GetPhysicalPlanSortKey(field.Layout);
+                        if (hasPrevious &&
+                            field.Offset == previousOffset &&
+                            string.Equals(layoutKey, previousLayoutKey, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        deduplicated.Add(field);
+                        previousOffset = field.Offset;
+                        previousLayoutKey = layoutKey;
+                        hasPrevious = true;
+                    }
+                    canonicalFields = [.. deduplicated];
+                }
             }
 
             return new FinalStructPhysicalPlan(
