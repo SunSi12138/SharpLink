@@ -66,11 +66,11 @@ SharpLink 把可执行 guard 作为规则入口，把文档作为规则解释；
 
 ### 例外与 baseline 变更
 
-大型文件或 baseline 例外不是常规扩展机制。只有在当前历史 debt 仍需保留，或同一聚焦 PR 内立即拆分会明显扩大范围、增加行为/兼容性/性能风险且没有安全的小步提取路径时，才应考虑新增或提高 allowance。
+大型文件或 baseline 例外不是常规扩展机制。新增或提高 allowance 的规范性接受条件只在 [`eng/maintainability.md`](eng/maintainability.md) 的 `Reviewing baseline changes` 维护。摘要（非规范）：这类例外用于需要保留既有 debt，或当前聚焦 PR 中立即拆分会显著扩大范围/风险且没有安全小步提取路径的场景；精确定义以该 canonical policy 为准。
 
 Review baseline 变更时：
 
-- 先确认是否可以通过独立状态/不变量/所有权提取消除例外，而不是扩大 allowance。
+- 先确认是否可以通过独立状态/不变量/所有权提取消除例外，而不是扩大 allowance；随后按 canonical policy 检查接受条件。
 - 新增或提高 allowance 必须在 baseline 中提供非空 `reason`，并按 [`eng/maintainability.md`](eng/maintainability.md) 的规则保持无额外 headroom；review 应明确检查该例外的范围和必要性。
 - 文件删除或回落到正常策略范围后应移除陈旧 allowance；全局阈值变化属于策略变化，需要单独、显式的 review 理由。
 - 架构临时例外必须在规范边界策略中显式记录理由和 tracking provenance，并保持架构 guard 通过；不能用条件、传递依赖或“临时先过”作为未记录例外。

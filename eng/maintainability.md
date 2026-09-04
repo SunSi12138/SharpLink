@@ -38,6 +38,13 @@ There are two distinct snapshots involved in the baseline history:
 
 Treat `eng/maintainability/baseline.json` as reviewed debt policy, not generated output. A baseline change should be intentional and visible in the same PR that needs it.
 
+An allowance is an exception, not a normal mechanism for growing an oversized file. A new or increased allowance is acceptable only when at least one of the following applies:
+
+- The PR needs to preserve historical debt that already exists and paying it down is outside the focused change.
+- Splitting the file in the same focused PR would materially broaden scope or increase behavioral, compatibility, or performance risk, and there is no safe small-step extraction available.
+
+Convenience, schedule pressure, or mechanically splitting one responsibility across `partial` files just to satisfy the gate are not sufficient reasons. Reviewers should first look for an extraction along independent state, invariants, lifecycle, or resource ownership.
+
 - Prefer reducing or splitting a file instead of adding or increasing an allowance.
 - New or increased allowances must include a non-empty `reason` explaining why the exception is necessary.
 - Do not add headroom. Set `maxLoc` to the reviewed current size that must be tolerated.
