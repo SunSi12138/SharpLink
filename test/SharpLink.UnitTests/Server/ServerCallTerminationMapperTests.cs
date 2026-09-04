@@ -97,7 +97,7 @@ public sealed class ServerCallTerminationMapperTests
         "Admission queue retained-byte capacity was exhausted.")]
     [Arguments((int)ServerCallCancellationReason.PreAdmissionStreamResourceExhausted,
         (int)SharpLinkErrorCode.ResourceExhausted,
-        "\u000ePre-admission stream retained-byte capacity was exhausted (server_pre_admission_stream_bytes).")]
+        "Pre-admission stream retained-byte capacity was exhausted (server_pre_admission_stream_bytes).")]
     [Arguments((int)ServerCallCancellationReason.Completed, (int)SharpLinkErrorCode.Cancelled,
         "Request canceled.")]
     [Arguments(byte.MaxValue, (int)SharpLinkErrorCode.Cancelled, "Request canceled.")]
@@ -121,6 +121,8 @@ public sealed class ServerCallTerminationMapperTests
             ServerCallCancellationReason.PreAdmissionStreamResourceExhausted,
             deadlineExceeded: false);
 
+        await Assert.That(exception.DetailCode)
+            .IsEqualTo(SharpLinkErrorDetails.ResourceExhausted.ServerPreAdmissionStreamBytes);
         await Assert.That(SharpLinkResourceExhaustion.GetReason(exception))
             .IsEqualTo(SharpLinkResourceExhaustion.ServerPreAdmissionStreamBytes);
     }

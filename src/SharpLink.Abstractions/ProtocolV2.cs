@@ -13,10 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 5;
+    public const ushort MinorVersion = 6;
 
     /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 5;
+    public const ushort MinimumCompatibleMinorVersion = 6;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -157,10 +157,12 @@ public readonly record struct ProtocolV2WindowUpdate(
     uint Credit);
 
 /// <summary>Decoded binary error payload.</summary>
-/// <param name="Code">The machine-readable error classification.</param>
+/// <param name="Code">The coarse machine-readable error classification.</param>
+/// <param name="DetailCode">The stable detail code scoped by <paramref name="Code"/>.</param>
 /// <param name="Message">The diagnostic message returned by the endpoint.</param>
 /// <param name="IsTruncated">Whether the endpoint truncated <paramref name="Message"/>.</param>
 public readonly record struct ProtocolV2Error(
     SharpLinkErrorCode Code,
+    ushort DetailCode,
     string Message,
     bool IsTruncated);

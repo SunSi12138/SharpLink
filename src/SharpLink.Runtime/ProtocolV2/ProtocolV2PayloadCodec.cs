@@ -358,10 +358,26 @@ public static class ProtocolV2PayloadCodec
         return new SharpLinkHealthCheckResult(status);
     }
 
+    /// <summary>Writes an error payload without a finer-grained detail code.</summary>
+    public static void WriteError(
+        IBufferWriter<byte> writer,
+        SharpLinkErrorCode code,
+        string? message,
+        int maxMessageBytes,
+        out bool truncated)
+        => WriteError(
+            writer,
+            code,
+            SharpLinkErrorDetails.Unspecified,
+            message,
+            maxMessageBytes,
+            out truncated);
+
     /// <summary>Writes a binary error payload and reports whether the UTF-8 message was truncated.</summary>
     public static void WriteError(
         IBufferWriter<byte> writer,
         SharpLinkErrorCode code,
+        ushort detailCode,
         string? message,
         int maxMessageBytes,
         out bool truncated)
@@ -381,6 +397,7 @@ public static class ProtocolV2PayloadCodec
         }
 
         WriteUInt16(writer, checked((ushort)code));
+        WriteUInt16(writer, detailCode);
         WriteVarUInt32(writer, checked((uint)byteCount));
         if (byteCount == 0)
             return;
@@ -397,8 +414,12 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out short codeBits) || !TryReadVarUInt32(ref reader, out var messageLength))
+        if (!reader.TryReadLittleEndian(out short codeBits) ||
+            !reader.TryReadLittleEndian(out short detailBits) ||
+            !TryReadVarUInt32(ref reader, out var messageLength))
+        {
             throw ProtocolV2FrameParser.Violation("Binary error payload is truncated.");
+        }
         if (messageLength > maxMessageBytes)
             throw ProtocolV2FrameParser.Violation($"Error message exceeds {maxMessageBytes} bytes.");
         if (reader.Remaining != messageLength)
@@ -407,10 +428,15 @@ public static class ProtocolV2PayloadCodec
         var code = (SharpLinkErrorCode)unchecked((ushort)codeBits);
         if (!IsDefinedErrorCode(code))
             throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
+        var detailCode = unchecked((ushort)detailBits);
         var message = messageLength == 0
             ? string.Empty
             : DecodeStrictUtf8(reader.Sequence.Slice(reader.Position, messageLength), "Binary error message");
-        return new ProtocolV2Error(code, message, (flags & ProtocolV2FrameFlags.Truncated) != 0);
+        return new ProtocolV2Error(
+            code,
+            detailCode,
+            message,
+            (flags & ProtocolV2FrameFlags.Truncated) != 0);
     }
 
     internal static void ValidateErrorPayload(ReadOnlySequence<byte> payload, int maxMessageBytes)
@@ -418,6 +444,7 @@ public static class ProtocolV2PayloadCodec
         ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short codeBits) ||
+            !reader.TryReadLittleEndian(out short _) ||
             !TryReadVarUInt32(ref reader, out var messageLength))
         {
             throw ProtocolV2FrameParser.Violation("Binary error payload is truncated.");
