@@ -13,7 +13,8 @@ public partial class RpcGenerator
             manifest.Codecs is null ||
             manifest.Enums is null ||
             manifest.Unions is null ||
-            manifest.Services is null)
+            manifest.Services is null ||
+            string.IsNullOrWhiteSpace(manifest.AssemblyLogicalIdentity))
         {
             return false;
         }
@@ -213,6 +214,7 @@ internal static class __SharpLinkContractManifest
         ImmutableArray<RpcServiceModel?> Services,
         ImmutableArray<GeneratedCodecModel> Codecs,
         ImmutableArray<GeneratedCodecHashModel> CodecHashes,
+        string AssemblyLogicalIdentity,
         ImmutableArray<GeneratedEnumModel> Enums,
         ImmutableArray<RpcUnionModel?> Unions);
 
@@ -248,6 +250,7 @@ internal static class __SharpLinkContractManifest
         public int Version { get; set; } = ContractManifestFormatVersion;
         public string GeneratorVersion { get; set; } = ExecutingGeneratorVersion;
         public string SchemaFingerprint { get; set; } = string.Empty;
+        public string AssemblyLogicalIdentity { get; set; } = string.Empty;
         public List<ContractManifestContract> Contracts { get; set; } = [];
         public List<ContractManifestDto> Dtos { get; set; } = [];
         [JsonRequired]
