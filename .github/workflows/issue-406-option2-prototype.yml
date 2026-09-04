@@ -1,0 +1,69 @@
+name: Issue 406 semantic option 2 prototype
+
+on:
+  push:
+    branches:
+      - tmp/issue-406-semantic-option2
+
+permissions:
+  contents: read
+
+jobs:
+  prototype:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Apply real source prototype in runner workspace
+        run: |
+          python3 eng/tmp-issue-406-option2.py
+          git diff --check
+          git status --short
+          git diff --stat
+          git diff -- src/SharpLink.Abstractions/SharpLinkInterceptors.cs src/SharpLink.Client src/SharpLink.Server | sed -n '1,1200p'
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Valid interceptor semantic gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj
+          run_class() {
+            local klass="$1"
+            dotnet test --project "$project" -c Release --no-build --treenode-filter "/*/*/$klass"
+          }
+          run_class DynamicInterceptorIntegrationTests
+          run_class RuntimeInterceptorContinuationIntegrationTests
+          run_class RuntimeInterceptorReviewCoverageIntegrationTests
+          run_class RuntimeInterceptorUnwindIntegrationTests
+          run_class RuntimeInterceptorOverlapStressIntegrationTests
+          run_class RuntimeInterceptorFaultRaceIntegrationTests
+          run_class ServerInterceptorDeadlineReentryTests
+          run_class ClientStreamingResultStressIntegrationTests
+      - name: Core interceptor tests except intentional misuse-delta cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj
+          # Run each valid InterceptorIntegrationTests method. The three old runtime-guarantee
+          # tests are intentionally excluded under semantic option 2:
+          # - ServerInterceptorMustJoinAnInvokedContinuation
+          # - ClientInterceptorMustJoinAnInvokedContinuation
+          # - InterceptorContinuationShouldExecuteEachTerminalAtMostOnce
+          mapfile -t tests < <(grep -oP 'public async Task \K[A-Za-z0-9_]+' test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs | grep -v -E '^(ServerInterceptorMustJoinAnInvokedContinuation|ClientInterceptorMustJoinAnInvokedContinuation|InterceptorContinuationShouldExecuteEachTerminalAtMostOnce)$')
+          for test in "${tests[@]}"; do
+            dotnet test --project "$project" -c Release --no-build --treenode-filter "/*/*/InterceptorIntegrationTests/$test"
+          done
+      - name: NativeAOT transport and topology smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
