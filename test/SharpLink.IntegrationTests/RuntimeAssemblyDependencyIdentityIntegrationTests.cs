@@ -61,15 +61,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var clientReplacement = await harness.Client.ReplaceAssemblyAsync(
                 provider2, consumer2, TimeSpan.FromSeconds(2));
             Ensure(!clientReplacement.Succeeded &&
-                   clientReplacement.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest &&
-                   clientReplacement.Error.Message.Contains("exact Type", StringComparison.Ordinal),
-                $"client replacement must validate the pending consumer against the final candidate snapshot: {clientReplacement.Error}");
+                   clientReplacement.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.MissingDependency &&
+                   clientReplacement.Error.Message.Contains("exact registered and running Assembly generation", StringComparison.Ordinal),
+                $"client replacement must reject a final candidate that removes the pending consumer's exact provider: {clientReplacement.Error}");
             var serverReplacement = await harness.Server.ReplaceAssemblyAsync(
                 provider2, consumer2, TimeSpan.FromSeconds(2));
             Ensure(!serverReplacement.Succeeded &&
-                   serverReplacement.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest &&
-                   serverReplacement.Error.Message.Contains("exact Type", StringComparison.Ordinal),
-                $"server replacement must validate the pending consumer against the final candidate snapshot: {serverReplacement.Error}");
+                   serverReplacement.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.MissingDependency &&
+                   serverReplacement.Error.Message.Contains("exact registered and running Assembly generation", StringComparison.Ordinal),
+                $"server replacement must reject a final candidate that removes the pending consumer's exact provider: {serverReplacement.Error}");
 
             Ensure(harness.Client.RegisterAssembly(consumer2).Succeeded,
                 "client accepts consumer with exact bound provider generation and expected CodecHash");
