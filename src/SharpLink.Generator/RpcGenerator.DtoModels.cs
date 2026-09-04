@@ -38,6 +38,8 @@ internal sealed record DtoGenerationResult(
 {
     public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =
         ImmutableArray<GeneratedCodecHashModel>.Empty;
+    public ImmutableArray<GeneratedCodecHashModel> ReferencedCodecHashes { get; init; } =
+        ImmutableArray<GeneratedCodecHashModel>.Empty;
     public ImmutableArray<GeneratedUnsafeBlitRequirementModel> UnsafeBlitRequirements { get; init; } =
         ImmutableArray<GeneratedUnsafeBlitRequirementModel>.Empty;
     public ImmutableArray<FinalCodecAutoLayoutDiagnosticModel> UnsafeBlitAutoLayoutDiagnostics { get; init; } =
@@ -62,6 +64,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             x.ContractCodecs.Length != y.ContractCodecs.Length ||
             x.FinalCodecBoundTypes.Length != y.FinalCodecBoundTypes.Length ||
             x.CodecHashes.Length != y.CodecHashes.Length ||
+            x.ReferencedCodecHashes.Length != y.ReferencedCodecHashes.Length ||
             x.UnsafeBlitRequirements.Length != y.UnsafeBlitRequirements.Length ||
             x.UnsafeBlitAutoLayoutDiagnostics.Length != y.UnsafeBlitAutoLayoutDiagnostics.Length ||
             x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length ||
@@ -84,6 +87,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         for (var index = 0; index < x.CodecHashes.Length; index++)
         {
             if (x.CodecHashes[index] != y.CodecHashes[index])
+                return false;
+        }
+        for (var index = 0; index < x.ReferencedCodecHashes.Length; index++)
+        {
+            if (x.ReferencedCodecHashes[index] != y.ReferencedCodecHashes[index])
                 return false;
         }
         for (var index = 0; index < x.UnsafeBlitRequirements.Length; index++)
@@ -152,6 +160,12 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             hash = unchecked(hash * 31 + codecHash.High.GetHashCode());
             hash = unchecked(hash * 31 + codecHash.Low.GetHashCode());
             hash = unchecked(hash * 31 + codecHash.IsReferenced.GetHashCode());
+        }
+        foreach (var codecHash in obj.ReferencedCodecHashes)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codecHash.TypeName));
+            hash = unchecked(hash * 31 + codecHash.High.GetHashCode());
+            hash = unchecked(hash * 31 + codecHash.Low.GetHashCode());
         }
         foreach (var requirement in obj.UnsafeBlitRequirements)
         {
