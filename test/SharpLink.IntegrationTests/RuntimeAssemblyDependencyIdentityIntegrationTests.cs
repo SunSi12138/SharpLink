@@ -222,17 +222,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     private static int GetDynamicModuleCount(object endpoint)
-    {
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        var field = endpoint.GetType().GetField("_dynamicModules", flags)
-            ?? throw new InvalidOperationException($"Dynamic module registry was not available from '{endpoint.GetType()}'.");
-        var registry = field.GetValue(endpoint)
-            ?? throw new InvalidOperationException("Dynamic module registry was null.");
-        var countProperty = registry.GetType().GetProperty("Count")
-            ?? throw new InvalidOperationException("Dynamic module registry count was unavailable.");
-        return (int)(countProperty.GetValue(registry)
-            ?? throw new InvalidOperationException("Dynamic module registry count was null."));
-    }
+        => ServerRegistryTestAccessor.DynamicModuleCount(endpoint);
 
     private static async Task EnsureDependencyPreventsUnregisterAsync(
         Func<ValueTask<SharpLinkAssemblyUnregisterResult>> unregister,

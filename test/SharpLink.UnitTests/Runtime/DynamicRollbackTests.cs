@@ -150,10 +150,10 @@ public class DynamicRollbackTests
         {
             var assembly = typeof(RollbackMarker).Assembly;
             Ensure(server.RegisterAssembly(assembly).Succeeded, "dynamic Server registration");
-            var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)typeof(SharpLinkServer)
-                .GetField("_dynamicModules", BindingFlags.Instance | BindingFlags.NonPublic)!
+            var registry = (ServerServiceModuleRegistry)typeof(SharpLinkServer)
+                .GetField("_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(server)!;
-            var module = modules[assembly];
+            Ensure(registry.DynamicModules.TryGetValue(assembly, out var module), "registered Server module");
             Ensure(module.TryAcquire(stream: false, out lease), "retained Server module lease");
             var forcedCancellationCount = 0;
             using var registration = module.ForcedCancellation.Register(
@@ -185,7 +185,7 @@ public class DynamicRollbackTests
                 "the Server unregister drain must leave both module counters exactly zero");
             await server.StopAsync(TimeSpan.Zero);
             await ownerProvider.WaitForTimersDrainedAsync();
-            Ensure(module.State == SharpLinkDynamicModuleState.Released && !modules.ContainsKey(assembly),
+            Ensure(module.State == SharpLinkDynamicModuleState.Released && !registry.DynamicModules.ContainsKey(assembly),
                 "Server module must be released after its retained lease and framework owner drain");
             Ensure(ownerProvider.ActiveTimerCount == 0 && forcedCancellationCount == 1,
                 "Server deferred release must leave no provider timer or duplicate forced cancellation");

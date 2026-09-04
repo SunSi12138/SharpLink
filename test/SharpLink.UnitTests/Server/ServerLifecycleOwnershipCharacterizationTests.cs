@@ -341,12 +341,11 @@ public class ServerLifecycleOwnershipCharacterizationTests
         ServerConnectionState connection)
     {
         var field = typeof(SharpLinkServer).GetField(
-            "_retiredConnections",
+            "_connectionRegistry",
             BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find retired connection registry");
-        var retiredConnections =
-            (System.Collections.Concurrent.ConcurrentDictionary<ServerConnectionState, byte>)field.GetValue(server)!;
-        return retiredConnections.ContainsKey(connection);
+            ?? throw new Exception("cannot find connection registry");
+        var registry = (ServerConnectionRegistry)field.GetValue(server)!;
+        return registry.IsRetired(connection);
     }
 
     private static ServiceRegistration CreateConnectionRegistration(

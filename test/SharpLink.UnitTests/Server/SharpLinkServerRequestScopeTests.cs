@@ -354,9 +354,9 @@ public class SharpLinkServerRequestScopeTests
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
-            typeof(SharpLinkServer).GetField(
-                    "_services", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .SetValue(Server, new Dictionary<long, ServiceRegistration>
+            ((ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
+                    "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(Server)!).PublishServices(new Dictionary<long, ServiceRegistration>
                 {
                     [stub.InterfaceHash] = registration
                 }.ToFrozenDictionary());

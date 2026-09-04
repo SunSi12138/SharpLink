@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Reflection;
 
 namespace SharpLink.IntegrationTests;
@@ -53,9 +52,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static void MarkDynamicModuleDraining(object endpoint, Assembly assembly)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        var field = endpoint.GetType().GetField("_dynamicModules", flags)
-            ?? throw new InvalidOperationException($"Dynamic module registry was not available from '{endpoint.GetType()}'.");
-        if (field.GetValue(endpoint) is not IDictionary modules || modules[assembly] is not { } module)
+        var modules = ServerRegistryTestAccessor.DynamicModules(endpoint);
+        if (modules[assembly] is not { } module)
             throw new InvalidOperationException($"Dynamic module for '{assembly.FullName}' was not registered.");
         var beginDraining = module.GetType().GetMethod("TryBeginDraining", flags)
             ?? throw new MissingMethodException(module.GetType().FullName, "TryBeginDraining");

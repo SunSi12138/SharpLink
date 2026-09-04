@@ -332,12 +332,12 @@ public class ServiceRegistrationTests
         runtime.AdoptGeneratedManifest(codecRegistration);
         var module = new SharpLinkDynamicModule(assembly, manifest, codecRegistration);
 
-        var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)GetPrivateField(server, "_dynamicModules");
-        modules.Add(assembly, module);
-        var detached = (Dictionary<SharpLinkDynamicModule, ServiceRegistration[]>)GetPrivateField(
-            server,
-            "_detachedModuleServices");
-        detached.Add(module, registrations);
+        var registry = (ServerServiceModuleRegistry)GetPrivateField(server, "_serviceModuleRegistry");
+        lock (registry.Gate)
+        {
+            registry.DynamicModules.Add(assembly, module);
+            registry.DetachedModuleServices.Add(module, registrations);
+        }
         return module;
     }
 

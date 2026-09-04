@@ -215,8 +215,6 @@ public class SharpLinkServerRequestScopeReviewTests
             var scopes = new List<string>();
             for (var current = _current.Value; current is not null; current = current.Parent)
             {
-                // A conforming provider is allowed to treat Dispose as globally ending the scope,
-                // even in ExecutionContexts that captured the same scope object earlier.
                 if (!current.IsDisposed && current.Label is { } label)
                     scopes.Add(label);
             }
@@ -344,9 +342,9 @@ public class SharpLinkServerRequestScopeReviewTests
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
-            typeof(SharpLinkServer).GetField(
-                    "_services", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .SetValue(Server, new Dictionary<long, ServiceRegistration>
+            ((ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
+                    "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(Server)!).PublishServices(new Dictionary<long, ServiceRegistration>
                 {
                     [stub.InterfaceHash] = registration
                 }.ToFrozenDictionary());

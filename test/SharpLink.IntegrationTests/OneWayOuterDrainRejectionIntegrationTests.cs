@@ -1,6 +1,3 @@
-using System.Collections.Concurrent;
-using System.Reflection;
-
 namespace SharpLink.IntegrationTests;
 
 public class OneWayOuterDrainRejectionIntegrationTests
@@ -95,10 +92,6 @@ public class OneWayOuterDrainRejectionIntegrationTests
 
     private sealed class Harness : IAsyncDisposable
     {
-        private static readonly FieldInfo ConnectionsField = typeof(SharpLinkServer).GetField(
-            "_connections", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("cannot find server connection registry");
-
         private readonly CancellationTokenSource _serverCts;
         private readonly Task _serverTask;
 
@@ -142,10 +135,7 @@ public class OneWayOuterDrainRejectionIntegrationTests
         internal void MarkConnectionDraining()
         {
             var server = (SharpLinkServer)Server;
-            var connections = (ConcurrentDictionary<string, ServerConnectionState>)(
-                ConnectionsField.GetValue(server)
-                ?? throw new InvalidOperationException("server connection registry is unavailable"));
-            var connection = connections.Values.Single();
+            var connection = ServerRegistryTestAccessor.ActiveConnections(server).Values.Single();
             Ensure(connection.ActiveCalls > 0,
                 "the connection should retain an already-accepted call while entering drain");
             connection.MarkDraining();

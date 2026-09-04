@@ -123,23 +123,16 @@ internal static class ServerLifecycleResourceInspector
     internal static ServerLifecycleResourceSnapshot Capture(ISharpLinkServer server)
     {
         ArgumentNullException.ThrowIfNull(server);
+        var sharpServer = (SharpLinkServer)server;
         var serverType = server.GetType();
         var admission = serverType.GetField("_admissionController", InstanceFlags)?.GetValue(server);
         return new ServerLifecycleResourceSnapshot(
             ServerCallAdmissionDiagnostics.ActiveCallCount(server),
-            ReadCountField(server, "_connections"),
-            ReadCountField(server, "_retiredConnections"),
+            ServerRegistryTestAccessor.ActiveConnectionCount(sharpServer),
+            ServerRegistryTestAccessor.RetiredConnectionCount(sharpServer),
             ReadIntProperty(admission, "ActivePermits"),
             ReadIntProperty(admission, "QueuedCalls"),
             ReadLongProperty(admission, "QueuedBytes"));
-    }
-
-    private static int ReadCountField(object value, string name)
-    {
-        var fieldValue = value.GetType().GetField(name, InstanceFlags)?.GetValue(value) ??
-            throw new InvalidOperationException($"Lifecycle field '{name}' was not found.");
-        return (int)(fieldValue.GetType().GetProperty("Count", InstanceFlags)?.GetValue(fieldValue) ??
-            throw new InvalidOperationException($"Lifecycle field '{name}' has no Count."));
     }
 
     private static int ReadIntProperty(object? value, string name)

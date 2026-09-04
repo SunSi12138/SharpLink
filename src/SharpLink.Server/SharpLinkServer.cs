@@ -18,18 +18,10 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private readonly TimeSpan _heartbeatCheckInterval;
     private readonly TimeSpan _heartbeatTimeout;
     private readonly SharpLinkRuntimeContext _runtimeContext;
-    private FrozenDictionary<long, ServiceRegistration> _services;
+    private readonly ServerServiceModuleRegistry _serviceModuleRegistry;
+    private readonly ServerConnectionRegistry _connectionRegistry = new();
     private readonly IServiceProvider _serviceProvider;
     private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
-    private readonly Lock _registryGate = new();
-    private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
-        new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
-        new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<SharpLinkDynamicModule, ServiceRegistration[]> _detachedModuleServices = [];
-    private long _registryGeneration;
-    private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
-    private readonly ConcurrentDictionary<ServerConnectionState, byte> _retiredConnections = [];
     private readonly ILogger _logger;
     private readonly ServerAuthenticationCoordinator _authentication;
     private readonly CancellationTokenSource _acceptCts = new();
@@ -66,6 +58,19 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private FixedWindowLogThrottle _oneWayAdmissionLogThrottle;
     private FixedWindowLogThrottle _protocolViolationLogThrottle;
 
+    // Keep the established partial-file transaction shape while the mutable registry state itself
+    // is owned by the focused collaborator. These are non-owning aliases, not Server fields.
+    private ref FrozenDictionary<long, ServiceRegistration> _services
+        => ref _serviceModuleRegistry.ServicesStorage;
+    private Lock _registryGate => _serviceModuleRegistry.Gate;
+    private ServerServiceModuleRegistry.DynamicModuleTable _dynamicModules
+        => _serviceModuleRegistry.DynamicModules;
+    private ServerServiceModuleRegistry.UnregisterOperationTable _unregisterOperations
+        => _serviceModuleRegistry.UnregisterOperations;
+    private ServerServiceModuleRegistry.DetachedModuleServiceTable _detachedModuleServices
+        => _serviceModuleRegistry.DetachedModuleServices;
+    private ref long _registryGeneration => ref _serviceModuleRegistry.GenerationStorage;
+
     /// <summary>
     /// Initializes a Server from the explicit composition materialized by
     /// <see cref="SharpLinkServerBuilder"/>. It performs no mutable-option fallback, clone, catalog
@@ -75,7 +80,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     {
         ArgumentNullException.ThrowIfNull(composition);
         _transportListener = composition.TransportListener;
-        _services = composition.Services;
+        _serviceModuleRegistry = new ServerServiceModuleRegistry(composition.Services);
         _heartbeatCheckInterval = composition.HeartbeatCheckInterval;
         _heartbeatTimeout = composition.HeartbeatTimeout;
         _logger = composition.Logger;
@@ -357,7 +362,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private async Task SendGoAwayToAllAsync()
     {
-        var connections = _connections.Values.ToArray();
+        var connections = _connectionRegistry.SnapshotActive();
         var tasks = new Task[connections.Length];
         for (var index = 0; index < connections.Length; index++)
         {
@@ -412,7 +417,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private async Task FlushAllSessionsAsync()
     {
-        var connections = _connections.Values.ToArray();
+        var connections = _connectionRegistry.SnapshotActive();
         var tasks = new Task[connections.Length];
         for (var index = 0; index < connections.Length; index++)
             tasks[index] = FlushSessionAsync(connections[index]);
@@ -454,7 +459,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private async Task DisposeAllSessionsAsync()
     {
-        var connections = _connections.Values.ToArray();
+        var connections = _connectionRegistry.SnapshotActive();
         var tasks = new Task[connections.Length];
         for (var index = 0; index < connections.Length; index++)
             tasks[index] = DisconnectConnectionAsync(connections[index]).AsTask();
@@ -817,7 +822,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private ServerStopDiagnosticSnapshot CaptureStopDiagnostics(int activeCalls)
     {
-        var connections = _connections.Values.ToArray();
+        var connections = _connectionRegistry.SnapshotActive();
         var snapshots = new ServerConnectionDiagnosticSnapshot[connections.Length];
         for (var index = 0; index < connections.Length; index++)
         {
