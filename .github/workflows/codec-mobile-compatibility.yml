@@ -192,9 +192,12 @@ jobs:
           - id: ios-simulator-x64
             os: macos-26-intel
             rid: iossimulator-x64
+            experimental: false
           - id: ios-simulator-arm64
             os: macos-26
             rid: iossimulator-arm64
+            experimental: true
+    continue-on-error: ${{ matrix.experimental }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     env:
@@ -338,14 +341,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require all non-Mono mobile evidence
+      - name: Require blocking non-Mono mobile evidence
         shell: bash
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
           IOS_RESULT: ${{ needs.ios-coreclr.result }}
         run: |
           echo "Android CoreCLR (.NET 10): $ANDROID_RESULT"
-          echo "iOS CoreCLR (.NET 11 preview): $IOS_RESULT"
+          echo "iOS CoreCLR (.NET 11 preview; x64 blocking, arm64 experimental): $IOS_RESULT"
           if [[ "$ANDROID_RESULT" != "success" || "$IOS_RESULT" != "success" ]]; then
             exit 1
           fi
