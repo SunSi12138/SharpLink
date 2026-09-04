@@ -426,6 +426,7 @@ public class ProtocolV2Tests
         ProtocolV2PayloadCodec.WriteError(
             payload,
             SharpLinkErrorCode.ResourceExhausted,
+            SharpLinkErrorDetails.ResourceExhausted.AdmissionQueue,
             "容量不足🙂🙂🙂",
             12,
             out var truncated);
@@ -436,35 +437,74 @@ public class ProtocolV2Tests
             ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             12);
         Ensure(error.Code == SharpLinkErrorCode.ResourceExhausted, "error code");
+        Ensure(error.DetailCode == SharpLinkErrorDetails.ResourceExhausted.AdmissionQueue, "error detail code");
         Ensure(error.IsTruncated, "truncated flag");
         Ensure(System.Text.Encoding.UTF8.GetByteCount(error.Message) <= 12, "bounded UTF-8 message");
     }
 
     [Test]
-    public void BinaryErrorShouldPreserveResourceReasonAtOneByteMessageLimit()
+    public void BinaryErrorShouldPreserveDetailCodeWhenMessageIsFullyTruncated()
     {
         var wireException = SharpLinkResourceExhaustion.CreateWire(
             SharpLinkResourceExhaustion.ServerCallCapacity,
-            "Server call capacity is exhausted (server_call_capacity).");
+            "Server call capacity is exhausted.");
         using var payload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteError(
             payload,
             wireException.Code,
+            wireException.DetailCode,
             wireException.Message,
-            maxMessageBytes: 1,
+            maxMessageBytes: 0,
             out var truncated);
 
         var error = ProtocolV2PayloadCodec.ReadError(
             new ReadOnlySequence<byte>(payload.WrittenMemory),
             ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
-            maxMessageBytes: 1);
-        var restored = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
+            maxMessageBytes: 0);
+        var restored = SharpLinkResourceExhaustion.CreateRemote(
+            error.Code,
+            error.DetailCode,
+            error.Message);
 
-        Ensure(truncated, "the human-readable suffix should be truncated");
+        Ensure(truncated, "the human-readable message should be fully truncated");
+        Ensure(error.Message.Length == 0, "the message limit should not retain diagnostic text");
+        Ensure(
+            error.DetailCode == SharpLinkErrorDetails.ResourceExhausted.ServerCallCapacity,
+            "the structured detail must survive independently of the message");
         Ensure(
             SharpLinkResourceExhaustion.GetReason(restored) ==
             SharpLinkResourceExhaustion.ServerCallCapacity,
-            "the one-byte wire discriminator must restore the stable reason");
+            "the resource reason must be restored from the structured detail");
+    }
+
+    [Test]
+    public void BinaryErrorShouldPreserveUnknownDetailCode()
+    {
+        const ushort futureDetail = ushort.MaxValue;
+        using var payload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteError(
+            payload,
+            SharpLinkErrorCode.ResourceExhausted,
+            futureDetail,
+            "future detail",
+            Limits.MaxErrorMessageBytes,
+            out var truncated);
+
+        var error = ProtocolV2PayloadCodec.ReadError(
+            new ReadOnlySequence<byte>(payload.WrittenMemory),
+            ProtocolV2FrameFlags.Error,
+            Limits.MaxErrorMessageBytes);
+
+        Ensure(!truncated, "short error message should not be truncated");
+        Ensure(error.DetailCode == futureDetail, "unknown detail values must round-trip unchanged");
+        var exception = SharpLinkResourceExhaustion.CreateRemote(
+            error.Code,
+            error.DetailCode,
+            error.Message);
+        Ensure(exception.DetailCode == futureDetail, "remote exceptions must preserve unknown detail values");
+        Ensure(
+            SharpLinkResourceExhaustion.GetReason(exception) == SharpLinkResourceExhaustion.Unspecified,
+            "unknown resource detail values must not be ambiguously reinterpreted");
     }
 
     [Test]
@@ -498,7 +538,7 @@ public class ProtocolV2Tests
             Limits.MaxErrorMessageBytes,
             out _));
         var readFailure = CaptureException(() => ProtocolV2PayloadCodec.ReadError(
-            new ReadOnlySequence<byte>(new byte[] { 0, 0, 0 }),
+            new ReadOnlySequence<byte>(new byte[] { 0, 0, 0, 0, 0 }),
             ProtocolV2FrameFlags.Error,
             Limits.MaxErrorMessageBytes));
 
@@ -515,6 +555,8 @@ public class ProtocolV2Tests
         var payload = new byte[]
         {
             (byte)SharpLinkErrorCode.Unavailable,
+            0,
+            0,
             0,
             2,
             0xC3,
@@ -596,7 +638,7 @@ public class ProtocolV2Tests
         await ExpectProtocolViolation(frame);
 
         var errorPayload = new PooledByteBufferWriter();
-        errorPayload.Write(new byte[sizeof(ushort)]);
+        errorPayload.Write(new byte[] { (byte)SharpLinkErrorCode.Unavailable, 0, 0, 0 });
         ProtocolV2PayloadCodec.WriteVarUInt32(
             errorPayload, checked((uint)Limits.MaxErrorMessageBytes + 1));
         await ExpectProtocolViolation(CreateFrame(

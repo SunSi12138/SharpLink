@@ -121,6 +121,7 @@ internal static class RpcSessionExtensions
                 ProtocolV2FrameType.Response,
                 requestId,
                 exception.Code,
+                exception.DetailCode,
                 exception.Message,
                 GetMaxErrorMessageBytes(session));
         }
@@ -136,6 +137,7 @@ internal static class RpcSessionExtensions
                 ProtocolV2FrameType.Response,
                 requestId,
                 exception.Code,
+                exception.DetailCode,
                 exception.Message,
                 GetMaxErrorMessageBytes(session),
                 cancellationToken);
@@ -409,6 +411,7 @@ internal static class RpcSessionExtensions
                 ProtocolV2PayloadCodec.WriteError(
                     writer,
                     exception.Code,
+                    exception.DetailCode,
                     exception.Message,
                     GetMaxErrorMessageBytes(session),
                     out var truncated);
@@ -548,6 +551,7 @@ internal static class RpcSessionExtensions
         ProtocolV2FrameType frameType,
         long requestId,
         SharpLinkErrorCode code,
+        ushort detailCode,
         string? message,
         int maxMessageBytes)
     {
@@ -557,7 +561,13 @@ internal static class RpcSessionExtensions
         {
             var token = writer.BeginPacket(
                 frameType, ProtocolV2FrameFlags.Error, unchecked((ulong)requestId));
-            ProtocolV2PayloadCodec.WriteError(writer, code, message, maxMessageBytes, out var truncated);
+            ProtocolV2PayloadCodec.WriteError(
+                writer,
+                code,
+                detailCode,
+                message,
+                maxMessageBytes,
+                out var truncated);
             writer.EndPacket(token);
             if (truncated)
                 SetTruncatedFlag(writer, token);
@@ -607,6 +617,7 @@ internal static class RpcSessionExtensions
         ProtocolV2FrameType frameType,
         long requestId,
         SharpLinkErrorCode code,
+        ushort detailCode,
         string? message,
         int maxMessageBytes,
         CancellationToken cancellationToken)
@@ -617,7 +628,13 @@ internal static class RpcSessionExtensions
         {
             var token = writer.BeginPacket(
                 frameType, ProtocolV2FrameFlags.Error, unchecked((ulong)requestId));
-            ProtocolV2PayloadCodec.WriteError(writer, code, message, maxMessageBytes, out var truncated);
+            ProtocolV2PayloadCodec.WriteError(
+                writer,
+                code,
+                detailCode,
+                message,
+                maxMessageBytes,
+                out var truncated);
             writer.EndPacket(token);
             if (truncated)
                 SetTruncatedFlag(writer, token);

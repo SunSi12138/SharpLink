@@ -412,7 +412,10 @@ internal sealed partial class SharpLinkClient
                     {
                         var error = ProtocolV2PayloadCodec.ReadError(
                             payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
-                        handshakeException = new SharpLinkException(error.Code, error.Message);
+                        handshakeException = new SharpLinkException(
+                            error.Code,
+                            error.DetailCode,
+                            error.Message);
                         if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
                             SharpLinkErrorCode.AuthenticationExpired or
                             SharpLinkErrorCode.AuthorizationDenied or
@@ -552,7 +555,10 @@ internal sealed partial class SharpLinkClient
                                 using (BeginRequestLogScope(_logger, unchecked((long)header.RequestId)))
                                     LogClientDisconnectedWithError(
                                         _logger,
-                                        new SharpLinkException(goAwayError.Code, goAwayError.Message));
+                                        new SharpLinkException(
+                                            goAwayError.Code,
+                                            goAwayError.DetailCode,
+                                            goAwayError.Message));
                                 break;
                             case ProtocolV2FrameType.HandshakeRequest:
                             case ProtocolV2FrameType.HandshakeResponse:
@@ -633,7 +639,10 @@ internal sealed partial class SharpLinkClient
         if (isError)
         {
             var error = ProtocolV2PayloadCodec.ReadError(payload, flags, _protocolOptions.MaxErrorMessageBytes);
-            var remoteException = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
+            var remoteException = SharpLinkResourceExhaustion.CreateRemote(
+                error.Code,
+                error.DetailCode,
+                error.Message);
             if (connection.PendingCalls.DispatchError(requestId, remoteException))
                 return;
         }
