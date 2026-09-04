@@ -43,4 +43,29 @@ public partial class RpcAnalyzerTests
         Ensure(diff.Contains("+ 2 | actual", StringComparison.Ordinal), "fixture diff added line");
         return Task.CompletedTask;
     }
+
+    [Test]
+    public Task GeneratedSourceFixtureDiffShouldResyncAfterSingleLineInsertionAndDeletion()
+    {
+        var insertion = GeneratedSourceFixture.BuildReadableDiff(
+            "sample",
+            "Sample.g.cs",
+            "first\nsecond\nthird\nlast\n",
+            "first\ninserted\nsecond\nthird\nlast\n");
+        Ensure(insertion.Contains("+ 2 | inserted", StringComparison.Ordinal), "fixture diff inserted line");
+        Ensure(insertion.Contains("  2/3 | second", StringComparison.Ordinal), "fixture diff insertion suffix alignment");
+        Ensure(!insertion.Contains("- 2 | second", StringComparison.Ordinal),
+            "fixture diff must not report stable insertion suffix as removed");
+
+        var deletion = GeneratedSourceFixture.BuildReadableDiff(
+            "sample",
+            "Sample.g.cs",
+            "first\nremoved\nsecond\nthird\nlast\n",
+            "first\nsecond\nthird\nlast\n");
+        Ensure(deletion.Contains("- 2 | removed", StringComparison.Ordinal), "fixture diff deleted line");
+        Ensure(deletion.Contains("  3/2 | second", StringComparison.Ordinal), "fixture diff deletion suffix alignment");
+        Ensure(!deletion.Contains("+ 2 | second", StringComparison.Ordinal),
+            "fixture diff must not report stable deletion suffix as added");
+        return Task.CompletedTask;
+    }
 }
