@@ -9,6 +9,7 @@ public partial class RpcGenerator
         ImmutableArray<GeneratedCodecModel> codecs,
         ImmutableArray<GeneratedCodecModel> contractCodecs,
         ImmutableArray<GeneratedCodecHashModel> codecHashes,
+        ImmutableArray<GeneratedCodecHashModel> referencedCodecHashes,
         string assemblyLogicalIdentity)
     {
         var contracts = GetContractModels(interfaces);
@@ -32,8 +33,7 @@ public partial class RpcGenerator
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static dependency => dependency, StringComparer.Ordinal)
             .ToArray();
-        var referencedCodecDependencies = codecHashes
-            .Where(static codecHash => codecHash.IsReferenced)
+        var referencedCodecDependencies = referencedCodecHashes
             .OrderBy(static codecHash => codecHash.TypeName, StringComparer.Ordinal)
             .ToArray();
         var compileTimeDescriptor = BuildCompileTimeDescriptor(contracts, serviceModels, codecs, contractCodecs);
