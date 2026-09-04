@@ -102,6 +102,7 @@ public partial class RpcGenerator
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
         ImmutableArray<GeneratedCodecHashModel> codecHashes,
+        string assemblyLogicalIdentity,
         ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions,
         ImmutableArray<AdditionalText> additionalTexts,
@@ -109,7 +110,14 @@ public partial class RpcGenerator
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var document = CreateContractManifest(interfaces, services, codecs, codecHashes, generatedEnums, unions);
+        var document = CreateContractManifest(
+            interfaces,
+            services,
+            codecs,
+            codecHashes,
+            assemblyLogicalIdentity,
+            generatedEnums,
+            unions);
         var diagnostics = ValidateCurrentContractManifest(document);
 
         if (!string.IsNullOrWhiteSpace(options.BaselinePath))
@@ -154,7 +162,7 @@ public partial class RpcGenerator
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more Codec entries, enum entries, or opaque payload references are missing required semantic identity",
+                            "one or more required assembly, Codec, enum, or opaque payload identities are missing",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -172,6 +180,18 @@ public partial class RpcGenerator
                     }
                     else
                     {
+                        if (!string.Equals(
+                                baseline.AssemblyLogicalIdentity,
+                                document.AssemblyLogicalIdentity,
+                                StringComparison.Ordinal))
+                        {
+                            diagnostics.Add(Change(
+                                ContractCompatibilityKind.WireType,
+                                Location.None,
+                                document.AssemblyLogicalIdentity,
+                                $"assembly logical identity changed from '{baseline.AssemblyLogicalIdentity}' to '{document.AssemblyLogicalIdentity}'",
+                                "restore the previous assembly logical identity or publish a new contract assembly/baseline"));
+                        }
                         diagnostics.AddRange(CompareContractManifests(baseline, document));
                     }
                 }
@@ -203,10 +223,14 @@ public partial class RpcGenerator
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
         ImmutableArray<GeneratedCodecHashModel> codecHashes,
+        string assemblyLogicalIdentity,
         ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions)
     {
-        var document = new ContractManifestDocument();
+        var document = new ContractManifestDocument
+        {
+            AssemblyLogicalIdentity = assemblyLogicalIdentity
+        };
         var codecsByType = codecs
             .GroupBy(static codec => RemoveGlobalPrefix(codec.TypeName), StringComparer.Ordinal)
             .ToDictionary(
