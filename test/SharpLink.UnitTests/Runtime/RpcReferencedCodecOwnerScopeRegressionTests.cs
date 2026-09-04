@@ -9,9 +9,13 @@ namespace SharpLink.UnitTests.Runtime;
 public sealed class RpcReferencedCodecOwnerScopeRegressionTests
 {
     [Test]
-    public void ReferencedGeneratedCodecShouldResolveNestedCodecThroughProviderOwner()
+    public void ReferencedGeneratedCodecShouldResolveNestedCodecThroughFrozenProviderOwner()
     {
         using var context = new SharpLinkRuntimeContextBuilder()
+            .AddCodec(new EndpointReferencedChildCodec())
+            .UseCodecResolver(static type => type == typeof(ReferencedFallbackChild)
+                ? new EndpointFallbackChildCodec()
+                : null)
             .Build(includeGeneratedAssemblyCatalog: false);
 
         var providerManifest = new ProviderManifest(typeof(ReferencedPayload).Assembly);
@@ -30,11 +34,19 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         Ensure(payloadCodec is not null,
             "the consumer must resolve the exact referenced provider registration");
         Ensure(payloadCodec!.Child is ReferencedChildCodec,
-            "the referenced payload factory must resolve its nested child through the provider manifest's global graph, not the consumer Contract policy");
+            "the referenced payload factory must resolve its generated child through the provider manifest's frozen global graph, not an endpoint AddCodec override");
+        Ensure(payloadCodec.FallbackChild is not EndpointFallbackChildCodec,
+            "the referenced payload factory must resolve unmanaged fallback semantics from the provider manifest's frozen graph, not endpoint UseCodecResolver state");
+        Ensure(payloadCodec.FallbackChild.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
+            "the provider-owned fallback child must use the compile-time unmanaged fallback strategy");
     }
 
     private sealed class ReferencedPayload { }
     private sealed class ReferencedChild { }
+    private struct ReferencedFallbackChild
+    {
+        public int Value;
+    }
 
     private sealed class ReferencedChildCodec : IRpcCodec<ReferencedChild>
     {
@@ -42,9 +54,24 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         public ReferencedChild Deserialize(in ReadOnlySequence<byte> buffer) => new();
     }
 
-    private sealed class ReferencedPayloadCodec(IRpcCodec<ReferencedChild> child) : IRpcCodec<ReferencedPayload>
+    private sealed class EndpointReferencedChildCodec : IRpcCodec<ReferencedChild>
+    {
+        public void Serialize(in ReferencedChild value, IBufferWriter<byte> buffer) { }
+        public ReferencedChild Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class EndpointFallbackChildCodec : IRpcCodec<ReferencedFallbackChild>
+    {
+        public void Serialize(in ReferencedFallbackChild value, IBufferWriter<byte> buffer) { }
+        public ReferencedFallbackChild Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class ReferencedPayloadCodec(
+        IRpcCodec<ReferencedChild> child,
+        IRpcCodec<ReferencedFallbackChild> fallbackChild) : IRpcCodec<ReferencedPayload>
     {
         internal IRpcCodec<ReferencedChild> Child { get; } = child;
+        internal IRpcCodec<ReferencedFallbackChild> FallbackChild { get; } = fallbackChild;
         public void Serialize(in ReferencedPayload value, IBufferWriter<byte> buffer) { }
         public ReferencedPayload Deserialize(in ReadOnlySequence<byte> buffer) => new();
     }
@@ -79,7 +106,9 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         [
             new NativeFactory<ReferencedChild>(static _ => new ReferencedChildCodec()),
             new NativeFactory<ReferencedPayload>(static provider =>
-                new ReferencedPayloadCodec(provider.GetCodec<ReferencedChild>()))
+                new ReferencedPayloadCodec(
+                    provider.GetCodec<ReferencedChild>(),
+                    provider.GetCodec<ReferencedFallbackChild>()))
         ];
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [];
         public IReadOnlyList<string> Dependencies => [];
