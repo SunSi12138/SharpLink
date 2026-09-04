@@ -109,6 +109,6 @@ NativeAOT 不支持运行时加载未知插件，动态模块只适用于 JIT �
 
 动态模块的 runnable 证据位于 `test/SharpLink.DynamicContracts`、`SharpLink.DynamicServices`、`SharpLink.RollbackPlugin` 和 `RuntimeAssemblyIntegrationTests`，覆盖注册、冲突、替换、调用排空、取消、回滚、cleanup failure、弱引用与 collectible ALC 回收。
 
-运行时 slot 的 unit 与真实 TCP 证据位于 `SharpLinkMultiClusterClientTests` 和
+运行时 slot 的 unit 与真实 TCP 证据位于 `test/SharpLink.UnitTests/Client/SharpLinkMultiCluster*Tests.cs` 和
 `RuntimeMultiClusterIntegrationTests`，覆盖 Created/Ready 状态、connect-before-publish、失败回滚、
 预算、Proxy 一次绑定、Add/Replace/Remove 和删除后的资源释放结果。
