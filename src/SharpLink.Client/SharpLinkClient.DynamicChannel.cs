@@ -103,8 +103,8 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     }
 
     public Task SendClientStreamAsync<T>(long requestId, ushort streamId, IAsyncEnumerable<T> stream,
-        CancellationToken cancellationToken = default)
-        => inner.SendClientStreamAsync(requestId, streamId, stream, cancellationToken);
+        IRpcCodec<T> codec, CancellationToken cancellationToken = default)
+        => inner.SendClientStreamAsync(requestId, streamId, stream, codec, cancellationToken);
 
     private static async ValueTask<T> AwaitAsync<T>(ValueTask<T> call, SharpLinkDynamicModuleLease lease,
         CombinedCancellation combined)
