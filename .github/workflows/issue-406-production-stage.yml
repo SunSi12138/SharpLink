@@ -32,6 +32,16 @@ jobs:
           python3 /tmp/tmp-issue-406-option2.py
           python3 /tmp/tmp-issue-406-option2-fix.py
           python3 /tmp/tmp-issue-406-option2-server-context.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('eng/tmp-issue-406-production-cleanup.py')
+          text = path.read_text()
+          old = "    '### Changed\\n\\n',\n    '### Changed\\n\\n'"
+          new = "    '## [Unreleased]\\n\\n### Changed\\n\\n',\n    '## [Unreleased]\\n\\n### Changed\\n\\n'"
+          if text.count(old) != 1:
+              raise SystemExit(f'cleanup changelog anchor patch expected once, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
           python3 eng/tmp-issue-406-production-cleanup.py
           git diff --check
           echo '=== production diff stat ==='
