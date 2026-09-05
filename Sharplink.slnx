@@ -48,7 +48,9 @@
     <Project Path="test/SharpLink.GeneratedAssemblyScanner/SharpLink.GeneratedAssemblyScanner.csproj" />
     <Project Path="test/SharpLink.AotContracts/SharpLink.AotContracts.csproj" />
     <Project Path="test/SharpLink.AotServices/SharpLink.AotServices.csproj" />
+    <Project Path="test/SharpLink.AotExternalPayloads/SharpLink.AotExternalPayloads.csproj" />
     <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />
+    <Project Path="test/SharpLink.SharpPackAotSmoke/SharpLink.SharpPackAotSmoke.csproj" />
     <Project Path="test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj" />
     <Project Path="test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj" />
 </Solution>
