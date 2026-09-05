@@ -199,6 +199,9 @@ public partial class RpcGenerator
                 return;
             }
 
+            if (TryVisitNativeUnion(type, stack, depth))
+                return;
+
             if (TryGetCollection(type, out var collectionKind, out var elementType, out var keyType, out var valueType))
             {
                 stack.Add(type);
