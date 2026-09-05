@@ -19,9 +19,10 @@ internal static class GeneratedSourceFixture
         string fixtureName,
         string assemblyName,
         string source,
-        string hintName)
+        string hintName,
+        params MetadataReference[] additionalReferences)
     {
-        var result = GeneratorTestHarness.Run(assemblyName, source);
+        var result = GeneratorTestHarness.Run(assemblyName, source, additionalReferences);
         var errors = result.Diagnostics
             .Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
             .ToArray();
