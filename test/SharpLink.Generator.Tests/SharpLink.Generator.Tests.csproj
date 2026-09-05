@@ -5,7 +5,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj" />
-    <ProjectReference Include="..\..\src\SharpLink.Serializer.SharpPack\SharpLink.Serializer.SharpPack.csproj" />
   </ItemGroup>
 
   <ItemGroup>
