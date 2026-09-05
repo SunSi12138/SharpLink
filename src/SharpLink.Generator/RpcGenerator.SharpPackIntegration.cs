@@ -193,7 +193,7 @@ public partial class RpcGenerator
         var analysis = new SharpPackSidecarAnalysis(compilation);
         foreach (var root in rootPlans)
         {
-            if (!state.TryResolveReachableType(root.TypeName, out var rootType))
+            if (!state.TryResolveSharpPackReachableType(root.TypeName, out var rootType))
             {
                 analysis.Report(
                     root.TypeName,
