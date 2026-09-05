@@ -6,7 +6,7 @@ on:
       - tmp/issue-438-source-patch
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -15,10 +15,11 @@ jobs:
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
-      - name: Checkout candidate
+      - name: Checkout feature branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 5f455b978a946931cc08aea48299cb2290b9a6a4
+          ref: fix/issue-438-sendpump-mailbox
+          fetch-depth: 0
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
       - name: Apply stop-crossing patch locally
@@ -28,10 +29,11 @@ jobs:
         run: dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
-      - name: Upload patched source
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: issue-438-patched-sendpump
-          path: src/SharpLink.Runtime/RpcSession.SendPump.cs
-          if-no-files-found: error
+      - name: Commit verified source fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/SharpLink.Runtime/RpcSession.SendPump.cs
+          git commit -m "fix(runtime): preserve stop wake across timed batching"
+          git push origin HEAD:fix/issue-438-sendpump-mailbox
