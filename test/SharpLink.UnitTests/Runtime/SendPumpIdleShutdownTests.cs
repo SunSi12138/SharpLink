@@ -8,8 +8,8 @@ namespace SharpLink.UnitTests.Runtime;
 
 /// <summary>
 /// Issue 157 lifecycle coverage: every terminal path must wake an idle send pump that is
-/// parked in <c>ChannelReader.WaitToReadAsync</c>, so the wait may safely become
-/// non-cancellable and rely on Channel completion/fault alone.
+/// parked on <c>WakeupSignal</c>. Stop/fault signals compete for the same live arm as
+/// producer wakeups, so no separate Channel-read lifetime is required.
 /// Every test has bounded completion; none may rely on an unbounded wait to "prove" liveness.
 /// </summary>
 public class SendPumpIdleShutdownTests
