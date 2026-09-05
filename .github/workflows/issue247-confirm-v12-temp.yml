@@ -31,14 +31,15 @@ jobs:
           mkdir -p artifacts/issue247-v12
           git fetch origin "$BASE_SHA" --depth=1
           git diff --name-only "$BASE_SHA" HEAD | tee artifacts/issue247-v12/temp-diff.txt
-          test "$(git diff --name-only "$BASE_SHA" HEAD | wc -l)" -eq 1
           grep -qx '.github/workflows/issue247-confirm-v12-temp.yml' artifacts/issue247-v12/temp-diff.txt
           echo "workflow_sha=$(git rev-parse HEAD)" > artifacts/issue247-v12/revision.txt
           echo "baseline_sha=$BASE_SHA" >> artifacts/issue247-v12/revision.txt
+          echo "pre_reset_diff_count=$(git diff --name-only "$BASE_SHA" HEAD | wc -l)" >> artifacts/issue247-v12/revision.txt
           dotnet --info > artifacts/issue247-v12/dotnet-info.txt
           uname -a > artifacts/issue247-v12/uname.txt
           lscpu > artifacts/issue247-v12/cpu.txt
           git reset --hard "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
 
           python3 - <<'PY'
           from pathlib import Path
@@ -303,25 +304,25 @@ jobs:
               raise SystemExit('AdmissionImmediate enum entry missing')
           s = s.replace(enum_old, enum_new, 1)
           case_old = '''            case ServerFeatureScenario.AdmissionImmediate:
-                          builder.UseAdmissionControl(options => options.Global.UseConcurrency(1024));
-                          break;'''
+                builder.UseAdmissionControl(options => options.Global.UseConcurrency(1024));
+                break;'''
           case_new = '''            case ServerFeatureScenario.AdmissionImmediate:
-                          builder.UseAdmissionControl(options => options.Global.UseConcurrency(1024));
-                          break;
-                      case ServerFeatureScenario.AdmissionRateImmediate:
-                          builder.UseAdmissionControl(options => options.Global.UseTokenBucket(rate =>
-                          {
-                              rate.TokenLimit = 1_000_000_000;
-                              rate.TokensPerPeriod = 1_000_000_000;
-                              rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
-                          }));
-                          break;'''
+                builder.UseAdmissionControl(options => options.Global.UseConcurrency(1024));
+                break;
+            case ServerFeatureScenario.AdmissionRateImmediate:
+                builder.UseAdmissionControl(options => options.Global.UseTokenBucket(rate =>
+                {
+                    rate.TokenLimit = 1_000_000_000;
+                    rate.TokensPerPeriod = 1_000_000_000;
+                    rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
+                }));
+                break;'''
           if case_old not in s:
               raise SystemExit('AdmissionImmediate switch case missing')
           p.write_text(s.replace(case_old, case_new, 1))
           PY
-            dotnet format whitespace "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore --verify-no-changes --verbosity minimal || true
             dotnet restore "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            dotnet format whitespace "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore --verify-no-changes --verbosity minimal
             dotnet build "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore -c Release -v minimal
           done
 
@@ -354,7 +355,7 @@ jobs:
         run: |
           set -euxo pipefail
           python3 - <<'PY'
-          import glob, json, statistics
+          import json, statistics
           from pathlib import Path
 
           root = Path('artifacts/issue247-v12/rpc')
@@ -423,8 +424,8 @@ jobs:
               }
 
           Path('artifacts/issue247-v12/confirmation-summary.json').write_text(json.dumps(result, indent=2))
-          lines = ['# Issue 247 v12 confirmation', '', '```json', json.dumps(result, indent=2), '```', '']
-          Path('artifacts/issue247-v12/confirmation-summary.md').write_text('\n'.join(lines))
+          Path('artifacts/issue247-v12/confirmation-summary.md').write_text(
+              '# Issue 247 v12 confirmation\n\n```json\n' + json.dumps(result, indent=2) + '\n```\n')
           print(json.dumps(result, indent=2))
           PY
 
