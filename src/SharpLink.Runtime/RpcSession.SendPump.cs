@@ -40,7 +40,6 @@ internal sealed partial class RpcSession
         private readonly Channel<OwnedFrame> _progressQueue;
         private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
-        private readonly DeadlineReadRace _deadlineRace;
         private readonly WakeupSignal _wakeup = new();
         private readonly Task _pumpTask;
         // When the caller configured an explicit MaxLatency through RpcSessionFlushOptions the
@@ -51,8 +50,6 @@ internal sealed partial class RpcSession
         // ping-pong under continuous RPC load (measured: ~1/3 of the balanced QPS at c128).
         private readonly bool _deadlineBatchingEnabled;
         private TaskCompletionSource<bool>? _capacityChanged;
-        private Task<bool>? _pendingReadWait;
-        private Task<bool>? _pendingProgressReadWait;
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
@@ -116,7 +113,6 @@ internal sealed partial class RpcSession
 
             _progressQueue = CreateFrameQueue();
             _normalQueue = CreateFrameQueue();
-            _deadlineRace = new DeadlineReadRace(_timeProvider);
             _pumpTask = RunAsync();
         }
 
@@ -230,11 +226,7 @@ internal sealed partial class RpcSession
                         // consumes any signal that arrived before the arm was published,
                         // so a frame written between the empty-queue check above and the
                         // arm cannot leave the await hanging, and the arm never has to be
-                        // abandoned (abandoning an armed ManualResetValueTaskSourceCore
-                        // and re-arming it crashed the CI Load Smoke with a completion
-                        // sentinel InvalidOperationException). This replaces the dual-read
-                        // Task.WhenAny wake-up with a claim-token value-task source that
-                        // allocates nothing per wake.
+                        // abandoned. Idle wakeups allocate nothing.
                         var wakeup = _wakeup.WaitAsync();
                         await wakeup.ConfigureAwait(false);
                         continue;
@@ -338,10 +330,6 @@ internal sealed partial class RpcSession
                         await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false) &&
                         (HasProgressFrames() || HasNormalFrames()))
                     {
-                        // More frames followed the deadline win: keep batching.
-                        // A stale retained read can win without new data, and
-                        // skipping the flush then would strand the batch until
-                        // more frames arrive.
                         continue;
                     }
 
@@ -362,17 +350,6 @@ internal sealed partial class RpcSession
             }
             finally
             {
-                _deadlineRace.Dispose();
-                // The retained reads stay registered on their channels until the channel
-                // completes them. A faulted teardown (ReportFaultOnce) completes both
-                // channels with terminalException while the reads are still pending, so
-                // abandon them with observation here: a faulted channel-read task that
-                // reaches the Task finalizer unobserved fires the unobserved-task event
-                // and trips the chaos harness's zero-tolerance gate (issue #216).
-                ObserveDroppedRead(_pendingReadWait);
-                ObserveDroppedRead(_pendingProgressReadWait);
-                _pendingReadWait = null;
-                _pendingProgressReadWait = null;
                 ReleaseBatch(pending, terminalException);
                 DrainQueuedFrames(terminalException);
                 PulseCapacityWaiters();
@@ -496,82 +473,28 @@ internal sealed partial class RpcSession
             ReleaseBatch(pending, exception: null);
         }
 
-        /// <summary>
-        /// Returns the retained progress-channel read used by the deadline race,
-        /// registering a fresh one when the retained read has completed. The pump
-        /// loop itself wakes through <see cref="WakeupSignal"/> instead.
-        /// </summary>
-        private Task<bool> GetProgressRead()
-        {
-            if (_pendingProgressReadWait is { IsCompleted: false } retained)
-                return retained;
-            ObserveDroppedRead(_pendingProgressReadWait);
-            _pendingProgressReadWait = null;
-            return _pendingProgressReadWait =
-                _progressQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
-        }
-
-        private Task<bool> GetNormalRead()
-        {
-            if (_pendingReadWait is { IsCompleted: false } retained)
-                return retained;
-            ObserveDroppedRead(_pendingReadWait);
-            _pendingReadWait = null;
-            return _pendingReadWait =
-                _normalQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
-        }
-
-        /// <summary>
-        /// Marks a replaced or abandoned retained read observed: a cancelled or faulted
-        /// task that completes unobserved fires the unobserved-task event and
-        /// can fail diagnostics that treat it as a leak (chaos smoke).
-        /// </summary>
-        private static void ObserveDroppedRead(Task<bool>? read)
-        {
-            if (read is null || read.IsCompletedSuccessfully)
-                return;
-            if (read.IsCompleted)
-            {
-                _ = read.Exception;
-                return;
-            }
-
-            // A read abandoned while still pending cannot be faulted by the pump anymore
-            // (queue faulting runs before the pump loop's finally block), but observe a
-            // late fault anyway so no future completion path can hand an exception to the
-            // finalizer unobserved.
-            _ = ObserveLateReadFaultAsync(read);
-        }
-
-        private static async Task ObserveLateReadFaultAsync(Task<bool> read)
-        {
-            try
-            {
-                await read.ConfigureAwait(false);
-            }
-            catch
-            {
-                // Observation only: the fault belongs to the pump that abandoned the read.
-            }
-        }
-
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
         {
-            // Reuse the retained reads: a read registered for an earlier wait
-            // stays registered on its channel, and the TryPeek fast path in
-            // WaitForFramesAsync can leave one behind. Re-creating reads every
-            // deadline cycle would abandon one registered read per cycle; a
-            // stale completed read (data already drained) is replaced by the
-            // helpers and a closed channel surfaces its result here.
-            var pendingRead = GetNormalRead();
-            if (pendingRead.IsCompleted)
-                return pendingRead.Result;
-            // The progress read ends the batching deadline immediately so protocol
-            // progress is not delayed by the batch window; it is retained across
-            // timer chunks like the normal read.
-            var progressRead = GetProgressRead();
+            // The queue and the explicit batching deadline now share one readiness authority:
+            // producers signal WakeupSignal, and the deadline timer competes for that same arm.
+            // No Channel read is registered here, so there is nothing to retain, abandon, or
+            // observe during teardown.
             while (true)
             {
+                if (HasProgressFrames() || HasNormalFrames())
+                    return true;
+
+                // Signals coalesce while the pump is busy, so the frames just drained can leave
+                // a latch behind. That latch is already accounted for and must not terminate the
+                // explicit MaxLatency window. Consume it, then re-check both queues before
+                // arming: a producer whose signal crosses this CAS has already published its
+                // frame, so the re-check preserves the no-lost-wakeup guarantee.
+                _wakeup.ConsumeLatched();
+                if (Volatile.Read(ref _stopped) != 0)
+                    return false;
+                if (HasProgressFrames() || HasNormalFrames())
+                    return true;
+
                 var remaining = SharpLinkTime.GetRemaining(
                     batchDeadline,
                     _timeProvider.GetTimestamp(),
@@ -580,31 +503,13 @@ internal sealed partial class RpcSession
                     return false;
 
                 var delay = remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
-                if (await _deadlineRace
-                        .WaitForReadsOrTimeout(pendingRead, progressRead, delay)
-                        .ConfigureAwait(false))
-                {
-                    if (_deadlineRace.Outcome == DeadlineReadRace.RaceOutcome.ProgressAvailable)
-                        _pendingProgressReadWait = null;
-                    else
-                        _pendingReadWait = null;
+                if (await _wakeup.WaitAsync(_timeProvider, delay).ConfigureAwait(false))
                     return true;
-                }
 
-                switch (_deadlineRace.Outcome)
-                {
-                    case DeadlineReadRace.RaceOutcome.ReadClosed:
-                        _pendingReadWait = null;
-                        _pendingProgressReadWait = null;
-                        return false;
-                    case DeadlineReadRace.RaceOutcome.TimedOut when remaining > MaximumTimerDelay:
-                        // A chunk of a very long deadline expired: re-arm the same retained reads.
-                        continue;
-                    default:
-                        // The deadline expired and the pending reads were not consumed: they stay
-                        // retained in _pendingReadWait/_pendingProgressReadWait for re-observation.
-                        return false;
-                }
+                if (remaining <= MaximumTimerDelay)
+                    return false;
+                // A chunk of a very long deadline expired. Re-evaluate queue visibility and
+                // remaining time before arming the next generation of the same wake authority.
             }
         }
 

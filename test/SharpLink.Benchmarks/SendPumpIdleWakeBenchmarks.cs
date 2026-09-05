@@ -12,7 +12,7 @@ namespace SharpLink.Benchmarks;
 
 /// <summary>
 /// Issue 157 allocation baseline for the send-pump idle/wake cycle:
-/// pump parked in <c>WaitToReadAsync</c> → producer enqueue → pump wake → drain → pump wait again.
+/// pump parked on <c>WakeupSignal</c> → producer enqueue → pump wake → drain → pump wait again.
 /// Each invocation is one complete force-flush cycle, so the waiter registration cost of the
 /// normal (non-timed-batch) wait path is included once per invocation.
 /// </summary>
@@ -166,7 +166,7 @@ public class SendPumpIdleWakeBenchmarks
 
 /// <summary>
 /// Issue 157 TimedBatch deadline observation: a non-force-flush small frame parks the pump in
-/// <c>WaitForMoreUntilDeadlineAsync</c> (pending read + <c>Task.WhenAny</c> + timer). The manual
+/// <c>WaitForMoreUntilDeadlineAsync</c> (one wake arm completed by producer or timer). The manual
 /// clock advances deterministically until the batch drains. Kept separate so the normal-wait
 /// measurements above stay clean.
 /// </summary>

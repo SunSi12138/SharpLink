@@ -91,7 +91,7 @@ public class SendPumpTests
     }
 
     [Test]
-    public async Task TimedBatchShouldDeliverFrameSentAfterDeadlineFlushThroughRetainedRead()
+    public async Task TimedBatchShouldDeliverFrameSentAfterDeadlineFlushThroughWakeupSignal()
     {
         var clock = new ManualTimeProvider();
         var maxLatency = TimeSpan.FromMilliseconds(100);
@@ -127,7 +127,7 @@ public class SendPumpTests
             var second = CreateFrame(session, 32, requestId: 2);
             await session.SendPacketAndFlushAsync(second).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
             EnsureReturned(second,
-                "a frame after a deadline flush must be delivered through the retained pending read");
+                "a frame after a deadline flush must be delivered through the wakeup signal");
             await ConsumeAvailableAsync(output.Reader);
         }
         finally
