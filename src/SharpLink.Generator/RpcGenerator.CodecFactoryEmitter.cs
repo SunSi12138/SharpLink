@@ -57,6 +57,8 @@ public partial class RpcGenerator
         sb.AppendLine("        {");
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(adapterScope);");
+        if (IsSharpPackAdapter(model))
+            sb.AppendLine("            __SharpLinkGeneratedSharpPackIntegration.Configure(adapterScope);");
         sb.AppendLine($"            return adapterScope.CreateCodec<{model.TypeName}>();");
         sb.AppendLine("        }");
         sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
