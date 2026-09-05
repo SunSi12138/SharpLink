@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="SharpPack" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
