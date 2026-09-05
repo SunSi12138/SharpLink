@@ -91,7 +91,7 @@ jobs:
         uses: ./.github/actions/allocation-gate
         with:
           artifact-directory: artifacts/perf/allocation-gate
-          negative-control: 'false'
+          negative-control: 'true'
 
       - name: Upload allocation evidence
         if: always()
