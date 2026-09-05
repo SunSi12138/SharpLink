@@ -28,6 +28,19 @@ public partial class RpcGenerator
                 finalCases);
         }
 
+        internal static IEnumerable<string> GetFinalCodecDependenciesIncludingUnion(FinalCodecPlan plan)
+        {
+            if (plan is FinalUnionCodecPlan union)
+            {
+                foreach (var unionCase in union.Cases)
+                    yield return unionCase.CaseTypeName;
+                yield break;
+            }
+
+            foreach (var dependency in GetFinalCodecPlanDependencies(plan))
+                yield return dependency;
+        }
+
         private static RpcHashValue GetUnionCaseLogicalIdentity(ITypeSymbol caseType)
         {
             var parts = new List<string> { "union-case-target/v1" };
