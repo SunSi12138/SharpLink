@@ -306,7 +306,6 @@ internal sealed partial class SharpLinkClient
         try
         {
             var connection = GetReadyConnection();
-            attemptOutcome.SetConnection(connection);
             return connection;
         }
         catch (Exception exception)
