@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using SharpLink.Abstractions;
 using SharpLink.AotExternalPayloads;
 using SharpLink.Client;
 using SharpLink.Runtime;
