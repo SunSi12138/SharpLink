@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  prototype-build:
+  candidate-unit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
@@ -53,8 +53,20 @@ jobs:
           path.write_text(text, encoding='utf-8')
           PY
           mkdir -p artifacts/issue410
-          git diff --stat > artifacts/issue410/candidate-stat.txt
-          git diff --numstat > artifacts/issue410/candidate-numstat.txt
+          git diff --stat -- \
+            src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
+            src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410/candidate-stat.txt
+          git diff --numstat -- \
+            src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
+            src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410/candidate-numstat.txt
           git diff -- \
             src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
             src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
@@ -73,17 +85,29 @@ jobs:
             exit 1
           fi
 
+      - name: Replace migration-only tests with generation-scoped validation in workspace
+        run: |
+          python3 .github/issue410-tests.py
+          git diff --stat -- test/SharpLink.UnitTests/Server > artifacts/issue410/test-stat.txt
+          git diff -- test/SharpLink.UnitTests/Server/AdmissionGenerationScopedRateTests.cs > artifacts/issue410/generation-scoped-tests.patch
+
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
-      - name: Build Release with unchanged baseline tests
+      - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Full unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build 2>&1 | tee artifacts/issue410/unit-tests.txt
 
       - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-410-clean-candidate-${{ github.sha }}
+          name: issue-410-candidate-unit-${{ github.sha }}
           path: artifacts/issue410
           if-no-files-found: warn
           retention-days: 14
