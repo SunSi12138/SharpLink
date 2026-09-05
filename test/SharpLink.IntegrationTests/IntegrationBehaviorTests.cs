@@ -1524,7 +1524,11 @@ public class IntegrationBehaviorTests
     [NotInParallel]
     public async Task QueuedOneWayRequestDecompressionFailureShouldDrainReservedStreams()
     {
+        using var metrics = new LifecycleMetricProbe(
+            LifecycleMetricProbe.AdmissionQueuedCalls,
+            LifecycleMetricProbe.ActiveStreams);
         CompressionService.ResetOneWay();
+        TestService.ResetBlockingAdd();
         var serverProvider = new ThrowingCompressionProvider(
             SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
         await using var harness = await TestHarness.CreateAsync(
@@ -1545,24 +1549,38 @@ public class IntegrationBehaviorTests
                 options.QueueOneWayCalls = true;
             }));
         var permitOwner = harness.Client.Get<ITestService>()
-            .SlowAddWithoutTimeoutAsync(9, 10).AsTask();
-        await Task.Delay(75);
-        var payloads = Enumerable.Range(0, 256)
-            .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
-        var failedOneWay = harness.Client.Get<ICompressionService>()
-            .NotifyStreamWithHeaderAsync(
-                Enumerable.Repeat((byte)0x41, 4096).ToArray(),
-                ToAsyncEnumerable(payloads, CancellationToken.None))
-            .AsTask();
+            .BlockingAddAsync(9, 10, CancellationToken.None).AsTask();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync();
+            var payloads = Enumerable.Range(0, 256)
+                .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
+            var failedOneWay = harness.Client.Get<ICompressionService>()
+                .NotifyStreamWithHeaderAsync(
+                    Enumerable.Repeat((byte)0x41, 4096).ToArray(),
+                    ToAsyncEnumerable(payloads, CancellationToken.None))
+                .AsTask();
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionQueuedCalls, 1,
+                "queued compressed OneWay reaches admission queue");
+            await metrics.WaitForAtLeastAsync(
+                LifecycleMetricProbe.ActiveStreams, 1,
+                "queued compressed OneWay reserves its pre-admission stream");
 
-        Ensure(await permitOwner.WaitAsync(TimeSpan.FromSeconds(2)) == 19,
-            "queued compressed OneWay permit owner");
-        await failedOneWay.WaitAsync(TimeSpan.FromSeconds(2));
-        await Task.Delay(100);
-        Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
-            "failed compressed OneWay request must not execute the service");
-        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
-            "compressed OneWay decode failure connection recovery");
+            TestService.ReleaseBlockingAdd();
+            Ensure(await permitOwner.WaitAsync(TimeSpan.FromSeconds(2)) == 19,
+                "queued compressed OneWay permit owner");
+            await failedOneWay.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(100);
+            Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
+                "failed compressed OneWay request must not execute the service");
+            Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+                "compressed OneWay decode failure connection recovery");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
     }
 
     [Test]
@@ -1602,7 +1620,11 @@ public class IntegrationBehaviorTests
     [NotInParallel]
     public async Task QueuedOneWayStubFailureShouldDrainReservedStreams()
     {
+        using var metrics = new LifecycleMetricProbe(
+            LifecycleMetricProbe.AdmissionQueuedCalls,
+            LifecycleMetricProbe.ActiveStreams);
         TestService.ResetMalformedOneWayInvocations();
+        TestService.ResetBlockingAdd();
         await using var harness = await TestHarness.CreateAsync(
             runtimeConfigure: options =>
             {
@@ -1621,20 +1643,34 @@ public class IntegrationBehaviorTests
                 });
             });
         var service = harness.Client.Get<ITestService>();
-        var permitOwner = service.SlowAddWithoutTimeoutAsync(10, 11).AsTask();
-        await Task.Delay(75);
-        var failedOneWay = service.NotifyUploadWithHeaderAsync(
-            new MalformedHeader(2),
-            ToAsyncEnumerable(Enumerable.Range(1, 256), CancellationToken.None)).AsTask();
+        var permitOwner = service.BlockingAddAsync(10, 11, CancellationToken.None).AsTask();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync();
+            var failedOneWay = service.NotifyUploadWithHeaderAsync(
+                new MalformedHeader(2),
+                ToAsyncEnumerable(Enumerable.Range(1, 256), CancellationToken.None)).AsTask();
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionQueuedCalls, 1,
+                "queued malformed OneWay reaches admission queue");
+            await metrics.WaitForAtLeastAsync(
+                LifecycleMetricProbe.ActiveStreams, 1,
+                "queued malformed OneWay reserves its pre-admission stream");
 
-        Ensure(await permitOwner.WaitAsync(TimeSpan.FromSeconds(2)) == 21,
-            "queued malformed OneWay permit owner");
-        await failedOneWay.WaitAsync(TimeSpan.FromSeconds(2));
-        await Task.Delay(100);
-        Ensure(TestService.MalformedOneWayInvocations == 0,
-            "malformed OneWay request must not execute the service");
-        Ensure(await service.AddAsync(20, 22) == 42,
-            "malformed OneWay stub failure connection recovery");
+            TestService.ReleaseBlockingAdd();
+            Ensure(await permitOwner.WaitAsync(TimeSpan.FromSeconds(2)) == 21,
+                "queued malformed OneWay permit owner");
+            await failedOneWay.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(100);
+            Ensure(TestService.MalformedOneWayInvocations == 0,
+                "malformed OneWay request must not execute the service");
+            Ensure(await service.AddAsync(20, 22) == 42,
+                "malformed OneWay stub failure connection recovery");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
     }
 
     [Test]
