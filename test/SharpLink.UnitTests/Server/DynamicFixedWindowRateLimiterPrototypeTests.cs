@@ -104,6 +104,7 @@ public sealed class DynamicFixedWindowRateLimiterPrototypeTests
         Ensure(limiter.PendingWindow == TimeSpan.FromSeconds(10), "latest pending window must replace earlier pending update");
 
         time.Advance(TimeSpan.FromSeconds(25));
+        _ = limiter.Consumed;
         Ensure(limiter.CurrentPermitLimit == 4, "latest pending definition must activate");
         Ensure(limiter.CurrentWindow == TimeSpan.FromSeconds(10), "latest pending duration must activate");
         for (var index = 0; index < 4; index++)
@@ -173,6 +174,7 @@ public sealed class DynamicFixedWindowRateLimiterPrototypeTests
 
         Ensure(limiter.WaitingCount == 0, "cancelled waiter must be removed exactly once");
         time.Advance(TimeSpan.FromSeconds(20));
+        _ = limiter.Consumed;
         Ensure(limiter.CurrentPermitLimit == 2, "pending update must still activate after unrelated waiter cancellation");
     }
 
