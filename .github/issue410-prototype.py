@@ -181,3 +181,17 @@ new = """        if (_hasPublishedRateLineage)
 """
 text = replace_once(text, old, new, "fresh enable rate generation")
 write(path, text)
+
+# The simplification drops AdmissionDynamicRateState below the normal source LOC threshold, so the
+# old maintainability exception must disappear with the transition machinery rather than linger.
+path = "eng/maintainability/baseline.json"
+text = Path(path).read_text(encoding="utf-8")
+allowance = """    {
+      \"domain\": \"source\",
+      \"path\": \"src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs\",
+      \"maxLoc\": 904,
+      \"reason\": \"Existing dev debt captured by issue #350.\"
+    },
+"""
+text = replace_once(text, allowance, "", "remove obsolete dynamic-rate maintainability allowance")
+write(path, text)
