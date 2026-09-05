@@ -160,9 +160,8 @@ internal sealed partial class SharpLinkClient
     private static ValueTask<SharpLinkAssemblyUnregisterResult> WaitForUnregisterAsync(
         Task<SharpLinkAssemblyUnregisterResult> operation,
         CancellationToken cancellationToken)
-        => cancellationToken.CanBeCanceled
-            ? new ValueTask<SharpLinkAssemblyUnregisterResult>(operation.WaitAsync(cancellationToken))
-            : new ValueTask<SharpLinkAssemblyUnregisterResult>(operation);
+        => new SharpLinkRetirementHandle<SharpLinkAssemblyUnregisterResult>(operation)
+            .WaitAsync(cancellationToken);
 
     private void EnsureNoDynamicDependants(SharpLinkDynamicModule module)
     {

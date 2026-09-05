@@ -347,9 +347,8 @@ internal sealed partial class SharpLinkServer
         Task<SharpLinkAssemblyUnregisterResult> operation,
         CancellationToken cancellationToken)
     {
-        var drain = cancellationToken.CanBeCanceled
-            ? await operation.WaitAsync(cancellationToken).ConfigureAwait(false)
-            : await operation.ConfigureAwait(false);
+        var drain = await new SharpLinkRetirementHandle<SharpLinkAssemblyUnregisterResult>(operation)
+            .WaitAsync(cancellationToken).ConfigureAwait(false);
         return SharpLinkAssemblyReplacementResult.Published(drain);
     }
 

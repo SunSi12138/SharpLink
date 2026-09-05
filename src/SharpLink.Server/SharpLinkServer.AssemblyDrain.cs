@@ -40,9 +40,8 @@ internal sealed partial class SharpLinkServer
     private static ValueTask<SharpLinkAssemblyUnregisterResult> WaitForUnregisterAsync(
         Task<SharpLinkAssemblyUnregisterResult> operation,
         CancellationToken cancellationToken)
-        => cancellationToken.CanBeCanceled
-            ? new ValueTask<SharpLinkAssemblyUnregisterResult>(operation.WaitAsync(cancellationToken))
-            : new ValueTask<SharpLinkAssemblyUnregisterResult>(operation);
+        => new SharpLinkRetirementHandle<SharpLinkAssemblyUnregisterResult>(operation)
+            .WaitAsync(cancellationToken);
 
     private async Task<SharpLinkAssemblyUnregisterResult> UnregisterCoreAsync(
         Assembly assembly,
