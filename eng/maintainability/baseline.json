@@ -36,12 +36,6 @@
     },
     {
       "domain": "source",
-      "path": "src/SharpLink.Generator/RpcGenerator.DtoEmitter.cs",
-      "maxLoc": 1291,
-      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Runtime/StreamManager.cs",
       "maxLoc": 1347,
       "reason": "Existing dev debt present when issue #351 enforcement was introduced."
