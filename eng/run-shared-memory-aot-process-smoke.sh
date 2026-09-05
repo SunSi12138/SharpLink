@@ -52,6 +52,20 @@ LOCAL_LOG="$OUTPUT/local-topologies.log"
 grep -q "STATIC_READINESS_PASS" "$LOCAL_LOG"
 grep -q "AOT_SMOKE_PASS transport=tcp" "$LOCAL_LOG"
 
+SIDECAR_OUTPUT="$OUTPUT/sharppack-sidecar"
+mkdir -p "$SIDECAR_OUTPUT"
+dotnet publish "$ROOT/test/SharpLink.SharpPackAotSmoke/SharpLink.SharpPackAotSmoke.csproj" \
+  -c Release -r "$RID" -p:PublishAot=true -o "$SIDECAR_OUTPUT" -v minimal
+
+SIDECAR_EXE="$SIDECAR_OUTPUT/SharpLink.SharpPackAotSmoke"
+if [[ "$RID" == win-* ]]; then
+  SIDECAR_EXE="$SIDECAR_EXE.exe"
+fi
+
+SIDECAR_LOG="$SIDECAR_OUTPUT/smoke.log"
+"$SIDECAR_EXE" | tee "$SIDECAR_LOG"
+grep -q "SHARPPACK_SIDECAR_AOT_PASS" "$SIDECAR_LOG"
+
 PRECREDIT_OUTPUT="$OUTPUT/precredit"
 mkdir -p "$PRECREDIT_OUTPUT"
 dotnet publish "$ROOT/test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj" \
@@ -70,4 +84,4 @@ PRECREDIT_SHM_LOG="$PRECREDIT_OUTPUT/sharedmemory.log"
 "$PRECREDIT_EXE" sharedmemory | tee "$PRECREDIT_SHM_LOG"
 grep -q "PRE_CREDIT_AOT_PASS transport=sharedmemory" "$PRECREDIT_SHM_LOG"
 
-echo "Shared-memory process, local endpoint-topology, and pre-credit NativeAOT smokes passed ($RID)."
+echo "Shared-memory process, local endpoint-topology, SharpPack sidecar, and pre-credit NativeAOT smokes passed ($RID)."
