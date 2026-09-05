@@ -16,4 +16,14 @@ public partial class RpcGenerator
         }
         return true;
     }
+
+    private static bool ContainsRefLikeType(ITypeSymbol type)
+        => type switch
+        {
+            INamedTypeSymbol { IsRefLikeType: true } => true,
+            IArrayTypeSymbol arrayType => ContainsRefLikeType(arrayType.ElementType),
+            IPointerTypeSymbol pointerType => ContainsRefLikeType(pointerType.PointedAtType),
+            INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsRefLikeType),
+            _ => false
+        };
 }

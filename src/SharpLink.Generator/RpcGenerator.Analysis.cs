@@ -11,99 +11,18 @@ public partial class RpcGenerator
         return true;
     }
 
-    private static ImmutableArray<InvalidRpcMethodModel> GetInvalidRpcMethods(GeneratorAttributeSyntaxContext context, CancellationToken _)
+    private static ImmutableArray<InvalidRpcMethodModel> GetInvalidRpcMethods(
+        GeneratorAttributeSyntaxContext context,
+        CancellationToken cancellationToken)
     {
-        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
-            return ImmutableArray<InvalidRpcMethodModel>.Empty;
-        if (!InheritsIService(symbol))
-            return ImmutableArray<InvalidRpcMethodModel>.Empty;
-
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
-        foreach (var method in GetConflictingInheritedRpcSignatures(symbol))
+        list.AddRange(GetInvalidRpcMethodDiagnostics(context, cancellationToken));
+        if (context.TargetSymbol is INamedTypeSymbol symbol &&
+            symbol.TypeKind == TypeKind.Interface &&
+            InheritsIService(symbol))
         {
-            list.Add(new InvalidRpcMethodModel(
-                InvalidRpcMethodKind.InheritedSignatureConflict,
-                method.Name,
-                "inherited declarations with the same CLR signature must agree on return type, call shape, execution policy, and request schema",
-                method.Locations.FirstOrDefault() ?? symbol.Locations.FirstOrDefault()));
+            AddUnsupportedContractMemberDiagnostics(symbol, list);
         }
-        foreach (var method in GetContractMethods(symbol))
-        {
-            var isOneWay = false;
-            if (method.IsStatic)
-            {
-                list.Add(new InvalidRpcMethodModel(
-                    InvalidRpcMethodKind.Static,
-                    method.Name,
-                    "RPC routes must be instance methods",
-                    method.Locations.FirstOrDefault()));
-            }
-            if (HasByReferenceSignature(method))
-            {
-                list.Add(new InvalidRpcMethodModel(
-                    InvalidRpcMethodKind.ByReference,
-                    method.Name,
-                    "ref, ref readonly, in, and out values have no supported RPC wire model",
-                    method.Locations.FirstOrDefault()));
-            }
-            if (!IsSupportedRpcReturnType(method.ReturnType))
-            {
-                list.Add(new InvalidRpcMethodModel(
-                    InvalidRpcMethodKind.ReturnType,
-                    method.Name,
-                    method.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                    method.Locations.FirstOrDefault()));
-            }
-            foreach (var attribute in method.GetAttributes())
-            {
-                if (IsOnewayAttribute(attribute))
-                    isOneWay = true;
-                if (!IsTimeoutAttribute(attribute))
-                    continue;
-                if (TryGetTimeoutSeconds(attribute, out var seconds) &&
-                    !TryValidateTimeoutSeconds(seconds, out var detail))
-                {
-                    list.Add(new InvalidRpcMethodModel(
-                        InvalidRpcMethodKind.Timeout,
-                        method.Name,
-                        detail,
-                        attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? method.Locations.FirstOrDefault()));
-                }
-            }
-            if (isOneWay && !IsValidOnewayReturnType(method.ReturnType))
-            {
-                list.Add(new InvalidRpcMethodModel(
-                    InvalidRpcMethodKind.OnewayReturn,
-                    method.Name,
-                    "only non-generic Task or ValueTask returns are supported",
-                    method.Locations.FirstOrDefault()));
-            }
-        }
-
-        AddUnsupportedContractMemberDiagnostics(symbol, list);
-
-        return list.ToImmutable();
-    }
-
-    private static ImmutableArray<InvalidCancellationTokenMethodModel> GetInvalidCancellationTokenMethods(GeneratorAttributeSyntaxContext context, CancellationToken _)
-    {
-        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
-            return ImmutableArray<InvalidCancellationTokenMethodModel>.Empty;
-        if (!InheritsIService(symbol))
-            return ImmutableArray<InvalidCancellationTokenMethodModel>.Empty;
-
-        var list = ImmutableArray.CreateBuilder<InvalidCancellationTokenMethodModel>();
-        foreach (var method in GetContractMethods(symbol))
-        {
-            var cancellationTokenCount = method.Parameters.Count(IsCancellationTokenParameter);
-            if (cancellationTokenCount <= 1)
-                continue;
-
-            list.Add(new InvalidCancellationTokenMethodModel(
-                method.Name,
-                method.Locations.FirstOrDefault()));
-        }
-
         return list.ToImmutable();
     }
 
@@ -208,31 +127,6 @@ public partial class RpcGenerator
         => IsAsyncEnumerable(method.ReturnType, out _) ||
            method.Parameters.Any(static parameter => IsAsyncEnumerable(parameter.Type, out _));
 
-    private static ImmutableArray<InvalidControlParameterOrderModel> GetInvalidControlParameterOrderMethods(
-        GeneratorAttributeSyntaxContext context,
-        CancellationToken _)
-    {
-        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface ||
-            !InheritsIService(symbol))
-            return ImmutableArray<InvalidControlParameterOrderModel>.Empty;
-
-        var list = ImmutableArray.CreateBuilder<InvalidControlParameterOrderModel>();
-        foreach (var method in GetContractMethods(symbol))
-        {
-            var cancellationIndex = -1;
-            for (var index = 0; index < method.Parameters.Length; index++)
-            {
-                if (IsCancellationTokenParameter(method.Parameters[index]))
-                    cancellationIndex = index;
-            }
-
-            if (cancellationIndex < 0 || cancellationIndex == method.Parameters.Length - 1)
-                continue;
-            list.Add(new InvalidControlParameterOrderModel(method.Name, method.Locations.FirstOrDefault()));
-        }
-        return list.ToImmutable();
-    }
-
     private static ImmutableArray<InvalidGenericUsageModel> GetInvalidGenericUsage(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
         if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
@@ -271,40 +165,18 @@ public partial class RpcGenerator
         if (interfaceSymbol.Arity > 0 || HasGenericContainingType(interfaceSymbol) ||
             !IsPubliclyReachableContract(interfaceSymbol) ||
             HasUnsupportedContractMember(interfaceSymbol) ||
-            GetConflictingInheritedRpcSignatures(interfaceSymbol).Any())
+            HasInvalidRpcMethodShape(interfaceSymbol))
+        {
             return true;
+        }
 
         return GetContractMethods(interfaceSymbol)
             .Any(m =>
-                !IsSupportedRpcReturnType(m.ReturnType) ||
-                m.IsStatic ||
-                HasByReferenceSignature(m) ||
-                ContainsRefLikeType(m.ReturnType) ||
-                m.Parameters.Any(static parameter => ContainsRefLikeType(parameter.Type)) ||
-                ContainsPointerOrFunctionPointer(m.ReturnType) ||
-                m.Parameters.Any(static parameter => ContainsPointerOrFunctionPointer(parameter.Type)) ||
                 m.IsGenericMethod ||
                 HasTypeParameter(m.ReturnType) ||
                 m.Parameters.Any(p => HasTypeParameter(p.Type)) ||
-                m.Parameters.Count(IsCancellationTokenParameter) > 1 ||
-                !HasValidControlParameterOrder(m) ||
-                m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
-                HasInvalidMethodAttributes(m));
+                m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue);
     }
-
-    private static bool IsValidOnewayReturnType(ITypeSymbol type)
-    {
-        if (type is not INamedTypeSymbol { Arity: 0 } named ||
-            named.ContainingNamespace.ToDisplayString() != "System.Threading.Tasks")
-        {
-            return false;
-        }
-        return named.Name is "Task" or "ValueTask";
-    }
-
-    private static bool HasByReferenceSignature(IMethodSymbol method)
-        => method.ReturnsByRef || method.ReturnsByRefReadonly ||
-           method.Parameters.Any(static parameter => parameter.RefKind != RefKind.None);
 
     private static void AddUnsupportedContractMemberDiagnostics(
         INamedTypeSymbol symbol,
@@ -393,23 +265,6 @@ public partial class RpcGenerator
         return false;
     }
 
-    private static bool HasInvalidMethodAttributes(IMethodSymbol method)
-    {
-        var isOneWay = false;
-        foreach (var attribute in method.GetAttributes())
-        {
-            if (IsOnewayAttribute(attribute))
-                isOneWay = true;
-            else if (IsTimeoutAttribute(attribute) &&
-                TryGetTimeoutSeconds(attribute, out var seconds) &&
-                !TryValidateTimeoutSeconds(seconds, out _))
-            {
-                return true;
-            }
-        }
-        return isOneWay && !IsValidOnewayReturnType(method.ReturnType);
-    }
-
     private static bool HasTypeParameter(ITypeSymbol type)
     {
         if (type.TypeKind == TypeKind.TypeParameter)
@@ -424,24 +279,4 @@ public partial class RpcGenerator
             _ => false
         };
     }
-
-    private static bool ContainsRefLikeType(ITypeSymbol type)
-        => type switch
-        {
-            INamedTypeSymbol { IsRefLikeType: true } => true,
-            IArrayTypeSymbol arrayType => ContainsRefLikeType(arrayType.ElementType),
-            IPointerTypeSymbol pointerType => ContainsRefLikeType(pointerType.PointedAtType),
-            INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsRefLikeType),
-            _ => false
-        };
-
-    private static bool ContainsPointerOrFunctionPointer(ITypeSymbol type)
-        => type switch
-        {
-            IPointerTypeSymbol => true,
-            IFunctionPointerTypeSymbol => true,
-            IArrayTypeSymbol arrayType => ContainsPointerOrFunctionPointer(arrayType.ElementType),
-            INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsPointerOrFunctionPointer),
-            _ => false
-        };
 }
