@@ -33,11 +33,16 @@ internal sealed partial class SharpLinkClient
     {
         Exception? lastFailure = null;
         var selection = new EndpointRetrySelectionState();
+        var requiresAttemptOutcome = _endpointAdmissionPolicy is not null || _retryPolicy is not null;
         for (var attempt = 1; attempt <= options.MaxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             EnsureLogicalCallProgress(control);
-            var outcome = new AttemptOutcomeState(this, method);
+            AttemptOutcomeState? outcome = null;
+            if (requiresAttemptOutcome)
+                outcome = new AttemptOutcomeState(this, method);
+            else
+                SharpLinkTelemetry.RecordClientAttempt();
             var attemptScope = SharpLinkTelemetry.StartClientAttempt(method, attempt);
             try
             {
@@ -65,11 +70,12 @@ internal sealed partial class SharpLinkClient
                 if (attempt == options.MaxAttempts)
                     throw;
 
-                var context = outcome.CreateRetryContext(attempt, exception);
                 SharpLinkRetryDecision decision;
                 try
                 {
-                    decision = EvaluateRetryDecision(context, options);
+                    decision = outcome is null
+                        ? EvaluateDefaultRetryDecision(attempt, GetErrorCode(exception), options)
+                        : EvaluateRetryDecision(outcome.CreateRetryContext(attempt, exception), options);
                 }
                 catch
                 {
@@ -87,7 +93,7 @@ internal sealed partial class SharpLinkClient
                         "The retry policy returned a negative delay.");
                 }
                 var delay = decision.Delay;
-                if (outcome.RetryAfter is { } admissionDelay && admissionDelay > delay)
+                if (outcome?.RetryAfter is { } admissionDelay && admissionDelay > delay)
                     delay = admissionDelay;
                 if (delay == TimeSpan.Zero)
                 {
@@ -101,7 +107,7 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        throw lastFailure ?? new SharpLinkException(SharpLinkErrorCode.Internal, "Retry exhausted without an attempt outcome.");
+        throw lastFailure ?? new SharpLinkException(SharpLinkErrorCode.Internal, "Retry exhausted without an attempt result.");
     }
 
     internal static void EnsureLogicalCallProgress(in ResolvedCallControl control)
@@ -140,9 +146,17 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        var retryable = context.ErrorCode is SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed;
+        return EvaluateDefaultRetryDecision(context.Attempt, context.ErrorCode, options);
+    }
+
+    private static SharpLinkRetryDecision EvaluateDefaultRetryDecision(
+        int attempt,
+        SharpLinkErrorCode? errorCode,
+        SharpLinkRetryOptions options)
+    {
+        var retryable = errorCode is SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed;
         return retryable
-            ? new SharpLinkRetryDecision(true, GetRetryDelay(context.Attempt, options))
+            ? new SharpLinkRetryDecision(true, GetRetryDelay(attempt, options))
             : default;
     }
 
@@ -172,7 +186,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
         EndpointRetrySelectionState selection,
-        AttemptOutcomeState outcome,
+        AttemptOutcomeState? outcome,
         CancellationToken cancellationToken)
     {
         try
@@ -204,7 +218,7 @@ internal sealed partial class SharpLinkClient
         catch (Exception exception)
         {
             exception = ArbitrateLogicalCallFailure(control, exception);
-            outcome.CompleteLocalFailure(exception);
+            outcome?.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);
         }
     }
