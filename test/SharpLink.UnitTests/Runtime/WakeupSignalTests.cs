@@ -151,6 +151,22 @@ public class WakeupSignalTests
         Ensure(clock.ActiveTimerCount == 0, "synchronous producer win must not leave a timer behind");
     }
 
+    [Test]
+    public async Task ConsumedObservedLatchMustNotShortenASubsequentTimedWait()
+    {
+        var clock = new ManualTimeProvider();
+        var signal = new WakeupSignal();
+
+        // Model the pump having already drained the frame associated with this coalesced signal.
+        signal.Signal();
+        signal.ConsumeLatched();
+
+        var wait = signal.WaitAsync(clock, TimeSpan.FromMilliseconds(10));
+        Ensure(!wait.IsCompleted, "an already-observed latch must not complete the timed wait");
+        clock.Advance(TimeSpan.FromMilliseconds(10));
+        Ensure(!await wait, "after consuming the old latch, the deadline must be the winner");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
