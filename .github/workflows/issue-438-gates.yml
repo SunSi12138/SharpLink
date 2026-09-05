@@ -1,0 +1,111 @@
+name: Issue 438 Temporary Gates
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-gates
+
+permissions:
+  contents: read
+
+jobs:
+  correctness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 5f455b978a946931cc08aea48299cb2290b9a6a4
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+      - name: TCP load smoke
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.LoadTest --
+          --mode local --transport tcp --operation add --concurrency 1,4
+          --warmup 1 --duration 4 --metrics-port 0
+      - name: SharedMemory load smoke
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.LoadTest --
+          --mode local --transport sharedmemory --operation add --concurrency 1,4
+          --warmup 1 --duration 4 --metrics-port 0
+      - name: Chaos smoke
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.ChaosTests --
+          --duration-seconds 60 --transport sharedmemory --concurrency 16
+          --restart-interval-seconds 10
+          --json-output artifacts/chaos/issue-438.json
+
+  controls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: dev-base
+            ref: 8e4cb3ce0b15e60ec1365781411e9b53e8cae742
+          - label: candidate
+            ref: 5f455b978a946931cc08aea48299cb2290b9a6a4
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_MATRIX_TIER: smoke
+      SHARPLINK_MATRIX_RUNTIMES: jit
+      SHARPLINK_MATRIX_REPETITIONS: '1'
+      SHARPLINK_MATRIX_TRANSPORTS: tcp,sharedmemory
+      SHARPLINK_MATRIX_PROFILES: balanced,lowlatency,throughput
+      SHARPLINK_MATRIX_PAYLOADS: 0,256
+      SHARPLINK_MATRIX_CONCURRENCY: 1,32
+      SHARPLINK_MATRIX_WORKLOADS: unary,streams
+      SHARPLINK_MATRIX_WARMUP: '1'
+      SHARPLINK_MATRIX_DURATION: '2'
+    steps:
+      - name: Checkout ${{ matrix.label }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.ref }}
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Transport/profile control matrix
+        env:
+          SHARPLINK_MATRIX_OUTPUT: artifacts/performance/issue-438/${{ matrix.label }}/matrix
+        run: ./eng/run-performance-matrix.sh
+      - name: SendPump isolation controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/performance/issue-438/${{ matrix.label }}/isolation
+          for profile in balanced lowlatency throughput; do
+            for scenario in unary-baseline stream-baseline sat-progress window-update; do
+              dotnet run -c Release --project test/SharpLink.Benchmarks -- \
+                --send-pump-isolation-evidence \
+                --scenario "$scenario" \
+                --profile "$profile" \
+                --transport-rate-bytes-per-second 15728640 \
+                --payload-bytes 16384 \
+                --bulk-producers 4 \
+                --max-send-queue-bytes 8388608 \
+                --duration-seconds 3 \
+                --output "artifacts/performance/issue-438/${{ matrix.label }}/isolation/${profile}-${scenario}.json"
+            done
+          done
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-${{ matrix.label }}-evidence
+          path: artifacts/performance/issue-438/${{ matrix.label }}
+          if-no-files-found: warn
