@@ -173,18 +173,26 @@ public partial class RpcGenerator
         out string detail,
         out Location? location)
     {
+        INamedTypeSymbol? unverifiableSharpPackableType = null;
+        Location? unverifiableSharpPackableLocation = null;
+
         for (var current = type;
              current is not null && current.SpecialType != SpecialType.System_Object;
              current = current.BaseType)
         {
             foreach (var attribute in current.GetAttributes())
             {
-                if (IsAttribute(attribute, "SharpPack", "SharpPackableAttribute") &&
-                    TryGetUnsupportedSharpPackableSetting(attribute, out var setting))
+                if (IsAttribute(attribute, "SharpPack", "SharpPackableAttribute"))
                 {
-                    detail = $"type '{GetTypeName(current)}' uses unsupported SharpPack metadata {setting}";
-                    location = current.Locations.FirstOrDefault();
-                    return true;
+                    if (TryGetUnsupportedSharpPackableSetting(attribute, out var setting))
+                    {
+                        detail = $"type '{GetTypeName(current)}' uses unsupported SharpPack metadata {setting}";
+                        location = current.Locations.FirstOrDefault();
+                        return true;
+                    }
+
+                    unverifiableSharpPackableType ??= current;
+                    unverifiableSharpPackableLocation ??= current.Locations.FirstOrDefault();
                 }
 
                 if (IsAttribute(attribute, "SharpPack", "SharpPackUnionAttribute") ||
@@ -237,6 +245,13 @@ public partial class RpcGenerator
                 location = member.Locations.FirstOrDefault();
                 return true;
             }
+        }
+
+        if (unverifiableSharpPackableType is not null)
+        {
+            detail = $"type '{GetTypeName(unverifiableSharpPackableType)}' carries [SharpPackable] metadata without a verifiable generated formatter; imported metadata cannot prove the absence of non-public SharpPack constructor or serialization-callback semantics";
+            location = unverifiableSharpPackableLocation;
+            return true;
         }
 
         detail = string.Empty;

@@ -86,8 +86,8 @@ public sealed class ExternalRequest
 }
 """);
 
-        Ensure(diagnostic.GetMessage().Contains("SharpPackOnDeserialized", StringComparison.Ordinal),
-            "serialization callback semantics must be identified by SLSP0001");
+        Ensure(diagnostic.GetMessage().Contains("callback", StringComparison.OrdinalIgnoreCase),
+            "private callback semantics that are not reliably visible through imported symbols must still fail closed");
     }
 
     [Test]
