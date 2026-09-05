@@ -10,6 +10,8 @@ public partial class RpcGenerator
             yield return codec.KeyType;
         if (codec.ValueType is not null)
             yield return codec.ValueType;
+        foreach (var unionCase in codec.UnionCases)
+            yield return unionCase.TypeName;
         foreach (var member in codec.Members)
         {
             if (member.Kind == GeneratedMemberKind.Complex)
@@ -29,6 +31,7 @@ public partial class RpcGenerator
             !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
             !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
             !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
+            !left.UnionCases.SequenceEqual(right.UnionCases) ||
             left.Members.Length != right.Members.Length)
         {
             return false;
