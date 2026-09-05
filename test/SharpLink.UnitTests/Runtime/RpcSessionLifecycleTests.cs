@@ -482,7 +482,7 @@ public class RpcSessionLifecycleTests
         {
             try
             {
-                await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                await packet.Entered.Task;
                 session.BeginShutdown();
                 terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
             }
@@ -540,7 +540,7 @@ public class RpcSessionLifecycleTests
         Exception? failure = null;
         try
         {
-            await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await packet.Entered.Task;
             shutdown = LongRunningTestWorker.Run(session.BeginShutdown);
             terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
             packet.Release();
