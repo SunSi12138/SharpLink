@@ -134,7 +134,7 @@ public partial class RpcGenerator
                 success &= AnalyzeType(
                     memberType,
                     path + " -> member '" + member.Name + "'",
-                    symbol.Locations.FirstOrDefault() ?? location);
+                    symbol!.Locations.FirstOrDefault() ?? location);
             }
 
             if (!success)
