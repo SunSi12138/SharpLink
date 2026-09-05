@@ -24,8 +24,20 @@ public partial class RpcGenerator
         if (HasAttribute(type, "SharpPack", "SharpPackUnionAttribute"))
             return true;
 
-        return TryGetCurrentCompilationSharpPackGenerateType(type, out var generateType) &&
-               generateType != SharpPackGenerateTypeNoGenerate;
+        if (!TryGetCurrentCompilationSharpPackGenerateType(
+                type,
+                out var generateType))
+        {
+            return false;
+        }
+
+        if (generateType != SharpPackGenerateTypeNoGenerate)
+            return true;
+
+        return TrySelectCurrentCompilationSharpPackExternalUnionFormatter(
+            compilation,
+            type,
+            out _);
     }
 
     private static ImmutableArray<SharpPackGeneratedDependency>
@@ -89,6 +101,34 @@ public partial class RpcGenerator
             return builder.ToImmutable();
         }
 
+        if (generateType == SharpPackGenerateTypeNoGenerate &&
+            TrySelectCurrentCompilationSharpPackExternalUnionFormatter(
+                compilation,
+                type,
+                out var externalUnionFormatter))
+        {
+            foreach (var attribute in externalUnionFormatter.GetAttributes())
+            {
+                if (!IsAttribute(attribute, "SharpPack", "SharpPackUnionAttribute") ||
+                    attribute.ConstructorArguments.Length < 2 ||
+                    attribute.ConstructorArguments[1].Value is not INamedTypeSymbol unionType)
+                {
+                    continue;
+                }
+
+                var tag = attribute.ConstructorArguments[0].Value?.ToString() ?? "?";
+                Add(
+                    ResolveSharpPackExternalUnionTagType(
+                        unionType,
+                        externalUnionFormatter,
+                        type),
+                    $"SharpPack external union tag {tag}",
+                    externalUnionFormatter.Locations.FirstOrDefault());
+            }
+
+            return builder.ToImmutable();
+        }
+
         foreach (var member in GetSharpPackGeneratedSerializableMembers(type))
         {
             if (HasSharpPackMemberCustomFormatterAttribute(member))
@@ -105,6 +145,221 @@ public partial class RpcGenerator
         }
 
         return builder.ToImmutable();
+    }
+
+    private static bool TrySelectCurrentCompilationSharpPackExternalUnionFormatter(
+        Compilation compilation,
+        INamedTypeSymbol type,
+        out INamedTypeSymbol formatter)
+    {
+        formatter = null!;
+        var targetDefinition = type.OriginalDefinition;
+        var candidates = new List<(
+            INamedTypeSymbol Formatter,
+            INamedTypeSymbol Pattern,
+            bool IsOpen)>();
+
+        foreach (var candidate in EnumerateCurrentCompilationNamedTypes(
+                     compilation.Assembly.GlobalNamespace))
+        {
+            if (!TryGetSharpPackUnionFormatterTarget(candidate, out var pattern) ||
+                !SymbolEqualityComparer.Default.Equals(
+                    pattern.OriginalDefinition,
+                    targetDefinition))
+            {
+                continue;
+            }
+
+            var isOpen = IsSharpPackExternalUnionOpenPattern(pattern);
+            if (!CanConstructSharpPackExternalUnionFormatter(
+                    targetDefinition,
+                    candidate,
+                    pattern,
+                    isOpen))
+            {
+                continue;
+            }
+
+            candidates.Add((candidate, pattern, isOpen));
+        }
+
+        var closed = candidates
+            .Where(candidate =>
+                !candidate.IsOpen &&
+                SymbolEqualityComparer.Default.Equals(candidate.Pattern, type))
+            .OrderBy(candidate => candidate.Pattern.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
+            .ThenBy(candidate => candidate.Formatter.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (closed.Formatter is not null)
+        {
+            formatter = closed.Formatter;
+            return true;
+        }
+
+        var open = candidates
+            .Where(static candidate => candidate.IsOpen)
+            .OrderBy(candidate => candidate.Pattern.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
+            .ThenBy(candidate => candidate.Formatter.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (open.Formatter is null)
+            return false;
+
+        formatter = open.Formatter;
+        return true;
+    }
+
+    private static IEnumerable<INamedTypeSymbol> EnumerateCurrentCompilationNamedTypes(
+        INamespaceSymbol ns)
+    {
+        foreach (var member in ns.GetMembers())
+        {
+            if (member is INamespaceSymbol childNamespace)
+            {
+                foreach (var type in EnumerateCurrentCompilationNamedTypes(
+                             childNamespace))
+                {
+                    yield return type;
+                }
+                continue;
+            }
+
+            if (member is not INamedTypeSymbol named)
+                continue;
+
+            foreach (var type in EnumerateCurrentCompilationNamedTypes(named))
+                yield return type;
+        }
+    }
+
+    private static IEnumerable<INamedTypeSymbol> EnumerateCurrentCompilationNamedTypes(
+        INamedTypeSymbol type)
+    {
+        yield return type;
+        foreach (var nested in type.GetTypeMembers())
+        {
+            foreach (var candidate in EnumerateCurrentCompilationNamedTypes(nested))
+                yield return candidate;
+        }
+    }
+
+    private static bool TryGetSharpPackUnionFormatterTarget(
+        INamedTypeSymbol formatter,
+        out INamedTypeSymbol target)
+    {
+        foreach (var attribute in formatter.GetAttributes())
+        {
+            if (IsAttribute(
+                    attribute,
+                    "SharpPack",
+                    "SharpPackUnionFormatterAttribute") &&
+                attribute.ConstructorArguments.Length != 0 &&
+                attribute.ConstructorArguments[0].Value is INamedTypeSymbol value)
+            {
+                target = value;
+                return true;
+            }
+        }
+
+        target = null!;
+        return false;
+    }
+
+    private static bool IsSharpPackExternalUnionOpenPattern(
+        INamedTypeSymbol pattern)
+        => !pattern.IsGenericType ||
+           pattern.IsUnboundGenericType ||
+           pattern.TypeArguments.All(static argument =>
+               argument is ITypeParameterSymbol);
+
+    private static bool CanConstructSharpPackExternalUnionFormatter(
+        INamedTypeSymbol targetDefinition,
+        INamedTypeSymbol formatter,
+        INamedTypeSymbol pattern,
+        bool isOpen)
+    {
+        if (!targetDefinition.IsGenericType)
+            return formatter.TypeParameters.Length == 0;
+
+        if (isOpen)
+        {
+            return formatter.TypeParameters.Length ==
+                   targetDefinition.TypeParameters.Length;
+        }
+
+        return formatter.TypeParameters.Length == 0 &&
+               pattern.TypeArguments.All(static argument =>
+                   argument is not ITypeParameterSymbol);
+    }
+
+    private static ITypeSymbol ResolveSharpPackExternalUnionTagType(
+        INamedTypeSymbol tagType,
+        INamedTypeSymbol formatter,
+        INamedTypeSymbol targetType)
+    {
+        if (!tagType.IsGenericType)
+            return tagType;
+
+        if (tagType.IsUnboundGenericType &&
+            tagType.Arity == targetType.TypeArguments.Length)
+        {
+            return tagType.OriginalDefinition.Construct(
+                targetType.TypeArguments.ToArray());
+        }
+
+        if (!tagType.TypeArguments.Any(ContainsTypeParameter))
+            return tagType;
+
+        var arguments = tagType.TypeArguments
+            .Select(argument => ResolveSharpPackExternalUnionTypeArgument(
+                argument,
+                formatter,
+                targetType))
+            .ToArray();
+        return tagType.OriginalDefinition.Construct(arguments);
+    }
+
+    private static ITypeSymbol ResolveSharpPackExternalUnionTypeArgument(
+        ITypeSymbol argument,
+        INamedTypeSymbol formatter,
+        INamedTypeSymbol targetType)
+    {
+        if (argument is ITypeParameterSymbol parameter)
+        {
+            for (var index = 0; index < formatter.TypeParameters.Length; index++)
+            {
+                if (SymbolEqualityComparer.Default.Equals(
+                        formatter.TypeParameters[index],
+                        parameter) &&
+                    index < targetType.TypeArguments.Length)
+                {
+                    return targetType.TypeArguments[index];
+                }
+            }
+
+            return argument;
+        }
+
+        if (argument is not INamedTypeSymbol named || !named.IsGenericType)
+            return argument;
+
+        if (named.IsUnboundGenericType &&
+            named.Arity == targetType.TypeArguments.Length)
+        {
+            return named.OriginalDefinition.Construct(
+                targetType.TypeArguments.ToArray());
+        }
+
+        var arguments = named.TypeArguments
+            .Select(item => ResolveSharpPackExternalUnionTypeArgument(
+                item,
+                formatter,
+                targetType))
+            .ToArray();
+        return named.OriginalDefinition.Construct(arguments);
     }
 
     private static INamedTypeSymbol? SelectSharpPackCollectionContract(
