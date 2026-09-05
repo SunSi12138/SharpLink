@@ -161,6 +161,9 @@ public partial class RpcGenerator
                 }
             }
 
+            if (!valid)
+                return true;
+
             cases = ordered;
             return true;
 
