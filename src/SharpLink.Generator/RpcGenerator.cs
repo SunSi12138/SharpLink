@@ -315,10 +315,9 @@ public partial class RpcGenerator : IIncrementalGenerator
             if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)
             {
                 var codecs = result.Codecs.AddRange(result.ContractCodecs);
-                var dtoAnalysis = CreateDtoCodecAnalysisResult(result.Codecs, result.ContractCodecs);
                 spc.AddSource(
                     "SharpLink.GeneratedCodecs.g.cs",
-                    SourceText.From(GenerateCodecs(codecs, dtoAnalysis), Encoding.UTF8));
+                    SourceText.From(GenerateCodecs(codecs, result.DtoAnalysis), Encoding.UTF8));
             }
 
             if (!result.UnsafeBlitRequirements.IsDefaultOrEmpty)

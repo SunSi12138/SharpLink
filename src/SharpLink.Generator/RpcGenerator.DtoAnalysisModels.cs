@@ -27,7 +27,7 @@ internal sealed record DtoMemberAnalysisModel(
 
 public partial class RpcGenerator
 {
-    private static DtoCodecAnalysisResult CreateDtoCodecAnalysisResult(
+    internal static DtoCodecAnalysisResult CreateDtoCodecAnalysisResult(
         ImmutableArray<GeneratedCodecModel> codecs,
         ImmutableArray<GeneratedCodecModel> contractCodecs)
         => new(

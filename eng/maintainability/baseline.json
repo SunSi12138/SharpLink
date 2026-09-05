@@ -30,12 +30,6 @@
     },
     {
       "domain": "source",
-      "path": "src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs",
-      "maxLoc": 1449,
-      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Client/PendingRequestTable.cs",
       "maxLoc": 1305,
       "reason": "Existing dev debt captured by issue #350."

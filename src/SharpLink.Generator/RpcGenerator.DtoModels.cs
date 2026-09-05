@@ -36,6 +36,8 @@ internal sealed record DtoGenerationResult(
     ImmutableArray<DtoDiagnosticModel> Diagnostics,
     ImmutableArray<GeneratedEnumModel> Enums)
 {
+    public DtoCodecAnalysisResult DtoAnalysis { get; } =
+        RpcGenerator.CreateDtoCodecAnalysisResult(Codecs, ContractCodecs);
     public ImmutableArray<GeneratedCodecHashModel> CodecHashes { get; init; } =
         ImmutableArray<GeneratedCodecHashModel>.Empty;
     public ImmutableArray<GeneratedCodecHashModel> ReferencedCodecHashes { get; init; } =
