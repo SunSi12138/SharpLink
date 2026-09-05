@@ -25,19 +25,7 @@ internal static class SharpLinkClientReadinessStateSupport
         CancellationToken cancellationToken)
     {
         var connection = new TestTransportConnection();
-        using var payload = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
-            ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.None,
-            4 * 1024 * 1024,
-            1024 * 1024,
-            16 * 1024 * 1024));
-        await connection.InjectFrameAsync(
-            ProtocolV2FrameType.HandshakeResponse,
-            ProtocolV2FrameFlags.None,
-            0,
-            payload.WrittenMemory,
-            cancellationToken);
+        await connection.InjectSuccessfulHandshakeAsync(cancellationToken: cancellationToken);
         return connection;
     }
 

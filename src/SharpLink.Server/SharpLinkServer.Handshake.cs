@@ -5,7 +5,7 @@ internal sealed partial class SharpLinkServer
     private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
-        var negotiationPolicy = ProtocolV2Negotiator.CreateImplementedPolicy(
+        var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,

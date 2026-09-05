@@ -309,6 +309,7 @@ internal sealed partial class SharpLinkClient
     {
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
+            ValidateRemoteContractAssembly(registration);
             var existing = Volatile.Read(ref registration.Proxy);
             if (existing is not null)
                 return (T)existing;
@@ -332,6 +333,7 @@ internal sealed partial class SharpLinkClient
 
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
+            ValidateRemoteContractAssembly(registration);
             IRpcChannel channel = registration.Module is null
                 ? this
                 : new SharpLinkModuleRpcChannel(this, registration.Module);
@@ -354,19 +356,21 @@ internal sealed partial class SharpLinkClient
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
-        var negotiationPolicy = ProtocolV2Negotiator.CreateImplementedPolicy(
+        var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders);
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,
-            ProtocolV2Capabilities.None,
+            ProtocolV2Capabilities.ContractManifest,
             authPayload);
         await session.SendHandshakeRequestAndFlushAsync(handshakeRequest, _protocolOptions, ct).ConfigureAwait(false);
 
         var reader = session.Input;
         Exception? handshakeException = null;
+        NegotiatedSessionOptions? negotiated = null;
+        ProtocolV2ContractManifest? manifest = null;
         var handshakeCompleted = false;
         while (session.IsConnected && !ct.IsCancellationRequested)
         {
@@ -381,60 +385,79 @@ internal sealed partial class SharpLinkClient
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.EnsureInboundFrameAllowed(header.Type);
-                    if (header.Type != ProtocolV2FrameType.HandshakeResponse)
-                        handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
-                    else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
+                    try
                     {
-                        var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, _protocolOptions);
-                        try
+                        if (header.Type == ProtocolV2FrameType.HandshakeResponse)
                         {
-                            var negotiated = ProtocolV2Negotiator.ValidateServerResponse(
-                                handshakeRequest,
-                                response,
-                                negotiationPolicy);
-                            var runtimeSession = session;
-                            if (!runtimeSession.TryCompleteHandshake(negotiated))
+                            if (negotiated is not null || manifest is not null)
                             {
                                 handshakeException = CreateProtocolViolationException(
-                                    "The handshake result was already completed or the session terminated.");
+                                    "Received duplicate or out-of-order HandshakeResponse.");
+                            }
+                            else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
+                            {
+                                var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, _protocolOptions);
+                                negotiated = ProtocolV2Negotiator.ValidateServerResponse(
+                                    handshakeRequest,
+                                    response,
+                                    negotiationPolicy);
+                                if (!session.TryCompleteHandshake(negotiated))
+                                {
+                                    handshakeException = CreateProtocolViolationException(
+                                        "The handshake result was already completed or the session terminated.");
+                                }
                             }
                             else
                             {
-                                handshakeException = null;
+                                var error = ProtocolV2PayloadCodec.ReadError(
+                                    payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
+                                handshakeException = new SharpLinkException(
+                                    error.Code,
+                                    error.DetailCode,
+                                    error.Message);
+                                if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
+                                    SharpLinkErrorCode.AuthenticationExpired or
+                                    SharpLinkErrorCode.AuthorizationDenied or
+                                    SharpLinkErrorCode.PermissionDenied)
+                                {
+                                    SharpLinkTelemetry.RecordAuthenticationFailure("client");
+                                }
                             }
                         }
-                        catch (SharpLinkException exception)
+                        else if (header.Type == ProtocolV2FrameType.ContractManifest)
                         {
-                            handshakeException = exception;
+                            if (negotiated is null || manifest is not null)
+                            {
+                                handshakeException = CreateProtocolViolationException(
+                                    "Received duplicate or out-of-order ContractManifest during handshake.");
+                            }
+                            else
+                            {
+                                manifest = ProtocolV2ContractManifestCodec.Read(payload, _protocolOptions);
+                                PublishRemoteContractManifest(session, manifest);
+                                handshakeCompleted = true;
+                            }
+                        }
+                        else
+                        {
+                            handshakeException = CreateProtocolViolationException(
+                                "Received unexpected packet during handshake.");
                         }
                     }
-                    else
+                    catch (SharpLinkException exception)
                     {
-                        var error = ProtocolV2PayloadCodec.ReadError(
-                            payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
-                        handshakeException = new SharpLinkException(
-                            error.Code,
-                            error.DetailCode,
-                            error.Message);
-                        if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
-                            SharpLinkErrorCode.AuthenticationExpired or
-                            SharpLinkErrorCode.AuthorizationDenied or
-                            SharpLinkErrorCode.PermissionDenied)
-                        {
-                            SharpLinkTelemetry.RecordAuthenticationFailure("client");
-                        }
+                        handshakeException = exception;
                     }
 
-                    handshakeCompleted = true;
-                    break;
+                    if (handshakeException is not null)
+                        handshakeCompleted = true;
+
+                    if (handshakeCompleted)
+                        break;
                 }
             }
             finally
             {
-                // A control or response frame can share this read with the handshake response.
-                // Once the handshake is complete, leave the remainder unexamined so the request
-                // loop observes it immediately instead of waiting for another transport read.
-                // The finally also releases transport read ownership when parsing throws.
                 reader.AdvanceTo(buffer.Start, handshakeCompleted ? buffer.Start : buffer.End);
             }
 
@@ -525,6 +548,11 @@ internal sealed partial class SharpLinkClient
                                 break;
                             case ProtocolV2FrameType.HealthResponse:
                                 DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
+                                break;
+                            case ProtocolV2FrameType.ContractManifest:
+                                PublishRemoteContractManifest(
+                                    session,
+                                    ProtocolV2ContractManifestCodec.Read(payload, _protocolOptions));
                                 break;
                             case ProtocolV2FrameType.StreamData:
                                 var streamRequestId = unchecked((long)header.RequestId);
