@@ -490,6 +490,8 @@ internal sealed partial class RpcSession
                 // arming: a producer whose signal crosses this CAS has already published its
                 // frame, so the re-check preserves the no-lost-wakeup guarantee.
                 _wakeup.ConsumeLatched();
+                if (Volatile.Read(ref _stopped) != 0)
+                    return false;
                 if (HasProgressFrames() || HasNormalFrames())
                     return true;
 
