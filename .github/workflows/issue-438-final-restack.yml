@@ -1,0 +1,126 @@
+name: Issue 438 Final Restack
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-final-restack
+
+permissions:
+  contents: write
+
+jobs:
+  final-restack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      ORIGINAL_BASE: 8e4cb3ce0b15e60ec1365781411e9b53e8cae742
+      FEATURE_SHA: f271c4ffaf679e01749ec1a29be234af542dfee2
+      HOTPATH_SHA: 27524f6841fd73e2b667ed9dc3649abe9e614d3d
+      DEV_SHA: d86458ec2adcbb151d493c91c55aaa4668344b99
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Build exact single-commit candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$ORIGINAL_BASE" "$FEATURE_SHA" "$HOTPATH_SHA" "$DEV_SHA"
+
+          git diff --binary "$ORIGINAL_BASE" "$FEATURE_SHA" -- \
+            'src/SharpLink.Runtime/**' \
+            'test/SharpLink.UnitTests/Runtime/**' \
+            'test/SharpLink.Benchmarks/SendPumpIdleWakeBenchmarks.cs' \
+            > "$RUNNER_TEMP/issue438.patch"
+
+          git checkout --detach "$DEV_SHA"
+          git apply --index --3way "$RUNNER_TEMP/issue438.patch"
+
+          # Replace only WakeupSignal with the performance-gated version. The latest dev
+          # WakeupSignal is byte-identical to ORIGINAL_BASE, so this does not overwrite
+          # unrelated upstream work.
+          git show "$HOTPATH_SHA:src/SharpLink.Runtime/WakeupSignal.cs" \
+            > src/SharpLink.Runtime/WakeupSignal.cs
+          git add src/SharpLink.Runtime/WakeupSignal.cs
+
+          changed="$(git diff --cached --name-only)"
+          printf '%s\n' "$changed"
+          expected=$(cat <<'EOF'
+          src/SharpLink.Runtime/DeadlineReadRace.cs
+          src/SharpLink.Runtime/RpcSession.SendPump.cs
+          src/SharpLink.Runtime/WakeupSignal.cs
+          test/SharpLink.Benchmarks/SendPumpIdleWakeBenchmarks.cs
+          test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs
+          test/SharpLink.UnitTests/Runtime/SendPumpTests.cs
+          test/SharpLink.UnitTests/Runtime/SendPumpTimedWaitStopTests.cs
+          test/SharpLink.UnitTests/Runtime/SendPumpUnobservedTaskTests.cs
+          test/SharpLink.UnitTests/Runtime/WakeupSignalTests.cs
+          EOF
+          )
+          if [ "$changed" != "$expected" ]; then
+            echo 'unexpected final changed-file set' >&2
+            diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$changed") || true
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "refactor(runtime): unify send-pump readiness coordination"
+          echo "FINAL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Deterministic managed-allocation gate
+        uses: ./.github/actions/allocation-gate
+        with:
+          artifact-directory: artifacts/perf/allocation-gate
+          negative-control: 'true'
+
+      - name: Publish final feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push --force origin HEAD:refs/heads/fix/issue-438-sendpump-mailbox
+
+      - name: Upload allocation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-final-allocation-gate
+          path: artifacts/perf/allocation-gate
+          if-no-files-found: warn
+          retention-days: 30
