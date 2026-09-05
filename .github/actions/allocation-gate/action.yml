@@ -54,3 +54,49 @@ runs:
           exit 1
         fi
         echo "Injected allocation was rejected as expected."
+
+    - name: Issue 399 exact-base BenchmarkDotNet A/B evidence
+      shell: bash
+      env:
+        ISSUE399_BASE: e42e80c5e87c2fa075d45bbae0f46c00dcd67821
+        ISSUE399_HEAD: d3fdfe424cbd3585c616f279416060e6aea842c5
+        ISSUE399_ARTIFACT_ROOT: ${{ runner.temp }}/issue399-bdn
+      run: |
+        set -euo pipefail
+
+        rm -rf "$ISSUE399_ARTIFACT_ROOT"
+        mkdir -p "$ISSUE399_ARTIFACT_ROOT/environment" "$ISSUE399_ARTIFACT_ROOT/allocation-gate"
+        cp -R "${{ inputs.artifact-directory }}/." "$ISSUE399_ARTIFACT_ROOT/allocation-gate/"
+        printf '%s\n' "$ISSUE399_BASE" > "$ISSUE399_ARTIFACT_ROOT/environment/base-sha.txt"
+        printf '%s\n' "$ISSUE399_HEAD" > "$ISSUE399_ARTIFACT_ROOT/environment/head-sha.txt"
+        dotnet --info > "$ISSUE399_ARTIFACT_ROOT/environment/dotnet-info.txt"
+        uname -a > "$ISSUE399_ARTIFACT_ROOT/environment/uname.txt"
+        lscpu > "$ISSUE399_ARTIFACT_ROOT/environment/cpu.txt"
+
+        git fetch --no-tags --depth=1 origin "$ISSUE399_BASE"
+        git checkout --detach --force "$ISSUE399_BASE"
+        git clean -ffdx
+
+        dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
+          --filter '*UnaryBenchmarks.Rpc_Add*' \
+          --artifacts "$ISSUE399_ARTIFACT_ROOT/baseline/unary"
+        dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
+          --filter '*StreamingBenchmarks*' \
+          --artifacts "$ISSUE399_ARTIFACT_ROOT/baseline/streaming"
+
+        git fetch --no-tags --depth=1 origin "$ISSUE399_HEAD"
+        git checkout --detach --force "$ISSUE399_HEAD"
+        git clean -ffdx
+
+        dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
+          --filter '*UnaryBenchmarks.Rpc_Add*' \
+          --artifacts "$ISSUE399_ARTIFACT_ROOT/head/unary"
+        dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
+          --filter '*StreamingBenchmarks*' \
+          --artifacts "$ISSUE399_ARTIFACT_ROOT/head/streaming"
+
+        mkdir -p "${{ inputs.artifact-directory }}/issue399-bdn"
+        cp -R "$ISSUE399_ARTIFACT_ROOT/environment" "${{ inputs.artifact-directory }}/issue399-bdn/"
+        cp -R "$ISSUE399_ARTIFACT_ROOT/baseline" "${{ inputs.artifact-directory }}/issue399-bdn/"
+        cp -R "$ISSUE399_ARTIFACT_ROOT/head" "${{ inputs.artifact-directory }}/issue399-bdn/"
+        cp -R "$ISSUE399_ARTIFACT_ROOT/allocation-gate/." "${{ inputs.artifact-directory }}/"
