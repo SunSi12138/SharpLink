@@ -12,10 +12,10 @@ namespace SharpLink.UnitTests.Runtime;
 /// <remarks>
 /// <para>
 /// The faulted teardown path throws <c>SharpLinkException("Transport output completed.")</c> from
-/// <c>SendPump.FlushAndReleaseAsync</c>. That single exception instance is then handed to every
-/// pending pump-owned task (retained channel reads and enqueuer flush waiters). Any such task that
-/// is abandoned without observation fires <c>TaskScheduler.UnobservedTaskException</c> once the GC
-/// finalizes it, which is exactly the intermittent chaos failure observed on the PR Quick CI gate.
+/// <c>SendPump.FlushAndReleaseAsync</c>. The send pump no longer owns retained channel-read tasks;
+/// its timed wait is the reusable wake authority plus a generation-owned timer. Enqueuer flush
+/// waiters can still outlive caller observation, so teardown must not leave any faulted task
+/// unobserved.
 /// </para>
 /// <para>
 /// The assertions below subscribe to the process-wide unobserved-task event and force a finalizer
@@ -27,7 +27,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class SendPumpUnobservedTaskTests
 {
     [Test]
-    public async Task FaultedTeardownShouldObserveRetainedChannelReads()
+    public async Task FaultedTimedBatchTeardownShouldLeaveNoUnobservedTasks()
     {
         var clock = new ManualTimeProvider();
         var context = new SharpLinkRuntimeContextBuilder()
@@ -36,7 +36,7 @@ public class SendPumpUnobservedTaskTests
         var input = new Pipe();
         var output = new Pipe();
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
-            "faulted-teardown-retained-reads",
+            "faulted-teardown-timed-batch",
             input.Reader,
             output.Writer,
             RpcSessionTestFixture.ClientOptions(
@@ -47,11 +47,12 @@ public class SendPumpUnobservedTaskTests
         {
             session.SendPacket(frame);
             await WaitUntilAsync(() => clock.ActiveTimerCount > 0);
-            // The deadline wait registered both retained channel reads before arming the timer.
+            // The deadline wait now owns one generation-specific timer and no channel-read task.
 
             // Transport teardown: the peer stops reading. When the deadline expires the pending
-            // flush observes IsCompleted, throws "Transport output completed.", and the fault
-            // closes both queues while their retained reads are still registered.
+            // flush observes IsCompleted and throws "Transport output completed.". The pump and
+            // all externally observable waiters must still terminate without a finalizer-visible
+            // fault.
             await output.Reader.CompleteAsync();
             clock.Advance(TimeSpan.FromSeconds(6));
 
@@ -62,7 +63,7 @@ public class SendPumpUnobservedTaskTests
             session = null!;
             var unobserved = await CountUnobservedFlushFaultsAsync();
             Ensure(unobserved == 0,
-                $"the faulted retained channel reads must be observed at teardown, " +
+                $"the faulted timed-batch teardown must leave no unobserved task, " +
                 $"but {unobserved} unobserved flush-fault task(s) reached the finalizer");
         }
         finally
