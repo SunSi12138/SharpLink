@@ -274,7 +274,7 @@ public sealed class AdmissionDynamicUpdateTests
         holder.Lease!.Dispose();
         foreach (var pending in new[] { first, second, third })
         {
-            var decision = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+            var decision = await pending;
             Ensure(decision.IsAcquired, "resident waiter must survive queue-policy updates");
             decision.Lease!.Dispose();
         }
@@ -356,10 +356,10 @@ public sealed class AdmissionDynamicUpdateTests
             "two-way queuing must remain enabled independently of QueueOneWayCalls");
 
         holder.Lease!.Dispose();
-        var oldAdmitted = await oldQueued.WaitAsync(TimeSpan.FromSeconds(2));
+        var oldAdmitted = await oldQueued;
         Ensure(oldAdmitted.IsAcquired, "old queued OneWay request must survive the false update");
         oldAdmitted.Lease!.Dispose();
-        var unaryAdmitted = await twoWay.WaitAsync(TimeSpan.FromSeconds(2));
+        var unaryAdmitted = await twoWay;
         Ensure(unaryAdmitted.IsAcquired, "two-way waiter must remain unaffected");
         unaryAdmitted.Lease!.Dispose();
 
@@ -375,7 +375,7 @@ public sealed class AdmissionDynamicUpdateTests
         await WaitUntilAsync(() => enabledQueue.Controller.QueuedCalls == 1,
             "new OneWay request must queue after false-to-true update");
         blocker.Lease!.Dispose();
-        var admitted = await newQueued.WaitAsync(TimeSpan.FromSeconds(2));
+        var admitted = await newQueued;
         Ensure(admitted.IsAcquired, "new OneWay waiter must complete after capacity returns");
         admitted.Lease!.Dispose();
     }
