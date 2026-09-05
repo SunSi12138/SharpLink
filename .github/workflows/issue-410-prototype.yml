@@ -45,16 +45,11 @@ jobs:
           if text.count(old_create) != 1:
               raise RuntimeError(f'partition generation create: expected one match, found {text.count(old_create)}')
           text = text.replace(old_create, new_create, 1)
-          old_commit = '''        if (transition.Source.Rate is { } sourceRate &&
-              !ReferenceEquals(sourceRate, transition.TargetRate))
-          {
-              sourceRate.CommitTransitionTo(transition.TargetRate);
-          }
-
-          '''
-          if text.count(old_commit) != 1:
-              raise RuntimeError(f'partition rate commit: expected one match, found {text.count(old_commit)}')
-          text = text.replace(old_commit, '', 1)
+          start_marker = '        if (transition.Source.Rate is { } sourceRate &&\n'
+          end_marker = '        if (transition.ResizePermitLimit is { } permitLimit)\n'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          text = text[:start] + text[end:]
           path.write_text(text, encoding='utf-8')
           PY
           mkdir -p artifacts/issue410
