@@ -1,0 +1,183 @@
+name: Issue 247 rate RPC confirmation v12b
+
+on:
+  push:
+    branches:
+      - tmp/issue247-confirm-v12b-20260905
+
+permissions:
+  contents: read
+
+jobs:
+  confirm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASE_SHA: ed03b9a3a9ae7f3eecc3963d0655f299faf7e4c2
+      SCRIPT_BRANCH: tmp/issue247-confirm-v12-20260905
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact baseline plus temporary workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Recreate already-gated production candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/issue247-v12b
+          git fetch origin "$BASE_SHA" "$SCRIPT_BRANCH" --depth=1
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          git show "origin/$SCRIPT_BRANCH:.github/workflows/issue247-confirm-v12-temp.yml" > /tmp/v12.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('/tmp/v12.yml').read_text()
+          section = text.index('      - name: Apply production-shaped candidate\n')
+          marker = "          python3 - <<'PY'\n"
+          start = text.index(marker, section) + len(marker)
+          end = text.index("\n          PY\n", start)
+          block = text[start:end]
+          block = "\n".join(line[10:] if line.startswith('          ') else line for line in block.splitlines())
+          Path('/tmp/apply-production-candidate.py').write_text(block + '\n')
+          PY
+          git reset --hard "$BASE_SHA"
+          python3 /tmp/apply-production-candidate.py
+          git diff --check
+          git status --short | tee artifacts/issue247-v12b/candidate-status.txt
+          git diff > artifacts/issue247-v12b/candidate.patch
+          test "$(git status --short | wc -l)" -eq 4
+
+      - name: Prepare exact base and rate RPC scenarios
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git worktree add --detach /tmp/issue247-v12b-base "$BASE_SHA"
+          for root in "$GITHUB_WORKSPACE" /tmp/issue247-v12b-base; do
+            ROOT="$root" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          p = Path(os.environ['ROOT']) / 'test/SharpLink.Benchmarks/FeatureBenchmarkScenarios.cs'
+          s = p.read_text()
+          enum_old = '    AdmissionImmediate,\n'
+          if enum_old not in s:
+              raise SystemExit('AdmissionImmediate enum entry missing')
+          s = s.replace(enum_old, '    AdmissionImmediate,\n    AdmissionRateImmediate,\n', 1)
+
+          marker = '            case ServerFeatureScenario.AdmissionImmediate:'
+          start = s.index(marker)
+          break_marker = '                break;'
+          end = s.index(break_marker, start) + len(break_marker)
+          insertion = '''
+            case ServerFeatureScenario.AdmissionRateImmediate:
+                builder.UseAdmissionControl(options => options.Global.UseTokenBucket(rate =>
+                {
+                    rate.TokenLimit = 1_000_000_000;
+                    rate.TokensPerPeriod = 1_000_000_000;
+                    rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
+                }));
+                break;'''
+          s = s[:end] + insertion + s[end:]
+          p.write_text(s)
+          PY
+            dotnet restore "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            dotnet format whitespace "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore --verify-no-changes --verbosity minimal
+            dotnet build "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore -c Release -v minimal
+          done
+
+      - name: Run seven alternating full RPC rounds
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/issue247-v12b/rpc
+          for round in 1 2 3 4 5 6 7; do
+            if (( round % 2 == 1 )); then order="base head"; else order="head base"; fi
+            for side in $order; do
+              if [[ "$side" == base ]]; then
+                project=/tmp/issue247-v12b-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+                prefix="$GITHUB_WORKSPACE/artifacts/issue247-v12b/rpc/base"
+                sha="$BASE_SHA"
+              else
+                project=test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+                prefix="$GITHUB_WORKSPACE/artifacts/issue247-v12b/rpc/head"
+                sha=issue247-v12b
+              fi
+              for scenario in StaticDefault AdmissionImmediate AdmissionRateImmediate; do
+                SHARPLINK_BENCHMARK_SHA="$sha" dotnet run --no-build -c Release --project "$project" -- \
+                  --feature-evidence server "$scenario" 2000 2 1000000 "${prefix}-${scenario}-${round}.json"
+              done
+            done
+          done
+
+      - name: Summarize paired and raw confirmation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import json, statistics
+          from pathlib import Path
+
+          root = Path('artifacts/issue247-v12b/rpc')
+          metrics = ['throughputPerSecond', 'cpuUsPerOperation', 'allocatedBytesPerOperation', 'p99Us']
+          scenarios = ['StaticDefault', 'AdmissionImmediate', 'AdmissionRateImmediate']
+
+          def rows(side, scenario):
+              result = [json.loads(p.read_text()) for p in sorted(root.glob(f'{side}-{scenario}-*.json'))]
+              if len(result) != 7:
+                  raise SystemExit(f'expected 7 {side}/{scenario} rows; got {len(result)}')
+              return result
+
+          data = {scenario: {side: rows(side, scenario) for side in ['base','head']} for scenario in scenarios}
+          out = {'rawMedian': {}, 'deltaPct': {}, 'pairedNormalizedMedian': {}}
+          for scenario in scenarios:
+              for side in ['base','head']:
+                  out['rawMedian'][f'{side}_{scenario}'] = {
+                      metric: statistics.median(row[metric] for row in data[scenario][side])
+                      for metric in metrics
+                  }
+              b = out['rawMedian'][f'base_{scenario}']
+              h = out['rawMedian'][f'head_{scenario}']
+              out['deltaPct'][scenario] = {
+                  'qpsGainPct': (h['throughputPerSecond']/b['throughputPerSecond']-1)*100,
+                  'cpuGainPct': (1-h['cpuUsPerOperation']/b['cpuUsPerOperation'])*100,
+                  'allocSavedB': b['allocatedBytesPerOperation']-h['allocatedBytesPerOperation'],
+                  'allocReductionPct': (1-h['allocatedBytesPerOperation']/b['allocatedBytesPerOperation'])*100,
+                  'p99RegressionPct': (h['p99Us']/b['p99Us']-1)*100,
+              }
+
+          for scenario in ['AdmissionImmediate','AdmissionRateImmediate']:
+              qps=[]; cpu=[]; p99=[]; alloc=[]
+              for i in range(7):
+                  b=data[scenario]['base'][i]; h=data[scenario]['head'][i]
+                  bs=data['StaticDefault']['base'][i]; hs=data['StaticDefault']['head'][i]
+                  qps.append(((h['throughputPerSecond']/hs['throughputPerSecond'])/(b['throughputPerSecond']/bs['throughputPerSecond'])-1)*100)
+                  cpu.append((1-(h['cpuUsPerOperation']/hs['cpuUsPerOperation'])/(b['cpuUsPerOperation']/bs['cpuUsPerOperation']))*100)
+                  p99.append(((h['p99Us']/hs['p99Us'])/(b['p99Us']/bs['p99Us'])-1)*100)
+                  alloc.append((b['allocatedBytesPerOperation']-bs['allocatedBytesPerOperation'])-(h['allocatedBytesPerOperation']-hs['allocatedBytesPerOperation']))
+              out['pairedNormalizedMedian'][scenario] = {
+                  'qpsGainPct': statistics.median(qps),
+                  'cpuGainPct': statistics.median(cpu),
+                  'p99RegressionPct': statistics.median(p99),
+                  'allocSavedB': statistics.median(alloc),
+                  'perRoundQpsGainPct': qps,
+                  'perRoundCpuGainPct': cpu,
+                  'perRoundP99RegressionPct': p99,
+              }
+
+          Path('artifacts/issue247-v12b/confirmation-summary.json').write_text(json.dumps(out, indent=2))
+          Path('artifacts/issue247-v12b/confirmation-summary.md').write_text('# Issue 247 final RPC confirmation\n\n```json\n'+json.dumps(out,indent=2)+'\n```\n')
+          print(json.dumps(out, indent=2))
+          PY
+
+      - name: Upload final confirmation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue247-confirm-v12b-evidence
+          path: artifacts/issue247-v12b
+          if-no-files-found: error
+          retention-days: 30
