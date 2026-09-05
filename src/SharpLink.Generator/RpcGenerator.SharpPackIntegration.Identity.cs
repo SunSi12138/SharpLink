@@ -52,7 +52,11 @@ public partial class RpcGenerator
             parts.Add(sidecar.IsReferenceType ? "ref" : "value");
             parts.Add(sidecar.Members.Length.ToString(InvariantCulture));
             foreach (var member in sidecar.Members)
+            {
+                parts.Add(member.Order.ToString(InvariantCulture));
+                parts.Add(member.Name);
                 parts.Add(member.TypeName);
+            }
         }
         return Hashing.GetSemanticHash(parts.ToArray());
     }
