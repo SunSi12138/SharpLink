@@ -79,9 +79,11 @@ runs:
 
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
           --filter '*UnaryBenchmarks.Rpc_Add*' \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
           --artifacts "$ISSUE399_ARTIFACT_ROOT/baseline/unary"
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
           --filter '*StreamingBenchmarks*' \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
           --artifacts "$ISSUE399_ARTIFACT_ROOT/baseline/streaming"
 
         git fetch --no-tags --depth=1 origin "$ISSUE399_HEAD"
@@ -90,9 +92,11 @@ runs:
 
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
           --filter '*UnaryBenchmarks.Rpc_Add*' \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
           --artifacts "$ISSUE399_ARTIFACT_ROOT/head/unary"
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
           --filter '*StreamingBenchmarks*' \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
           --artifacts "$ISSUE399_ARTIFACT_ROOT/head/streaming"
 
         mkdir -p "${{ inputs.artifact-directory }}/issue399-bdn"
