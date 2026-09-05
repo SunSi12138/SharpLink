@@ -48,6 +48,7 @@ jobs:
             test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs
           cp .github/issue410-dynamic-fixed-integration-benchmarks.cs \
             test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedBenchmarks.cs
+          python3 .github/issue410-dynamic-fixed-benchmark-fix.py
           git add -N \
             src/SharpLink.Server/Admission/AdmissionStateKernel.Types.cs \
             test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs \
