@@ -1,0 +1,136 @@
+name: Issue 438 Same Runner AB
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-same-runner-ab
+
+permissions:
+  contents: read
+
+jobs:
+  same-runner-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      BASE_SHA: 8e4cb3ce0b15e60ec1365781411e9b53e8cae742
+      CANDIDATE_SHA: 6009760a56c4e9d0f7cb5082691fbd61bb1edb82
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record runner identity
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-438-ab
+          dotnet --info > artifacts/issue-438-ab/dotnet-info.txt
+          uname -a > artifacts/issue-438-ab/uname.txt
+          lscpu > artifacts/issue-438-ab/lscpu.txt
+
+      - name: Prepare pinned worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_SHA" "$CANDIDATE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue438-base" "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue438-candidate" "$CANDIDATE_SHA"
+          for dir in "$RUNNER_TEMP/issue438-base" "$RUNNER_TEMP/issue438-candidate"; do
+            (
+              cd "$dir"
+              dotnet restore Sharplink.slnx
+              dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+              dotnet build test/SharpLink.LoadTest/SharpLink.LoadTest.csproj -c Release --no-restore -v minimal
+              dotnet build test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj -c Release --no-restore -v minimal
+            )
+          done
+
+      - name: Run same-runner ABBA controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/artifacts/issue-438-ab"
+          BASE="$RUNNER_TEMP/issue438-base"
+          CAND="$RUNNER_TEMP/issue438-candidate"
+
+          run_bdn() {
+            local label="$1" dir="$2" class_filter="$3"
+            (
+              cd "$dir"
+              rm -rf BenchmarkDotNet.Artifacts
+              dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+                --filter "$class_filter" --job short --exporters json
+              mkdir -p "$OUT/$label"
+              cp -a BenchmarkDotNet.Artifacts "$OUT/$label/"
+            )
+          }
+
+          run_loads() {
+            local label="$1" dir="$2"
+            for transport in tcp sharedmemory; do
+              for profile in balanced lowlatency throughput; do
+                (
+                  cd "$dir"
+                  dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- \
+                    --mode local --transport "$transport" --operation empty \
+                    --payload-size 0 --concurrency 128 --warmup 1 --duration 3 \
+                    --metrics-port 0 --profile "$profile" --min-connections 1 \
+                    --max-connections 1 --max-send-queue-bytes 67108864 \
+                    --json-output "$OUT/$label-unary-$transport-$profile.json"
+
+                  dotnet run -c Release --no-build --project test/SharpLink.StreamLoadTest -- \
+                    --mode local --transport "$transport" --operation s2c --stream-size 256 \
+                    --concurrency 32 --warmup 1 --duration 3 --profile "$profile" \
+                    --min-connections 1 --max-connections 1 --max-send-queue-bytes 67108864 \
+                    --json-output "$OUT/$label-stream-$transport-$profile.json"
+                )
+              done
+            done
+          }
+
+          run_isolation() {
+            local label="$1" dir="$2"
+            (
+              cd "$dir"
+              dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+                --send-pump-isolation-evidence --scenario sat-progress --profile balanced \
+                --transport-rate-bytes-per-second 15728640 --payload-bytes 16384 \
+                --bulk-producers 4 --progress-interval-ms 1 --duration-seconds 3 \
+                --max-send-queue-bytes 8388608 --output "$OUT/$label-isolation-sat-progress-balanced.json"
+              dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+                --send-pump-isolation-evidence --scenario window-update --profile balanced \
+                --transport-rate-bytes-per-second 15728640 --payload-bytes 16384 \
+                --bulk-producers 4 --progress-interval-ms 1 --duration-seconds 3 \
+                --max-send-queue-bytes 8388608 --output "$OUT/$label-isolation-window-update-balanced.json"
+              dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+                --send-pump-isolation-evidence --scenario sat-progress --profile throughput \
+                --transport-rate-bytes-per-second 15728640 --payload-bytes 16384 \
+                --bulk-producers 4 --progress-interval-ms 1 --duration-seconds 3 \
+                --max-send-queue-bytes 8388608 --output "$OUT/$label-isolation-sat-progress-throughput.json"
+            )
+          }
+
+          # ABBA order reduces first-run/cache and thermal drift on this one VM.
+          for spec in "base-a:$BASE" "candidate-a:$CAND" "candidate-b:$CAND" "base-b:$BASE"; do
+            label="${spec%%:*}"
+            dir="${spec#*:}"
+            echo "===== $label ====="
+            run_bdn "$label-idle" "$dir" '*SendPumpIdleWakeBenchmarks*'
+            run_bdn "$label-timed" "$dir" '*SendPumpTimedBatchDeadlineBenchmarks*'
+            run_loads "$label" "$dir"
+            run_isolation "$label" "$dir"
+          done
+
+      - name: Upload same-runner evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-same-runner-ab
+          path: artifacts/issue-438-ab
+          if-no-files-found: error
+          retention-days: 30
