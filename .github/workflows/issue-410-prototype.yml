@@ -21,35 +21,39 @@ jobs:
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
 
-      - name: Apply generation-scoped rate prototype in workspace only
+      - name: Apply serious generation-scoped candidate in workspace only
         shell: bash
         run: |
           python3 .github/issue410-prototype.py
+          python3 .github/issue410-cleanup.py
           mkdir -p artifacts/issue410
-          git diff --stat > artifacts/issue410/prototype-stat.txt
-          git diff --numstat > artifacts/issue410/prototype-numstat.txt
+          git diff --stat > artifacts/issue410/candidate-stat.txt
+          git diff --numstat > artifacts/issue410/candidate-numstat.txt
           git diff -- \
             src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
             src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
             src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
-            > artifacts/issue410/prototype.patch
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410/candidate.patch
           {
-            echo "migration symbols after prototype:"
-            grep -R -n -E 'transitionDebt|AdmissionRateTransitionLineage|InitializeTransitionLocked|RecordLegacyGrantLocked' \
-              src/SharpLink.Server/Admission || true
+            echo "migration symbols after full candidate transform:"
+            grep -R -n -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|CommitTransitionTo|InitializeTransitionLocked|RecordLegacyGrantLocked' \
+              src/SharpLink.Server/Admission \
+              src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs || true
           } > artifacts/issue410/symbol-audit.txt
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
-      - name: Build Release
+      - name: Build Release with unchanged baseline tests
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
-      - name: Upload prototype evidence
+      - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-410-prototype-build-${{ github.sha }}
+          name: issue-410-clean-candidate-${{ github.sha }}
           path: artifacts/issue410
           if-no-files-found: warn
           retention-days: 14
