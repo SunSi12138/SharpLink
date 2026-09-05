@@ -1,0 +1,71 @@
+name: Issue 438 Restack Verify
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-restack-verify
+
+permissions:
+  contents: write
+
+jobs:
+  restack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      ORIGINAL_BASE: 8e4cb3ce0b15e60ec1365781411e9b53e8cae742
+      FEATURE_SHA: f271c4ffaf679e01749ec1a29be234af542dfee2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Build single-commit restack on latest dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin dev "$FEATURE_SHA"
+          DEV_SHA="$(git rev-parse origin/dev)"
+          echo "DEV_SHA=$DEV_SHA" >> "$GITHUB_ENV"
+          git diff --binary "$ORIGINAL_BASE" "$FEATURE_SHA" -- \
+            'src/SharpLink.Runtime/**' \
+            'test/SharpLink.UnitTests/Runtime/**' \
+            'test/SharpLink.Benchmarks/SendPumpIdleWakeBenchmarks.cs' \
+            > "$RUNNER_TEMP/issue438.patch"
+          git checkout --detach "$DEV_SHA"
+          git apply --index --3way "$RUNNER_TEMP/issue438.patch"
+
+          changed="$(git diff --cached --name-only)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -q '^\.github/workflows/'; then
+            echo 'temporary workflow leaked into restacked candidate' >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$changed" | grep -q '^src/SharpLink.Runtime/DeadlineReadRace.cs$'; then
+            echo 'DeadlineReadRace deletion missing from restack' >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "refactor(runtime): unify send-pump readiness coordination"
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Release build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Publish verified restacked candidate
+        shell: bash
+        run: |
+          git push --force origin HEAD:refs/heads/tmp/issue-438-restacked-candidate
+          echo "RESTACKED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
