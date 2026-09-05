@@ -1,0 +1,812 @@
+name: Issue 247 admission allocation sweep v3
+
+on:
+  push:
+    branches:
+      - tmp/issue247-allocation-sweep-v3-20260905
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE_SHA: ed03b9a3a9ae7f3eecc3963d0655f299faf7e4c2
+      FEATURE_BRANCH: codex/issue247-admission-allocation-sweep
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout isolated evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Apply candidate without touching baseline history
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/issue247-sweep-v3
+          git fetch origin "$BASE_SHA" --depth=1
+          git diff --name-only "$BASE_SHA" HEAD | tee artifacts/issue247-sweep-v3/temp-diff.txt
+          test "$(git diff --name-only "$BASE_SHA" HEAD | wc -l)" -eq 1
+          grep -qx '.github/workflows/issue247-allocation-sweep-v3-temp.yml' artifacts/issue247-sweep-v3/temp-diff.txt
+          echo "workflow_sha=$(git rev-parse HEAD)" > artifacts/issue247-sweep-v3/revision.txt
+          echo "baseline_sha=$BASE_SHA" >> artifacts/issue247-sweep-v3/revision.txt
+          dotnet --info > artifacts/issue247-sweep-v3/dotnet-info.txt
+          uname -a > artifacts/issue247-sweep-v3/uname.txt
+          lscpu > artifacts/issue247-sweep-v3/cpu.txt
+          git reset --hard "$BASE_SHA"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def lines(*xs):
+              return "\n".join(xs)
+
+          # A. Admission permit-drain signal: allocate a TCS only if shutdown actually waits.
+          kernel = Path('src/SharpLink.Server/Admission/AdmissionStateKernel.cs')
+          s = kernel.read_text()
+          field = '    private TaskCompletionSource<bool> _permitsDrained = CompletedSignal();'
+          if field not in s:
+              raise SystemExit('permit drain field missing')
+          s = s.replace(field, '    private TaskCompletionSource<bool>? _permitsDrainWaiter;', 1)
+          start = s.index('    internal void OnLeaseCreated()')
+          end = s.index('\n\n    internal void StopAccepting()', start)
+          s = s[:start] + lines(
+              '    internal void OnLeaseCreated()',
+              '    {',
+              '        lock (_accountingGate)',
+              '            _activePermits++;',
+              '        SharpLinkTelemetry.AddAdmissionActivePermits(1);',
+              '    }',
+              '',
+              '    internal void OnLeaseDisposed()',
+              '    {',
+              '        TaskCompletionSource<bool>? drained = null;',
+              '        lock (_accountingGate)',
+              '        {',
+              '            if (--_activePermits < 0)',
+              '                throw new InvalidOperationException("Admission active permit accounting underflowed.");',
+              '            if (_activePermits == 0)',
+              '            {',
+              '                drained = _permitsDrainWaiter;',
+              '                _permitsDrainWaiter = null;',
+              '            }',
+              '        }',
+              '        drained?.TrySetResult(true);',
+              '        SharpLinkTelemetry.AddAdmissionActivePermits(-1);',
+              '    }') + s[end:]
+          dispose_line = '                permitsDrained = _permitsDrained.Task;'
+          if dispose_line not in s:
+              raise SystemExit('dispose permit snapshot missing')
+          s = s.replace(dispose_line, lines(
+              '                permitsDrained = _activePermits == 0',
+              '                    ? Task.CompletedTask',
+              '                    : (_permitsDrainWaiter ??= new TaskCompletionSource<bool>(',
+              '                        TaskCreationOptions.RunContinuationsAsynchronously)).Task;'), 1)
+          kernel.write_text(s)
+
+          # B/C. Keep the large controller file within its maintainability budget by moving the
+          # new internal server input and shared AcquireCore into a partial companion file.
+          controller = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          c = controller.read_text()
+          class_decl = 'internal sealed class SharpLinkAdmissionController : IAsyncDisposable'
+          if class_decl not in c:
+              raise SystemExit('controller class declaration missing')
+          c = c.replace(class_decl, 'internal sealed partial class SharpLinkAdmissionController : IAsyncDisposable', 1)
+
+          acquire_sig = lines(
+              '    internal ValueTask<AdmissionDecision> AcquireAsync(',
+              '        SharpLinkAdmissionContext context,',
+              '        int retainedBytes,',
+              '        bool allowQueue,',
+              '        RpcDeadline deadline,',
+              '        CancellationToken cancellationToken)')
+          start = c.index(acquire_sig)
+          end = c.index('\n\n    internal void StopAccepting()', start)
+          c = c[:start] + lines(
+              acquire_sig,
+              '    {',
+              '        ArgumentNullException.ThrowIfNull(context);',
+              '        return AcquireCore(',
+              '            context.ContractId,',
+              '            context.MethodId,',
+              '            context,',
+              '            retainedBytes,',
+              '            allowQueue,',
+              '            deadline,',
+              '            cancellationToken);',
+              '    }') + c[end:]
+
+          start = c.index('    private AdmissionRequest CreateRequest(')
+          end = c.index('\n\n    private async ValueTask<AdmissionDecision> WaitForAdmissionAsync', start)
+          request_block = c[start:end]
+          request_block = request_block.replace(
+              'SharpLinkAdmissionContext context',
+              'long contractId,\n        long methodId',
+              1)
+          request_block = request_block.replace('context.ContractId', 'contractId')
+          request_block = request_block.replace('context.MethodId', 'methodId')
+          c = c[:start] + request_block + c[end:]
+
+          retained = '        HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;'
+          if retained not in c:
+              raise SystemExit('retained lease initializer missing')
+          c = c.replace(
+              retained,
+              '        slotCount > 1 && HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;',
+              1)
+
+          single_marker = '        if (slotCount == 1 && retainedLeases is null && suppliedLease is null)'
+          start = c.index(single_marker)
+          end = c.index('\n\n        var leases = new RateLimitLease?[slotCount];', start)
+          c = c[:start] + lines(
+              '        if (slotCount == 1)',
+              '        {',
+              '            var slot = slots[0];',
+              '            var singleLease = suppliedLease;',
+              '            if (singleLease is not null)',
+              '            {',
+              '                if (!ReferenceEquals(slot.Limiter, suppliedLimiter))',
+              '                {',
+              '                    singleLease.Dispose();',
+              '                    throw new InvalidOperationException("The supplied admission limiter is not part of this request.");',
+              '                }',
+              '            }',
+              '            else',
+              '            {',
+              '                singleLease = slot.Limiter.AttemptAcquire(1);',
+              '            }',
+              '',
+              '            if (!singleLease.IsAcquired)',
+              '            {',
+              '                singleLease.Dispose();',
+              '                admissionLease = null;',
+              '                failedSlot = slot;',
+              '                return false;',
+              '            }',
+              '',
+              '            admissionLease = new AdmissionLease(',
+              '                owner,',
+              '                singleLease,',
+              '                Interlocked.Exchange(ref _partition, null));',
+              '            failedSlot = default;',
+              '            return true;',
+              '        }') + c[end:]
+          controller.write_text(c)
+
+          fast = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.FastInput.cs')
+          fast.write_text(lines(
+              'namespace SharpLink.Server;',
+              '',
+              'internal sealed partial class SharpLinkAdmissionController',
+              '{',
+              '    internal ValueTask<AdmissionDecision> AcquireAsync(',
+              '        AdmissionCallContext context,',
+              '        int retainedBytes,',
+              '        bool allowQueue,',
+              '        CancellationToken cancellationToken)',
+              '        => AcquireAsync(context, retainedBytes, allowQueue, default, cancellationToken);',
+              '',
+              '    internal ValueTask<AdmissionDecision> AcquireAsync(',
+              '        AdmissionCallContext context,',
+              '        int retainedBytes,',
+              '        bool allowQueue,',
+              '        RpcDeadline deadline,',
+              '        CancellationToken cancellationToken)',
+              '        => AcquireCore(',
+              '            context.ContractId,',
+              '            context.MethodId,',
+              '            _partitions is null ? null : context.Materialize(),',
+              '            retainedBytes,',
+              '            allowQueue,',
+              '            deadline,',
+              '            cancellationToken);',
+              '',
+              '    private ValueTask<AdmissionDecision> AcquireCore(',
+              '        long contractId,',
+              '        long methodId,',
+              '        SharpLinkAdmissionContext? partitionContext,',
+              '        int retainedBytes,',
+              '        bool allowQueue,',
+              '        RpcDeadline deadline,',
+              '        CancellationToken cancellationToken)',
+              '    {',
+              '        ArgumentOutOfRangeException.ThrowIfNegative(retainedBytes);',
+              '        if (_kernel.IsDraining)',
+              '            return ValueTask.FromResult(AdmissionDecision.Reject("draining", SharpLinkErrorCode.Unavailable));',
+              '',
+              '        AdmissionPartitionLease? partitionLease = null;',
+              '        if (_partitions is not null)',
+              '        {',
+              '            partitionLease = _partitions.TryAcquire(',
+              '                partitionContext ?? throw new InvalidOperationException("Partition admission context is missing."),',
+              '                _partitionStateBinding!.Value.Policy);',
+              '            if (partitionLease is null)',
+              '                return ValueTask.FromResult(AdmissionDecision.Reject("partition_capacity"));',
+              '        }',
+              '',
+              '        var request = CreateRequest(contractId, methodId, partitionLease);',
+              '        if (request.TryAcquire(_kernel, out var lease, out var failedSlot))',
+              '            return ValueTask.FromResult(AdmissionDecision.Accept(lease!));',
+              '',
+              '        if (!allowQueue || _maxQueuedCalls == 0)',
+              '        {',
+              '            request.Dispose();',
+              '            return ValueTask.FromResult(AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope));',
+              '        }',
+              '',
+              '        if (!_kernel.TryReserveQueue(retainedBytes, _maxQueuedCalls, _maxQueuedBytes, out var queueReason))',
+              '        {',
+              '            request.Dispose();',
+              '            return ValueTask.FromResult(queueReason == "draining"',
+              '                ? AdmissionDecision.Reject(queueReason, SharpLinkErrorCode.Unavailable)',
+              '                : AdmissionDecision.Reject(queueReason));',
+              '        }',
+              '',
+              '        return WaitForAdmissionAsync(',
+              '            request,',
+              '            failedSlot,',
+              '            retainedBytes,',
+              '            deadline,',
+              '            cancellationToken);',
+              '    }',
+              '}',
+              '',
+              'internal readonly record struct AdmissionCallContext(',
+              '    long ContractId,',
+              '    long MethodId,',
+              '    RpcMethodKind MethodKind,',
+              '    string ConnectionId,',
+              '    SharpLinkAuthenticationContext? AuthenticationContext,',
+              '    SharpLinkMetadata? Metadata)',
+              '{',
+              '    internal SharpLinkAdmissionContext Materialize()',
+              '        => new(ContractId, MethodId, MethodKind, ConnectionId, AuthenticationContext, Metadata);',
+              '}',
+              ''))
+
+          server = Path('src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs')
+          d = server.read_text()
+          old = '    private static SharpLinkAdmissionContext CreateAdmissionContext('
+          if old not in d:
+              raise SystemExit('server admission context helper missing')
+          server.write_text(d.replace(old, '    private static AdmissionCallContext CreateAdmissionContext(', 1))
+
+          tests = Path('test/SharpLink.UnitTests/Server/AdmissionAllocationRegressionTests.cs')
+          tests.write_text(lines(
+              'using System.Threading;',
+              'using SharpLink.Abstractions;',
+              'using SharpLink.Server;',
+              '',
+              'namespace SharpLink.UnitTests.Server;',
+              '',
+              'public sealed class AdmissionAllocationRegressionTests',
+              '{',
+              '    [Test]',
+              '    public async Task ImmediateConcurrencyShouldNotAllocateDrainSignalPerCall()',
+              '    {',
+              '        var options = new SharpLinkAdmissionControlOptions();',
+              '        options.Global.UseConcurrency(1);',
+              '        await using var controller = SharpLinkAdmissionController.Create(options, []);',
+              '        var context = CreateContext();',
+              '        await WarmAsync(controller, context);',
+              '',
+              '        var bytesPerCall = await MeasureAsync(controller, context);',
+              '        Ensure(bytesPerCall <= 224,',
+              '            $"immediate concurrency admission allocated {bytesPerCall} B/call after warm-up");',
+              '    }',
+              '',
+              '    [Test]',
+              '    public async Task SingleRateImmediateShouldNotAllocateTransientLeaseArrays()',
+              '    {',
+              '        var options = new SharpLinkAdmissionControlOptions();',
+              '        options.Global.UseTokenBucket(rate =>',
+              '        {',
+              '            rate.TokenLimit = 1_000_000_000;',
+              '            rate.TokensPerPeriod = 1_000_000_000;',
+              '            rate.ReplenishmentPeriod = TimeSpan.FromHours(1);',
+              '        });',
+              '        await using var controller = SharpLinkAdmissionController.Create(options, []);',
+              '        var context = CreateContext();',
+              '        await WarmAsync(controller, context);',
+              '',
+              '        var bytesPerCall = await MeasureAsync(controller, context);',
+              '        Ensure(bytesPerCall <= 176,',
+              '            $"single-rate immediate admission allocated {bytesPerCall} B/call after warm-up");',
+              '    }',
+              '',
+              '    [Test]',
+              '    public async Task InternalInputShouldNotMaterializePublicContextWithoutPartition()',
+              '    {',
+              '        var options = new SharpLinkAdmissionControlOptions();',
+              '        options.Global.UseConcurrency(1);',
+              '        await using var controller = SharpLinkAdmissionController.Create(options, []);',
+              '        var context = new AdmissionCallContext(',
+              '            1, 2, RpcMethodKind.Unary, "connection", null, null);',
+              '        for (var index = 0; index < 2_000; index++)',
+              '        {',
+              '            var warmup = await controller.AcquireAsync(',
+              '                context, 1, false, CancellationToken.None);',
+              '            warmup.Lease!.Dispose();',
+              '        }',
+              '',
+              '        const int iterations = 20_000;',
+              '        var before = GC.GetAllocatedBytesForCurrentThread();',
+              '        for (var index = 0; index < iterations; index++)',
+              '        {',
+              '            var decision = await controller.AcquireAsync(',
+              '                context, 1, false, CancellationToken.None);',
+              '            decision.Lease!.Dispose();',
+              '        }',
+              '        var bytesPerCall = (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;',
+              '        Ensure(bytesPerCall <= 224,',
+              '            $"internal admission input materialized unexpected heap state: {bytesPerCall} B/call");',
+              '    }',
+              '',
+              '    [Test]',
+              '    public async Task InternalInputShouldMaterializePublicContextForPartitionSelector()',
+              '    {',
+              '        SharpLinkAdmissionContext? observed = null;',
+              '        var options = new SharpLinkAdmissionControlOptions();',
+              '        options.UsePartition(',
+              '            context =>',
+              '            {',
+              '                observed = context;',
+              '                return "hot";',
+              '            },',
+              '            partition =>',
+              '            {',
+              '                partition.MaxPartitions = 1;',
+              '                partition.UseConcurrency(1);',
+              '            });',
+              '        await using var controller = SharpLinkAdmissionController.Create(options, []);',
+              '        var decision = await controller.AcquireAsync(',
+              '            new AdmissionCallContext(',
+              '                11, 22, RpcMethodKind.ClientStreaming, "cx", null, null),',
+              '            1, false, CancellationToken.None);',
+              '',
+              '        Ensure(decision.IsAcquired, "partition input should acquire");',
+              '        Ensure(observed is not null &&',
+              '            observed.ContractId == 11 &&',
+              '            observed.MethodId == 22 &&',
+              '            observed.MethodKind == RpcMethodKind.ClientStreaming &&',
+              '            observed.ConnectionId == "cx",',
+              '            "partition selector must receive the materialized public context");',
+              '        decision.Lease!.Dispose();',
+              '    }',
+              '',
+              '    [Test]',
+              '    public async Task DisposeAsyncShouldLazilyWaitForTheLastActivePermit()',
+              '    {',
+              '        var options = new SharpLinkAdmissionControlOptions();',
+              '        options.Global.UseConcurrency(1);',
+              '        var controller = SharpLinkAdmissionController.Create(options, []);',
+              '        var decision = await controller.AcquireAsync(',
+              '            CreateContext(), 1, false, CancellationToken.None);',
+              '',
+              '        var dispose = controller.DisposeAsync().AsTask();',
+              '        Ensure(!dispose.IsCompleted,',
+              '            "dispose must wait while the admitted call owns its permit");',
+              '        decision.Lease!.Dispose();',
+              '        await dispose;',
+              '        Ensure(controller.ActivePermits == 0,',
+              '            "lazy drain completion must leave active permit accounting at zero");',
+              '    }',
+              '',
+              '    private static async Task WarmAsync(',
+              '        SharpLinkAdmissionController controller,',
+              '        SharpLinkAdmissionContext context)',
+              '    {',
+              '        for (var index = 0; index < 2_000; index++)',
+              '        {',
+              '            var decision = await controller.AcquireAsync(',
+              '                context, 1, false, CancellationToken.None);',
+              '            decision.Lease!.Dispose();',
+              '        }',
+              '    }',
+              '',
+              '    private static async Task<long> MeasureAsync(',
+              '        SharpLinkAdmissionController controller,',
+              '        SharpLinkAdmissionContext context)',
+              '    {',
+              '        const int iterations = 20_000;',
+              '        var before = GC.GetAllocatedBytesForCurrentThread();',
+              '        for (var index = 0; index < iterations; index++)',
+              '        {',
+              '            var decision = await controller.AcquireAsync(',
+              '                context, 1, false, CancellationToken.None);',
+              '            decision.Lease!.Dispose();',
+              '        }',
+              '        return (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;',
+              '    }',
+              '',
+              '    private static SharpLinkAdmissionContext CreateContext()',
+              '        => new(1, 2, RpcMethodKind.Unary, "connection", null, null);',
+              '}',
+              ''))
+          PY
+
+          git diff --check
+          git status --short | tee artifacts/issue247-sweep-v3/candidate-status.txt
+          git diff > artifacts/issue247-sweep-v3/candidate.patch
+
+      - name: Source, maintainability, build and unit gates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          dotnet restore Sharplink.slnx
+          python3 eng/check-project-reference-boundaries.py
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+          ./eng/verify-generated-assembly-dependencies.sh
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build \
+            | tee artifacts/issue247-sweep-v3/unit-tests.log
+
+      - name: Prepare exact baseline and controller pair harness
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git worktree add --detach /tmp/issue247-sweep-v3-base "$BASE_SHA"
+          cat > /tmp/Issue247SweepPair.cs <<'CS'
+          using System;
+          using System.Collections.Generic;
+          using System.Diagnostics;
+          using System.Text.Json;
+          using System.Threading;
+          using System.Threading.Tasks;
+          using SharpLink.Abstractions;
+          using SharpLink.Server;
+
+          namespace SharpLink.Benchmarks;
+
+          internal static class Issue247SweepPair
+          {
+              private const int Warmup = 20_000;
+              private const int Iterations = 300_000;
+
+              internal static async Task RunAsync(string outputPath)
+              {
+                  var context = new SharpLinkAdmissionContext(
+                      1, 2, RpcMethodKind.Unary, "issue247", null, null);
+                  var rows = new List<Measurement>();
+                  await using var globalConcurrency = Create(o => o.Global.UseConcurrency(1024));
+                  await using var globalRate = Create(o => ConfigureRate(o.Global));
+                  await using var contract = Create(o => o.AddContract(1, r => r.UseConcurrency(1024)));
+                  await using var method = Create(o => o.AddMethod(1, 2, r => r.UseConcurrency(1024)));
+                  await using var allStatic = Create(o =>
+                  {
+                      o.Global.UseConcurrency(1024);
+                      o.AddContract(1, r => r.UseConcurrency(1024));
+                      o.AddMethod(1, 2, r => r.UseConcurrency(1024));
+                  });
+                  await using var concurrencyRate = Create(o =>
+                  {
+                      o.Global.UseConcurrency(1024);
+                      ConfigureRate(o.Global);
+                  });
+                  await using var partition = Create(o => o.UsePartition(
+                      _ => "hot", p =>
+                      {
+                          p.MaxPartitions = 1;
+                          p.UseConcurrency(1024);
+                      }));
+                  await using var reject = Create(o => o.Global.UseConcurrency(1));
+                  using var blocker = (await reject.AcquireAsync(
+                      context, 1, false, CancellationToken.None)).Lease!;
+
+                  rows.Add(Measure("GlobalConcurrencyImmediate", () => AcquireAndDispose(globalConcurrency, context)));
+                  rows.Add(Measure("GlobalRateImmediate", () => AcquireAndDispose(globalRate, context)));
+                  rows.Add(Measure("ContractImmediate", () => AcquireAndDispose(contract, context)));
+                  rows.Add(Measure("MethodImmediate", () => AcquireAndDispose(method, context)));
+                  rows.Add(Measure("GlobalContractMethodImmediate", () => AcquireAndDispose(allStatic, context)));
+                  rows.Add(Measure("GlobalConcurrencyRateImmediate", () => AcquireAndDispose(concurrencyRate, context)));
+                  rows.Add(Measure("PartitionImmediate", () => AcquireAndDispose(partition, context)));
+                  rows.Add(Measure("ImmediateReject", () =>
+                  {
+                      if (reject.AcquireAsync(context, 1, false, CancellationToken.None).Result.IsAcquired)
+                          throw new InvalidOperationException("expected reject");
+                  }));
+
+                  Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                  await File.WriteAllTextAsync(
+                      outputPath,
+                      JsonSerializer.Serialize(new { Measurements = rows },
+                          new JsonSerializerOptions { WriteIndented = true }));
+              }
+
+              private static Measurement Measure(string name, Action action)
+              {
+                  for (var i = 0; i < Warmup; i++) action();
+                  GC.Collect();
+                  GC.WaitForPendingFinalizers();
+                  GC.Collect();
+                  var before = GC.GetAllocatedBytesForCurrentThread();
+                  var started = Stopwatch.GetTimestamp();
+                  for (var i = 0; i < Iterations; i++) action();
+                  var elapsed = Stopwatch.GetTimestamp() - started;
+                  var after = GC.GetAllocatedBytesForCurrentThread();
+                  return new(
+                      name,
+                      elapsed * 1_000_000_000.0 / Stopwatch.Frequency / Iterations,
+                      (after - before) / (double)Iterations);
+              }
+
+              private static void AcquireAndDispose(
+                  SharpLinkAdmissionController controller,
+                  SharpLinkAdmissionContext context)
+              {
+                  var decision = controller.AcquireAsync(
+                      context, 1, false, CancellationToken.None).Result;
+                  if (!decision.IsAcquired)
+                      throw new InvalidOperationException(decision.Reason);
+                  decision.Lease!.Dispose();
+              }
+
+              private static SharpLinkAdmissionController Create(
+                  Action<SharpLinkAdmissionControlOptions> configure)
+              {
+                  var options = new SharpLinkAdmissionControlOptions();
+                  configure(options);
+                  return SharpLinkAdmissionController.Create(options, []);
+              }
+
+              private static void ConfigureRate(SharpLinkAdmissionRuleOptions rule)
+                  => rule.UseTokenBucket(rate =>
+                  {
+                      rate.TokenLimit = 1_000_000_000;
+                      rate.TokensPerPeriod = 1_000_000_000;
+                      rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
+                  });
+
+              private sealed record Measurement(
+                  string Name,
+                  double NanosecondsPerOperation,
+                  double BytesPerOperation);
+          }
+          CS
+
+          for root in "$GITHUB_WORKSPACE" /tmp/issue247-sweep-v3-base; do
+            cp /tmp/Issue247SweepPair.cs "$root/test/SharpLink.Benchmarks/Issue247SweepPair.cs"
+            ROOT="$root" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['ROOT']) / 'test/SharpLink.Benchmarks/Program.cs'
+          s = p.read_text()
+          needle = '        BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);'
+          replacement = '''        if (args.Length > 0 && string.Equals(args[0], "--issue247-sweep-pair", StringComparison.Ordinal))
+                  {
+                      await Issue247SweepPair.RunAsync(args[1]);
+                      return;
+                  }
+          ''' + needle
+          if needle not in s:
+              raise SystemExit('benchmark program insertion point missing')
+          p.write_text(s.replace(needle, replacement, 1))
+          PY
+          done
+          dotnet build /tmp/issue247-sweep-v3-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -v minimal
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -v minimal
+
+      - name: Run alternating controller pairs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/issue247-sweep-v3/pair
+          for r in 1 2 3 4 5 6 7; do
+            if (( r % 2 == 1 )); then order="base head"; else order="head base"; fi
+            for side in $order; do
+              if [[ "$side" == base ]]; then
+                project=/tmp/issue247-sweep-v3-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+                output="$GITHUB_WORKSPACE/artifacts/issue247-sweep-v3/pair/base-${r}.json"
+              else
+                project=test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+                output="artifacts/issue247-sweep-v3/pair/head-${r}.json"
+              fi
+              dotnet run --no-build -c Release --project "$project" -- --issue247-sweep-pair "$output"
+            done
+          done
+
+      - name: Run queue and reject controls
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/issue247-sweep-v3/bdn-base artifacts/issue247-sweep-v3/bdn-head
+          dotnet run --no-build -c Release --project /tmp/issue247-sweep-v3-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+            --filter '*AdmissionControllerBenchmarks*' \
+            --artifacts "$GITHUB_WORKSPACE/artifacts/issue247-sweep-v3/bdn-base" \
+            | tee artifacts/issue247-sweep-v3/bdn-base.log
+          dotnet run --no-build -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+            --filter '*AdmissionControllerBenchmarks*' \
+            --artifacts artifacts/issue247-sweep-v3/bdn-head \
+            | tee artifacts/issue247-sweep-v3/bdn-head.log
+
+      - name: Run alternating full tiny RPC pairs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/issue247-sweep-v3/rpc
+          for r in 1 2 3 4 5; do
+            if (( r % 2 == 1 )); then order="base head"; else order="head base"; fi
+            for side in $order; do
+              if [[ "$side" == base ]]; then
+                project=/tmp/issue247-sweep-v3-base/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+                prefix="$GITHUB_WORKSPACE/artifacts/issue247-sweep-v3/rpc/base"
+                sha="$BASE_SHA"
+              else
+                project=test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+                prefix="artifacts/issue247-sweep-v3/rpc/head"
+                sha=issue247-sweep-v3
+              fi
+              SHARPLINK_BENCHMARK_SHA="$sha" dotnet run --no-build -c Release --project "$project" -- \
+                --feature-evidence server StaticDefault 2000 2 1000000 "${prefix}-static-${r}.json"
+              SHARPLINK_BENCHMARK_SHA="$sha" dotnet run --no-build -c Release --project "$project" -- \
+                --feature-evidence server AdmissionImmediate 2000 2 1000000 "${prefix}-admission-${r}.json"
+            done
+          done
+
+      - name: Evaluate revised production gate
+        id: gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import json, statistics
+          from pathlib import Path
+
+          root = Path('artifacts/issue247-sweep-v3')
+          def load_pair(side):
+              out = {}
+              for p in sorted((root / 'pair').glob(f'{side}-*.json')):
+                  for m in json.loads(p.read_text())['Measurements']:
+                      out.setdefault(m['Name'], []).append(m)
+              return out
+
+          def median(rows, name, field):
+              return statistics.median(x[field] for x in rows[name])
+
+          base, head = load_pair('base'), load_pair('head')
+          names = [
+              'GlobalConcurrencyImmediate',
+              'GlobalRateImmediate',
+              'ContractImmediate',
+              'MethodImmediate',
+              'GlobalContractMethodImmediate',
+              'GlobalConcurrencyRateImmediate',
+              'PartitionImmediate',
+              'ImmediateReject'
+          ]
+          controller = {}
+          for name in names:
+              bn = median(base, name, 'NanosecondsPerOperation')
+              hn = median(head, name, 'NanosecondsPerOperation')
+              bb = median(base, name, 'BytesPerOperation')
+              hb = median(head, name, 'BytesPerOperation')
+              controller[name] = {
+                  'base_ns': bn,
+                  'head_ns': hn,
+                  'cpu_gain_pct': (bn - hn) / bn * 100,
+                  'base_b': bb,
+                  'head_b': hb,
+                  'alloc_reduction_pct': (bb - hb) / bb * 100 if bb else 0
+              }
+
+          def rpc(side, scenario, field):
+              return statistics.median(
+                  json.loads(p.read_text())[field]
+                  for p in sorted((root / 'rpc').glob(f'{side}-{scenario}-*.json')))
+
+          metrics = {}
+          for scenario in ('static', 'admission'):
+              for field in ('throughputPerSecond', 'cpuUsPerOperation', 'allocatedBytesPerOperation', 'p99Us'):
+                  metrics[f'{scenario}_{field}_base'] = rpc('base', scenario, field)
+                  metrics[f'{scenario}_{field}_head'] = rpc('head', scenario, field)
+
+          qps = (metrics['admission_throughputPerSecond_head'] /
+                 metrics['admission_throughputPerSecond_base'] - 1) * 100
+          cpu = (1 - metrics['admission_cpuUsPerOperation_head'] /
+                 metrics['admission_cpuUsPerOperation_base']) * 100
+          p99 = (metrics['admission_p99Us_head'] /
+                 metrics['admission_p99Us_base'] - 1) * 100
+          static_alloc_delta = (
+              metrics['static_allocatedBytesPerOperation_head'] -
+              metrics['static_allocatedBytesPerOperation_base'])
+          admission_alloc_saved = (
+              metrics['admission_allocatedBytesPerOperation_base'] -
+              metrics['admission_allocatedBytesPerOperation_head'])
+          partition_reg = (
+              controller['PartitionImmediate']['head_ns'] /
+              controller['PartitionImmediate']['base_ns'] - 1) * 100
+          reject_reg = (
+              controller['ImmediateReject']['head_ns'] /
+              controller['ImmediateReject']['base_ns'] - 1) * 100
+
+          allocation_ok = (
+              controller['GlobalConcurrencyImmediate']['alloc_reduction_pct'] >= 30 and
+              controller['GlobalRateImmediate']['alloc_reduction_pct'] >= 45 and
+              admission_alloc_saved >= 150)
+          macro_ok = qps >= -1 and cpu >= -1 and p99 <= 3
+          guardrails = static_alloc_delta <= 1 and partition_reg <= 3 and reject_reg <= 5
+          acceptable = bool(allocation_ok and macro_ok and guardrails)
+          summary = {
+              'controller': controller,
+              'rpc': metrics,
+              'gate': {
+                  'allocation_ok': allocation_ok,
+                  'macro_ok': macro_ok,
+                  'guardrails': guardrails,
+                  'acceptable': acceptable,
+                  'qps_gain_pct': qps,
+                  'cpu_gain_pct': cpu,
+                  'p99_regression_pct': p99,
+                  'static_alloc_delta_b': static_alloc_delta,
+                  'admission_alloc_saved_b': admission_alloc_saved,
+                  'partition_ns_regression_pct': partition_reg,
+                  'reject_ns_regression_pct': reject_reg
+              }
+          }
+          (root / 'gate-summary.json').write_text(json.dumps(summary, indent=2))
+          (root / 'gate-summary.md').write_text(
+              '# Issue 247 allocation sweep v3\n\n'
+              f'Production-acceptable: **{acceptable}**\n\n'
+              '```json\n' + json.dumps(summary['gate'], indent=2) + '\n```\n')
+          Path('/tmp/acceptable').write_text('true' if acceptable else 'false')
+          print(json.dumps(summary, indent=2))
+          PY
+          echo "acceptable=$(cat /tmp/acceptable)" >> "$GITHUB_OUTPUT"
+          cat artifacts/issue247-sweep-v3/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Full integration and NativeAOT for acceptable candidate
+        if: steps.gate.outputs.acceptable == 'true'
+        shell: bash
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: |
+          set -euxo pipefail
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- \
+            --maximum-parallel-tests 1 --timeout 120s \
+            | tee artifacts/issue247-sweep-v3/integration.log
+          ./eng/run-shared-memory-aot-process-smoke.sh \
+            | tee artifacts/issue247-sweep-v3/nativeaot.log
+
+      - name: Push production candidate only after all gates pass
+        if: steps.gate.outputs.acceptable == 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git restore test/SharpLink.Benchmarks/Program.cs
+          rm -f test/SharpLink.Benchmarks/Issue247SweepPair.cs
+          git status --short | tee artifacts/issue247-sweep-v3/final-status.txt
+          test "$(git status --short | wc -l)" -eq 5
+          grep -q 'src/SharpLink.Server/Admission/AdmissionStateKernel.cs' artifacts/issue247-sweep-v3/final-status.txt
+          grep -q 'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs' artifacts/issue247-sweep-v3/final-status.txt
+          grep -q 'src/SharpLink.Server/Admission/SharpLinkAdmissionController.FastInput.cs' artifacts/issue247-sweep-v3/final-status.txt
+          grep -q 'src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs' artifacts/issue247-sweep-v3/final-status.txt
+          grep -q 'test/SharpLink.UnitTests/Server/AdmissionAllocationRegressionTests.cs' artifacts/issue247-sweep-v3/final-status.txt
+          git switch -C "$FEATURE_BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.FastInput.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs \
+            test/SharpLink.UnitTests/Server/AdmissionAllocationRegressionTests.cs
+          git commit -m "perf(admission): trim immediate-path allocations"
+          git push --force-with-lease origin HEAD:refs/heads/$FEATURE_BRANCH
+          git rev-parse HEAD | tee artifacts/issue247-sweep-v3/feature-sha.txt
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue247-allocation-sweep-v3-evidence
+          path: artifacts/issue247-sweep-v3
+          if-no-files-found: error
+          retention-days: 30
