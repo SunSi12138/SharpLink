@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace SharpLink.AotExternalPayloads;
 
 public sealed class ExternalAotPayload
