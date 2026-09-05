@@ -1,3 +1,4 @@
+using System.Reflection;
 using SharpLink.Sdk;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -7,8 +8,10 @@ public sealed class GeneratedUnionCodecTests
     [Test]
     public void GeneratedUnionCodecShouldRoundTripCasesNullAndNestedCollections()
     {
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
-        var codec = context.Codecs.GetCodec<IGeneratedUnionPayload>();
+        using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
+        using var registration = CreateGeneratedRegistration(provider);
+        provider.PublishGeneratedRegistrations(registration.Codecs);
+        var codec = provider.GetCodec<IGeneratedUnionPayload>();
 
         var text = new GeneratedUnionTextCase { Value = "alpha" };
         var textBytes = Serialize(codec, text);
@@ -33,7 +36,7 @@ public sealed class GeneratedUnionCodecTests
         Ensure(codec.Deserialize(new ReadOnlySequence<byte>(nullBytes)) is null,
             "union discriminator 0 must decode as null");
 
-        var envelopeCodec = context.Codecs.GetCodec<GeneratedUnionEnvelope>();
+        var envelopeCodec = provider.GetCodec<GeneratedUnionEnvelope>();
         var envelope = new GeneratedUnionEnvelope
         {
             Value = text,
@@ -56,14 +59,26 @@ public sealed class GeneratedUnionCodecTests
     [Test]
     public void GeneratedUnionCodecShouldRejectMalformedDiscriminatorsAsDataLoss()
     {
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
-        var codec = context.Codecs.GetCodec<IGeneratedUnionPayload>();
+        using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
+        using var registration = CreateGeneratedRegistration(provider);
+        provider.PublishGeneratedRegistrations(registration.Codecs);
+        var codec = provider.GetCodec<IGeneratedUnionPayload>();
 
         ExpectDataLoss(codec, [3]);
         ExpectDataLoss(codec, [0, 1]);
         ExpectDataLoss(codec, [0x81, 0x00]);
         ExpectDataLoss(codec, [0x80]);
         ExpectDataLoss(codec, [0xFF, 0xFF, 0xFF, 0xFF, 0x10]);
+    }
+
+    private static RpcGeneratedManifestRegistration CreateGeneratedRegistration(RpcCodecProvider provider)
+    {
+        var locator = typeof(GeneratedUnionEnvelope).Assembly
+            .GetCustomAttribute<SharpLinkGeneratedAssemblyManifestAttribute>() ??
+            throw new Exception("Expected the UnitTests assembly to contain its generated SharpLink manifest.");
+        var manifest = Activator.CreateInstance(locator.ManifestType) as ISharpLinkGeneratedAssemblyManifest ??
+            throw new Exception("Expected the generated SharpLink manifest to be constructible.");
+        return RpcGeneratedManifestRegistration.Create(manifest, provider);
     }
 
     private static byte[] Serialize<T>(IRpcCodec<T> codec, T value)
