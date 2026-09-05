@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkServer
         lock (_stateGate)
         {
             Volatile.Read(ref _replacementStateGateEnteredForTesting)?.Invoke();
-            if (_stopTask is not null)
+            if (_lifecycle.HasStopStarted)
             {
                 throw new InvalidOperationException(
                     $"Server state '{CurrentState}' does not accept runtime interceptor replacement.");

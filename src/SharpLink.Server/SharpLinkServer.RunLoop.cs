@@ -3,31 +3,10 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     public ValueTask RunAsync(CancellationToken cancellationToken = default)
-    {
-        Task runTask;
-        lock (_stateGate)
-        {
-            if (_runTask is null)
-            {
-                if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
-                    return ValueTask.FromException(new SharpLinkException(
-                        SharpLinkErrorCode.ConnectionClosed,
-                        "Server cannot be restarted."));
-                _runTask = RunCoreAsync(cancellationToken);
-            }
-            runTask = _runTask;
-        }
-        return new ValueTask(runTask);
-    }
+        => _lifecycle.RunAsync(cancellationToken);
 
-    private async Task RunCoreAsync(CancellationToken cancellationToken)
+    private async Task RunAcceptLoopAsync(CancellationToken acceptToken)
     {
-        TransitionTo(ServerState.Starting);
-        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _acceptCts.Token);
-        var acceptToken = runCts.Token;
-        TransitionTo(ServerState.Running);
         LogServerCallCapacityConfigured(
             _logger,
             _maxConcurrentCallsPerConnection,
@@ -41,81 +20,48 @@ internal sealed partial class SharpLinkServer
             RunHeartbeatCheckLoopAsync(_forceStopCts.Token),
             "HeartbeatCheckLoop");
 
-        try
+        while (!acceptToken.IsCancellationRequested)
         {
-            while (!acceptToken.IsCancellationRequested)
+            ITransportConnection? connection = null;
+            try
             {
-                ITransportConnection? connection = null;
-                try
+                connection = await _transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
+                if (!_connectionAdmission.TryAcquireConnection(out var connectionLease))
                 {
-                    connection = await _transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
-                    if (!_connectionAdmission.TryAcquireConnection(out var connectionLease))
+                    RecordConnectionAdmissionRejection(ConnectionAdmissionRejectionReason.ConnectionLimit);
+                    try
                     {
-                        RecordConnectionAdmissionRejection(ConnectionAdmissionRejectionReason.ConnectionLimit);
-                        try
-                        {
-                            await connection.DisposeAsync().ConfigureAwait(false);
-                        }
-                        catch (Exception exception)
-                        {
-                            // A rejected transport must never take down the accept loop;
-                            // the failure is observed without terminating the listener.
-                            LogDeferredCleanupFailed(_logger, "ConnectionAdmissionReject", exception);
-                        }
-                        continue;
-                    }
-
-                    TrackFrameworkTask(
-                        HandleAcceptedConnectionAsync(connection, connectionLease, _forceStopCts.Token),
-                        "AcceptedConnectionSession");
-                    connection = null;
-                }
-                catch (OperationCanceledException) when (acceptToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (ObjectDisposedException) when (acceptToken.IsCancellationRequested || CurrentState == ServerState.Draining)
-                {
-                    break;
-                }
-                catch
-                {
-                    if (connection is not null)
                         await connection.DisposeAsync().ConfigureAwait(false);
-                    throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        // A rejected transport must never take down the accept loop;
+                        // the failure is observed without terminating the listener.
+                        LogDeferredCleanupFailed(_logger, "ConnectionAdmissionReject", exception);
+                    }
+                    continue;
                 }
-            }
 
-            if (cancellationToken.IsCancellationRequested && CurrentState == ServerState.Running)
-            {
-                Task stopTask;
-                lock (_stateGate)
-                {
-                    _stopTask ??= StopCoreAsync(TimeSpan.Zero);
-                    stopTask = _stopTask;
-                }
-                await stopTask.ConfigureAwait(false);
+                TrackFrameworkTask(
+                    HandleAcceptedConnectionAsync(connection, connectionLease, _forceStopCts.Token),
+                    "AcceptedConnectionSession");
+                connection = null;
             }
-            else
+            catch (OperationCanceledException) when (acceptToken.IsCancellationRequested)
             {
-                Task? stopTask;
-                lock (_stateGate)
-                    stopTask = _stopTask;
-                if (stopTask is not null)
-                    await stopTask.ConfigureAwait(false);
+                break;
             }
-        }
-        catch
-        {
-            Task cleanupTask;
-            lock (_stateGate)
+            catch (ObjectDisposedException) when (
+                acceptToken.IsCancellationRequested || CurrentState == ServerState.Draining)
             {
-                TransitionTo(ServerState.Faulted);
-                _stopTask ??= CleanupAfterRunFailureAsync();
-                cleanupTask = _stopTask;
+                break;
             }
-            await cleanupTask.ConfigureAwait(false);
-            throw;
+            catch
+            {
+                if (connection is not null)
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
         }
     }
 
