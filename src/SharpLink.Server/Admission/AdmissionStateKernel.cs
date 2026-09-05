@@ -19,7 +19,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     private readonly CancellationTokenSource _draining = new();
     private readonly TimeProvider _timeProvider;
     private TaskCompletionSource<bool> _queueDrained = CompletedSignal();
-    private TaskCompletionSource<bool> _permitsDrained = CompletedSignal();
+    private TaskCompletionSource<bool>? _permitsDrainWaiter;
     private TaskCompletionSource<bool> _programsDrained = CompletedSignal();
     private int _queuedCalls;
     private long _queuedBytes;
@@ -595,13 +595,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
     internal void OnLeaseCreated()
     {
         lock (_accountingGate)
-        {
-            if (_activePermits++ == 0)
-            {
-                _permitsDrained = new TaskCompletionSource<bool>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-        }
+            _activePermits++;
         SharpLinkTelemetry.AddAdmissionActivePermits(1);
     }
 
@@ -613,7 +607,10 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             if (--_activePermits < 0)
                 throw new InvalidOperationException("Admission active permit accounting underflowed.");
             if (_activePermits == 0)
-                drained = _permitsDrained;
+            {
+                drained = _permitsDrainWaiter;
+                _permitsDrainWaiter = null;
+            }
         }
         drained?.TrySetResult(true);
         SharpLinkTelemetry.AddAdmissionActivePermits(-1);
@@ -650,7 +647,10 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
             lock (_accountingGate)
             {
                 queueDrained = _queueDrained.Task;
-                permitsDrained = _permitsDrained.Task;
+                permitsDrained = _activePermits == 0
+                    ? Task.CompletedTask
+                    : (_permitsDrainWaiter ??= new TaskCompletionSource<bool>(
+                        TaskCreationOptions.RunContinuationsAsynchronously)).Task;
             }
             lock (_registryGate)
                 programsDrained = _programsDrained.Task;
