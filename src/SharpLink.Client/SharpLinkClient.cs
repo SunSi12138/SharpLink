@@ -52,7 +52,7 @@ internal sealed partial class SharpLinkClient :
     private readonly ILogger _logger;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions;
-    private ISharpLinkClientInterceptor[] _clientInterceptors;
+    private ClientInterceptorGeneration _clientInterceptorGeneration;
     private readonly SharpLinkRetryOptions? _retryOptions;
     private readonly ISharpLinkRetryPolicy? _retryPolicy;
     private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
@@ -88,7 +88,7 @@ internal sealed partial class SharpLinkClient :
         _protocolOptions = composition.ProtocolOptions;
         _rpcSessionFlushOptions = composition.RpcSessionFlushOptions;
         _connectionPoolOptions = composition.ConnectionPoolOptions;
-        _clientInterceptors = composition.Interceptors;
+        _clientInterceptorGeneration = ClientInterceptorGeneration.Create(composition.Interceptors);
         _retryOptions = composition.RetryOptions;
         _retryPolicy = composition.RetryPolicy;
         _endpointAdmissionPolicy = composition.EndpointAdmissionPolicy;

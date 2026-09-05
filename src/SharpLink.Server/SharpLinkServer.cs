@@ -30,7 +30,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private readonly int _maxConcurrentCallsPerConnection;
     private readonly int _maxConcurrentCallsPerServer;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
-    private ISharpLinkServerInterceptor[] _serverInterceptors;
+    private ServerInterceptorGeneration _serverInterceptorGeneration;
     private readonly IRpcExceptionMapper _exceptionMapper;
     private readonly ServerServiceCleanup _serviceCleanup;
     private readonly SharpLinkAdmissionController? _admissionController;
@@ -77,7 +77,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _authentication = composition.Authentication;
         _protocolOptions = composition.ProtocolOptions;
         _rpcSessionFlushOptions = composition.RpcSessionFlushOptions;
-        _serverInterceptors = composition.Interceptors;
+        _serverInterceptorGeneration = ServerInterceptorGeneration.Create(composition.Interceptors);
         _exceptionMapper = composition.ExceptionMapper;
         _serviceProvider = composition.ServiceProvider;
         _staticManifests = composition.StaticManifests;
@@ -145,8 +145,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         CancellationToken cancellationToken)
     {
         var session = connection.Session;
-        var interceptors = Volatile.Read(ref _serverInterceptors);
-        if (interceptors.Length == 0)
+        var interceptors = Volatile.Read(ref _serverInterceptorGeneration);
+        if (interceptors.Count == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
         var method = GetMethodDescriptor(stub, methodId);
@@ -182,7 +182,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         TimeProvider deadlineTimeProvider,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken,
-        ISharpLinkServerInterceptor[]? interceptors = null)
+        ServerInterceptorGeneration? interceptors = null)
     {
         var method = GetMethodDescriptor(stub, methodId);
         return new SharpLinkServerInvocationContext(

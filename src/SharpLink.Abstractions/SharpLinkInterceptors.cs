@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 
 namespace SharpLink.Abstractions;
@@ -46,6 +47,8 @@ public sealed class SharpLinkClientInvocationContext
     public Exception? Exception { get; internal set; }
     /// <summary>Gets elapsed time after the pipeline completes.</summary>
     public TimeSpan Elapsed { get; internal set; }
+
+    internal object? InterceptorPipelineState { get; set; }
 }
 
 /// <summary>Represents the boxed terminal result used only by an enabled client interceptor pipeline.</summary>
@@ -63,7 +66,12 @@ public readonly record struct SharpLinkClientInvocationResult(object? Value)
     }
 }
 
-/// <summary>Continues a client interceptor pipeline. Each delegate instance may be invoked once.</summary>
+/// <summary>
+/// Continues a client interceptor pipeline. If used, invoke this continuation at most once and await or directly return
+/// the resulting <see cref="ValueTask{TResult}"/>. Do not retain the continuation or invocation context after
+/// <see cref="ISharpLinkClientInterceptor.InvokeAsync"/> returns. Violating these rules is an interceptor bug and is not
+/// dynamically enforced by SharpLink.
+/// </summary>
 public delegate ValueTask<SharpLinkClientInvocationResult> SharpLinkClientInvocationDelegate(
     SharpLinkClientInvocationContext context);
 
@@ -90,10 +98,10 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         TimeProvider deadlineTimeProvider,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken,
-        ISharpLinkServerInterceptor[]? interceptors = null)
+        object? interceptorGeneration = null)
         : base(connectionId, authentication, deadline, deadlineTimeProvider, metadata)
     {
-        Interceptors = interceptors;
+        InterceptorGeneration = interceptorGeneration;
         Method = method;
         RequestId = requestId;
         LocalEndPoint = localEndPoint;
@@ -101,7 +109,16 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         CancellationToken = cancellationToken;
     }
 
-    internal ISharpLinkServerInterceptor[]? Interceptors { get; }
+    internal object? InterceptorGeneration { get; }
+    internal bool InterceptorTerminalReached { get; set; }
+    internal object? InterceptorStub { get; set; }
+    internal object? InterceptorService { get; set; }
+    internal object? InterceptorGeneratedBridge { get; set; }
+    internal long InterceptorMethodId { get; set; }
+    internal ReadOnlySequence<byte> InterceptorArguments { get; set; }
+    internal object? InterceptorOutput { get; set; }
+    internal TimeProvider? InterceptorTimeProvider { get; set; }
+    internal long InterceptorStarted { get; set; }
 
     /// <summary>Gets generated method metadata.</summary>
     public RpcMethodDescriptor Method { get; }
@@ -125,7 +142,12 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
     public TimeSpan Elapsed { get; internal set; }
 }
 
-/// <summary>Continues a server interceptor pipeline. Each delegate instance may be invoked once.</summary>
+/// <summary>
+/// Continues a server interceptor pipeline. If used, invoke this continuation at most once and await or directly return
+/// the resulting <see cref="ValueTask"/>. Do not retain the continuation or invocation context after
+/// <see cref="ISharpLinkServerInterceptor.InvokeAsync"/> returns. Violating these rules is an interceptor bug and is not
+/// dynamically enforced by SharpLink.
+/// </summary>
 public delegate ValueTask SharpLinkServerInvocationDelegate(SharpLinkServerInvocationContext context);
 
 /// <summary>Intercepts a server call for authorization, limiting, auditing, or exception policy.</summary>

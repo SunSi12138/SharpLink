@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkServer
 
     public void ReplaceInterceptors(IEnumerable<ISharpLinkServerInterceptor> interceptors)
     {
-        var candidate = CreateInterceptorSnapshot(interceptors);
+        var candidate = ServerInterceptorGeneration.Create(CreateInterceptorSnapshot(interceptors));
         lock (_stateGate)
         {
             Volatile.Read(ref _replacementStateGateEnteredForTesting)?.Invoke();
@@ -23,7 +23,7 @@ internal sealed partial class SharpLinkServer
                     $"Server state '{CurrentState}' does not accept runtime interceptor replacement.");
             }
 
-            Volatile.Write(ref _serverInterceptors, candidate);
+            Volatile.Write(ref _serverInterceptorGeneration, candidate);
         }
     }
 

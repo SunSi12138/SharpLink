@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkClient
             method,
             metadata,
             includeClientDefault: true);
-        var interceptors = Volatile.Read(ref _clientInterceptors);
+        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -27,7 +27,7 @@ internal sealed partial class SharpLinkClient
                 invocation = InvokeUnaryWithTelemetryAsync(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
-            else if (interceptors.Length != 0)
+            else if (interceptors.Count != 0)
             {
                 invocation = InvokeUnaryInterceptedAsync(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
@@ -61,7 +61,7 @@ internal sealed partial class SharpLinkClient
             method,
             metadata,
             includeClientDefault: false);
-        var interceptors = Volatile.Read(ref _clientInterceptors);
+        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -71,7 +71,7 @@ internal sealed partial class SharpLinkClient
                 invocation = InvokeOneWayWithTelemetryAsync(
                     method, request, requestCodec, streams, interceptors, control, cancellationToken);
             }
-            else if (interceptors.Length != 0)
+            else if (interceptors.Count != 0)
             {
                 invocation = InvokeOneWayInterceptedAsync(
                     method, request, requestCodec, streams, interceptors, control, cancellationToken);
@@ -112,7 +112,7 @@ internal sealed partial class SharpLinkClient
             method,
             metadata,
             includeClientDefault: false);
-        var interceptors = Volatile.Read(ref _clientInterceptors);
+        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -122,7 +122,7 @@ internal sealed partial class SharpLinkClient
                 invocation = InvokeClientStreamingWithTelemetryAsync(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
-            else if (interceptors.Length != 0)
+            else if (interceptors.Count != 0)
             {
                 invocation = InvokeClientStreamingInterceptedAsync(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
@@ -174,7 +174,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         EnsureLogicalCallProgress(control);
-        var interceptors = Volatile.Read(ref _clientInterceptors);
+        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -184,7 +184,7 @@ internal sealed partial class SharpLinkClient
                 invocation = InvokeServerStreamingWithTelemetry(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
-            else if (interceptors.Length != 0)
+            else if (interceptors.Count != 0)
             {
                 invocation = InvokeServerStreamingIntercepted(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
@@ -258,7 +258,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         EnsureLogicalCallProgress(control);
-        var interceptors = Volatile.Read(ref _clientInterceptors);
+        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -268,7 +268,7 @@ internal sealed partial class SharpLinkClient
                 invocation = InvokeDuplexStreamingWithTelemetry(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
-            else if (interceptors.Length != 0)
+            else if (interceptors.Count != 0)
             {
                 invocation = InvokeDuplexStreamingIntercepted(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
