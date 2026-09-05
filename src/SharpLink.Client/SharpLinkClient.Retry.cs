@@ -32,7 +32,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
     {
         Exception? lastFailure = null;
-        var selection = new EndpointRetrySelectionState();
+        var selection = _cluster is null ? null : new EndpointRetrySelectionState();
         var requiresAttemptOutcome = _endpointAdmissionPolicy is not null || _retryPolicy is not null;
         for (var attempt = 1; attempt <= options.MaxAttempts; attempt++)
         {
@@ -185,7 +185,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
-        EndpointRetrySelectionState selection,
+        EndpointRetrySelectionState? selection,
         AttemptOutcomeState? outcome,
         CancellationToken cancellationToken)
     {
