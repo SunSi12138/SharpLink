@@ -64,7 +64,7 @@ public sealed class ExternalRequest
 
         var result = RunAndCompile("SharpPackExternalGraph", source, [vendor]);
         EnsureNoErrors(result);
-        var generated = GetSharpPackGeneratedSource(result.RunResult);
+        var generated = GetSharpPackGeneratedSource(result.DriverRunResult);
 
         Ensure(generated.Contains(
                 "SharpPackFormatter<global::Vendor.ExternalRequest>",
@@ -118,7 +118,7 @@ public partial class ExistingSharpPackPayload
 
         var result = RunAndCompile("SharpPackExistingSupport", source, [vendor]);
         EnsureNoErrors(result);
-        var generated = GetSharpPackGeneratedSource(result.RunResult);
+        var generated = GetSharpPackGeneratedSource(result.DriverRunResult);
 
         Ensure(!generated.Contains(
                 "SharpPackFormatter<global::Vendor.ExistingSharpPackPayload>",
@@ -178,7 +178,7 @@ public sealed class FakeAdapter : IRpcCodecAdapter
 
         var result = RunAndCompile("SharpPackExplicitOverride", source, [vendor]);
         EnsureNoErrors(result);
-        Ensure(!result.RunResult.Results
+        Ensure(!result.DriverRunResult.Results
                 .SelectMany(static item => item.GeneratedSources)
                 .Any(static item => item.HintName == "SharpLink.SharpPackIntegration.g.cs"),
             "no SharpPack binding remains after the explicit non-SharpPack override");
@@ -252,7 +252,7 @@ public interface IContract : IService
         return MetadataReference.CreateFromImage(stream.ToArray());
     }
 
-    private static RunResult RunAndCompile(
+    private static GeneratorExecution RunAndCompile(
         string assemblyName,
         string source,
         IEnumerable<MetadataReference> additionalReferences)
@@ -271,7 +271,7 @@ public interface IContract : IService
             compilation,
             out var outputCompilation,
             out var driverDiagnostics);
-        return new RunResult(driver.GetRunResult(), outputCompilation, driverDiagnostics);
+        return new GeneratorExecution(driver.GetRunResult(), outputCompilation, driverDiagnostics);
     }
 
     private static string GetSharpPackGeneratedSource(GeneratorDriverRunResult result)
@@ -281,7 +281,7 @@ public interface IContract : IService
             .SourceText
             .ToString();
 
-    private static void EnsureNoErrors(RunResult result)
+    private static void EnsureNoErrors(GeneratorExecution result)
     {
         var errors = result.DriverDiagnostics
             .Concat(result.OutputCompilation.GetDiagnostics())
@@ -297,8 +297,8 @@ public interface IContract : IService
             throw new Exception(message);
     }
 
-    private sealed record RunResult(
-        GeneratorDriverRunResult RunResult,
+    private sealed record GeneratorExecution(
+        GeneratorDriverRunResult DriverRunResult,
         Compilation OutputCompilation,
         ImmutableArray<Diagnostic> DriverDiagnostics);
 }
