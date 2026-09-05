@@ -65,3 +65,4 @@
  SHARPLINK062 | SharpLink.Generator | Error | RPC payload selects multiple different Custom Codecs
  SHARPLINK063 | SharpLink.Generator | Error | Custom Codec attempts to replace a built-in Codec
  SHARPLINK064 | SharpLink.Generator | Info | Implicit UnsafeBlit payload contains source-defined AutoLayout
+ SLSP0001     | SharpLink.Serializer.SharpPack.Generator | Error | Final SharpPack payload has no authoritative or generated formatter
