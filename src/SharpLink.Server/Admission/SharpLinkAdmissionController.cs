@@ -735,7 +735,7 @@ internal sealed class AdmissionRequest(
 {
     private AdmissionPartitionLease? _partition = partition;
     private readonly RateLimitLease?[]? _retainedLeases =
-        HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
+        slotCount > 1 && HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
     private readonly bool _tracksConcurrencyTargetVersion =
         slotCount > 1 && HasMultipleVersionedConcurrencySlots(slots, slotCount);
 
@@ -764,24 +764,15 @@ internal sealed class AdmissionRequest(
     {
         var retainedLeases = _retainedLeases;
 
-        if (slotCount == 1 && retainedLeases is null && suppliedLease is null)
-        {
-            var singleLease = slots[0].Limiter.AttemptAcquire(1);
-            if (!singleLease.IsAcquired)
-            {
-                singleLease.Dispose();
-                admissionLease = null;
-                failedSlot = slots[0];
-                return false;
-            }
-
-            admissionLease = new AdmissionLease(
+        if (slotCount == 1 && retainedLeases is null)
+            return AdmissionSingleSlot.TryAcquire(
                 owner,
-                singleLease,
-                Interlocked.Exchange(ref _partition, null));
-            failedSlot = default;
-            return true;
-        }
+                slots[0],
+                suppliedLimiter,
+                suppliedLease,
+                ref _partition,
+                out admissionLease,
+                out failedSlot);
 
         var leases = new RateLimitLease?[slotCount];
         var currentSuppliedLimiter = suppliedLimiter;
