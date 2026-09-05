@@ -34,8 +34,9 @@ internal static class GeneratorTestHarness
         string source,
         IEnumerable<MetadataReference>? additionalReferences = null)
     {
-        IIncrementalGenerator generator = new RpcGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            new RpcGenerator().AsSourceGenerator(),
+            new SharpPackIntegrationGenerator().AsSourceGenerator());
         return driver.RunGenerators(CreateCompilation(assemblyName, source, additionalReferences)).GetRunResult();
     }
 
