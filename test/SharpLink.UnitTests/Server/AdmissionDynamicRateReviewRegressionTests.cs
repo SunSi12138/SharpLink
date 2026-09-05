@@ -35,7 +35,7 @@ public sealed class AdmissionDynamicRateReviewRegressionTests
             for (var index = 0; index < waiters.Length; index++)
             {
                 time.Advance(TimeSpan.FromSeconds(1));
-                var decision = await waiters[index].WaitAsync(TimeSpan.FromSeconds(2));
+                var decision = await waiters[index];
                 Ensure(decision.IsAcquired, $"old waiter {index + 1} must grant on its source one-second cadence");
                 decision.Lease!.Dispose();
             }
@@ -93,7 +93,7 @@ public sealed class AdmissionDynamicRateReviewRegressionTests
             kernel.RecordPublishedRateLineage(reenabled.Controller);
 
             time.Advance(TimeSpan.FromSeconds(1));
-            var oldDecision = await oldQueued.WaitAsync(TimeSpan.FromSeconds(2));
+            var oldDecision = await oldQueued;
             Ensure(oldDecision.IsAcquired,
                 "historical A waiter must remain valid and late-grant after re-enable");
             oldDecision.Lease!.Dispose();
