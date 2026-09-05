@@ -367,8 +367,12 @@ public partial class RpcGenerator
 
         private bool HasExistingSharpPackSupport(INamedTypeSymbol type)
         {
-            if (HasAttribute(type, "SharpPack", "SharpPackableAttribute") ||
-                HasAttribute(type, "SharpPack", "SharpPackUnionAttribute"))
+            var isCurrentAssembly = SymbolEqualityComparer.Default.Equals(
+                type.ContainingAssembly,
+                _compilation.Assembly);
+            if (isCurrentAssembly &&
+                (HasAttribute(type, "SharpPack", "SharpPackableAttribute") ||
+                 HasAttribute(type, "SharpPack", "SharpPackUnionAttribute")))
             {
                 return true;
             }
