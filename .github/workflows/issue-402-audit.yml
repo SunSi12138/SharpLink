@@ -1,0 +1,51 @@
+name: Issue 402 Attempt Audit
+
+on:
+  push:
+    branches:
+      - issue-402-attempt-admission-eval
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Exact current-state audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== HEAD ==='
+          git rev-parse HEAD
+          echo '=== WaitForReady ==='
+          git grep -n 'WaitForReady' -- src test || true
+          echo '=== AttemptOutcomeState ==='
+          git grep -n 'AttemptOutcomeState' -- src test || true
+          echo '=== Attempt state fields/usages ==='
+          for token in HasAdmissionRejection HasAdmissionGrant HasCompletion RetryAfter ShouldHonorAdmissionRetryAfter SetConnection EndpointGeneration ConnectionId IPendingCallCompletionObserver; do
+            echo "--- $token ---"
+            git grep -n "$token" -- src test || true
+          done
+
+      - name: Restore focused projects
+        run: dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+
+      - name: Build focused tests
+        run: dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -v minimal
+
+      - name: Retry and admission tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --filter-class SharpLink.UnitTests.Client.SharpLinkClientRetryBehaviorTests
+
+      - name: Circuit breaker tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --filter-class SharpLink.UnitTests.Client.SharpLinkClientCircuitBreakerTests
+
+      - name: Pending request table tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --filter-class SharpLink.UnitTests.Runtime.PendingRequestTableTests
