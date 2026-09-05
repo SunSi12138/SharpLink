@@ -34,8 +34,29 @@ jobs:
             if ! grep -Fq 'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs: migration symbol remains: CommitTransitionTo' <<< "$cleanup_output"; then
               exit "$cleanup_status"
             fi
-            echo 'Ignoring partition-owned CommitTransitionTo false positive; rate-specific audit continues below.'
           fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          text = path.read_text(encoding='utf-8')
+          old_create = '                    createdRate = AdmissionRateState.Create(target, _timeProvider, source.Rate);\n'
+          new_create = '                    createdRate = AdmissionRateState.Create(target, _timeProvider);\n'
+          if text.count(old_create) != 1:
+              raise RuntimeError(f'partition generation create: expected one match, found {text.count(old_create)}')
+          text = text.replace(old_create, new_create, 1)
+          old_commit = '''        if (transition.Source.Rate is { } sourceRate &&
+              !ReferenceEquals(sourceRate, transition.TargetRate))
+          {
+              sourceRate.CommitTransitionTo(transition.TargetRate);
+          }
+
+          '''
+          if text.count(old_commit) != 1:
+              raise RuntimeError(f'partition rate commit: expected one match, found {text.count(old_commit)}')
+          text = text.replace(old_commit, '', 1)
+          path.write_text(text, encoding='utf-8')
+          PY
           mkdir -p artifacts/issue410
           git diff --stat > artifacts/issue410/candidate-stat.txt
           git diff --numstat > artifacts/issue410/candidate-numstat.txt
@@ -48,11 +69,11 @@ jobs:
             > artifacts/issue410/candidate.patch
           {
             echo "rate migration symbols after full candidate transform:"
-            grep -R -n -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|InitializeTransitionLocked|RecordLegacyGrantLocked' \
+            grep -R -n -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|CommitTransitionTo|InitializeTransitionLocked|RecordLegacyGrantLocked' \
               src/SharpLink.Server/Admission \
               src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs || true
           } > artifacts/issue410/symbol-audit.txt
-          if grep -q -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|InitializeTransitionLocked|RecordLegacyGrantLocked' artifacts/issue410/symbol-audit.txt; then
+          if grep -q -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|CommitTransitionTo|InitializeTransitionLocked|RecordLegacyGrantLocked' artifacts/issue410/symbol-audit.txt; then
             cat artifacts/issue410/symbol-audit.txt
             exit 1
           fi
