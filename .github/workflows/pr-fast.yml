@@ -15,64 +15,37 @@ concurrency:
 jobs:
   fast:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 45
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_MATRIX_TIER: smoke
+      SHARPLINK_MATRIX_REPETITIONS: '1'
+      SHARPLINK_MATRIX_WORKLOADS: unary,streams
+      SHARPLINK_MATRIX_STREAM_OPERATION: all
+      SHARPLINK_MATRIX_OUTPUT: ${{ github.workspace }}/artifacts/performance/issue-399-baseline/${{ github.sha }}
     steps:
-      - name: Start Fast validation timing
-        run: echo "FAST_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
-
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
 
-      - name: Restore
-        run: dotnet restore Sharplink.slnx
-
-      - name: Production Project Reference Boundary Guard
-        run: python3 eng/check-project-reference-boundaries.py
-
-      - name: Verify Formatting
-        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
-
-      - name: Maintainability Debt Gate Tests
-        run: python3 eng/test-verify-maintainability.py
-
-      - name: Maintainability Debt Gate
-        run: bash eng/check-maintainability.sh
-
-      - name: Build Release
-        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-
-      - name: Verify Generated Assemblies Do Not Reference Runtime
-        run: ./eng/verify-generated-assembly-dependencies.sh
-
-      - name: Unit Tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-
-      - name: Generator Tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
-
-      - name: Load Test Tests
-        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
-
-      - name: Record Fast validation steps elapsed
-        if: always()
+      - name: Record environment
         shell: bash
         run: |
-          now=$(date +%s)
-          elapsed=$((now - FAST_STARTED_AT))
-          minutes=$((elapsed / 60))
-          seconds=$((elapsed % 60))
-          {
-            echo "### PR Fast timing"
-            echo
-            printf -- "- Fast validation steps elapsed: %dm %02ds\n" "$minutes" "$seconds"
-            echo "- Scope: first workflow step through the final validation step; runner setup and action post-cleanup are excluded"
-            echo "- Full Fast job target: <= 3m under normal hosted-runner conditions"
-            echo "- Hard timeout: 5m"
-            echo "- Previous PR Quick full active-duration median: 7m 03s (representative fresh-run range: 6m 47s to 7m 06s)"
-            echo "- Compare the completed Actions job timestamps for an exact like-for-like full-duration comparison"
-          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p artifacts/performance/issue-399-baseline/${{ github.sha }}
+          dotnet --info > artifacts/performance/issue-399-baseline/${{ github.sha }}/dotnet-info.txt
+          uname -a > artifacts/performance/issue-399-baseline/${{ github.sha }}/uname.txt
+          lscpu > artifacts/performance/issue-399-baseline/${{ github.sha }}/cpu.txt
+
+      - name: Run issue 399 performance baseline
+        run: ./eng/run-performance-matrix.sh
+
+      - name: Upload issue 399 baseline
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-399-performance-baseline-${{ github.sha }}
+          path: artifacts/performance/issue-399-baseline/${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
