@@ -239,8 +239,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
 
             if (attached is not null)
             {
-                decoder = decoder ?? throw new InvalidOperationException(
-                    "The inbound stream mailbox has no compressed-frame decoder.");
+                decoder = RequireCompressedDecoderAfterChildDispatchAcquired(decoder);
                 return DecodeAndDispatchAcquired(attached, wirePayload, originalByteCount, decoder);
             }
             if (completed || discarding)
@@ -268,8 +267,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                     continue;
                 if (attached is not null)
                 {
-                    decoder = decoder ?? throw new InvalidOperationException(
-                        "The inbound stream mailbox has no compressed-frame decoder.");
+                    decoder = RequireCompressedDecoderAfterChildDispatchAcquired(decoder);
                     return DecodeAndDispatchAcquired(attached, wirePayload, originalByteCount, decoder);
                 }
 
@@ -346,8 +344,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             {
                 try
                 {
-                    decoder = decoder ?? throw new InvalidOperationException(
-                        "The inbound stream mailbox has no compressed-frame decoder.");
+                    decoder = RequireCompressedDecoderAfterChildDispatchAcquired(decoder);
                     var dispatch = DecodeAndDispatchAcquired(
                         attached,
                         new ReadOnlySequence<byte>(owner.WrittenMemory),
@@ -709,8 +706,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                             dispatcher,
                             bufferedPayload,
                             item.EncodedByteCount,
-                            decoder ?? throw new InvalidOperationException(
-                                "The inbound stream mailbox has no compressed-frame decoder."))
+                            RequireCompressedDecoderAfterChildDispatchAcquired(decoder))
                         : DispatchAttachedAcquired(
                             dispatcher,
                             bufferedPayload,
@@ -915,6 +911,18 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     {
         try { await dispatch.ConfigureAwait(false); }
         finally { ReleaseChildDispatch(); }
+    }
+
+    private Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>
+        RequireCompressedDecoderAfterChildDispatchAcquired(
+            Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decoder)
+    {
+        if (decoder is not null)
+            return decoder;
+
+        ReleaseChildDispatch();
+        throw new InvalidOperationException(
+            "The inbound stream mailbox has no compressed-frame decoder.");
     }
 
     private ValueTask DecodeAndDispatchAcquired(
