@@ -284,6 +284,14 @@ public partial class RpcGenerator
                 return;
             }
 
+            if (TryGetNativeUnionCases(type, reportDiagnostics: false, out var unionCases) &&
+                !unionCases.IsDefaultOrEmpty)
+            {
+                foreach (var unionCase in unionCases)
+                    CollectRouteEligibleTypes(unionCase.Type, eligible, depth + 1);
+                return;
+            }
+
             if (type is not INamedTypeSymbol named || IsThirdPartyType(type))
                 return;
 
@@ -305,12 +313,38 @@ public partial class RpcGenerator
         {
             if (IsFrameworkWirePrimitive(type))
                 return true;
+            if (TryGetNativeUnionCases(type, reportDiagnostics: false, out var unionCases) &&
+                !unionCases.IsDefaultOrEmpty)
+            {
+                return CanGenerateNativeUnion(type, unionCases, stack, depth, blockedRouteType);
+            }
             if (TryGetCollection(type, out _, out _, out _, out _))
                 return CanGenerateNativeCollection(type, stack, depth, blockedRouteType);
             if (type.IsUnmanagedType || IsThirdPartyType(type))
                 return false;
 
             return CanGenerateNativeDto(type, stack, depth, blockedRouteType);
+        }
+
+        private bool CanGenerateNativeUnion(
+            ITypeSymbol type,
+            ImmutableArray<NativeUnionCaseSymbol> cases,
+            List<ITypeSymbol> stack,
+            int depth,
+            ITypeSymbol blockedRouteType)
+        {
+            if (depth > MaximumDepth ||
+                cases.IsDefaultOrEmpty ||
+                stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)))
+            {
+                return false;
+            }
+
+            stack.Add(type);
+            var valid = cases.All(unionCase =>
+                CanResolveContractCodecDependency(unionCase.Type, stack, depth + 1, blockedRouteType));
+            stack.RemoveAt(stack.Count - 1);
+            return valid;
         }
 
         private bool CanGenerateNativeCollection(
