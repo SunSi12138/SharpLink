@@ -53,7 +53,8 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>
     internal ValueTask<bool> WaitAsync(TimeProvider timeProvider, TimeSpan timeout)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
-        ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
+        if (timeout < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeout));
         return Arm(new DeadlineArm(this, timeProvider, timeout));
     }
 
