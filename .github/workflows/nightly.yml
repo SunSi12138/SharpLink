@@ -14,6 +14,10 @@ jobs:
   codec-compatibility:
     uses: ./.github/workflows/codec-compatibility.yml
 
+  codec-servicing-compatibility:
+    if: github.event_name != 'push'
+    uses: ./.github/workflows/codec-servicing-compatibility.yml
+
   merge-chaos-smoke:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest

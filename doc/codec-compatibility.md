@@ -25,7 +25,7 @@ Runner labels are infrastructure selectors, not compatibility identities. Each p
 
 A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
 
-The six-platform desktop expansion is exercised as a 6 producer × 6 consumer × 49 fixture matrix: 1,764 verification entries. A run is only considered green if every expected producer fixture is present exactly once and all 1,764 blocking matrix entries complete without blockers.
+The six-platform desktop expansion is exercised as six producers × six consumers × the current retained fixture registry. The summary derives the expected fixture IDs from producer manifests and rejects missing or duplicate rows; a historical fixture count is not part of the compatibility contract. A run is only considered green if every expected producer fixture is present exactly once for every desktop edge and all blocking matrix entries complete without blockers.
 
 ### Verified / evidence-backed
 
@@ -37,9 +37,16 @@ The current evidence-backed environments include:
 - Android x64 emulator: Mono;
 - Android x64 emulator: .NET 10 CoreCLR experimental runtime;
 - iOS Simulator x64: Mono, Interpreter;
-- iOS Simulator arm64: Mono, Interpreter.
+- iOS Simulator arm64: Mono, Interpreter;
+- .NET 10 servicing baseline/latest evidence on Linux x64 CoreCLR, executed by the scheduled/manual Nightly lane.
 
 Browser evidence in `.github/workflows/codec-compatibility.yml` is bidirectional with the six desktop identities. The Browser consumer downloads all six desktop corpora plus its own corpus. Separately, six non-gating desktop evidence consumers download the Browser-produced corpus and execute the safe fixtures on Linux x64/arm64, Windows x64/arm64, and macOS x64/arm64. Framework-owned raw fixtures are compared as representation evidence rather than unsafe semantic materialization. The Browser gate additionally requires the observed wasm32 identity (`pointerSize=4`, `runtimeIdentifier=browser-wasm`, and `targetFramework=net10.0/browser-wasm`) rather than relying on the platform tag alone.
+
+.NET 10 servicing evidence is defined by `.github/workflows/codec-servicing-compatibility.yml`. It intentionally keeps the non-servicing identity fixed as `linux-x64-hosted-desktop-coreclr-net10` so SDK/runtime servicing is the variable under test. The baseline SDK is read from the repository `global.json`; its paired CoreCLR runtime is resolved from that SDK's `Microsoft.NETCoreSdk.BundledVersions.props` `BundledNETCoreAppPackageVersion`. The latest lane resolves the current `10.0.x` SDK and its bundled CoreCLR runtime in the same way. Both SDK and runtime versions are recorded in the manifest rather than inferred from the lane name.
+
+The servicing workflow prevents a newer shared framework already installed on the hosted runner from silently substituting for the intended runtime. It pins the exact SDK, passes the exact `RuntimeFrameworkVersion`, sets `DOTNET_ROLL_FORWARD=Disable`, and fails if the probe manifest does not report the expected runtime version. Each runtime then acts as a consumer for both corpora, producing the four explicit edges baseline -> baseline, baseline -> latest, latest -> baseline, and latest -> latest. The servicing summary validates exact producer/consumer SDK and runtime identity, fixture completeness, raw-wire hashes, contiguous semantic cross-decode, segmented semantic cross-decode, and blocking classifications before publishing evidence.
+
+This servicing lane is called by scheduled/manual Nightly and is not added to the normal `dev` push path or release hard gate. Its successful artifacts therefore establish Verified / evidence-backed servicing edges, not a broader Guaranteed promise for every .NET 10 servicing patch.
 
 Mobile evidence is defined by `.github/workflows/codec-mobile-compatibility.yml`. It is intentionally an evidence graph rather than an all-to-all five-platform matrix. The currently documented edges are:
 
@@ -70,7 +77,7 @@ Platforms, runtime combinations, or producer/consumer edges that have not been e
 - iOS Simulator x64 <-> arm64 cross-architecture edges;
 - mobile producer -> desktop consumer edges;
 - NativeAOT compatibility beyond existing dedicated smoke coverage;
-- future .NET major versions and unreviewed servicing/runtime combinations;
+- future .NET major versions and servicing/runtime combinations not represented by retained servicing evidence;
 - other pointer-width, runtime-family, or architecture combinations not represented by retained evidence.
 
 `Codec Android ARM64 Device Evidence` provides a manual path for a prepared self-hosted ARM64 runner with one attached physical `arm64-v8a` Android device. The workflow rejects emulator devices before execution, while the Android host independently records its in-process RID and classifies the execution environment rather than hard-coding the x64-emulator identity. The uploaded artifact retains the desktop reference corpus, device-local corpora, verification reports, and aggregate summary. Until such a physical-device run is retained and reviewed, Android ARM64 remains Investigational.
@@ -117,7 +124,7 @@ Consumers report, per producer/fixture pair:
 
 Semantic result fields are tri-state. `true` and `false` mean the semantic operation actually ran and produced that result; `null` / `not-run` means the operation was intentionally not executed. Raw representation-only evidence must never set logical equality to `true` merely because bytes match. Raw representation evidence also recomputes and validates the producer and local SHA-256 hashes before classifying byte identity. Strict gates require classification, byte equality, and first-difference metadata to agree with the validated semantic or raw-representation outcome.
 
-The desktop aggregator emits both `compatibility-summary.json` and `compatibility-summary.md`. The mobile evidence aggregator emits the same report format over its explicitly documented edges; that aggregation is not an assertion that every listed mobile environment consumed every other producer.
+The desktop aggregator emits both `compatibility-summary.json` and `compatibility-summary.md`. The mobile evidence aggregator emits the same report format over its explicitly documented edges; that aggregation is not an assertion that every listed mobile environment consumed every other producer. The .NET 10 servicing evidence lane emits `servicing-compatibility-summary.json` and `servicing-compatibility-summary.md` after validating the four exact baseline/latest edges and their recorded SDK/runtime identities.
 
 ## Corpus scope
 
