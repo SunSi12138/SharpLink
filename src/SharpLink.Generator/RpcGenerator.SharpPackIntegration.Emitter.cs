@@ -69,7 +69,6 @@ public partial class RpcGenerator
         sb.AppendLine("    public override void Serialize<TBufferWriter>(");
         sb.AppendLine("        ref global::SharpPack.SharpPackWriter<TBufferWriter> writer,");
         sb.AppendLine($"        scoped ref {sidecar.TypeName}{nullableSuffix} value)");
-        sb.AppendLine("        where TBufferWriter : IBufferWriter<byte>");
         sb.AppendLine("    {");
         if (sidecar.IsReferenceType)
         {
