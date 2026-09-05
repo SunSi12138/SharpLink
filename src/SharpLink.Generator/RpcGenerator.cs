@@ -32,6 +32,8 @@ public partial class RpcGenerator : IIncrementalGenerator
         var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
                 AnalyzeGeneratedCodecsWithPolicyOwnership(compilation, ct))
             .WithComparer(DtoGenerationResultComparer.Instance);
+        var sharpPackIntegration = context.CompilationProvider.Select(static (compilation, ct) =>
+            AnalyzeSharpPackIntegration(compilation, ct));
         var boundInterfaces = interfaces
             .Combine(generatedCodecs)
             .Select(static (value, _) => BindFinalCodecSelections(value.Left, value.Right))
@@ -326,6 +328,25 @@ public partial class RpcGenerator : IIncrementalGenerator
                     "SharpLink.GeneratedUnsafeBlitRequirements.g.cs",
                     SourceText.From(GenerateUnsafeBlitRequirements(result.UnsafeBlitRequirements), Encoding.UTF8));
             }
+        });
+
+        context.RegisterSourceOutput(sharpPackIntegration, static (spc, result) =>
+        {
+            foreach (var diagnostic in result.Diagnostics)
+            {
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    UnsupportedSharpPackPayloadRule,
+                    diagnostic.Location,
+                    diagnostic.TypeName,
+                    diagnostic.Detail));
+            }
+
+            if (!result.HasBindings)
+                return;
+
+            spc.AddSource(
+                "SharpLink.SharpPackIntegration.g.cs",
+                SourceText.From(GenerateSharpPackIntegration(result), Encoding.UTF8));
         });
 
         var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
