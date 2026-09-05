@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -39,14 +40,20 @@ public static class Program
             if (args[index].Equals("--role", StringComparison.OrdinalIgnoreCase))
                 role = args[index + 1].ToLowerInvariant();
         }
+        string? completionFile = null;
+        for (var index = 0; index + 1 < args.Length; index++)
+        {
+            if (args[index].Equals("--completion-file", StringComparison.OrdinalIgnoreCase))
+                completionFile = args[index + 1];
+        }
         if (role == "server")
-            return await RunServerOnlyAsync(sharedMemoryName).ConfigureAwait(false);
+            return await RunServerOnlyAsync(sharedMemoryName, completionFile).ConfigureAwait(false);
         if (role == "client")
             return await RunClientOnlyAsync(sharedMemoryName).ConfigureAwait(false);
         if (role != "local")
             throw new ArgumentException($"Unsupported AOT smoke role '{role}'.");
 
-        var cts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
@@ -78,14 +85,14 @@ public static class Program
         ISharpLinkClient client;
         if (useSharedMemory)
         {
-            client = SharpClientBuilder.Create()
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseRuntime(ConfigureCompression)
                 .UseSharedMemory(sharedMemoryName)
                 .Build();
         }
         else
         {
-            client = SharpClientBuilder.Create()
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseRuntime(ConfigureCompression)
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
@@ -104,6 +111,8 @@ public static class Program
         try
         {
             await VerifyClientAsync(client, runToken).ConfigureAwait(false);
+            if (!useSharedMemory)
+                await VerifyStaticReadinessClientAsync(port, runToken).ConfigureAwait(false);
             await using var multiClusterClient = CreateMultiClusterClient(useSharedMemory, sharedMemoryName, port);
             await VerifyMultiClusterClientAsync(multiClusterClient, runToken).ConfigureAwait(false);
 
@@ -125,7 +134,7 @@ public static class Program
         }
     }
 
-    private static async Task<int> RunServerOnlyAsync(string name)
+    private static async Task<int> RunServerOnlyAsync(string name, string? completionFile)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         VerifyReferencedServiceManifestIsRootedBeforeBuild();
@@ -139,7 +148,10 @@ public static class Program
         Console.WriteLine("AOT_SMOKE_SERVER_READY");
         try
         {
-            await AotService.FinalCall.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+            if (completionFile is null)
+                await AotService.FinalCall.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+            else
+                await WaitForCompletionFileAsync(completionFile, timeout.Token).ConfigureAwait(false);
             await server.StopAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
             await runTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             Console.WriteLine("AOT_SMOKE_SERVER_PASS");
@@ -154,13 +166,14 @@ public static class Program
 
     private static async Task<int> RunClientOnlyAsync(string name)
     {
-        await using var client = SharpClientBuilder.Create()
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseSharedMemory(name)
             .UseRuntime(ConfigureCompression)
             .Build();
         try
         {
-            await VerifyClientAsync(client, CancellationToken.None).ConfigureAwait(false);
+            await VerifyClientAsync(client, timeout.Token).ConfigureAwait(false);
             Console.WriteLine("AOT_SMOKE_CLIENT_PASS");
             return 0;
         }
@@ -171,10 +184,29 @@ public static class Program
         }
     }
 
+    private static async Task WaitForCompletionFileAsync(
+        string completionFile,
+        CancellationToken cancellationToken)
+    {
+        while (!File.Exists(completionFile))
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
+    }
+
     private static async Task VerifyClientAsync(ISharpLinkClient client, CancellationToken cancellationToken)
     {
         VerifyRuntimeAssemblyBoundary(client);
         await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        var readiness = await client.WaitForReadinessAsync(1, cancellationToken).ConfigureAwait(false);
+        if (!readiness.MeetsTarget ||
+            readiness.State != SharpLinkConnectionState.Ready ||
+            readiness.ActiveEndpoints != 1 ||
+            readiness.ReadyEndpoints != 1 ||
+            readiness.ReadyConnections < 1 ||
+            readiness.TargetReadyEndpoints != 1 ||
+            client.GetReadinessSnapshot() != readiness)
+        {
+            throw new Exception($"unexpected Client readiness snapshot: {readiness}");
+        }
 
         var health = await client.CheckHealthAsync(cancellationToken).ConfigureAwait(false);
         if (health.Status != SharpLinkHealthStatus.Ready)
@@ -230,16 +262,94 @@ public static class Program
         if (moved.X != 5 || moved.Y != 2)
             throw new Exception("unexpected struct result");
 
+        await svc.NotifyAsync(37).ConfigureAwait(false);
+
+        var uploadSum = await svc.SumAsync(ToAsyncEnumerable([3, 5, 7])).ConfigureAwait(false);
+        if (uploadSum != 15)
+            throw new Exception($"unexpected client-streaming sum: {uploadSum}");
+
+        var range = await CollectAsync(svc.RangeAsync(4)).ConfigureAwait(false);
+        if (!range.SequenceEqual([0, 1, 2, 3]))
+            throw new Exception("unexpected server-streaming values");
+
+        var duplex = await CollectAsync(svc.MultiplyStreamAsync(
+            ToAsyncEnumerable([2, 4, 6]),
+            3)).ConfigureAwait(false);
+        if (!duplex.SequenceEqual([6, 12, 18]))
+            throw new Exception("unexpected duplex-streaming values");
+
         var pair = await svc.EchoPairAsync(new AotPair(7, "pair")).ConfigureAwait(false);
         if (pair.Number != 14 || pair.Text != "pair-ok")
             throw new Exception("unexpected pair result");
+    }
+
+    private static async Task VerifyStaticReadinessClientAsync(
+        int port,
+        CancellationToken cancellationToken)
+    {
+        var endpoints = new[]
+        {
+            new SharpLinkEndpoint
+            {
+                Id = "aot-static-first",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
+            },
+            new SharpLinkEndpoint
+            {
+                Id = "aot-static-second",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
+            }
+        };
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseRuntime(ConfigureCompression)
+            .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        var readiness = await client.WaitForReadinessAsync(2, cancellationToken).ConfigureAwait(false);
+        if (!readiness.MeetsTarget ||
+            readiness.State != SharpLinkConnectionState.Ready ||
+            readiness.ActiveEndpoints != 2 ||
+            readiness.ReadyEndpoints != 2 ||
+            readiness.ReadyConnections != 2 ||
+            readiness.TargetReadyEndpoints != 2 ||
+            client.GetReadinessSnapshot() != readiness)
+        {
+            throw new Exception($"unexpected static Client readiness snapshot: {readiness}");
+        }
+        if (await client.Get<IAotService>().PingAsync().ConfigureAwait(false) != "pong")
+            throw new Exception("unexpected static Client AOT result");
+        Console.WriteLine("STATIC_READINESS_PASS");
+    }
+
+    private static async IAsyncEnumerable<int> ToAsyncEnumerable(IEnumerable<int> values)
+    {
+        foreach (var value in values)
+        {
+            yield return value;
+            await Task.Yield();
+        }
+    }
+
+    private static async Task<List<int>> CollectAsync(IAsyncEnumerable<int> values)
+    {
+        var result = new List<int>();
+        await foreach (var value in values.ConfigureAwait(false))
+            result.Add(value);
+        return result;
     }
 
     private static ISharpLinkMultiClusterClient CreateMultiClusterClient(
         bool useSharedMemory,
         string sharedMemoryName,
         int port)
-        => SharpLinkMultiClusterClientBuilder.Create()
+        => SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "orders",
                 child => ConfigureClientTransport(child, useSharedMemory, sharedMemoryName, port),
@@ -349,6 +459,15 @@ public interface IAotService : IService
     ValueTask<string[][]> EchoNestedStringsAsync(string[][] values);
     [NonCancellable]
     ValueTask<Point2D> OffsetAsync(Point2D point, int dx, int dy);
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifyAsync(int value);
+    [NonCancellable]
+    ValueTask<int> SumAsync(IAsyncEnumerable<int> values);
+    [NonCancellable]
+    IAsyncEnumerable<int> RangeAsync(int count);
+    [NonCancellable]
+    IAsyncEnumerable<int> MultiplyStreamAsync(IAsyncEnumerable<int> values, int factor);
     [NonCancellable]
     ValueTask<AotPair> EchoPairAsync(AotPair value);
 }
@@ -356,6 +475,9 @@ public interface IAotService : IService
 [RpcService]
 public class AotService : IAotService
 {
+    private static readonly TaskCompletionSource<int> NotificationObserved =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     internal static TaskCompletionSource<bool> FinalCall { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -376,6 +498,37 @@ public class AotService : IAotService
 
     public ValueTask<Point2D> OffsetAsync(Point2D point, int dx, int dy)
         => ValueTask.FromResult(new Point2D { X = point.X + dx, Y = point.Y + dy });
+
+    public ValueTask NotifyAsync(int value)
+    {
+        NotificationObserved.TrySetResult(value);
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask<int> SumAsync(IAsyncEnumerable<int> values)
+    {
+        var sum = 0;
+        await foreach (var value in values.ConfigureAwait(false))
+            sum += value;
+        return sum;
+    }
+
+    public async IAsyncEnumerable<int> RangeAsync(int count)
+    {
+        var notification = await NotificationObserved.Task.ConfigureAwait(false);
+        if (notification != 37)
+            throw new InvalidOperationException($"unexpected one-way value: {notification}");
+        for (var value = 0; value < count; value++)
+            yield return value;
+    }
+
+    public async IAsyncEnumerable<int> MultiplyStreamAsync(
+        IAsyncEnumerable<int> values,
+        int factor)
+    {
+        await foreach (var value in values.ConfigureAwait(false))
+            yield return value * factor;
+    }
 
     public ValueTask<AotPair> EchoPairAsync(AotPair value)
     {

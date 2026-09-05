@@ -33,6 +33,9 @@ public interface IDynamicPluginService : IService
         int count,
         CancellationToken cancellationToken);
 
+    IAsyncEnumerable<int> ThrowingServerStreamAsync(
+        CancellationToken cancellationToken);
+
     IAsyncEnumerable<int> DuplexAsync(
         IAsyncEnumerable<int> values,
         CancellationToken cancellationToken);

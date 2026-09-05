@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Server;
 
 internal enum ServerCallCancellationReason : byte
@@ -12,7 +10,38 @@ internal enum ServerCallCancellationReason : byte
     ServerStopping,
     ConnectionClosed,
     AdmissionResourceExhausted,
+    PreAdmissionStreamResourceExhausted,
     Completed
+}
+
+/// <summary>
+/// An immutable lookup/snapshot lease that binds a pooled call state to one request generation.
+/// </summary>
+internal readonly struct ServerCallCancellationLease
+{
+    private readonly ServerCallCancellationState? _state;
+
+    internal ServerCallCancellationLease(
+        ServerCallCancellationState state,
+        long requestId,
+        long generation)
+    {
+        _state = state ?? throw new ArgumentNullException(nameof(state));
+        RequestId = requestId;
+        Generation = generation;
+    }
+
+    internal long RequestId { get; }
+
+    internal long Generation { get; }
+
+    internal ServerCallCancellationState State
+        => _state ?? throw new InvalidOperationException("The server call cancellation lease is empty.");
+
+    internal bool TryAcquire()
+        => _state?.TryAcquire(RequestId, Generation) == true;
+
+    internal void ReleaseUse() => State.ReleaseUse();
 }
 
 /// <summary>
@@ -23,9 +52,11 @@ internal sealed class ServerCallCancellationState : IDisposable
 {
     private const int MaxRetained = 4096;
     private static readonly ConcurrentStack<ServerCallCancellationState> Pool = new();
+    private static Action<ServerCallCancellationState>? s_beforeRequestActivationForTests;
     private static int s_retainedCount;
 
     private readonly Lock _lifetimeGate = new();
+    private readonly Lock _terminalGate = new();
     private CancellationTokenSource? _invocationCancellation;
     private CancellationTokenRegistration _serverStoppingRegistration;
     private CancellationTokenRegistration _connectionClosedRegistration;
@@ -35,9 +66,13 @@ internal sealed class ServerCallCancellationState : IDisposable
     private int _moduleDrainResponseClaimed;
     private bool _disposeRequested;
     private int _externalUsers;
+    private long _leaseGeneration;
+    private AdmissionProgram? _admissionProgramUse;
     private AdmissionLease? _admissionLease;
     private SharpLinkBufferWriterPool? _payloadPool;
     private IRpcByteBufferWriter? _payloadOwner;
+    private ServerDecodedBytesPermit? _decodedBytesPermit;
+    private TimeProvider? _timeProvider;
 
     private ServerCallCancellationState()
     {
@@ -45,9 +80,7 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public long RequestId { get; private set; }
 
-    public DateTimeOffset? Deadline { get; private set; }
-
-    public long DeadlineTimestamp { get; private set; }
+    public RpcDeadline Deadline { get; private set; }
 
     public CancellationToken InvocationToken
         => _invocationCancellation?.Token ?? CancellationToken.None;
@@ -57,17 +90,25 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);
 
+    internal bool HasPayloadOwnerForDiagnostics => Volatile.Read(ref _payloadOwner) is not null;
+
+    internal static Action<ServerCallCancellationState>? BeforeRequestActivationForTests
+    {
+        get => Volatile.Read(ref s_beforeRequestActivationForTests);
+        set => Volatile.Write(ref s_beforeRequestActivationForTests, value);
+    }
+
     public static ServerCallCancellationState Rent(
         long requestId,
-        DateTimeOffset? deadline,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
+        TimeProvider timeProvider,
         CancellationToken connectionClosedToken,
         CancellationToken serverStoppingToken,
         bool supportsCooperativeCancellation)
         => Rent(
             requestId,
             deadline,
-            deadlineTimestamp,
+            timeProvider,
             connectionClosedToken,
             serverStoppingToken,
             CancellationToken.None,
@@ -75,8 +116,8 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public static ServerCallCancellationState Rent(
         long requestId,
-        DateTimeOffset? deadline,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
+        TimeProvider timeProvider,
         CancellationToken connectionClosedToken,
         CancellationToken serverStoppingToken,
         CancellationToken moduleDrainingToken,
@@ -87,15 +128,18 @@ internal sealed class ServerCallCancellationState : IDisposable
         else
             Interlocked.Decrement(ref s_retainedCount);
 
+        _ = Interlocked.Increment(ref state._leaseGeneration);
         state.RequestId = requestId;
         state.Deadline = deadline;
-        state.DeadlineTimestamp = deadlineTimestamp;
+        state._timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
+        state._admissionProgramUse = null;
         state._admissionLease = null;
         state._payloadPool = null;
         state._payloadOwner = null;
+        state._decodedBytesPermit = null;
         state._disposeRequested = false;
         state._externalUsers = 0;
         state._serverStoppingRegistration = default;
@@ -134,6 +178,13 @@ internal sealed class ServerCallCancellationState : IDisposable
         return state;
     }
 
+    internal void AttachAdmissionProgramUse(AdmissionProgram admissionProgram)
+    {
+        ArgumentNullException.ThrowIfNull(admissionProgram);
+        if (Interlocked.CompareExchange(ref _admissionProgramUse, admissionProgram, null) is not null)
+            throw new InvalidOperationException("An admission program use is already attached to this call.");
+    }
+
     internal void AttachAdmissionLease(AdmissionLease lease)
     {
         ArgumentNullException.ThrowIfNull(lease);
@@ -152,13 +203,42 @@ internal sealed class ServerCallCancellationState : IDisposable
         _payloadPool = pool;
     }
 
-    public bool TryAcquire(long expectedRequestId)
+    internal void AttachDecodedBytesPermit(ServerDecodedBytesPermit decodedBytesPermit)
+    {
+        ArgumentNullException.ThrowIfNull(decodedBytesPermit);
+        if (Volatile.Read(ref _payloadOwner) is null)
+        {
+            throw new InvalidOperationException(
+                "Decoded-byte ownership cannot outlive a call without its physical decoded payload owner.");
+        }
+        if (Interlocked.CompareExchange(ref _decodedBytesPermit, decodedBytesPermit, null) is not null)
+            throw new InvalidOperationException("Decoded-byte ownership is already attached to this call.");
+    }
+
+    internal ServerCallCancellationLease CaptureLease(long requestId)
+        => new(this, requestId, Volatile.Read(ref _leaseGeneration));
+
+    internal bool TryAcquire(long expectedRequestId, long expectedGeneration)
     {
         lock (_lifetimeGate)
         {
-            if (_disposeRequested || RequestId != expectedRequestId)
+            if (_disposeRequested || RequestId != expectedRequestId ||
+                _leaseGeneration != expectedGeneration)
                 return false;
             _externalUsers++;
+            return true;
+        }
+    }
+
+    internal bool TryActivateRequest(ServerRequestPermit requestPermit)
+    {
+        ArgumentNullException.ThrowIfNull(requestPermit);
+        Volatile.Read(ref s_beforeRequestActivationForTests)?.Invoke(this);
+        lock (_terminalGate)
+        {
+            if (Reason != ServerCallCancellationReason.None)
+                return false;
+            requestPermit.Activate();
             return true;
         }
     }
@@ -181,40 +261,105 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
 
-        if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
-            (int)ServerCallCancellationReason.None)
-        {
-            return false;
-        }
+        return TryClaimTerminal(reason, signalCancellation: true, out _, out _);
+    }
 
+    public bool TryAcceptStreamData()
+        => TryClaimStreamProgress(signalCancellation: true, out _);
+
+    /// <summary>
+    /// Claims the same stream-progress terminal boundary without invoking application cancellation
+    /// callbacks on the caller thread. The caller must arrange <see cref="NotifyInvocationCancellation"/>
+    /// when <paramref name="cancellationNotificationRequired"/> is true while retaining a lease.
+    /// </summary>
+    internal bool TryAcceptStreamDataDeferredCancellation(out bool cancellationNotificationRequired)
+        => TryClaimStreamProgress(signalCancellation: false, out cancellationNotificationRequired);
+
+    public bool TryClaimResponse()
+        => TryClaimTerminal(
+               ServerCallCancellationReason.Completed,
+               signalCancellation: true,
+               out var claimedReason,
+               out _) &&
+           claimedReason == ServerCallCancellationReason.Completed;
+
+    internal void NotifyInvocationCancellation()
+    {
         try
         {
             _invocationCancellation?.Cancel();
         }
         catch
         {
-            // User cancellation callbacks cannot be allowed to escape into a protocol loop,
-            // timer callback or server shutdown path. Cancellation remains observable.
+            // User cancellation callbacks are best-effort notification after terminal ownership
+            // has already been decided. They cannot replace the selected RPC result.
         }
-        return true;
     }
 
-    public bool TryClaimResponse()
+    private bool TryClaimStreamProgress(
+        bool signalCancellation,
+        out bool cancellationNotificationRequired)
     {
+        cancellationNotificationRequired = false;
         if (Reason != ServerCallCancellationReason.None)
             return false;
 
-        if (DeadlineTimestamp > 0 && DeadlineTimestamp <= Stopwatch.GetTimestamp())
+        var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+            "Server call state has no time provider.");
+        if (Deadline.IsExpired(timeProvider))
         {
-            TryCancel(ServerCallCancellationReason.DeadlineExceeded);
+            _ = TryClaimTerminal(
+                ServerCallCancellationReason.DeadlineExceeded,
+                signalCancellation,
+                out _,
+                out cancellationNotificationRequired);
             return false;
         }
 
-        return Interlocked.CompareExchange(
-                   ref _reason,
-                   (int)ServerCallCancellationReason.Completed,
-                   (int)ServerCallCancellationReason.None) ==
-               (int)ServerCallCancellationReason.None;
+        return Reason == ServerCallCancellationReason.None;
+    }
+
+    private bool TryClaimTerminal(
+        ServerCallCancellationReason proposedReason,
+        bool signalCancellation,
+        out ServerCallCancellationReason claimedReason,
+        out bool cancellationNotificationRequired)
+    {
+        if (proposedReason == ServerCallCancellationReason.None)
+            throw new ArgumentOutOfRangeException(nameof(proposedReason));
+
+        var claimed = false;
+        cancellationNotificationRequired = false;
+        lock (_terminalGate)
+        {
+            var reason = proposedReason;
+            var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+                "Server call state has no time provider.");
+            if (reason != ServerCallCancellationReason.DeadlineExceeded && Deadline.IsExpired(timeProvider))
+                reason = ServerCallCancellationReason.DeadlineExceeded;
+
+            if (Interlocked.CompareExchange(ref _reason, (int)reason, (int)ServerCallCancellationReason.None) !=
+                (int)ServerCallCancellationReason.None)
+            {
+                claimedReason = Reason;
+                return false;
+            }
+
+            claimed = true;
+            claimedReason = reason;
+            if (reason != ServerCallCancellationReason.Completed)
+                cancellationNotificationRequired = _invocationCancellation is not null;
+        }
+
+        if (claimedReason == ServerCallCancellationReason.Completed)
+            return true;
+
+        if (signalCancellation && cancellationNotificationRequired)
+        {
+            NotifyInvocationCancellation();
+            cancellationNotificationRequired = false;
+        }
+        return claimed;
     }
 
     public bool TryRecordAbandoned()
@@ -264,18 +409,30 @@ internal sealed class ServerCallCancellationState : IDisposable
         _serverStoppingRegistration.Dispose();
         _invocationCancellation?.Dispose();
         Interlocked.Exchange(ref _admissionLease, null)?.Dispose();
+        Interlocked.Exchange(ref _admissionProgramUse, null)?.ReleaseUse();
         var payloadOwner = Interlocked.Exchange(ref _payloadOwner, null);
         var payloadPool = Interlocked.Exchange(ref _payloadPool, null);
+        var decodedBytesPermit = Interlocked.Exchange(ref _decodedBytesPermit, null);
         if (payloadOwner is not null)
+        {
             (payloadPool ?? throw new InvalidOperationException("A retained payload has no owning pool."))
                 .Return(payloadOwner);
+            decodedBytesPermit?.Dispose();
+        }
+        else if (decodedBytesPermit is not null)
+        {
+            // This should be unreachable because decoded-byte ownership is attached only after the
+            // corresponding physical owner. Release conservatively rather than leak accounting if
+            // an invariant violation reaches teardown.
+            decodedBytesPermit.Dispose();
+        }
         _invocationCancellation = null;
         _connectionClosedRegistration = default;
         _serverStoppingRegistration = default;
         _moduleDrainingRegistration = default;
         RequestId = 0;
-        Deadline = null;
-        DeadlineTimestamp = 0;
+        Deadline = default;
+        _timeProvider = null;
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;

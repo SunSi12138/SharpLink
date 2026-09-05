@@ -3,7 +3,6 @@ namespace SharpLink.UnitTests.Runtime;
 public class BufferWriterPoolTests
 {
     [Test]
-    [NotInParallel]
     public void ConcurrentReturnsMustNotPopulateDetachedQueueAfterDispose()
     {
         const int writerCount = 256;

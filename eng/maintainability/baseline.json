@@ -1,0 +1,218 @@
+{
+  "schemaVersion": 1,
+  "sourceRef": "d23304028cb133ebcede9323e5859cc88bde1901",
+  "rules": {
+    "source": {
+      "maxFileLoc": 800
+    },
+    "test": {
+      "maxFileLoc": 1000
+    }
+  },
+  "allowances": [
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+      "maxLoc": 1930,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs",
+      "maxLoc": 1638,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs",
+      "maxLoc": 1450,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/PendingRequestTable.cs",
+      "maxLoc": 1305,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/StreamManager.cs",
+      "maxLoc": 1347,
+      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs",
+      "maxLoc": 1193,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/Admission/AdmissionStateKernel.cs",
+      "maxLoc": 1160,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/Transport/SharedMemoryPipelines.cs",
+      "maxLoc": 1142,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpLinkClient.Invokers.cs",
+      "maxLoc": 1100,
+      "reason": "Issue #282 adds the reviewed terminal call-control telemetry invocation seam; existing invoker decomposition debt remains tracked by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpClientBuilder.cs",
+      "maxLoc": 1060,
+      "reason": "Issue #282 adds the explicit request-timeout policy API and the reviewed order-independent MultiCluster inheritance helper; existing builder decomposition debt remains tracked by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/StreamFlowController.cs",
+      "maxLoc": 958,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpLinkClient.StaticCluster.cs",
+      "maxLoc": 908,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs",
+      "maxLoc": 904,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/SharpLinkServerBuilder.cs",
+      "maxLoc": 829,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
+      "maxLoc": 814,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs",
+      "maxLoc": 2692,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs",
+      "maxLoc": 2499,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs",
+      "maxLoc": 2155,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/TransportConnectionIntegrationTests.cs",
+      "maxLoc": 2075,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.UnitTests/Runtime/SharpLinkRuntimeContextTests.cs",
+      "maxLoc": 1552,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.ChaosTests/Program.cs",
+      "maxLoc": 1540,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.LoadTest/Program.cs",
+      "maxLoc": 1506,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/DynamicEndpointIntegrationTests.cs",
+      "maxLoc": 1401,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/StaticEndpointIntegrationTests.cs",
+      "maxLoc": 1360,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/SharedMemoryTransportConnectionIntegrationTests.cs",
+      "maxLoc": 1330,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.Benchmarks/SendPumpIsolationEvidenceRunner.cs",
+      "maxLoc": 1318,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.Benchmarks/DecodeExecutionPhase0EvidenceRunner.cs",
+      "maxLoc": 1312,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs",
+      "maxLoc": 1289,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
+      "maxLoc": 1281,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.UnitTests/Runtime/StreamManagerTests.cs",
+      "maxLoc": 1252,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs",
+      "maxLoc": 1095,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/RpcChannelCallShapeIntegrationTests.cs",
+      "maxLoc": 1056,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.cs",
+      "maxLoc": 1047,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.Benchmarks/ConnectionAdmissionEvidenceRunner.cs",
+      "maxLoc": 1006,
+      "reason": "Existing dev debt captured by issue #350."
+    }
+  ]
+}

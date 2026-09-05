@@ -83,6 +83,69 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task InvalidMagicViolationMustNotEchoAttackerControlledPayloadBytes()
+    {
+        // An unauthenticated client can place arbitrary bytes behind an invalid magic byte.
+        // The terminal diagnostic must not retain any of them, not even hex/base64-encoded.
+        const string attackerBytes = "DE AD BE EF SECRET TOKEN";
+        var frame = new byte[ProtocolV2Constants.HeaderBytes + attackerBytes.Length];
+        frame[0] = 0x5A; // invalid magic
+        System.Text.Encoding.ASCII.GetBytes(
+            attackerBytes,
+            frame.AsSpan(ProtocolV2Constants.HeaderBytes));
+
+        var failure = CaptureException(() =>
+        {
+            var sequence = new ReadOnlySequence<byte>(frame);
+            _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _);
+        });
+
+        await Assert.That(failure).IsAssignableTo<SharpLinkException>();
+        await Assert.That(((SharpLinkException)failure!).Code).IsEqualTo(SharpLinkErrorCode.ProtocolViolation);
+        await Assert.That(SharpLinkProtocolViolationException.Classify((SharpLinkException)failure!))
+            .IsEqualTo(ProtocolViolationReason.InvalidMagic);
+
+        var text = failure!.Message;
+        await Assert.That(text.Contains("0x5A", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(text.Contains($"remaining={frame.Length}", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(text.Contains("prefix=", StringComparison.OrdinalIgnoreCase)).IsFalse();
+        await Assert.That(text.Contains("DEADBEEF", StringComparison.OrdinalIgnoreCase)).IsFalse();
+        await Assert.That(text.Contains("SECRET", StringComparison.OrdinalIgnoreCase)).IsFalse();
+        await Assert.That(text.Contains("TOKEN", StringComparison.OrdinalIgnoreCase)).IsFalse();
+    }
+
+    [Test]
+    public async Task ParserViolationsShouldCarryFixedLowCardinalityClassification()
+    {
+        var malformed = CaptureException(() =>
+        {
+            var sequence = new ReadOnlySequence<byte>(MutateHeader(length: -1));
+            _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _);
+        });
+        await Assert.That(malformed).IsAssignableTo<SharpLinkException>();
+        await Assert.That(SharpLinkProtocolViolationException.Classify((SharpLinkException)malformed!))
+            .IsEqualTo(ProtocolViolationReason.MalformedFrame);
+
+        var unknownType = CaptureException(() =>
+        {
+            var sequence = new ReadOnlySequence<byte>(MutateHeader(type: 0xFF));
+            _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _);
+        });
+        await Assert.That(SharpLinkProtocolViolationException.Classify((SharpLinkException)unknownType!))
+            .IsEqualTo(ProtocolViolationReason.MalformedFrame);
+    }
+
+    [Test]
+    public async Task ViolationReasonTokensAreFixedAndLowCardinality()
+    {
+        await Assert.That(ProtocolViolationReason.InvalidMagic.ToLogToken()).IsEqualTo("invalid_magic");
+        await Assert.That(ProtocolViolationReason.MalformedFrame.ToLogToken()).IsEqualTo("malformed_frame");
+        await Assert.That(ProtocolViolationReason.ProtocolState.ToLogToken()).IsEqualTo("protocol_state");
+        await Assert.That(ProtocolViolationReason.InternalState.ToLogToken()).IsEqualTo("internal_state");
+        await Assert.That(ProtocolViolationReason.Other.ToLogToken()).IsEqualTo("other");
+    }
+
+    [Test]
     public void CompleteHeaderWithPartialPayloadShouldRemainBuffered()
     {
         var frame = CreateFrame(
@@ -323,28 +386,35 @@ public class ProtocolV2Tests
         Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _),
             "static parser should accept a bounded one-byte Cancel payload");
 
-        var input = new Pipe();
-        var output = new Pipe();
-        await using var session = new RpcSession(
-            "cancel-shape",
-            input.Reader,
-            output.Writer,
-            static () => { },
-            static () => true);
-
-        session.NegotiatedCapabilities = ProtocolV2Capabilities.CancellationReason;
+        var negotiatedInput = new Pipe();
+        var negotiatedOutput = new Pipe();
+        await using var negotiatedSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "cancel-shape-negotiated",
+            negotiatedInput.Reader,
+            negotiatedOutput.Writer,
+            RpcSessionTestFixture.ClientOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            negotiatedSession,
+            ProtocolV2Capabilities.CancellationReason);
         Ensure(
-            session.ReadNegotiatedCancelReason(payload) == ProtocolV2CancelReason.ConsumerAbandoned,
+            negotiatedSession.ReadNegotiatedCancelReason(payload) == ProtocolV2CancelReason.ConsumerAbandoned,
             "negotiated reason should decode");
         await ExpectProtocolViolation(() =>
-            session.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty));
+            negotiatedSession.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty));
 
-        session.NegotiatedCapabilities = ProtocolV2Capabilities.None;
+        var legacyInput = new Pipe();
+        var legacyOutput = new Pipe();
+        await using var legacySession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "cancel-shape-legacy",
+            legacyInput.Reader,
+            legacyOutput.Writer,
+            RpcSessionTestFixture.ClientOptions());
         Ensure(
-            session.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty) ==
+            legacySession.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty) ==
             ProtocolV2CancelReason.Unspecified,
             "legacy empty Cancel should decode as unspecified");
-        await ExpectProtocolViolation(() => session.ReadNegotiatedCancelReason(payload));
+        await ExpectProtocolViolation(() => legacySession.ReadNegotiatedCancelReason(payload));
         await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadCancelReason(
             new ReadOnlySequence<byte>(new byte[] { byte.MaxValue })));
     }
@@ -356,6 +426,7 @@ public class ProtocolV2Tests
         ProtocolV2PayloadCodec.WriteError(
             payload,
             SharpLinkErrorCode.ResourceExhausted,
+            SharpLinkErrorDetails.ResourceExhausted.AdmissionQueue,
             "容量不足🙂🙂🙂",
             12,
             out var truncated);
@@ -366,35 +437,74 @@ public class ProtocolV2Tests
             ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             12);
         Ensure(error.Code == SharpLinkErrorCode.ResourceExhausted, "error code");
+        Ensure(error.DetailCode == SharpLinkErrorDetails.ResourceExhausted.AdmissionQueue, "error detail code");
         Ensure(error.IsTruncated, "truncated flag");
         Ensure(System.Text.Encoding.UTF8.GetByteCount(error.Message) <= 12, "bounded UTF-8 message");
     }
 
     [Test]
-    public void BinaryErrorShouldPreserveResourceReasonAtOneByteMessageLimit()
+    public void BinaryErrorShouldPreserveDetailCodeWhenMessageIsFullyTruncated()
     {
         var wireException = SharpLinkResourceExhaustion.CreateWire(
             SharpLinkResourceExhaustion.ServerCallCapacity,
-            "Server call capacity is exhausted (server_call_capacity).");
+            "Server call capacity is exhausted.");
         using var payload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteError(
             payload,
             wireException.Code,
+            wireException.DetailCode,
             wireException.Message,
-            maxMessageBytes: 1,
+            maxMessageBytes: 0,
             out var truncated);
 
         var error = ProtocolV2PayloadCodec.ReadError(
             new ReadOnlySequence<byte>(payload.WrittenMemory),
             ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
-            maxMessageBytes: 1);
-        var restored = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
+            maxMessageBytes: 0);
+        var restored = SharpLinkResourceExhaustion.CreateRemote(
+            error.Code,
+            error.DetailCode,
+            error.Message);
 
-        Ensure(truncated, "the human-readable suffix should be truncated");
+        Ensure(truncated, "the human-readable message should be fully truncated");
+        Ensure(error.Message.Length == 0, "the message limit should not retain diagnostic text");
+        Ensure(
+            error.DetailCode == SharpLinkErrorDetails.ResourceExhausted.ServerCallCapacity,
+            "the structured detail must survive independently of the message");
         Ensure(
             SharpLinkResourceExhaustion.GetReason(restored) ==
             SharpLinkResourceExhaustion.ServerCallCapacity,
-            "the one-byte wire discriminator must restore the stable reason");
+            "the resource reason must be restored from the structured detail");
+    }
+
+    [Test]
+    public void BinaryErrorShouldPreserveUnknownDetailCode()
+    {
+        const ushort futureDetail = ushort.MaxValue;
+        using var payload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteError(
+            payload,
+            SharpLinkErrorCode.ResourceExhausted,
+            futureDetail,
+            "future detail",
+            Limits.MaxErrorMessageBytes,
+            out var truncated);
+
+        var error = ProtocolV2PayloadCodec.ReadError(
+            new ReadOnlySequence<byte>(payload.WrittenMemory),
+            ProtocolV2FrameFlags.Error,
+            Limits.MaxErrorMessageBytes);
+
+        Ensure(!truncated, "short error message should not be truncated");
+        Ensure(error.DetailCode == futureDetail, "unknown detail values must round-trip unchanged");
+        var exception = SharpLinkResourceExhaustion.CreateRemote(
+            error.Code,
+            error.DetailCode,
+            error.Message);
+        Ensure(exception.DetailCode == futureDetail, "remote exceptions must preserve unknown detail values");
+        Ensure(
+            SharpLinkResourceExhaustion.GetReason(exception) == SharpLinkResourceExhaustion.Unspecified,
+            "unknown resource detail values must not be ambiguously reinterpreted");
     }
 
     [Test]
@@ -428,7 +538,7 @@ public class ProtocolV2Tests
             Limits.MaxErrorMessageBytes,
             out _));
         var readFailure = CaptureException(() => ProtocolV2PayloadCodec.ReadError(
-            new ReadOnlySequence<byte>(new byte[] { 0, 0, 0 }),
+            new ReadOnlySequence<byte>(new byte[] { 0, 0, 0, 0, 0 }),
             ProtocolV2FrameFlags.Error,
             Limits.MaxErrorMessageBytes));
 
@@ -445,6 +555,8 @@ public class ProtocolV2Tests
         var payload = new byte[]
         {
             (byte)SharpLinkErrorCode.Unavailable,
+            0,
+            0,
             0,
             2,
             0xC3,
@@ -463,34 +575,37 @@ public class ProtocolV2Tests
     }
 
     [Test]
-    public async Task GeneratedDtoStringShouldRejectInvalidUtf8()
+    public void GeneratedDtoStringShouldPreserveUtf16LeAndRejectOddByteLength()
     {
         var payload = new byte[]
         {
             2, 0, 0, 0,
             0xC3, 0x28
         };
+        var contiguousReader = new SequenceReader<byte>(new ReadOnlySequence<byte>(payload));
+        Ensure(RpcGeneratedCodecWire.ReadString(ref contiguousReader) == "\u28C3",
+            "contiguous generated string must decode UTF-16LE code units");
+
+        var segmentedReader = new SequenceReader<byte>(CreateSegmented(payload, 1));
+        Ensure(RpcGeneratedCodecWire.ReadString(ref segmentedReader) == "\u28C3",
+            "segmented generated string must decode UTF-16LE code units");
+
+        var oddPayload = new byte[] { 1, 0, 0, 0, 0x41 };
         var contiguousFailure = CaptureException(() =>
         {
-            var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(payload));
+            var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(oddPayload));
             _ = RpcGeneratedCodecWire.ReadString(ref reader);
         });
         var segmentedFailure = CaptureException(() =>
         {
-            var reader = new SequenceReader<byte>(CreateSegmented(payload, 1));
+            var reader = new SequenceReader<byte>(CreateSegmented(oddPayload, 1));
             _ = RpcGeneratedCodecWire.ReadString(ref reader);
         });
 
         Ensure(contiguousFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
-            "contiguous generated string must reject invalid UTF-8");
+            "contiguous generated UTF-16 string must reject an odd byte length");
         Ensure(segmentedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
-            "segmented generated string must reject invalid UTF-8");
-
-        var validReplacementPayload = new byte[] { 3, 0, 0, 0, 0xEF, 0xBF, 0xBD };
-        var validReader = new SequenceReader<byte>(CreateSegmented(validReplacementPayload, 1));
-        Ensure(RpcGeneratedCodecWire.ReadString(ref validReader) == "\uFFFD",
-            "a canonically encoded replacement character must remain valid");
-        await Task.CompletedTask;
+            "segmented generated UTF-16 string must reject an odd byte length");
     }
 
     [Test]
@@ -523,7 +638,7 @@ public class ProtocolV2Tests
         await ExpectProtocolViolation(frame);
 
         var errorPayload = new PooledByteBufferWriter();
-        errorPayload.Write(new byte[sizeof(ushort)]);
+        errorPayload.Write(new byte[] { (byte)SharpLinkErrorCode.Unavailable, 0, 0, 0 });
         ProtocolV2PayloadCodec.WriteVarUInt32(
             errorPayload, checked((uint)Limits.MaxErrorMessageBytes + 1));
         await ExpectProtocolViolation(CreateFrame(

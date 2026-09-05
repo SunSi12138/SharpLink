@@ -12,13 +12,13 @@ internal sealed partial class SharpLinkClient
         long requestId,
         ProtocolV2FrameFlags flags,
         Action<IBufferWriter<byte>>? payloadWriter,
-        DateTimeOffset? deadline = null,
+        RpcDeadline deadline = default,
         SharpLinkMetadata? metadata = null)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
-        if (deadline is not null)
-            flags |= ProtocolV2FrameFlags.HasDeadline;
+        if (deadline.HasValue)
+            flags |= ProtocolV2FrameFlags.HasTimeBudget;
         if (hasMetadata)
         {
             if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
@@ -48,12 +48,12 @@ internal sealed partial class SharpLinkClient
                 BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
                 writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
-                if (deadline is { } absoluteDeadline)
+                if (deadline.HasValue)
                 {
-                    var deadlineSpan = writer.GetSpan(sizeof(long));
-                    BinaryPrimitives.WriteInt64LittleEndian(
-                        deadlineSpan,
-                        absoluteDeadline.ToUnixTimeMilliseconds());
+                    // Placeholder only. RpcSession stamps the remaining TimeBudget immediately
+                    // before the batch is flushed to the transport.
+                    var timeBudgetSpan = writer.GetSpan(sizeof(long));
+                    BinaryPrimitives.WriteInt64LittleEndian(timeBudgetSpan, 0L);
                     writer.Advance(sizeof(long));
                 }
                 if (hasMetadata)
@@ -66,7 +66,7 @@ internal sealed partial class SharpLinkClient
 
             // SendPacket takes ownership even when enqueueing detects a terminal session.
             ownsWriter = false;
-            session.SendPacket(writer);
+            session.SendPacket(writer, deadline);
         }
         finally
         {
@@ -79,11 +79,13 @@ internal sealed partial class SharpLinkClient
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
+        IRpcCodec<T> codec,
         CancellationToken cancellationToken = default)
         => Task.FromException(new InvalidOperationException(
-            "Client streams must use the connection-bound sink supplied to generated stream writers."));
+  "Client streams must use the connection-bound sink supplied to generated stream writers."));
 
-    private static ValueTask DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
+
+    private static ValueTask DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))
@@ -114,7 +116,10 @@ internal sealed partial class SharpLinkClient
             return;
         }
         var error = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
-        var exception = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
+        var exception = SharpLinkResourceExhaustion.CreateRemote(
+            error.Code,
+            error.DetailCode,
+            error.Message);
         if (streamId == 0)
         {
             connection.PendingCalls.TryComplete(
@@ -148,19 +153,12 @@ internal sealed partial class SharpLinkClient
 
     private void HandleDisconnected(ClientConnection connection, Exception ex)
     {
-        if (!RemoveReadyConnection(connection))
+        if (!TryStartConnectionCleanup(connection, "DisconnectedConnectionCleanup", ex))
             return;
 
         var session = connection.Session;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         LogClientDisconnectedWithError(_logger, ex);
-
-        connection.Fail(ex);
-        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
-
-        if (_shutdownCts.IsCancellationRequested ||
-            State is SharpLinkConnectionState.Stopped)
-            return;
 
         if (ReadyConnectionCount != 0)
         {
@@ -169,12 +167,25 @@ internal sealed partial class SharpLinkClient
             return;
         }
 
-        ResetReadySignal();
-        var stableTicks = Stopwatch.GetTimestamp() - Volatile.Read(ref _readyTimestamp);
-        if (stableTicks >= 30L * Stopwatch.Frequency)
+        var stableDuration = _runtimeContext.TimeProvider.GetElapsedTime(
+            Volatile.Read(ref _readyTimestamp));
+        if (stableDuration >= TimeSpan.FromSeconds(30))
             Volatile.Write(ref _reconnectDelayMilliseconds, 100);
         TransitionTo(SharpLinkConnectionState.Reconnecting);
         EnsureReconnectLoop();
+    }
+
+    internal void HandleConnectionFatalFailure(ClientConnection connection, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(exception);
+        if (_cluster is not null)
+        {
+            _cluster.HandleConnectionFailure(connection, exception);
+            return;
+        }
+
+        HandleDisconnected(connection, exception);
     }
 
     private void EnsureReconnectLoop()
@@ -184,7 +195,10 @@ internal sealed partial class SharpLinkClient
             if (_shutdownCts.IsCancellationRequested)
                 return;
             if (_reconnectTask is not { IsCompleted: false })
+            {
                 _reconnectTask = ReconnectLoopAsync();
+                TrackFrameworkTask(_reconnectTask, "ReconnectLoop");
+            }
             if (_reconnectSignal.CurrentCount == 0)
                 _reconnectSignal.Release();
         }
@@ -207,11 +221,13 @@ internal sealed partial class SharpLinkClient
                    ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
                 var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
-                var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
-                var delay = TimeSpan.FromMilliseconds(baseDelay * jitter);
+                var delay = _reconnectJitter.ScaleTwentyPercent(baseDelay);
                 try
                 {
-                    await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
+                    await Task.Delay(
+                        delay,
+                        _runtimeContext.TimeProvider,
+                        _shutdownCts.Token).ConfigureAwait(false);
                     SharpLinkTelemetry.ReconnectAttempt();
                     await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
                     PublishReadyState();
@@ -251,7 +267,7 @@ internal sealed partial class SharpLinkClient
                 var second = Random.Shared.Next(connections.Length - 1);
                 if (second >= first)
                     second++;
-                selected = SelectLeastLoaded(connections, first, second);
+                selected = EndpointSelectionKernel.SelectLeastLoaded(connections, first, second);
             }
 
             if (selected.CanAcceptCalls)
@@ -300,23 +316,6 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    internal static ClientConnection SelectLeastLoaded(
-        ClientConnection[] connections,
-        int first,
-        int second)
-    {
-        ArgumentNullException.ThrowIfNull(connections);
-        ArgumentOutOfRangeException.ThrowIfNegative(first);
-        ArgumentOutOfRangeException.ThrowIfNegative(second);
-        if ((uint)first >= (uint)connections.Length || (uint)second >= (uint)connections.Length)
-            throw new ArgumentOutOfRangeException(nameof(first));
-        var firstConnection = connections[first];
-        var secondConnection = connections[second];
-        return firstConnection.ActiveCallCount <= secondConnection.ActiveCallCount
-            ? firstConnection
-            : secondConnection;
-    }
-
     private bool RemoveReadyConnection(ClientConnection connection)
     {
         lock (_poolGate)
@@ -324,6 +323,29 @@ internal sealed partial class SharpLinkClient
             if (!_connections.Remove(connection))
                 return false;
             PublishReadySnapshotLocked();
+            return true;
+        }
+    }
+
+    private bool TryStartConnectionCleanup(
+        ClientConnection connection,
+        string operation,
+        Exception? failure = null)
+    {
+        lock (_poolGate)
+        {
+            // Once Stop has closed the pool admission gate, the connection remains published
+            // for StopCore to snapshot and dispose. Before that point, task start and Track are
+            // one indivisible owner transition relative to Seal.
+            if (_poolStopping || !_connections.Remove(connection))
+                return false;
+
+            PublishReadySnapshotLocked();
+            if (failure is not null)
+                connection.Fail(failure);
+            TrackFrameworkTask(
+                DisposeDisconnectedConnectionAsync(connection),
+                operation);
             return true;
         }
     }
@@ -348,7 +370,6 @@ internal sealed partial class SharpLinkClient
             EnsureReconnectLoop();
             return;
         }
-        ResetReadySignal();
         TransitionTo(SharpLinkConnectionState.Draining);
         EnsureReconnectLoop();
     }
@@ -384,12 +405,10 @@ internal sealed partial class SharpLinkClient
         }
         if (connection.State != ClientConnectionState.Draining ||
             connection.ActiveCallCount != 0 ||
-            !RemoveReadyConnection(connection))
+            !TryStartConnectionCleanup(connection, "DrainingConnectionCleanup"))
         {
             return;
         }
-
-        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
     }
 
     private void EnsureExpansion()
@@ -406,6 +425,7 @@ internal sealed partial class SharpLinkClient
                 return;
             }
             _expansionTask = ExpandOneAsync();
+            TrackFrameworkTask(_expansionTask, "ConnectionPoolExpansion");
         }
     }
 

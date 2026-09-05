@@ -62,12 +62,57 @@ internal static class SharpLinkAssemblyManifestLoader
                     "The assembly does not contain a source-generated SharpLink manifest locator.",
                     assembly);
             }
-            if (locator.ConstructorArguments.Count != 1 ||
-                locator.ConstructorArguments[0].Value is not Type manifestType)
+            if (locator.ConstructorArguments.Count == 1 &&
+                locator.ConstructorArguments[0].Value is Type)
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    SharpLinkGeneratedManifestCompatibility.FormatVersionMismatch(
+                        actualApiVersion: 3,
+                        actualProtocolVersion: 2,
+                        generatorVersion: "<unavailable: legacy API 3 locator>"),
+                    assembly);
+            }
+            if (locator.ConstructorArguments.Count == 4 &&
+                locator.ConstructorArguments[0].Value is Type &&
+                locator.ConstructorArguments[1].Value is int legacyApiVersion &&
+                locator.ConstructorArguments[2].Value is int legacyProtocolVersion &&
+                locator.ConstructorArguments[3].Value is string legacyGeneratorVersion)
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    SharpLinkGeneratedManifestCompatibility.FormatVersionMismatch(
+                        legacyApiVersion,
+                        legacyProtocolVersion,
+                        legacyGeneratorVersion,
+                        actualAbiIdentity: "<missing: pre-current ABI locator>"),
+                    assembly);
+            }
+            if (locator.ConstructorArguments.Count != 5 ||
+                locator.ConstructorArguments[0].Value is not Type manifestType ||
+                locator.ConstructorArguments[1].Value is not int apiVersion ||
+                locator.ConstructorArguments[2].Value is not int protocolVersion ||
+                locator.ConstructorArguments[3].Value is not string generatorVersion ||
+                string.IsNullOrWhiteSpace(generatorVersion) ||
+                locator.ConstructorArguments[4].Value is not string abiIdentity ||
+                string.IsNullOrWhiteSpace(abiIdentity))
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
-                    "The SharpLink manifest locator does not contain a valid manifest type.",
+                    "The SharpLink manifest locator is not a valid current self-describing locator.",
+                    assembly);
+            }
+            if (apiVersion != SharpLinkGeneratedManifestVersions.Api ||
+                protocolVersion != SharpLinkGeneratedManifestVersions.Protocol ||
+                !string.Equals(abiIdentity, SharpLinkGeneratedManifestVersions.AbiIdentity, StringComparison.Ordinal))
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    SharpLinkGeneratedManifestCompatibility.FormatVersionMismatch(
+                        apiVersion,
+                        protocolVersion,
+                        generatorVersion,
+                        abiIdentity),
                     assembly);
             }
             if (!ReferenceEquals(manifestType.Assembly, assembly))
@@ -84,25 +129,16 @@ internal static class SharpLinkAssemblyManifestLoader
                     $"Manifest type '{manifestType.FullName}' does not implement ISharpLinkGeneratedAssemblyManifest.",
                     assembly);
             }
-            if (!ReferenceEquals(generated.OwnerAssembly, assembly))
+            if (generated.ApiVersion != apiVersion ||
+                generated.ProtocolVersion != protocolVersion ||
+                !string.Equals(generated.GeneratorVersion, generatorVersion, StringComparison.Ordinal))
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
-                    $"Manifest owner '{generated.OwnerAssembly.FullName}' does not match incoming assembly '{assembly.FullName}'.",
+                    "The materialized manifest metadata does not match its self-describing locator.",
                     assembly);
             }
-            if (generated.ApiVersion != SharpLinkGeneratedManifestVersions.Api ||
-                generated.ProtocolVersion != SharpLinkGeneratedManifestVersions.Protocol)
-            {
-                return Failure(
-                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
-                    $"Manifest compatibility mismatch: API {generated.ApiVersion}/{SharpLinkGeneratedManifestVersions.Api}, " +
-                    $"Protocol {generated.ProtocolVersion}/{SharpLinkGeneratedManifestVersions.Protocol}, " +
-                    $"Generator '{generated.GeneratorVersion}'.",
-                    assembly);
-            }
-
-            var validationError = ValidateManifest(generated, assembly);
+            var validationError = SharpLinkGeneratedManifestCompatibility.Validate(generated, assembly);
             if (validationError is not null)
                 return SharpLinkAssemblyRegistrationResult.Failure(validationError);
 
@@ -136,11 +172,25 @@ internal static class SharpLinkAssemblyManifestLoader
         if (string.IsNullOrWhiteSpace(manifest.GeneratorVersion) ||
             string.IsNullOrWhiteSpace(manifest.CompileTimeDescriptor) ||
             manifest.Contracts is null || manifest.Services is null ||
-            manifest.Codecs is null || manifest.Dependencies is null)
+            manifest.Codecs is null || manifest.ContractCodecs is null ||
+            manifest.Dependencies is null)
         {
             return Error(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 "The generated manifest contains a null or empty required metadata field.",
+                assembly,
+                "Manifest");
+        }
+
+        try
+        {
+            SharpLinkGeneratedManifestStructureValidator.Validate(manifest);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            return Error(
+                SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                exception.Message,
                 assembly,
                 "Manifest");
         }
@@ -266,7 +316,7 @@ internal static class SharpLinkAssemblyManifestLoader
         for (var codecIndex = 0; codecIndex < manifest.Codecs.Count; codecIndex++)
         {
             var codec = manifest.Codecs[codecIndex];
-            if (codec is null || codec.TargetType is null || string.IsNullOrWhiteSpace(codec.SchemaId))
+            if (codec is null || codec.TargetType is null || codec.CodecHash.IsEmpty)
             {
                 return Error(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
@@ -281,7 +331,7 @@ internal static class SharpLinkAssemblyManifestLoader
                     $"Manifest contains more than one Codec for '{codec.TargetType.FullName}'.",
                     assembly,
                     "Codec",
-                    incomingFingerprint: codec.SchemaId);
+                    incomingFingerprint: codec.CodecHash.ToString());
             }
         }
 
@@ -352,7 +402,6 @@ internal static class SharpLinkAssemblyManifestLoader
 
 internal sealed class SharpLinkDynamicModule
 {
-    private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
     private readonly PaddedCounter[] _callCounters;
     private readonly PaddedCounter[] _streamCounters;
     private readonly int _stripeMask;
@@ -401,6 +450,21 @@ internal sealed class SharpLinkDynamicModule
 
     internal int RemainingStreams => Sum(_streamCounters);
 
+    /// <summary>
+    /// Validates the aggregate view of the striped module counters at a lifecycle or test boundary.
+    /// It deliberately does not alter the striped acquire/release fast path.
+    /// </summary>
+    internal void AssertAccountingInvariant()
+    {
+        var remainingCalls = RemainingCalls;
+        var remainingStreams = RemainingStreams;
+        if (remainingCalls < 0 || remainingStreams < 0 || remainingStreams > remainingCalls)
+        {
+            throw new InvalidOperationException(
+                "Dynamic module call and stream lease counters are inconsistent.");
+        }
+    }
+
     internal bool TryAcquire(bool stream, out SharpLinkDynamicModuleLease lease)
     {
         lease = default;
@@ -434,31 +498,23 @@ internal sealed class SharpLinkDynamicModule
     internal Task WaitForDrainAsync() => _drained.Task;
 
     internal static async Task<bool> WaitForDrainAsync(Task drainTask, TimeSpan gracefulTimeout)
+        => await WaitForDrainAsync(
+            drainTask,
+            gracefulTimeout,
+            TimeProvider.System).ConfigureAwait(false);
+
+    internal static async Task<bool> WaitForDrainAsync(
+        Task drainTask,
+        TimeSpan gracefulTimeout,
+        TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(drainTask);
+        ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        while (true)
-        {
-            if (drainTask.IsCompleted)
-            {
-                await drainTask.ConfigureAwait(false);
-                return true;
-            }
-
-            var delay = gracefulTimeout > MaximumTimerDelay
-                ? MaximumTimerDelay
-                : gracefulTimeout;
-            if (ReferenceEquals(
-                    await Task.WhenAny(drainTask, Task.Delay(delay)).ConfigureAwait(false),
-                    drainTask))
-            {
-                await drainTask.ConfigureAwait(false);
-                return true;
-            }
-            if (gracefulTimeout <= MaximumTimerDelay)
-                return false;
-            gracefulTimeout -= MaximumTimerDelay;
-        }
+        return await SharpLinkTimer.WaitAsync(
+            drainTask,
+            gracefulTimeout,
+            timeProvider).ConfigureAwait(false);
     }
 
     internal void CancelRemainingCalls()

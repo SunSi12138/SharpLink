@@ -22,6 +22,12 @@ public static class SharpLinkTelemetry
 
     private static readonly UpDownCounter<long> ActiveConnections =
         Meter.CreateUpDownCounter<long>("sharplink.connections.active", unit: "{connection}");
+    private static readonly UpDownCounter<long> AdmittedConnections =
+        Meter.CreateUpDownCounter<long>("sharplink.connections.admitted", unit: "{connection}");
+    private static readonly UpDownCounter<long> ActiveHandshakes =
+        Meter.CreateUpDownCounter<long>("sharplink.connections.handshakes.active", unit: "{connection}");
+    private static readonly Counter<long> RejectedConnections =
+        Meter.CreateCounter<long>("sharplink.connections.rejected", unit: "{connection}");
     private static readonly ObservableUpDownCounter<long> ClientActiveEndpoints =
         Meter.CreateObservableUpDownCounter(
             "sharplink.client.endpoints.active",
@@ -150,11 +156,14 @@ public static class SharpLinkTelemetry
         var activity = ClientActivitySource.StartActivity("sharplink.rpc.attempt", ActivityKind.Client);
         if (activity is null)
             return default;
-        activity.SetTag("rpc.system", "sharplink");
-        activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
-        activity.SetTag("rpc.sharplink.method_id", method.MethodId);
-        activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
-        activity.SetTag("rpc.sharplink.attempt", attempt);
+        if (activity.IsAllDataRequested)
+        {
+            activity.SetTag("rpc.system", "sharplink");
+            activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
+            activity.SetTag("rpc.sharplink.method_id", method.MethodId);
+            activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
+            activity.SetTag("rpc.sharplink.attempt", attempt);
+        }
         return new AttemptScope(activity);
     }
 
@@ -175,6 +184,16 @@ public static class SharpLinkTelemetry
         RecordDelta(ActiveConnections, -1, side);
         if (side == "client")
             Interlocked.Decrement(ref _clientActiveConnectionCount);
+    }
+    internal static void AddAdmittedConnections(long count) => RecordDelta(AdmittedConnections, count, "server");
+    internal static void AddActiveHandshakes(long count) => RecordDelta(ActiveHandshakes, count, "server");
+    internal static void RecordConnectionRejected(string reason)
+    {
+        if (!RejectedConnections.Enabled)
+            return;
+        RejectedConnections.Add(
+            1,
+            new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
     }
     internal static void AddClientActiveEndpoints(long count)
     {
@@ -378,12 +397,15 @@ public static class SharpLinkTelemetry
             activity = source.StartActivity("sharplink.rpc", kind);
             if (activity is not null)
             {
-                activity.SetTag("rpc.system", "sharplink");
-                activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
-                activity.SetTag("rpc.sharplink.method_id", method.MethodId);
-                activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
-                if (requestId != 0)
-                    activity.SetTag("rpc.sharplink.request_id", requestId);
+                if (activity.IsAllDataRequested)
+                {
+                    activity.SetTag("rpc.system", "sharplink");
+                    activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
+                    activity.SetTag("rpc.sharplink.method_id", method.MethodId);
+                    activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
+                    if (requestId != 0)
+                        activity.SetTag("rpc.sharplink.request_id", requestId);
+                }
             }
         }
 
@@ -475,6 +497,12 @@ public static class SharpLinkTelemetry
         }
 
         internal readonly bool IsEnabled => _side is not null;
+
+        internal readonly void SetTag(string key, object? value)
+        {
+            if (_activity?.IsAllDataRequested == true)
+                _activity.SetTag(key, value);
+        }
 
         internal void Complete(Exception? exception = null)
         {

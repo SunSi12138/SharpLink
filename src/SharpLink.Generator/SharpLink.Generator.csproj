@@ -27,9 +27,8 @@
     </ItemGroup>
 
     <ItemGroup>
-        <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
-        <AdditionalFiles Include="AnalyzerReleases.UnShipped.md" />
+        <Compile Include="..\SharpLink.Shared\RpcBuiltinCollectionWireCatalog.cs"
+                 Link="Shared\RpcBuiltinCollectionWireCatalog.cs" />
     </ItemGroup>
-
 
 </Project>

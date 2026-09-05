@@ -30,8 +30,12 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Where(m => m != null);
 
         var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
-                AnalyzeGeneratedCodecs(compilation, ct))
+                AnalyzeGeneratedCodecsWithPolicyOwnership(compilation, ct))
             .WithComparer(DtoGenerationResultComparer.Instance);
+        var boundInterfaces = interfaces
+            .Combine(generatedCodecs)
+            .Select(static (value, _) => BindFinalCodecSelections(value.Left, value.Right))
+            .Where(static model => model is not null);
 
         var services = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
@@ -64,11 +68,6 @@ public partial class RpcGenerator : IIncrementalGenerator
                 RpcContractAttributeMetadataName,
                 static (node, _) => node is InterfaceDeclarationSyntax,
                 static (attributeContext, ct) => GetInvalidCancellationTokenMethods(attributeContext, ct))
-            .Where(x => x.Length > 0);
-        var invalidCallOptionsMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
-                RpcContractAttributeMetadataName,
-                static (node, _) => node is InterfaceDeclarationSyntax,
-                static (attributeContext, ct) => GetInvalidCallOptionsMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
         var invalidControlParameterOrderMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
@@ -138,11 +137,6 @@ public partial class RpcGenerator : IIncrementalGenerator
                     method.MethodName);
                 spc.ReportDiagnostic(diagnostic);
             }
-        });
-        context.RegisterSourceOutput(invalidCallOptionsMethods, static (spc, methods) =>
-        {
-            foreach (var method in methods)
-                spc.ReportDiagnostic(Diagnostic.Create(MultipleCallOptionsRule, method.Location, method.MethodName));
         });
         context.RegisterSourceOutput(invalidControlParameterOrderMethods, static (spc, methods) =>
         {
@@ -268,12 +262,11 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        context.RegisterSourceOutput(interfaces, (spc, model) =>
+        context.RegisterSourceOutput(boundInterfaces, (spc, model) =>
         {
-            var proxy = GenerateProxy(model!);
-            spc.AddSource(GetProxyHintName(model!), SourceText.From(proxy, Encoding.UTF8));
-            var stub = GenerateStub(model!);
-            spc.AddSource(GetStubHintName(model!), SourceText.From(stub, Encoding.UTF8));
+            var proxyHelpers = GenerateProxyHelpers(model!);
+            if (!string.IsNullOrEmpty(proxyHelpers))
+                spc.AddSource(GetProxyHintName(model!), SourceText.From(proxyHelpers, Encoding.UTF8));
         });
 
         context.RegisterSourceOutput(generatedCodecs, static (spc, result) =>
@@ -294,6 +287,12 @@ public partial class RpcGenerator : IIncrementalGenerator
                     DtoDiagnosticKind.AdapterTargetInvalid => InvalidAdapterTargetRule,
                     DtoDiagnosticKind.AdapterIdentityConflict => AdapterIdentityConflictRule,
                     DtoDiagnosticKind.BuiltinAdapterOverride => BuiltinAdapterOverrideRule,
+                    DtoDiagnosticKind.CustomCodecBindingInvalid => InvalidCustomCodecBindingRule,
+                    DtoDiagnosticKind.CustomCodecTargetInvalid => InvalidCustomCodecTargetRule,
+                    DtoDiagnosticKind.CustomCodecTypeInvalid => InvalidCustomCodecTypeRule,
+                    DtoDiagnosticKind.CustomCodecIdentityInvalid => InvalidCustomCodecIdentityRule,
+                    DtoDiagnosticKind.CustomCodecSelectionConflict => CustomCodecSelectionConflictRule,
+                    DtoDiagnosticKind.BuiltinCustomCodecOverride => BuiltinCustomCodecOverrideRule,
                     _ => UnsupportedGeneratedDtoRule
                 };
                 spc.ReportDiagnostic(Diagnostic.Create(
@@ -303,23 +302,73 @@ public partial class RpcGenerator : IIncrementalGenerator
                     diagnostic.Detail));
             }
 
-            if (!result.Codecs.IsDefaultOrEmpty)
+            foreach (var diagnostic in result.UnsafeBlitAutoLayoutDiagnostics)
             {
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    ImplicitUnsafeBlitAutoLayoutRule,
+                    diagnostic.Location,
+                    diagnostic.PayloadType,
+                    diagnostic.TypeName,
+                    diagnostic.FieldPath));
+            }
+
+            if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)
+            {
+                var codecs = result.Codecs.AddRange(result.ContractCodecs);
                 spc.AddSource(
                     "SharpLink.GeneratedCodecs.g.cs",
-                    SourceText.From(GenerateCodecs(result.Codecs), Encoding.UTF8));
+                    SourceText.From(GenerateCodecs(codecs, result.DtoAnalysis), Encoding.UTF8));
+            }
+
+            if (!result.UnsafeBlitRequirements.IsDefaultOrEmpty)
+            {
+                spc.AddSource(
+                    "SharpLink.GeneratedUnsafeBlitRequirements.g.cs",
+                    SourceText.From(GenerateUnsafeBlitRequirements(result.UnsafeBlitRequirements), Encoding.UTF8));
             }
         });
 
-        var manifest = interfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
+        var manifest = boundInterfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
-            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs);
+            if (!value.Right.Diagnostics.IsDefaultOrEmpty)
+                return;
+
+            var interfaces = value.Left.Left;
+            var services = value.Left.Right;
+            var codecs = value.Right.Codecs;
+            var contractCodecs = value.Right.ContractCodecs;
+            var codecHashes = value.Right.CodecHashes;
+            var contracts = GetContractModels(interfaces);
+            var serviceModels = GetServiceModels(services);
+
+            var code = GenerateAssemblyManifest(
+                interfaces,
+                services,
+                codecs,
+                contractCodecs,
+                codecHashes,
+                value.Right.ReferencedCodecHashes,
+                value.Right.AssemblyLogicalIdentity);
             if (!string.IsNullOrEmpty(code))
             {
+                var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs, contractCodecs);
                 spc.AddSource(
                     "SharpLink.GeneratedAssemblyManifest.g.cs",
                     SourceText.From(code, Encoding.UTF8));
+
+                foreach (var contract in contracts)
+                {
+                    var proxy = GenerateProxy(manifestTypeName, contract);
+                    spc.AddSource(
+                        GetProxyArtifactHintName(contract),
+                        SourceText.From(proxy, Encoding.UTF8));
+
+                    var stub = GenerateStub(manifestTypeName, contract);
+                    spc.AddSource(
+                        GetStubHintName(contract),
+                        SourceText.From(stub, Encoding.UTF8));
+                }
             }
         });
 
@@ -330,7 +379,8 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Select(static (value, _) => new ContractManifestModels(
                 value.Left.Left.Left,
                 value.Left.Left.Right,
-                value.Left.Right.Codecs,
+                GetContractManifestCodecs(value.Left.Right),
+                value.Left.Right.CodecHashes,
                 value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider
@@ -342,6 +392,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 value.Left.Left.Interfaces,
                 value.Left.Left.Services,
                 value.Left.Left.Codecs,
+                value.Left.Left.CodecHashes,
                 value.Left.Left.Enums,
                 value.Left.Left.Unions,
                 value.Left.Right,

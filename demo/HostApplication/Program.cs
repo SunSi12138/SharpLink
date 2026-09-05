@@ -29,6 +29,7 @@ builder.Services.AddSharpLinkClient(client =>
 {
     client
         .UseTcp("127.0.0.1", port)
+        .UseRequestTimeout()
         ;
 });
 
@@ -45,7 +46,7 @@ public sealed class HostRpcDemoService(
     {
         var clientGetter = clientAccessor.GetClientAsync(cancellationToken);
         var client = clientGetter.IsCompleted ? clientGetter.Result : await clientGetter;
-            
+
 
         logger.LogInformation("Host RPC demo starting.");
         var hello = client.Get<IHelloService>();

@@ -109,7 +109,7 @@ public class SharpLinkAdmissionRuleOptions
 
     internal bool HasLimit => Concurrency is not null || RateLimit is not null;
 
-    private protected void CopyLimitsTo(SharpLinkAdmissionRuleOptions destination)
+    internal void CopyLimitsTo(SharpLinkAdmissionRuleOptions destination)
     {
         destination.Concurrency = Concurrency is null
             ? null
@@ -152,6 +152,14 @@ public class SharpLinkAdmissionRuleOptions
                 slidingWindow.Validate();
                 break;
         }
+    }
+
+    internal SharpLinkAdmissionRuleOptions CloneRuleValidated()
+    {
+        Validate();
+        var clone = new SharpLinkAdmissionRuleOptions();
+        CopyLimitsTo(clone);
+        return clone;
     }
 
     private SharpLinkAdmissionRuleOptions SetRateLimit<T>(Action<T> configure, Func<T> factory)
@@ -207,8 +215,7 @@ public sealed class SharpLinkAdmissionContext
         RpcMethodKind methodKind,
         string connectionId,
         SharpLinkAuthenticationContext? authenticationContext,
-        SharpLinkMetadata? metadata,
-        DateTimeOffset? deadline)
+        SharpLinkMetadata? metadata)
     {
         ContractId = contractId;
         MethodId = methodId;
@@ -216,7 +223,6 @@ public sealed class SharpLinkAdmissionContext
         ConnectionId = connectionId;
         AuthenticationContext = authenticationContext;
         Metadata = metadata;
-        Deadline = deadline;
     }
 
     /// <summary>Gets the stable generated contract ID.</summary>
@@ -231,8 +237,6 @@ public sealed class SharpLinkAdmissionContext
     public SharpLinkAuthenticationContext? AuthenticationContext { get; }
     /// <summary>Gets request metadata, or <see langword="null"/> when absent.</summary>
     public SharpLinkMetadata? Metadata { get; }
-    /// <summary>Gets the absolute request deadline, when present.</summary>
-    public DateTimeOffset? Deadline { get; }
 }
 
 /// <summary>Configures optional active admission control for one SharpLink server.</summary>
@@ -367,6 +371,32 @@ public sealed class SharpLinkAdmissionControlOptions
     internal IReadOnlyList<AdmissionRuleRegistration> Rules => _rules;
     internal Func<SharpLinkAdmissionContext, string?>? PartitionSelector => _partitionSelector;
     internal SharpLinkPartitionAdmissionOptions? Partition => _partition;
+
+    /// <summary>Validates and deep-copies every mutable admission option for one build plan.</summary>
+    internal SharpLinkAdmissionControlOptions CloneValidated()
+    {
+        Validate();
+        var clone = new SharpLinkAdmissionControlOptions
+        {
+            MaxQueuedCalls = MaxQueuedCalls,
+            MaxQueuedBytes = MaxQueuedBytes,
+            MaxQueueDelay = MaxQueueDelay,
+            QueueOneWayCalls = QueueOneWayCalls,
+            _partitionSelector = _partitionSelector,
+            _partition = _partition?.CloneValidated()
+        };
+        Global.CopyLimitsTo(clone.Global);
+        foreach (var registration in _rules)
+        {
+            clone._rules.Add(new AdmissionRuleRegistration(
+                registration.ContractType,
+                registration.ContractId,
+                registration.MethodName,
+                registration.MethodId,
+                registration.Rule.CloneRuleValidated()));
+        }
+        return clone;
+    }
 
     private SharpLinkAdmissionControlOptions AddRule(AdmissionRuleRegistration registration)
     {

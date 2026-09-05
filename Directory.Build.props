@@ -7,7 +7,7 @@
     </PropertyGroup>
     <!-- Nuget包信息 -->
     <PropertyGroup>
-        <VersionPrefix>1.1.2</VersionPrefix>
+        <VersionPrefix>2.0.0</VersionPrefix>
         <Authors>sunsi</Authors>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
@@ -60,6 +60,7 @@
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
         <NuGetAudit>true</NuGetAudit>
         <NuGetAuditMode>all</NuGetAuditMode>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
     </PropertyGroup>
     <!-- 调试配置 -->

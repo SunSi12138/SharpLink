@@ -1,0 +1,407 @@
+schema_version: 1
+
+# Canonical machine-readable policy for ProjectReference edges whose origin is
+# under test/. Production-origin edges remain exclusively governed by
+# doc/project-reference-boundaries.yml.
+production_policy:
+  path: doc/project-reference-boundaries.yml
+  authoritative_for_production_origins: true
+  project_ids_source: projects
+  test_policy_may_relax_production_policy: false
+
+scope:
+  test_root: test
+  test_project_glob: "**/*.csproj"
+  reference_kind: ProjectReference
+  origin: test
+  default: deny
+  package_references: out_of_scope
+  fixtures: included
+
+inventory:
+  baseline_branch: dev
+  baseline_commit: 3e772ef0de75bda9f79d5f3508ef01f573bb6254
+  project_reference_edge_count: 107
+  allowed_references_are_current_inventory: true
+  debt_exception_count: 0
+
+evaluation:
+  active_items:
+    source: msbuild_evaluated_items
+    include_imports: true
+    respect_conditions: true
+  declaration_audit:
+    source: project_and_repository_import_closure
+    ignore_project_reference_conditions_for_authorization: true
+    ignore_repository_import_conditions_for_traversal: true
+    repository_imports_must_be_statically_traversable: true
+    project_reference_include_must_be_literal_path: true
+    unresolved_or_dynamic_project_reference_include: deny
+    conditions_may_gate_presence_only: true
+    mode_metadata_must_be_context_invariant: true
+    mode_metadata_values_must_be_literal_on_reference:
+      - ReferenceOutputAssembly
+      - OutputItemType
+    mode_metadata_from_item_definitions_or_updates: deny
+
+mode_semantics:
+  assembly:
+    effective_metadata_defaults:
+      ReferenceOutputAssembly: "true"
+    required_effective_metadata:
+      ReferenceOutputAssembly: "true"
+    forbidden_effective_metadata:
+      OutputItemType:
+        - Analyzer
+  analyzer:
+    required_effective_metadata:
+      OutputItemType: Analyzer
+      ReferenceOutputAssembly: "false"
+  build_only:
+    required_effective_metadata:
+      ReferenceOutputAssembly: "false"
+    forbidden_effective_metadata:
+      OutputItemType:
+        - Analyzer
+
+# Test projects that participate in the current ProjectReference graph either
+# as an origin or as a test-project target. Package-only/fixture projects with
+# no ProjectReference participation do not need registration, but any
+# ProjectReference originating from an unregistered test project is denied.
+test_projects:
+  aot_contracts: test/SharpLink.AotContracts/SharpLink.AotContracts.csproj
+  aot_services: test/SharpLink.AotServices/SharpLink.AotServices.csproj
+  aot_smoke: test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj
+  benchmarks: test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+  chaos_tests: test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj
+  codec_compatibility: test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+  codec_compatibility_android: test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj
+  codec_compatibility_browser: test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
+  codec_compatibility_ios: test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj
+  dynamic_contracts: test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj
+  dynamic_services: test/SharpLink.DynamicServices/SharpLink.DynamicServices.csproj
+  generator_tests: test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj
+  integration_tests: test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj
+  load_test_base: test/SharpLink.LoadTestBase/SharpLink.LoadTestBase.csproj
+  load_test: test/SharpLink.LoadTest/SharpLink.LoadTest.csproj
+  load_test_tests: test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj
+  multi_cluster_contracts: test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj
+  package_smoke: test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+  pre_credit_aot_smoke: test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj
+  reference_rooting_package_client: test/SharpLink.ReferenceRooting.PackageClient/SharpLink.ReferenceRooting.PackageClient.csproj
+  reference_rooting_package_contracts: test/SharpLink.ReferenceRooting.PackageContracts/SharpLink.ReferenceRooting.PackageContracts.csproj
+  reference_rooting_package_server: test/SharpLink.ReferenceRooting.PackageServer/SharpLink.ReferenceRooting.PackageServer.csproj
+  reference_rooting_package_services: test/SharpLink.ReferenceRooting.PackageServices/SharpLink.ReferenceRooting.PackageServices.csproj
+  rollback_plugin: test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj
+  sdk_only_package_smoke: test/SharpLink.SdkOnlyPackageSmoke/SharpLink.SdkOnlyPackageSmoke.csproj
+  static_codec_owner_contracts: test/SharpLink.StaticCodecOwnerTest.Contracts/SharpLink.StaticCodecOwnerTest.Contracts.csproj
+  stream_load_test: test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj
+  stream_load_test_tests: test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj
+  unit_tests: test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+  api4_fixture: test/fixtures/generated-api4/source/SharpLink.Api4Fixture.csproj
+
+# Each entry expands to one exact edge for every id in `to`. `target_scope`
+# selects either the production project registry from production_policy or the
+# local test_projects registry. Grouping targets does not authorize any other
+# edge or mode.
+allowed_references:
+  - from: aot_contracts
+    target_scope: production
+    to: [abstractions, sdk]
+    mode: assembly
+    classification: allowed
+  - from: aot_contracts
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+
+  - from: aot_services
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+  - from: aot_services
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: aot_services
+    target_scope: test
+    to: [aot_contracts]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: aot_smoke
+    target_scope: production
+    to: [abstractions, runtime, client, server, sdk, serializer_sharppack]
+    mode: assembly
+    classification: allowed
+  - from: aot_smoke
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: aot_smoke
+    target_scope: test
+    to: [aot_contracts, aot_services]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: benchmarks
+    target_scope: production
+    to: [abstractions, server, client, runtime, sdk, serializer_sharppack]
+    mode: assembly
+    classification: allowed
+  - from: benchmarks
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: benchmarks
+    target_scope: test
+    to: [dynamic_contracts, load_test_base]
+    mode: assembly
+    classification: intentional_test_infrastructure
+  - from: benchmarks
+    target_scope: test
+    to: [dynamic_services]
+    mode: build_only
+    classification: intentional_test_infrastructure
+
+  - from: chaos_tests
+    target_scope: production
+    to: [abstractions, runtime, client, server, sdk]
+    mode: assembly
+    classification: allowed
+  - from: chaos_tests
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+
+  - from: codec_compatibility
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+  - from: codec_compatibility_android
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+  - from: codec_compatibility_browser
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+  - from: codec_compatibility_ios
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+
+  - from: dynamic_contracts
+    target_scope: production
+    to: [sdk, abstractions, serializer_sharppack]
+    mode: assembly
+    classification: allowed
+  - from: dynamic_contracts
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+
+  - from: dynamic_services
+    target_scope: production
+    to: [sdk, abstractions]
+    mode: assembly
+    classification: allowed
+  - from: dynamic_services
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: dynamic_services
+    target_scope: test
+    to: [dynamic_contracts]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: generator_tests
+    target_scope: production
+    to: [generator]
+    mode: assembly
+    classification: allowed
+
+  - from: integration_tests
+    target_scope: production
+    to: [abstractions, runtime, client, server, sdk, serializer_sharppack]
+    mode: assembly
+    classification: allowed
+  - from: integration_tests
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: integration_tests
+    target_scope: test
+    to: [aot_smoke, dynamic_contracts, dynamic_services]
+    mode: build_only
+    classification: intentional_test_infrastructure
+
+  - from: load_test_base
+    target_scope: production
+    to: [abstractions, runtime, client, server, serializer_sharppack]
+    mode: assembly
+    classification: allowed
+
+  - from: load_test
+    target_scope: production
+    to: [abstractions, runtime, client, server, sdk, serializer_sharppack]
+    mode: assembly
+    classification: allowed
+  - from: load_test
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: load_test
+    target_scope: test
+    to: [load_test_base]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: load_test_tests
+    target_scope: test
+    to: [load_test]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: multi_cluster_contracts
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+  - from: multi_cluster_contracts
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+
+  - from: package_smoke
+    target_scope: test
+    to: [sdk_only_package_smoke]
+    mode: assembly
+    classification: intentional_test_infrastructure
+  - from: package_smoke
+    target_scope: test
+    to: [reference_rooting_package_server, reference_rooting_package_client]
+    mode: build_only
+    classification: intentional_test_infrastructure
+
+  - from: pre_credit_aot_smoke
+    target_scope: production
+    to: [abstractions, runtime, client, server, sdk]
+    mode: assembly
+    classification: allowed
+  - from: pre_credit_aot_smoke
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+
+  - from: reference_rooting_package_services
+    target_scope: test
+    to: [reference_rooting_package_contracts]
+    mode: assembly
+    classification: intentional_test_infrastructure
+  - from: reference_rooting_package_server
+    target_scope: test
+    to: [reference_rooting_package_services]
+    mode: assembly
+    classification: intentional_test_infrastructure
+  - from: reference_rooting_package_client
+    target_scope: test
+    to: [reference_rooting_package_contracts]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: rollback_plugin
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+
+  - from: static_codec_owner_contracts
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+  - from: static_codec_owner_contracts
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+
+  - from: stream_load_test
+    target_scope: production
+    to: [abstractions, server, client, runtime, sdk, serializer_sharppack]
+    mode: assembly
+    classification: allowed
+  - from: stream_load_test
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: stream_load_test
+    target_scope: test
+    to: [load_test_base]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: stream_load_test_tests
+    target_scope: test
+    to: [stream_load_test, load_test_base]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: unit_tests
+    target_scope: production
+    to: [abstractions, client, hosting, runtime, sdk, serializer_sharppack, server]
+    mode: assembly
+    classification: allowed
+  - from: unit_tests
+    target_scope: test
+    to: [multi_cluster_contracts, rollback_plugin, static_codec_owner_contracts]
+    mode: assembly
+    classification: intentional_test_infrastructure
+
+  - from: api4_fixture
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+  - from: api4_fixture
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+
+debt_exceptions: []
+
+mechanical_rules:
+  production_origin_policy_is_separate_and_authoritative: true
+  evaluate_all_test_projects_for_outgoing_project_references: true
+  unregistered_test_project_with_project_reference: deny
+  unregistered_test_target: deny
+  test_reference_target_outside_registered_production_or_test_projects: deny
+  evaluated_project_references_include_imports: true
+  conditional_references_cannot_hide_edges: true
+  project_reference_conditions_do_not_affect_authorization: true
+  project_reference_mode_is_condition_invariant: true
+  grouped_targets_expand_to_exact_individual_edges: true
+  unlisted_test_origin_project_references: deny
+  package_only_test_projects_may_remain_unregistered: true
+  debt_exceptions_require_reason_and_tracking_issue: true
+  debt_exceptions_are_not_precedent: true

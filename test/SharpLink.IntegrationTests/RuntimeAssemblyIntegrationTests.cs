@@ -5,13 +5,13 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace SharpLink.IntegrationTests;
 
-public sealed class RuntimeAssemblyIntegrationTests
+public sealed partial class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
     public async Task MultiClusterDynamicRegistrationShouldRouteToOneExplicitSlot()
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster("plugins", child => child.UseTcp(IPAddress.Loopback.ToString(), 1),
                 slot => slot.AllowDynamicContracts = true)
             .AddCluster("other", child => child.UseTcp(IPAddress.Loopback.ToString(), 2),
@@ -150,7 +150,7 @@ public sealed class RuntimeAssemblyIntegrationTests
     public async Task MultiClusterDeferredUnregisterShouldRemoveARegistrationReleasedByItsChild()
     {
         using var plugin = PluginBundle.Load("multi-cluster-deferred-unregister", loadService: false);
-        await using var registrationSource = SharpClientBuilder.Create()
+        await using var registrationSource = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
@@ -184,7 +184,7 @@ public sealed class RuntimeAssemblyIntegrationTests
     public async Task MultiClusterRejectedUnregisterShouldRestoreCoordinatorRoute()
     {
         using var plugin = PluginBundle.Load("multi-cluster-rejected-unregister", loadService: false);
-        await using var registrationSource = SharpClientBuilder.Create()
+        await using var registrationSource = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
@@ -224,7 +224,7 @@ public sealed class RuntimeAssemblyIntegrationTests
     {
         using var originalPlugin = PluginBundle.Load("multi-cluster-rejected-unregister-original", loadService: false);
         using var reloadedPlugin = PluginBundle.Load("multi-cluster-rejected-unregister-reloaded", loadService: false);
-        await using var registrationSource = SharpClientBuilder.Create()
+        await using var registrationSource = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(originalPlugin.ContractAssembly);
@@ -275,7 +275,7 @@ public sealed class RuntimeAssemblyIntegrationTests
             "multi-cluster-replacement-cleanup-failure-old", loadService: false);
         using var newPlugin = PluginBundle.Load(
             "multi-cluster-replacement-cleanup-failure-new", loadService: false);
-        await using var registrationSource = SharpClientBuilder.Create()
+        await using var registrationSource = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), 1)
             .Build();
         var registrationResult = registrationSource.RegisterAssembly(oldPlugin.ContractAssembly);
@@ -532,6 +532,71 @@ public sealed class RuntimeAssemblyIntegrationTests
         Ensure((await harness.Server.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2))).ReferencesReleased, "dormant stream server contract release");
+        proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ServerStreamConsumerExitShouldReleaseDynamicModuleLeasesAndAllCounters()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-server-stream-consumer-exit");
+        plugin.ResetServiceState();
+        RegisterAll(harness, plugin);
+
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        var clientModule = GetDynamicModule(harness.Client, plugin.ContractAssembly);
+        var serverModule = GetDynamicModule(harness.Server, plugin.ServiceAssembly);
+        await using (var enumerator = InvokeStream(
+                proxy,
+                plugin.ContractType,
+                "ServerStreamAsync",
+                int.MaxValue,
+                CancellationToken.None)
+            .GetAsyncEnumerator())
+        {
+            Ensure(await enumerator.MoveNextAsync(),
+                "P2-T06 dynamic stream publishes one item before consumer exit");
+            Ensure(enumerator.Current == 0,
+                "P2-T06 dynamic stream first item preserves the expected route payload");
+            Ensure(clientModule.RemainingCalls == 1 && clientModule.RemainingStreams == 1,
+                "P2-T06 active stream holds one client contract module lease");
+            Ensure(serverModule.RemainingCalls == 1 && serverModule.RemainingStreams == 1,
+                "P2-T06 active stream holds one server service module lease");
+        }
+
+        Ensure(clientModule.RemainingCalls == 0 && clientModule.RemainingStreams == 0,
+            "P2-T06 consumer exit synchronously releases the client module lease");
+        var serverServiceRelease = harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(5)).AsTask();
+        await serverModule.WaitForDrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(serverModule.RemainingCalls == 0 && serverModule.RemainingStreams == 0,
+            "P2-T06 consumer cancellation naturally releases the server module before grace expires");
+        var serverService = await serverServiceRelease.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(serverService.ReferencesReleased &&
+               serverService.RemainingCalls == 0 &&
+               serverService.RemainingStreams == 0,
+            "P2-T06 consumer exit releases the server service module lease");
+        Ensure(plugin.GetStaticInt("Disposed") == 1,
+            "P2-T06 dynamic singleton is disposed exactly once");
+
+        var clientContract = await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(clientContract.ReferencesReleased &&
+               clientContract.RemainingCalls == 0 &&
+               clientContract.RemainingStreams == 0,
+            "P2-T06 consumer exit releases the client contract module lease");
+
+        var serverContract = await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(serverContract.ReferencesReleased &&
+               serverContract.RemainingCalls == 0 &&
+               serverContract.RemainingStreams == 0,
+            "P2-T06 server contract releases after the stream dispatcher exits");
+        EnsureClientAndServerCountersAreZero(harness, "P2-T06 dynamic stream");
         proxy = null;
     }
 
@@ -969,6 +1034,79 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task CancelledUnregisterWaitsShouldNotCancelClientOrServerBackgroundDrain()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-cancelled-unregister-waits");
+        plugin.ResetServiceState();
+        RegisterAll(harness, plugin);
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        var blocked = InvokeValueTaskAsync<int>(
+            proxy,
+            plugin.ContractType,
+            "BlockIgnoringCancellationAsync",
+            CancellationToken.None).AsTask();
+        await plugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var clientCancellation = new CancellationTokenSource();
+        using var serverCancellation = new CancellationTokenSource();
+        var clientWait = harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2),
+            clientCancellation.Token).AsTask();
+        var serverWait = harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2),
+            serverCancellation.Token).AsTask();
+        clientCancellation.Cancel();
+        serverCancellation.Cancel();
+        await EnsureCancelledAsync(clientWait, "client unregister wait");
+        await EnsureCancelledAsync(serverWait, "server unregister wait");
+
+        plugin.ReleaseBlock();
+        Ensure(await blocked.WaitAsync(TimeSpan.FromSeconds(2)) == 43,
+            "the admitted call completes while both background drains continue");
+        await WaitUntilAsync(() => plugin.GetStaticInt("Disposed") == 1);
+
+        SharpLinkAssemblyRegistrationResult clientRegistration = default;
+        await WaitUntilAsync(() =>
+            (clientRegistration = harness.Client.RegisterAssembly(plugin.ContractAssembly)).Succeeded);
+        Ensure(clientRegistration.Succeeded,
+            "client background drain removes the cancelled waiter's old registration");
+        SharpLinkAssemblyRegistrationResult serverRegistration = default;
+        await WaitUntilAsync(() =>
+            (serverRegistration = harness.Server.RegisterAssembly(plugin.ServiceAssembly)).Succeeded);
+        Ensure(serverRegistration.Succeeded,
+            "server background drain removes the cancelled waiter's old registration");
+        object? reRegisteredProxy = GetProxy(harness.Client, plugin.ContractType);
+        Ensure(await InvokeValueTaskAsync<int>(
+                reRegisteredProxy,
+                plugin.ContractType,
+                "UnaryAsync",
+                5,
+                CancellationToken.None) == 6,
+            "re-registered client and server routes serve a new call");
+
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "re-registered server service release");
+        Ensure(plugin.GetStaticInt("Disposed") == 2,
+            "each server service registration is disposed exactly once");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "server contract release");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "re-registered client contract release");
+        proxy = null;
+        reRegisteredProxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ConcurrentUnregisterCallersShouldShareOneDrainOperation()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -1012,84 +1150,86 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task ReplacementShouldPublishNewRoutesWhileOldUnaryDrainsAndThenReleaseItsAlc()
+    public async Task ReplacementShouldRejectContractGenerationWhileDependentServiceRemainsRegistered()
     {
         await using var harness = await DynamicHarness.CreateAsync();
-        var oldPlugin = PluginBundle.Load("replace-old");
-        using var newPlugin = PluginBundle.Load("replace-new");
-        oldPlugin.ResetServiceState();
-        newPlugin.ResetServiceState();
+        using var oldPlugin = PluginBundle.Load("replace-dependency-old");
+        using var newPlugin = PluginBundle.Load("replace-dependency-new");
+        RegisterAll(harness, oldPlugin);
+        object? oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
+
+        Ensure(string.Equals(
+                oldPlugin.ContractAssembly.FullName,
+                newPlugin.ContractAssembly.FullName,
+                StringComparison.Ordinal),
+            "the regression must exercise same-identity replacement across distinct collectible generations");
+        var replacement = await harness.Server.ReplaceAssemblyAsync(
+            oldPlugin.ContractAssembly,
+            newPlugin.ContractAssembly,
+            TimeSpan.Zero);
+        Ensure(!replacement.Succeeded,
+            "a Contract generation must not be replaced while a dynamic service dependant remains registered");
+        Ensure(replacement.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
+            "unsafe same-identity replacement must return the structured dependency error");
+        Ensure(replacement.Error?.Message.Contains("depends on", StringComparison.Ordinal) == true,
+            "replacement rejection should identify the retained dependant");
+        Ensure(await InvokeValueTaskAsync<int>(
+                oldProxy, oldPlugin.ContractType, "UnaryAsync", 9, CancellationToken.None) == 10,
+            "rejected replacement must leave the old Contract/service snapshot serving normally");
+
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            oldPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "dependent service release after replacement rejection");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            oldPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "old server Contract release after dependant removal");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            oldPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "old client Contract release after replacement rejection");
+        oldProxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ReplacementShouldProceedAfterDependentServiceIsRemoved()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var oldPlugin = PluginBundle.Load("replace-safe-order-old");
+        using var newPlugin = PluginBundle.Load("replace-safe-order-new");
         RegisterAll(harness, oldPlugin);
 
-        object? oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
-        var oldCall = InvokeValueTaskAsync<int>(
-            oldProxy,
-            oldPlugin.ContractType,
-            "BlockIgnoringCancellationAsync",
-            CancellationToken.None).AsTask();
-        await oldPlugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
-
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            oldPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "safe replacement removes the service dependant before replacing its Contract generation");
         var serverContract = await harness.Server.ReplaceAssemblyAsync(
             oldPlugin.ContractAssembly,
             newPlugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
         Ensure(serverContract.Succeeded && serverContract.ReferencesReleased,
-            "contract-only replacement drains immediately");
+            "server Contract replacement may proceed once no dynamic dependant retains the old generation");
+        Ensure(harness.Server.RegisterAssembly(newPlugin.ServiceAssembly).Succeeded,
+            "the new service generation may register after its new Contract generation is published");
 
-        var serverServiceTask = harness.Server.ReplaceAssemblyAsync(
-            oldPlugin.ServiceAssembly,
-            newPlugin.ServiceAssembly,
-            TimeSpan.FromSeconds(5)).AsTask();
-        var clientContractTask = harness.Client.ReplaceAssemblyAsync(
+        var clientContract = await harness.Client.ReplaceAssemblyAsync(
             oldPlugin.ContractAssembly,
             newPlugin.ContractAssembly,
-            TimeSpan.FromSeconds(5)).AsTask();
-
-        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
-        await InvokeValueTaskAsync(
-            newProxy,
-            newPlugin.ContractType,
-            "NotifyAsync",
-            17,
-            CancellationToken.None);
-        await WaitUntilAsync(() => newPlugin.GetStaticInt("Notifications") == 17);
-        Ensure(oldPlugin.GetStaticInt("Notifications") == 0,
-            "post-switch request enters only the new service registration");
-        Ensure(!serverServiceTask.IsCompleted && !clientContractTask.IsCompleted,
-            "old server and client registrations remain alive while their admitted call is active");
-
-        oldPlugin.ReleaseBlock();
-        Ensure(await oldCall.WaitAsync(TimeSpan.FromSeconds(2)) == 43,
-            "admitted old unary completes on its original registration");
-        var serverService = await serverServiceTask;
-        Ensure(serverService.Succeeded && serverService.ReferencesReleased,
-            "old service registration releases after the last call");
-        var clientContract = await clientContractTask;
+            TimeSpan.FromSeconds(2));
         Ensure(clientContract.Succeeded && clientContract.ReferencesReleased,
-            "old client registration releases after the last call");
-        Ensure(oldPlugin.GetStaticInt("Disposed") == 1, "old singleton is observed and disposed once");
-        Ensure(newPlugin.GetStaticInt("Disposed") == 0, "new singleton remains active");
-
-        oldProxy = null;
-        var weakOldContext = oldPlugin.Unload();
-        for (var attempt = 0; attempt < 20 && weakOldContext.IsAlive; attempt++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            await Task.Delay(20);
-        }
-        Ensure(!weakOldContext.IsAlive, "replacement cleanup releases the old collectible ALC");
+            "client Contract replacement without dependants remains supported");
+        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
+        Ensure(await InvokeValueTaskAsync<int>(
+                newProxy, newPlugin.ContractType, "UnaryAsync", 4, CancellationToken.None) == 5,
+            "safe-order replacement publishes a usable new Contract/service generation");
 
         Ensure((await harness.Server.UnregisterAssemblyAsync(
             newPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "new service release");
+            "new service release after safe replacement");
         Ensure((await harness.Server.UnregisterAssemblyAsync(
             newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "new server contract release");
+            "new server Contract release after safe replacement");
         Ensure((await harness.Client.UnregisterAssemblyAsync(
             newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "new client contract release");
+            "new client Contract release after safe replacement");
         newProxy = null;
     }
 
@@ -1123,78 +1263,6 @@ public sealed class RuntimeAssemblyIntegrationTests
             plugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
             "client contract release after failed replacement");
         proxy = null;
-    }
-
-    [Test]
-    [NotInParallel]
-    public async Task ReplacementTimeoutShouldCancelThenDeferOldServiceCleanup()
-    {
-        await using var harness = await DynamicHarness.CreateAsync();
-        using var oldPlugin = PluginBundle.Load("replace-timeout-old");
-        using var newPlugin = PluginBundle.Load("replace-timeout-new");
-        oldPlugin.ResetServiceState();
-        newPlugin.ResetServiceState();
-        RegisterAll(harness, oldPlugin);
-        object? proxy = GetProxy(harness.Client, oldPlugin.ContractType);
-        var blocked = InvokeValueTaskAsync<int>(
-            proxy,
-            oldPlugin.ContractType,
-            "BlockIgnoringCancellationAsync",
-            CancellationToken.None).AsTask();
-        await oldPlugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
-
-        Ensure((await harness.Server.ReplaceAssemblyAsync(
-            oldPlugin.ContractAssembly,
-            newPlugin.ContractAssembly,
-            TimeSpan.Zero)).ReferencesReleased, "timeout test contract replacement");
-        var timedOut = await harness.Server.ReplaceAssemblyAsync(
-            oldPlugin.ServiceAssembly,
-            newPlugin.ServiceAssembly,
-            TimeSpan.FromMilliseconds(20));
-        Ensure(timedOut.Succeeded && !timedOut.ReferencesReleased,
-            "published replacement returns at its graceful bound");
-        Ensure(timedOut.RemainingCalls > 0,
-            "bounded replacement reports the non-cooperative old call");
-        Ensure(oldPlugin.GetStaticInt("Disposed") == 0,
-            "old service is not disposed while user code is still active");
-
-        var clientReplacement = await harness.Client.ReplaceAssemblyAsync(
-            oldPlugin.ContractAssembly,
-            newPlugin.ContractAssembly,
-            TimeSpan.FromMilliseconds(20));
-        Ensure(clientReplacement.Succeeded,
-            "client replacement publishes even when the remote old call was already canceled");
-        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
-        Ensure(await InvokeValueTaskAsync<int>(
-                newProxy, newPlugin.ContractType, "UnaryAsync", 4, CancellationToken.None) == 5,
-            "new server route accepts requests immediately after timeout");
-        oldPlugin.ReleaseBlock();
-        try
-        {
-            _ = await blocked.WaitAsync(TimeSpan.FromSeconds(2));
-        }
-        catch (SharpLinkException exception)
-        {
-            Ensure(exception.Code == SharpLinkErrorCode.Unavailable,
-                "timed-out client observes targeted old-module cancellation");
-        }
-        catch (OperationCanceledException)
-        {
-            // The old client module's forced token may win the response race.
-        }
-        await WaitUntilAsync(() => oldPlugin.GetStaticInt("Disposed") == 1);
-
-        Ensure((await harness.Server.UnregisterAssemblyAsync(
-            newPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "timeout replacement new service release");
-        Ensure((await harness.Server.UnregisterAssemblyAsync(
-            newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "timeout replacement new contract release");
-        Ensure((await harness.Client.UnregisterAssemblyAsync(
-            newPlugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "timeout replacement client contract release");
-        proxy = null;
-        newProxy = null;
     }
 
     [Test]
@@ -1263,6 +1331,43 @@ public sealed class RuntimeAssemblyIntegrationTests
     }
 
     [Test]
+    [Arguments("normal")]
+    [Arguments("cancellation-before-first")]
+    [Arguments("cancellation-mid-stream")]
+    [Arguments("consumer-break")]
+    [Arguments("service-exception")]
+    [NotInParallel]
+    public async Task Api4DynamicStreamExitShouldReleaseItsCollectibleContext(string exitMode)
+    {
+        var weakContext = await ExecuteDynamicStreamExitAndUnloadAsync(exitMode);
+        for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Delay(20);
+        }
+        Ensure(!weakContext.IsAlive,
+            $"API 4 dynamic stream '{exitMode}' must not retain its collectible ALC");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RejectedApi4DynamicRegistrationShouldReleaseItsCollectibleContext()
+    {
+        var weakContext = await RejectConflictingApi4AssemblyAndUnloadAsync();
+        for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Delay(20);
+        }
+        Ensure(!weakContext.IsAlive,
+            "rejected API 4 registration must not retain its collectible ALC");
+    }
+
+    [Test]
     [NotInParallel]
     public async Task TenThousandRegisterUnregisterCyclesShouldLeaveRegistryReusable()
     {
@@ -1321,10 +1426,145 @@ public sealed class RuntimeAssemblyIntegrationTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> ExecuteDynamicStreamExitAndUnloadAsync(string exitMode)
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
+        RegisterAll(harness, plugin);
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+
+        if (string.Equals(exitMode, "normal", StringComparison.Ordinal))
+        {
+            Ensure((await CollectAsync(InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ServerStreamAsync",
+                    3,
+                    CancellationToken.None))).SequenceEqual([0, 1, 2]),
+                "normal API 4 dynamic stream completes");
+        }
+        else if (string.Equals(exitMode, "service-exception", StringComparison.Ordinal))
+        {
+            try
+            {
+                _ = await CollectAsync(InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ThrowingServerStreamAsync",
+                    CancellationToken.None));
+                throw new Exception("assert failed: dynamic service stream must fail");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(exception.Code == SharpLinkErrorCode.Internal,
+                    "dynamic service stream exception maps to Internal");
+            }
+        }
+        else if (string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
+        {
+            using var cancellation = new CancellationTokenSource();
+            await using var enumerator = InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ServerStreamAsync",
+                    int.MaxValue,
+                    cancellation.Token)
+                .GetAsyncEnumerator();
+            cancellation.Cancel();
+            var cancelled = false;
+            try
+            {
+                _ = await enumerator.MoveNextAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled = true;
+            }
+            Ensure(cancelled,
+                "API 4 dynamic stream cancellation before the first item reaches the caller");
+        }
+        else
+        {
+            using var cancellation = new CancellationTokenSource();
+            var token = string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal)
+                ? cancellation.Token
+                : CancellationToken.None;
+            await using var enumerator = InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ServerStreamAsync",
+                    int.MaxValue,
+                    token)
+                .GetAsyncEnumerator();
+            Ensure(await enumerator.MoveNextAsync(),
+                $"API 4 dynamic stream '{exitMode}' starts before exit");
+            if (string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal))
+            {
+                cancellation.Cancel();
+                var cancelled = false;
+                try
+                {
+                    _ = await enumerator.MoveNextAsync();
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                }
+                Ensure(cancelled,
+                    "API 4 dynamic stream cancellation after the first item reaches the caller");
+            }
+            else
+                Ensure(string.Equals(exitMode, "consumer-break", StringComparison.Ordinal),
+                    $"unknown dynamic stream exit mode '{exitMode}'");
+        }
+
+        if (!string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
+        {
+            await plugin.GetStaticTask("ServerStreamDisposed").WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        proxy = null;
+        var service = await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(service.ReferencesReleased,
+            $"API 4 dynamic stream '{exitMode}' releases its service module before dependants");
+        var serverContract = await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        var clientContract = await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(serverContract.ReferencesReleased && clientContract.ReferencesReleased,
+            $"API 4 dynamic stream '{exitMode}' releases all module references");
+        EnsureClientAndServerCountersAreZero(harness, $"API 4 dynamic stream '{exitMode}'");
+        return plugin.Unload();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> RejectConflictingApi4AssemblyAndUnloadAsync()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var accepted = PluginBundle.Load("api4-registration-accepted", loadService: false);
+        var rejected = PluginBundle.Load("api4-registration-rejected", loadService: false);
+        Ensure(harness.Client.RegisterAssembly(accepted.ContractAssembly).Succeeded,
+            "first API 4 dynamic contract registers");
+        var conflict = harness.Client.RegisterAssembly(rejected.ContractAssembly);
+        Ensure(!conflict.Succeeded &&
+               conflict.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
+            "conflicting API 4 dynamic contract is rejected before publication");
+        var weakContext = rejected.Unload();
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            accepted.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "accepted API 4 contract releases after conflict verification");
+        return weakContext;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<WeakReference> RegisterRemoveAndUnloadMultiClusterPluginAsync()
     {
         var plugin = PluginBundle.Load("multi-cluster-runtime-remove", loadService: false);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "plugins",
                 child => child.UseTcp(IPAddress.Loopback.ToString(), 1),
@@ -1418,6 +1658,49 @@ public sealed class RuntimeAssemblyIntegrationTests
         Ensure(harness.Server.RegisterAssembly(plugin.ServiceAssembly).Succeeded, "server service registration");
     }
 
+    private static void EnsureReplacementReleased(
+        SharpLinkAssemblyReplacementResult result,
+        string name)
+        => Ensure(result.Succeeded &&
+                  result.ReferencesReleased &&
+                  result.RemainingCalls == 0 &&
+                  result.RemainingStreams == 0,
+            $"{name} publishes atomically and releases every old module counter: {result.Error}");
+
+    private static void EnsureUnregisterReleased(
+        SharpLinkAssemblyUnregisterResult result,
+        string name)
+        => Ensure(result.ReferencesReleased &&
+                  result.RemainingCalls == 0 &&
+                  result.RemainingStreams == 0,
+            $"{name} releases every module counter");
+
+    private static void EnsureClientAndServerCountersAreZero(
+        DynamicHarness harness,
+        string name)
+    {
+        var client = (SharpLinkClient)harness.Client;
+        var serverActiveCalls =
+            ServerCallAdmissionDiagnostics.ActiveCallCount(harness.Server);
+        Ensure(client.PendingCallCount == 0 &&
+               client.ActiveClientCallCount == 0 &&
+               client.ActiveClientStreamCount == 0 &&
+               serverActiveCalls == 0,
+            $"{name} leaves client pending/call/stream and server call counters at zero");
+    }
+
+    private static SharpLinkDynamicModule GetDynamicModule(object owner, Assembly assembly)
+    {
+        var modules = owner.GetType().GetField(
+                "_dynamicModules",
+                BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(owner)
+            as System.Collections.IDictionary
+            ?? throw new InvalidOperationException("Dynamic module registry was not found.");
+        return modules[assembly] as SharpLinkDynamicModule
+            ?? throw new InvalidOperationException(
+                $"Dynamic module was not found for '{assembly.FullName}'.");
+    }
+
     private static object GetProxy(ISharpLinkClient client, Type contractType)
     {
         var get = typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.Get))!
@@ -1505,7 +1788,7 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     private static async Task<ISharpLinkMultiClusterClient> CreateDynamicMultiClusterClientAsync(int port)
     {
-        var client = SharpLinkMultiClusterClientBuilder.Create()
+        var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster("plugins", child => child.UseTcp(IPAddress.Loopback.ToString(), port),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -1828,6 +2111,13 @@ public sealed class RuntimeAssemblyIntegrationTests
         public TContract Get<TContract>() where TContract : IService
             => default!;
 
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+
+
+            => throw new NotSupportedException();
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public bool IsDynamicAssemblyRegistered(Assembly assembly)
@@ -1906,6 +2196,13 @@ public sealed class RuntimeAssemblyIntegrationTests
 
         public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
 
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+
+
+            => throw new NotSupportedException();
+
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => throw new NotSupportedException();
 
@@ -1972,7 +2269,7 @@ public sealed class RuntimeAssemblyIntegrationTests
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
-            var client = SharpClientBuilder.Create()
+            var client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .Build();

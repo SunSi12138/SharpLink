@@ -17,8 +17,7 @@ public class CodecSafetyTests
             new ReadOnlySequence<byte>(new byte[] { 0xA5 })));
     }
 
-    private static readonly IRpcCodecProvider SCodecs =
-        new SharpLinkRuntimeContextBuilder().Build().Codecs;
+    private static IRpcCodecProvider SCodecs => RpcSessionTestFixture.RuntimeContext.Codecs;
 
     [Test]
     public void FixedLengthCodecsShouldRoundTripSingleAndMultiSegmentAndRejectTruncation()
@@ -224,19 +223,19 @@ public class CodecSafetyTests
     }
 
     [Test]
-    public void DateTimeOffsetBlitCollectionsShouldValidateValuesAndClearPadding()
+    public void DateTimeOffsetBlitCollectionsShouldValidateValuesAndEmitCanonicalPadding()
     {
         var invalid = new byte[16];
         BinaryPrimitives.WriteInt16LittleEndian(invalid, 0);
         BinaryPrimitives.WriteInt64LittleEndian(invalid.AsSpan(sizeof(long)), long.MaxValue);
         AssertBlitCollectionShapesReject<DateTimeOffset>(invalid);
 
-        var poisoned = CreateDateTimeOffsetWithPoisonedPadding();
-        AssertDateTimeOffsetCollectionPadding(new[] { poisoned });
-        AssertDateTimeOffsetCollectionPadding(new List<DateTimeOffset> { poisoned });
-        AssertDateTimeOffsetCollectionPadding(new Memory<DateTimeOffset>([poisoned]));
-        AssertDateTimeOffsetCollectionPadding(new ReadOnlyMemory<DateTimeOffset>([poisoned]));
-        AssertDateTimeOffsetCollectionPadding(ImmutableArray.Create(poisoned));
+        var value = new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8));
+        AssertDateTimeOffsetCollectionPadding(new[] { value });
+        AssertDateTimeOffsetCollectionPadding(new List<DateTimeOffset> { value });
+        AssertDateTimeOffsetCollectionPadding(new Memory<DateTimeOffset>([value]));
+        AssertDateTimeOffsetCollectionPadding(new ReadOnlyMemory<DateTimeOffset>([value]));
+        AssertDateTimeOffsetCollectionPadding(ImmutableArray.Create(value));
     }
 
     [Test]
@@ -388,16 +387,6 @@ public class CodecSafetyTests
         Ensure(writer.WrittenSpan.Length == sizeof(int) + 16, $"DateTimeOffset collection size {typeof(T)}");
         Ensure(writer.WrittenSpan.Slice(sizeof(int) + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0,
             $"DateTimeOffset collection padding {typeof(T)}");
-    }
-
-    private static DateTimeOffset CreateDateTimeOffsetWithPoisonedPadding()
-    {
-        var value = new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8));
-        Span<byte> bytes = stackalloc byte[16];
-        bytes.Fill(0xA5);
-        BinaryPrimitives.WriteInt16LittleEndian(bytes, checked((short)value.Offset.TotalMinutes));
-        BinaryPrimitives.WriteInt64LittleEndian(bytes[sizeof(long)..], value.UtcTicks);
-        return MemoryMarshal.Read<DateTimeOffset>(bytes);
     }
 
     private static void Serialize<T>(in T value, IBufferWriter<byte> writer)

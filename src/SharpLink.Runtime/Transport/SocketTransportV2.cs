@@ -136,13 +136,15 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
 /// <summary>Listens for TCP or Unix-domain socket connections.</summary>
 public sealed class SocketServerTransportListener : IServerTransportListener
 {
-    private readonly Socket _listener;
+    private Socket _listener;
     private readonly SocketTransportOptions _options;
-    private readonly SslServerAuthenticationOptions? _tlsOptions;
-    private readonly TimeSpan _tlsHandshakeTimeout;
+    private SslServerAuthenticationOptions? _tlsOptions;
+    private TimeSpan _tlsHandshakeTimeout;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly string? _ownedUnixSocketPath;
     private readonly UnixSocketPathIdentity? _ownedUnixSocketIdentity;
+    private readonly int _backlog;
+    private readonly int _port;
     private int _disposed;
 
     /// <summary>Creates, binds, and starts a socket listener.</summary>
@@ -157,9 +159,22 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         SocketTransportOptions? options = null,
         SslServerAuthenticationOptions? tlsOptions = null,
         TimeSpan? tlsHandshakeTimeout = null)
+        : this(localEndPoint, backlog, options, tlsOptions, tlsHandshakeTimeout, null)
+    {
+    }
+
+    internal SocketServerTransportListener(
+        EndPoint localEndPoint,
+        int backlog,
+        SocketTransportOptions? options,
+        SslServerAuthenticationOptions? tlsOptions,
+        TimeSpan? tlsHandshakeTimeout,
+        Action<string, UnixSocketPathIdentity>? permissionHardeningOverride)
     {
         ArgumentNullException.ThrowIfNull(localEndPoint);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
+        _backlog = backlog;
+        _port = localEndPoint is IPEndPoint ipEndPoint ? ipEndPoint.Port : 0;
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
         _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
         _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
@@ -182,9 +197,22 @@ public sealed class SocketServerTransportListener : IServerTransportListener
 
             _listener.Bind(localEndPoint);
             boundUnixPath = unixPath;
-            if (unixPath is not null)
-                boundUnixIdentity = UnixSocketPathIdentity.Capture(unixPath);
-            _listener.Listen(backlog);
+            if (unixPath is not null && !OperatingSystem.IsWindows())
+            {
+                // UnixSocketPathIdentity.Capture returns null only on Windows, which
+                // is excluded above; on every other platform it either returns the
+                // identity or throws. The coalescing throw only satisfies nullable
+                // flow analysis and doubles as a fail-closed invariant.
+                var identity = UnixSocketPathIdentity.Capture(unixPath)
+                    ?? throw new UnauthorizedAccessException(
+                        "The Unix-domain socket path could not be identified to secure its permissions.");
+                boundUnixIdentity = identity;
+                HardenUnixSocketPermissions(
+                    unixPath,
+                    identity,
+                    permissionHardeningOverride);
+            }
+            _listener.Listen(_backlog);
             LocalEndPoint = _listener.LocalEndPoint;
             _ownedUnixSocketPath = unixPath;
             _ownedUnixSocketIdentity = boundUnixIdentity;
@@ -201,7 +229,89 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     }
 
     /// <inheritdoc />
-    public EndPoint? LocalEndPoint { get; }
+    public EndPoint? LocalEndPoint { get; private set; }
+
+    internal bool UsesTls =>
+        _tlsOptions is not null &&
+        _tlsOptions.EncryptionPolicy == EncryptionPolicy.RequireEncryption;
+
+    internal void ConfigureListenAddress(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (LocalEndPoint is not IPEndPoint)
+            throw new InvalidOperationException("The listen address can only be changed for TCP listeners.");
+
+        var replacementEndPoint = new IPEndPoint(address, _port);
+
+        if (_port == 0)
+        {
+            var replacement = CreateBoundTcpListener(replacementEndPoint);
+            var previous = _listener;
+            _listener = replacement;
+            LocalEndPoint = replacement.LocalEndPoint;
+            previous.Dispose();
+            return;
+        }
+
+        var original = _listener;
+        var replacementSocket = SocketTransportSocketFactory.Create(replacementEndPoint);
+        try
+        {
+            original.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.ReuseAddress,
+                true);
+            replacementSocket.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.ReuseAddress,
+                true);
+            replacementSocket.Bind(replacementEndPoint);
+            replacementSocket.Listen(_backlog);
+        }
+        catch
+        {
+            replacementSocket.Dispose();
+            throw;
+        }
+
+        _listener = replacementSocket;
+        LocalEndPoint = replacementSocket.LocalEndPoint;
+        original.Dispose();
+    }
+
+    private Socket CreateBoundTcpListener(IPEndPoint endPoint)
+    {
+        var listener = SocketTransportSocketFactory.Create(endPoint);
+        try
+        {
+            listener.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.ReuseAddress,
+                true);
+            listener.Bind(endPoint);
+            listener.Listen(_backlog);
+            return listener;
+        }
+        catch
+        {
+            listener.Dispose();
+            throw;
+        }
+    }
+
+    internal void ConfigureTls(
+        SslServerAuthenticationOptions tlsOptions,
+        TimeSpan? tlsHandshakeTimeout)
+    {
+        ArgumentNullException.ThrowIfNull(tlsOptions);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (LocalEndPoint is not IPEndPoint)
+            throw new InvalidOperationException("TLS can only be configured for TCP listeners.");
+
+        _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
+        _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
+    }
 
     /// <inheritdoc />
     public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
@@ -282,6 +392,60 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             {
                 Debug.WriteLine($"SharpLink could not remove Unix-domain socket path '{path}': {ex.Message}");
             }
+        }
+    }
+
+    private const UnixFileMode DefaultUnixSocketMode =
+        UnixFileMode.UserRead |
+        UnixFileMode.UserWrite;
+
+    private const UnixFileMode DisallowedUnixSocketMode =
+        UnixFileMode.GroupRead |
+        UnixFileMode.GroupWrite |
+        UnixFileMode.GroupExecute |
+        UnixFileMode.OtherRead |
+        UnixFileMode.OtherWrite |
+        UnixFileMode.OtherExecute;
+
+    /// <summary>
+    /// Restricts a SharpLink-created filesystem Unix-domain socket to the current user
+    /// before the listener accepts connections. Any failure throws so the constructor
+    /// fails closed and the existing cleanup path removes the owned socket node.
+    /// </summary>
+    internal static void HardenUnixSocketPermissions(
+        string path,
+        UnixSocketPathIdentity identity,
+        Action<string, UnixSocketPathIdentity>? overrideForTesting = null)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        if (overrideForTesting is not null)
+        {
+            overrideForTesting(path, identity);
+            return;
+        }
+
+        if (!identity.Matches(path))
+        {
+            throw new UnauthorizedAccessException(
+                "The Unix-domain socket path changed before its permissions could be secured.");
+        }
+
+        File.SetUnixFileMode(path, DefaultUnixSocketMode);
+
+        if (!identity.Matches(path))
+        {
+            throw new UnauthorizedAccessException(
+                "The Unix-domain socket path changed while its permissions were being secured.");
+        }
+
+        var actual = File.GetUnixFileMode(path);
+        if ((actual & DisallowedUnixSocketMode) != 0 ||
+            (actual & DefaultUnixSocketMode) != DefaultUnixSocketMode)
+        {
+            throw new UnauthorizedAccessException(
+                "The Unix-domain socket permissions could not be restricted to the current user.");
         }
     }
 }
@@ -453,6 +617,8 @@ internal readonly record struct UnixSocketPathIdentity(long Device, long Inode)
 
     internal static bool PathExists(string path) => LStat(path, out _) == 0;
 
+    [System.Runtime.InteropServices.DefaultDllImportSearchPaths(
+        System.Runtime.InteropServices.DllImportSearchPath.System32)]
     [System.Runtime.InteropServices.DllImport(
         "System.Native",
         EntryPoint = "SystemNative_LStat",

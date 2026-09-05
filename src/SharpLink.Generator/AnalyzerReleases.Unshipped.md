@@ -10,7 +10,6 @@
  SHARPLINK015 | SharpLink.Generator | Error    | RPC method declares both NonCancellable and CancellationToken
  SHARPLINK005 | SharpLink.Generator | Error    | Generic Type Parameter Not Supported in RPC Contract    
  SHARPLINK006 | SharpLink.Generator | Error    | RpcContract Interface Must Inherit IService             
- SHARPLINK007 | SharpLink.Generator | Error    | More than one SharpLinkCallOptions parameter
  SHARPLINK008 | SharpLink.Generator | Error    | RPC control parameters must be trailing
  SHARPLINK009 | SharpLink.Generator | Error    | DTO type is outside the native generated Codec subset
  SHARPLINK010 | SharpLink.Generator | Error    | Cyclic DTO graph is unsupported
@@ -59,3 +58,10 @@
  SHARPLINK055 | SharpLink.Generator | Error | RPC contract must be publicly reachable
  SHARPLINK056 | SharpLink.Generator | Error | Oneway RPC return type is invalid
  SHARPLINK057 | SharpLink.Generator | Error | Inherited RPC signatures have incompatible return types
+ SHARPLINK058 | SharpLink.Generator | Error | Custom RPC Codec binding is invalid
+ SHARPLINK059 | SharpLink.Generator | Error | Custom RPC Codec target is open or unsupported
+ SHARPLINK060 | SharpLink.Generator | Error | Custom RPC Codec implementation is invalid
+ SHARPLINK061 | SharpLink.Generator | Error | Custom RPC Codec wire/schema identity is invalid
+ SHARPLINK062 | SharpLink.Generator | Error | RPC payload selects multiple different Custom Codecs
+ SHARPLINK063 | SharpLink.Generator | Error | Custom Codec attempts to replace a built-in Codec
+ SHARPLINK064 | SharpLink.Generator | Info | Implicit UnsafeBlit payload contains source-defined AutoLayout

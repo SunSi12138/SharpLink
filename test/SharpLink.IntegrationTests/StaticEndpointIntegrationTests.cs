@@ -3,11 +3,230 @@ namespace SharpLink.IntegrationTests;
 public sealed class StaticEndpointIntegrationTests
 {
     [Test]
+    public async Task StaticReadinessCreatedSnapshotsShouldReflectConfiguredEndpointCounts()
+    {
+        await using var twoEndpointClient = SharpClientBuilder.Create().DisableRequestTimeout()
+
+            .UseEndpoints(
+                [Endpoint("first", 1), Endpoint("second", 2)],
+                SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+        await using var threeEndpointClient = SharpClientBuilder.Create().DisableRequestTimeout()
+
+            .UseEndpoints(
+                [Endpoint("first", 1), Endpoint("second", 2), Endpoint("third", 3)],
+                SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 3;
+                options.MaxConnections = 3;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        EnsureReadiness(
+            twoEndpointClient.GetReadinessSnapshot(),
+            SharpLinkConnectionState.Created,
+            activeEndpoints: 2,
+            readyEndpoints: 0,
+            readyConnections: 0,
+            targetReadyEndpoints: 2,
+            meetsTarget: false,
+            "two-endpoint Created readiness");
+        EnsureReadiness(
+            threeEndpointClient.GetReadinessSnapshot(),
+            SharpLinkConnectionState.Created,
+            activeEndpoints: 3,
+            readyEndpoints: 0,
+            readyConnections: 0,
+            targetReadyEndpoints: 3,
+            meetsTarget: false,
+            "three-endpoint Created readiness");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task StaticReadinessWaitsShouldNotChangeConnectAsyncConnectivityBoundary()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var gatedSecond = new GatedConnectFactory(sockets(Endpoint("second", second.Port)));
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
+
+            .UseEndpoints(
+                [Endpoint("first", first.Port), Endpoint("second", second.Port)],
+                endpoint => endpoint.Id == "second" ? gatedSecond : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await gatedSecond.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            await connect.WaitAsync(TimeSpan.FromSeconds(2));
+
+            EnsureReadiness(
+                client.GetReadinessSnapshot(),
+                SharpLinkConnectionState.Ready,
+                activeEndpoints: 2,
+                readyEndpoints: 1,
+                readyConnections: 1,
+                targetReadyEndpoints: 2,
+                meetsTarget: false,
+                "ConnectAsync first-connectivity readiness");
+            EnsureReadiness(
+                await client.WaitForReadinessAsync(1),
+                SharpLinkConnectionState.Ready,
+                activeEndpoints: 2,
+                readyEndpoints: 1,
+                readyConnections: 1,
+                targetReadyEndpoints: 2,
+                meetsTarget: false,
+                "Wait(1) readiness");
+
+            var waitForTwo = client.WaitForReadinessAsync(2).AsTask();
+            Ensure(!waitForTwo.IsCompleted, "Wait(2) must remain pending while the second endpoint dial is gated");
+
+            gatedSecond.Release();
+            EnsureReadiness(
+                await waitForTwo.WaitAsync(TimeSpan.FromSeconds(2)),
+                SharpLinkConnectionState.Ready,
+                activeEndpoints: 2,
+                readyEndpoints: 2,
+                readyConnections: 2,
+                targetReadyEndpoints: 2,
+                meetsTarget: true,
+                "Wait(2) readiness");
+        }
+        finally
+        {
+            gatedSecond.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task StaticReadinessWaitBelowTargetShouldCompleteBeforeFullConvergence()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        await using var third = await TcpServerScope.StartAsync("third");
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var gatedThird = new GatedConnectFactory(sockets(Endpoint("third", third.Port)));
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
+
+            .UseEndpoints(
+                [
+                    Endpoint("first", first.Port),
+                    Endpoint("second", second.Port),
+                    Endpoint("third", third.Port)
+                ],
+                endpoint => endpoint.Id == "third" ? gatedThird : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 3;
+                options.MaxConnections = 3;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await gatedThird.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            await connect.WaitAsync(TimeSpan.FromSeconds(2));
+
+            EnsureReadiness(
+                await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(2)),
+                SharpLinkConnectionState.Ready,
+                activeEndpoints: 3,
+                readyEndpoints: 2,
+                readyConnections: 2,
+                targetReadyEndpoints: 3,
+                meetsTarget: false,
+                "Wait(2) below configured target readiness");
+
+            var waitForThree = client.WaitForReadinessAsync(3).AsTask();
+            Ensure(!waitForThree.IsCompleted, "Wait(3) must remain pending until the third endpoint is ready");
+            gatedThird.Release();
+            EnsureReadiness(
+                await waitForThree.WaitAsync(TimeSpan.FromSeconds(2)),
+                SharpLinkConnectionState.Ready,
+                activeEndpoints: 3,
+                readyEndpoints: 3,
+                readyConnections: 3,
+                targetReadyEndpoints: 3,
+                meetsTarget: true,
+                "full static target readiness");
+        }
+        finally
+        {
+            gatedThird.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task StaticReadinessThresholdAboveConfiguredTargetShouldFailWithoutDialingAnotherEndpoint()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var surplus = new FailingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+
+            .UseEndpoints(
+                [
+                    Endpoint("first", first.Port),
+                    Endpoint("second", second.Port),
+                    Endpoint("surplus", 1)
+                ],
+                endpoint => endpoint.Id == "surplus" ? surplus : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 3;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(surplus.ConnectCount == 0, "the endpoint above the configured target must not be dialed");
+
+        try
+        {
+            _ = client.WaitForReadinessAsync(3);
+            throw new Exception("Wait(3) should reject a static target configured for two endpoints");
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            Ensure(exception.ParamName == "minimumReadyEndpoints", "static readiness threshold parameter name");
+        }
+
+        await Task.Yield();
+        Ensure(surplus.ConnectCount == 0, "an invalid readiness wait must not trigger an extra endpoint dial");
+    }
+
+    [Test]
     public async Task StaticTcpEndpointsShouldConnectAndContinueWhenOneEndpointStops()
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpoints(
@@ -42,7 +261,7 @@ public sealed class StaticEndpointIntegrationTests
         unavailableListener.Stop();
 
         await using var available = await TcpServerScope.StartAsync("available");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("unavailable", unavailablePort), Endpoint("available", available.Port)],
@@ -68,7 +287,7 @@ public sealed class StaticEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -111,7 +330,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         var firstPort = GetUnusedTcpPort();
         var secondPort = GetUnusedTcpPort();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", firstPort), Endpoint("second", secondPort)],
@@ -128,7 +347,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -143,19 +362,44 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
-        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "both preferred-endpoint candidates should be ready");
+        EnsureReadiness(
+            await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(2)),
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "both preferred-endpoint candidates readiness");
         var service = client.Get<IConnectionBehaviorService>();
         Ensure(await service.GetEndpointIdAsync() == "first", "initial preferred endpoint");
 
         var port = first.Port;
         await first.StopAsync();
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(
+            () => client.GetReadinessSnapshot().ReadyEndpoints == 1,
+            TimeSpan.FromSeconds(2));
+        EnsureReadiness(
+            client.GetReadinessSnapshot(),
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 1,
+            readyConnections: 1,
+            targetReadyEndpoints: 2,
+            meetsTarget: false,
+            "one-endpoint loss readiness");
         Ensure(await service.GetEndpointIdAsync() == "second", "healthy endpoint remains available during reconnect");
 
         await using var replacement = await TcpServerScope.StartAsync("first-reconnected", port);
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
-        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "disconnected endpoint should reconnect independently");
+        EnsureReadiness(
+            await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(3)),
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "reconnected endpoint readiness");
         Ensure(await service.GetEndpointIdAsync() == "first-reconnected", "reconnected endpoint should rejoin selection");
     }
 
@@ -164,7 +408,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -188,7 +432,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -209,7 +453,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -223,7 +467,15 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        EnsureReadiness(
+            await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(2)),
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "initial two-endpoint pool readiness");
         var service = client.Get<IConnectionBehaviorService>();
         var calls = new Task<int>[32];
         for (var index = 0; index < calls.Length; index++)
@@ -231,9 +483,20 @@ public sealed class StaticEndpointIntegrationTests
         await Task.WhenAll(calls);
 
         var implementation = (SharpLinkClient)client;
-        await WaitUntilAsync(() => implementation.ReadyConnectionCount == 4, TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(
+            () => client.GetReadinessSnapshot().ReadyConnections == 4,
+            TimeSpan.FromSeconds(10));
         Ensure(implementation.ReadyConnectionCount == 4,
             $"cluster should fill only the configured global budget; observed {implementation.ReadyConnectionCount}");
+        EnsureReadiness(
+            client.GetReadinessSnapshot(),
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 4,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "expanded connection pool readiness");
     }
 
     [Test]
@@ -242,7 +505,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var east = await TcpServerScope.StartAsync("east");
         await using var west = await TcpServerScope.StartAsync("west");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("east", east.Port, "east"), Endpoint("west", west.Port, "west")],
@@ -275,7 +538,7 @@ public sealed class StaticEndpointIntegrationTests
         var secondName = $"sharplink-static-second-{Guid.NewGuid():N}";
         await using var first = await TcpServerScope.StartNamedPipeAsync(firstName);
         await using var second = await TcpServerScope.StartNamedPipeAsync(secondName);
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -296,7 +559,7 @@ public sealed class StaticEndpointIntegrationTests
         var secondName = $"sharplink-static-second-{Guid.NewGuid():N}";
         await using var first = await TcpServerScope.StartSharedMemoryAsync(firstName);
         await using var second = await TcpServerScope.StartSharedMemoryAsync(secondName);
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -319,7 +582,7 @@ public sealed class StaticEndpointIntegrationTests
         var secondPath = Path.Combine(Path.GetTempPath(), $"sharplink-static-{Guid.NewGuid():N}.sock");
         await using var first = await TcpServerScope.StartUdsAsync(firstPath);
         await using var second = await TcpServerScope.StartUdsAsync(secondPath);
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -359,7 +622,7 @@ public sealed class StaticEndpointIntegrationTests
             });
         }
 
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
@@ -389,7 +652,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -425,7 +688,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         var blocking = new BlockingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("blocked", GetUnusedTcpPort())],
@@ -462,7 +725,7 @@ public sealed class StaticEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var surplus = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("blocked", 1), Endpoint("surplus", 2)],
@@ -505,7 +768,7 @@ public sealed class StaticEndpointIntegrationTests
         var sockets = SharpLinkTransportFactories.Sockets();
         var blocking = new BlockAfterFirstConnectFactory(sockets(Endpoint("first", first.Port)));
         var unavailable = new FailingConnectFactory();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("unavailable", 1)],
@@ -537,7 +800,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var recovered = await TcpServerScope.StartAsync("recovered");
         var sockets = SharpLinkTransportFactories.Sockets();
         var delayedFailure = new DeferredFailOnceFactory(sockets(Endpoint("recovered", recovered.Port)));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("recovered", recovered.Port)],
@@ -572,7 +835,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var second = await TcpServerScope.StartAsync("second");
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("bad", 1), Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -602,7 +865,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var third = await TcpServerScope.StartAsync("third");
         await using var fourth = await TcpServerScope.StartAsync("fourth");
         await using var fifth = await TcpServerScope.StartAsync("fifth");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [
@@ -639,7 +902,7 @@ public sealed class StaticEndpointIntegrationTests
             Endpoint("second", second.Port, "west")
         };
 
-        await using (var roundRobin = SharpClientBuilder.Create()
+        await using (var roundRobin = SharpClientBuilder.Create().DisableRequestTimeout()
 
                          .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
                          .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
@@ -659,7 +922,7 @@ public sealed class StaticEndpointIntegrationTests
             Ensure(ids[0] != ids[1] && ids[0] == ids[2] && ids[1] == ids[3], "round robin endpoint order");
         }
 
-        await using var custom = SharpClientBuilder.Create()
+        await using var custom = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(new AttributeSelector("west"))
@@ -675,7 +938,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -706,7 +969,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -740,7 +1003,7 @@ public sealed class StaticEndpointIntegrationTests
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
@@ -795,6 +1058,29 @@ public sealed class StaticEndpointIntegrationTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private static void EnsureReadiness(
+        SharpLinkClientReadinessSnapshot snapshot,
+        SharpLinkConnectionState state,
+        int activeEndpoints,
+        int readyEndpoints,
+        int readyConnections,
+        int targetReadyEndpoints,
+        bool meetsTarget,
+        string name)
+    {
+        Ensure(snapshot.State == state, $"{name}: expected state {state}, observed {snapshot.State}");
+        Ensure(snapshot.ActiveEndpoints == activeEndpoints,
+            $"{name}: expected {activeEndpoints} active endpoints, observed {snapshot.ActiveEndpoints}");
+        Ensure(snapshot.ReadyEndpoints == readyEndpoints,
+            $"{name}: expected {readyEndpoints} ready endpoints, observed {snapshot.ReadyEndpoints}");
+        Ensure(snapshot.ReadyConnections == readyConnections,
+            $"{name}: expected {readyConnections} ready connections, observed {snapshot.ReadyConnections}");
+        Ensure(snapshot.TargetReadyEndpoints == targetReadyEndpoints,
+            $"{name}: expected target {targetReadyEndpoints}, observed {snapshot.TargetReadyEndpoints}");
+        Ensure(snapshot.MeetsTarget == meetsTarget,
+            $"{name}: expected MeetsTarget={meetsTarget}, observed {snapshot.MeetsTarget}");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
@@ -939,6 +1225,25 @@ public sealed class StaticEndpointIntegrationTests
             await _release.Task.ConfigureAwait(false);
             throw new InvalidOperationException("test initial dial completed after release");
         }
+    }
+
+    private sealed class GatedConnectFactory(IClientTransportFactory inner) : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            _entered.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return await inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        public void Release() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     private sealed class DeferredFailOnceFactory(IClientTransportFactory inner) : IClientTransportFactory

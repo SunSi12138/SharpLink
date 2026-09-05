@@ -16,13 +16,14 @@ internal sealed partial class SharpLinkClient
                 "The server did not negotiate protocol health checks.");
         }
 
+        var timeProvider = _runtimeContext.TimeProvider;
         var deadline = _hasRequestTimeout
-            ? AddTimeout(DateTimeOffset.UtcNow, _requestTimeoutValue)
-            : (DateTimeOffset?)null;
+            ? RpcDeadline.Create(_requestTimeoutValue, timeProvider)
+            : default;
         var operation = connection.PendingCalls.Rent(
             HealthResponseCodec.Instance,
             PendingCallKind.Health,
-            GetMonotonicDeadlineTimestamp(deadline, DateTimeOffset.UtcNow),
+            deadline,
             cancellationToken,
             out var requestId);
         try

@@ -11,11 +11,11 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
+    private readonly TimeProvider _timeProvider;
+    private readonly FrameworkTaskSupervisor _frameworkTasks;
     private MultiClusterSnapshot _snapshot;
     private readonly List<DynamicAssemblyRegistration> _dynamicRegistrations = [];
     private readonly HashSet<DynamicAssemblyRegistration> _drainingRegistrations =
-        new(ReferenceEqualityComparer.Instance);
-    private readonly HashSet<Task> _retiredCleanupOperations =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<DynamicAssemblyRegistration, Task<SharpLinkAssemblyUnregisterResult>>
         _unregisterOperations = new(ReferenceEqualityComparer.Instance);
@@ -34,7 +34,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         int configuredConnectionBudget = 0,
         ILoggerFactory? loggerFactory = null)
     {
-        _ = routeManifestSnapshot;
+        ArgumentNullException.ThrowIfNull(routeManifestSnapshot);
         _options = options;
         _snapshot = new MultiClusterSnapshot(
             clusters,
@@ -44,6 +44,12 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                 : clusters.Values.Sum(static slot => slot.ConfiguredConnectionBudget));
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _logger = _loggerFactory.CreateLogger<SharpLinkMultiClusterClient>();
+        _timeProvider = clusters.Values
+            .Select(static slot => slot.Client)
+            .OfType<ISharpLinkClientTimeProvider>()
+            .FirstOrDefault()?.TimeProvider ?? TimeProvider.System;
+        _frameworkTasks = new FrameworkTaskSupervisor((operation, exception) =>
+            LogMultiClusterFrameworkTaskFailure(_logger, operation, exception));
     }
 
     public SharpLinkMultiClusterState State
@@ -80,7 +86,14 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             if (_slotMutationInProgress)
                 return ValueTask.FromException(new InvalidOperationException("A cluster slot lifecycle mutation is in progress."));
 
-            _connectTask ??= ConnectCoreAsync();
+            if (_connectTask is null)
+            {
+                _connectTask = ConnectCoreAsync();
+                TrackFrameworkTask(
+                    _connectTask,
+                    "MultiClusterInitialConnect",
+                    TaskObservationMode.ExternallyObserved);
+            }
             operation = _connectTask;
         }
 
@@ -112,6 +125,19 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
 
         if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
             return route.Slot.Client.Get<TContract>();
+
+        throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
+    }
+
+    public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        var state = State;
+        if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
+
+        if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
+            return route.Slot.Client.GetWithMetadata<TContract>(metadata);
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
     }
@@ -214,7 +240,9 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             }
             catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
             {
-                _ = slot.Client.UnregisterAssemblyAsync(assembly, TimeSpan.Zero);
+                TrackFrameworkTask(
+                    slot.Client.UnregisterAssemblyAsync(assembly, TimeSpan.Zero).AsTask(),
+                    "MultiClusterRegistrationRollback");
                 return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                     $"Cluster route publication failed after child registration: {exception.GetType().Name}: {exception.Message}", assembly);
             }
@@ -265,7 +293,10 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                 registration,
                 gracefulTimeout,
                 completion);
-            ObserveBackgroundFailure(operation);
+            TrackFrameworkTask(
+                operation,
+                "MultiClusterAssemblyUnregister",
+                TaskObservationMode.ExternallyObserved);
             return WaitForOperationAsync(operation, cancellationToken);
         }
     }
@@ -343,7 +374,10 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
 
         var operation = CompleteTrackedReplacementAsync(
             slot, registration!, newAssembly, newManifest!, gracefulTimeout);
-        ObserveBackgroundFailure(operation);
+        TrackFrameworkTask(
+            operation,
+            "MultiClusterAssemblyReplacement",
+            TaskObservationMode.ExternallyObserved);
         return WaitForOperationAsync(operation, cancellationToken);
     }
 
@@ -356,7 +390,13 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             await Parallel.ForEachAsync(
                 Volatile.Read(ref _snapshot).Clusters.Values,
                 new ParallelOptions { CancellationToken = attempts.Token, MaxDegreeOfParallelism = _options.MaxConcurrentClusterConnects },
-                static async (slot, token) => await slot.Client.ConnectAsync(token).ConfigureAwait(false)).ConfigureAwait(false);
+                static async (slot, token) =>
+                {
+                    // The child owns its physical connect attempt. The coordinator owns only
+                    // the cancellable wait, so an uncooperative child cannot hold coordinator
+                    // shutdown or its supervised initial-connect operation indefinitely.
+                    await slot.Client.ConnectAsync(token).AsTask().WaitAsync(token).ConfigureAwait(false);
+                }).ConfigureAwait(false);
             _ = Interlocked.CompareExchange(
                 ref _state,
                 (int)SharpLinkMultiClusterState.Ready,
@@ -382,6 +422,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private async Task StopCoreAsync()
     {
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Draining);
+        _frameworkTasks.Seal();
         var failures = new List<Exception>();
         try { await _shutdown.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { failures.Add(exception); }
@@ -390,21 +431,14 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         {
             var slots = Volatile.Read(ref _snapshot).Clusters.Values.ToArray();
             await StopSlotsAsync(slots, failures).ConfigureAwait(false);
-            Task[] retiredCleanupOperations;
-            lock (_gate)
-                retiredCleanupOperations = [.. _retiredCleanupOperations];
-            foreach (var cleanup in retiredCleanupOperations)
-            {
-                try { await cleanup.ConfigureAwait(false); }
-                catch (Exception exception) { failures.Add(exception); }
-            }
+            try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
+            catch (Exception exception) { failures.Add(exception); }
             lock (_gate)
             {
                 Volatile.Write(ref _snapshot, MultiClusterSnapshot.Empty);
                 _dynamicRegistrations.Clear();
                 _drainingRegistrations.Clear();
                 _unregisterOperations.Clear();
-                _retiredCleanupOperations.Clear();
                 _transitionConnectionBudget = 0;
             }
         }
@@ -457,7 +491,9 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         }
         else
         {
-            ObserveBackgroundFailure(CompleteDeferredUnregisterAsync(slot, registration));
+            TrackFrameworkTask(
+                CompleteDeferredUnregisterAsync(slot, registration),
+                "MultiClusterDeferredAssemblyUnregister");
         }
         return result;
     }
@@ -533,7 +569,10 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     {
         while ((SharpLinkMultiClusterState)Volatile.Read(ref _state) is not SharpLinkMultiClusterState.Stopped)
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(100),
+                GetTimeProvider(slot.Client),
+                _shutdown.Token).ConfigureAwait(false);
             if (slot.Client is IDynamicAssemblyRegistrationInspector inspector)
             {
                 if (!inspector.IsDynamicAssemblyRegistered(registration.Assembly))
@@ -670,14 +709,18 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             ? new ValueTask<T>(operation.WaitAsync(cancellationToken))
             : new ValueTask<T>(operation);
 
-    private static void ObserveBackgroundFailure(Task task)
-    {
-        _ = task.ContinueWith(
-            static completedTask => _ = completedTask.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
+    private void TrackFrameworkTask(
+        Task task,
+        string operation,
+        TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
+        => _frameworkTasks.Track(task, operation, observationMode, IsExpectedStopException);
+
+    private static bool IsExpectedStopException(Exception exception)
+        => exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException or
+            SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed or SharpLinkErrorCode.Unavailable };
+
+    internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
+        => _frameworkTasks.CaptureSnapshot();
 
     private SharpLinkClusterSlot GetSlot(SharpLinkClusterKey cluster)
     {
@@ -699,6 +742,11 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         string message,
         Assembly assembly)
         => new(code, message, IncomingAssembly: assembly.FullName);
+
+    private TimeProvider GetTimeProvider(ISharpLinkClient client)
+        => client is ISharpLinkClientTimeProvider inspector
+            ? inspector.TimeProvider
+            : _timeProvider;
 }
 
 internal sealed record SharpLinkClusterSlot(
@@ -743,4 +791,9 @@ internal interface ISharpLinkClientDrainInspector
     int ActiveCallCount { get; }
 
     int ActiveStreamCount { get; }
+}
+
+internal interface ISharpLinkClientTimeProvider
+{
+    TimeProvider TimeProvider { get; }
 }

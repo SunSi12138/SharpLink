@@ -2,105 +2,129 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    // This duration is accepted by Task.Delay on every supported runtime. Longer public retry
-    // and admission delays are awaited in cancellable slices rather than rejected by the timer.
-    private static readonly TimeSpan MaximumRetryOrAdmissionDelay = TimeSpan.FromMilliseconds(int.MaxValue);
-
-    private ResolvedCallControl ResolveCallControl(
-        SharpLinkCallOptions options,
+    internal ResolvedCallControl ResolveCallControl(
+        SharpLinkMetadata? metadata,
         bool includeClientDefault,
         bool hasMethodTimeout,
         TimeSpan? methodTimeout)
     {
-        if (options.Timeout is { } optionTimeout)
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(optionTimeout, TimeSpan.Zero);
+        var lifetimeSource = ClientCallLifetimeSource.None;
+        return ResolveCallControl(
+            metadata,
+            includeClientDefault,
+            hasMethodTimeout,
+            methodTimeout,
+            ref lifetimeSource);
+    }
+
+    private ResolvedCallControl ResolveCallControl(
+        SharpLinkMetadata? metadata,
+        bool includeClientDefault,
+        bool hasMethodTimeout,
+        TimeSpan? methodTimeout,
+        ref ClientCallLifetimeSource lifetimeSource)
+    {
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
-        var now = DateTimeOffset.UtcNow;
-        DateTimeOffset? deadline = null;
-        AddDeadlineCandidate(ref deadline, options.Deadline);
-        if (options.Timeout is { } timeout)
-            AddDeadlineCandidate(ref deadline, AddTimeout(now, timeout));
-        if (methodTimeout is { } explicitMethodTimeout)
-            AddDeadlineCandidate(ref deadline, AddTimeout(now, explicitMethodTimeout));
-        if ((includeClientDefault || hasMethodTimeout) && _hasRequestTimeout)
-            AddDeadlineCandidate(ref deadline, AddTimeout(now, _requestTimeoutValue));
 
-        if (deadline is { } expired && expired <= now)
+        // Method policy overrides the client-wide fallback. These are policy-selection layers,
+        // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
+        // the client-wide value even on call shapes that do not otherwise use the client default.
+        TimeSpan? selectedTimeout;
+        if (hasMethodTimeout && methodTimeout is { } explicitMethodTimeout)
+        {
+            selectedTimeout = explicitMethodTimeout;
+            lifetimeSource = ClientCallLifetimeSource.MethodTimeout;
+        }
+        else if ((hasMethodTimeout || includeClientDefault) && _hasRequestTimeout)
+        {
+            selectedTimeout = _requestTimeoutValue;
+            lifetimeSource = _requestTimeoutSource.ToLifetimeSource();
+        }
+        else
+        {
+            selectedTimeout = null;
+            lifetimeSource = ClientCallLifetimeSource.None;
+        }
+
+        var timeProvider = _runtimeContext.TimeProvider;
+        var localAnchor = timeProvider.GetTimestamp();
+        var deadline = selectedTimeout is { } timeout
+            ? RpcDeadline.Create(timeout, localAnchor, timeProvider.TimestampFrequency)
+            : default;
+
+        var ambientCall = SharpLinkCallContext.Current;
+        if (ambientCall is not null &&
+            ambientCall.LocalRpcDeadline.HasValue &&
+            ambientCall.DeadlineTimeProvider is { } inheritedTimeProvider)
+        {
+            RpcDeadline inheritedDeadline;
+            long comparisonTimestamp;
+            if (ReferenceEquals(inheritedTimeProvider, timeProvider))
+            {
+                // One shared monotonic clock already gives us the exact parent boundary. Preserve
+                // it directly: converting the parent to a remaining duration and re-anchoring that
+                // duration can either double-charge a scheduling gap or extend the parent's hard
+                // cap, depending on which side of the two clock reads the gap lands on.
+                comparisonTimestamp = timeProvider.GetTimestamp();
+                inheritedDeadline = ambientCall.LocalRpcDeadline;
+                if (inheritedDeadline.IsExpired(comparisonTimestamp))
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
+                    throw CreateDeadlineExceededException();
+                }
+            }
+            else
+            {
+                // Across genuinely different providers no absolute monotonic timestamp is
+                // transferable. Project the observed parent remaining duration onto the child
+                // clock, but charge child-clock time consumed while obtaining that observation so
+                // the projection can be conservative and can never extend the observed lifetime.
+                var projectionStarted = timeProvider.GetTimestamp();
+                var inheritedRemaining = ambientCall.LocalRpcDeadline.GetRemaining(inheritedTimeProvider);
+                comparisonTimestamp = timeProvider.GetTimestamp();
+                if (inheritedRemaining <= TimeSpan.Zero)
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
+                    throw CreateDeadlineExceededException();
+                }
+
+                var projectionElapsed = SharpLinkTime.GetElapsed(
+                    projectionStarted,
+                    comparisonTimestamp,
+                    timeProvider.TimestampFrequency);
+                if (projectionElapsed >= inheritedRemaining)
+                {
+                    lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
+                    throw CreateDeadlineExceededException();
+                }
+                inheritedRemaining -= projectionElapsed;
+                inheritedDeadline = RpcDeadline.Create(
+                    inheritedRemaining,
+                    comparisonTimestamp,
+                    timeProvider.TimestampFrequency);
+            }
+
+            if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, comparisonTimestamp))
+            {
+                deadline = inheritedDeadline;
+                lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
+            }
+        }
+
+        if (deadline.IsExpired(timeProvider))
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
             deadline,
-            GetMonotonicDeadlineTimestamp(deadline, now),
-            options.Metadata is { Count: > 0 } ? options.Metadata : null,
-            options.WaitForReady);
+            metadata is { Count: > 0 } ? metadata : null,
+            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null,
+            lifetimeSource);
     }
 
-    private async ValueTask<ClientConnection> GetReadyConnectionAsync(
-        bool waitForReady,
-        DateTimeOffset? deadline,
-        CancellationToken cancellationToken,
-        RpcMethodDescriptor? method = null,
-        AttemptOutcomeState? attemptOutcome = null)
-    {
-        while (true)
-        {
-            attemptOutcome?.BeginAdmissionSelection();
-            try
-            {
-                if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)
-                    return method is { } descriptor
-                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
-                        : GetReadyConnection();
-
-                if (!waitForReady)
-                    return method is { } descriptor
-                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
-                        : GetReadyConnection();
-            }
-            catch (SharpLinkException exception) when (
-                waitForReady && exception.Code == SharpLinkErrorCode.Unavailable)
-            {
-                if (attemptOutcome?.ShouldHonorAdmissionRetryAfter == true)
-                {
-                    if (attemptOutcome.RetryAfter is not { } retryAfter)
-                        throw;
-                    var delay = retryAfter > TimeSpan.Zero ? retryAfter : TimeSpan.FromMilliseconds(1);
-                    if (deadline is { } retryDeadline && WouldReachDeadline(retryDeadline, delay))
-                        throw CreateDeadlineExceededException();
-                    await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                // A grant after the rejection supersedes that earlier delay, but a stale grant must
-                // not suppress a retry-after returned by a later rejected endpoint.
-                if (attemptOutcome?.HasAdmissionRejection == true && !attemptOutcome.HasAdmissionGrant)
-                    throw;
-            }
-
-            if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)
-                throw CreateConnectionClosedException("Client has stopped.");
-
-            var signal = Volatile.Read(ref _readySignal).Task;
-            if (deadline is not { } absoluteDeadline)
-            {
-                await signal.WaitAsync(cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
-            if (remaining <= TimeSpan.Zero)
-                throw CreateDeadlineExceededException();
-            if (!await SharpLinkTimer.WaitAsync(
-                    signal,
-                    remaining,
-                    cancellationToken).ConfigureAwait(false))
-            {
-                throw CreateDeadlineExceededException();
-            }
-        }
-    }
-
-    private async ValueTask DelayForRetryOrAdmissionAsync(TimeSpan delay, CancellationToken cancellationToken)
+    private async ValueTask DelayForRetryOrAdmissionAsync(
+        TimeSpan delay,
+        RpcDeadline deadline,
+        CancellationToken cancellationToken)
     {
         if (_shutdownCts.IsCancellationRequested)
             throw CreateConnectionClosedException("Client has stopped.");
@@ -109,12 +133,14 @@ internal sealed partial class SharpLinkClient
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
         try
         {
-            while (delay > MaximumRetryOrAdmissionDelay)
+            if (!await SharpLinkTimer.DelayAsync(
+                    delay,
+                    deadline,
+                    _runtimeContext.TimeProvider,
+                    linkedCancellation.Token).ConfigureAwait(false))
             {
-                await Task.Delay(MaximumRetryOrAdmissionDelay, linkedCancellation.Token).ConfigureAwait(false);
-                delay -= MaximumRetryOrAdmissionDelay;
+                throw CreateDeadlineExceededException();
             }
-            await Task.Delay(delay, linkedCancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (
             _shutdownCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -123,44 +149,42 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private static void AddDeadlineCandidate(
-        ref DateTimeOffset? deadline,
-        DateTimeOffset? candidate)
-    {
-        if (candidate is { } value && (deadline is null || value < deadline.Value))
-            deadline = value;
-    }
-
-    private static bool WouldReachDeadline(DateTimeOffset deadline, TimeSpan delay)
-        => delay >= deadline - DateTimeOffset.UtcNow;
-
-    private static DateTimeOffset AddTimeout(DateTimeOffset now, TimeSpan timeout)
-    {
-        var maximum = DateTimeOffset.MaxValue - now;
-        return timeout >= maximum ? DateTimeOffset.MaxValue : now.Add(timeout);
-    }
-
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
 
-    private static long GetMonotonicDeadlineTimestamp(
-        DateTimeOffset? deadline,
-        DateTimeOffset utcNow)
+    internal sealed class ClientLogicalCallState
     {
-        if (deadline is not { } absoluteDeadline)
-            return 0;
-        var remaining = absoluteDeadline - utcNow;
-        if (remaining <= TimeSpan.Zero)
-            return Stopwatch.GetTimestamp();
-        var stopwatchTicks = remaining.TotalSeconds * Stopwatch.Frequency;
-        if (stopwatchTicks >= long.MaxValue - Stopwatch.GetTimestamp())
-            return long.MaxValue;
-        return Stopwatch.GetTimestamp() + Math.Max(1L, (long)Math.Ceiling(stopwatchTicks));
+        private readonly RpcDeadline _deadline;
+        private readonly TimeProvider _timeProvider;
+        private int _deadlineClaimed;
+
+        internal ClientLogicalCallState(
+            RpcDeadline deadline,
+            TimeProvider timeProvider)
+        {
+            _deadline = deadline;
+            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        }
+
+        internal bool TryEnterProgress()
+        {
+            if (Volatile.Read(ref _deadlineClaimed) != 0)
+                return false;
+            if (_deadline.IsExpired(_timeProvider))
+            {
+                _ = TryClaimDeadline();
+                return false;
+            }
+            return Volatile.Read(ref _deadlineClaimed) == 0;
+        }
+
+        internal bool TryClaimDeadline()
+            => Interlocked.CompareExchange(ref _deadlineClaimed, 1, 0) == 0;
     }
 
-    private readonly record struct ResolvedCallControl(
-        DateTimeOffset? Deadline,
-        long DeadlineTimestamp,
+    internal readonly record struct ResolvedCallControl(
+        RpcDeadline Deadline,
         SharpLinkMetadata? Metadata,
-        bool WaitForReady);
+        ClientLogicalCallState? LogicalCall,
+        ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None);
 }

@@ -1,17 +1,22 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Runtime.CompilerServices;
+using System.Runtime.Loader;
+using System.Collections.Concurrent;
+using SharpLink.RollbackPlugin;
 
 namespace SharpLink.UnitTests.Runtime;
 
+[NotInParallel("dispatcher-pool")]
 public class PooledAsyncStreamDispatcherTests
 {
+    // The fixture owns dispatcher-pool clear/count assertions; ReferenceItem cases share one closed pool.
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
 
     private static readonly ReadOnlySequence<byte> Payload = new(new byte[] { 1 });
     private static readonly ReadOnlySequence<byte> NullStringPayload = new(new byte[] { 255, 255, 255, 255 });
 
     [Test]
-    [NotInParallel]
     public async Task RequiredClientResponseStreamMustRejectDecodedNull()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -41,13 +46,12 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task RequiredServerRequestStreamMustRejectDecodedNull()
     {
         PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
         var dispatcher = PooledAsyncStreamDispatcher<string>.Rent(
             default,
-            SharpLinkRuntimeContext.Default.Codecs);
+            RpcSessionTestFixture.RuntimeContext.Codecs);
 
         var failure = await CaptureDispatchFailureAsync(() => dispatcher.DispatchAsync(NullStringPayload));
         dispatcher.Complete(failure);
@@ -59,7 +63,7 @@ public class PooledAsyncStreamDispatcherTests
 
         var nullableDispatcher = PooledAsyncStreamDispatcher<string>.Rent(
             default,
-            SharpLinkRuntimeContext.Default.Codecs,
+            RpcSessionTestFixture.RuntimeContext.Codecs,
             payloadNullable: true);
         await nullableDispatcher.DispatchAsync(NullStringPayload);
         nullableDispatcher.Complete(exception: null);
@@ -71,7 +75,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task ConsumerCancellationTokenShouldNotMaskLeaseCancellation()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -97,7 +100,51 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
+    public async Task MoveNextAsync_PreCanceledEnumeration_CompletesAsCanceled()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        using var enumerationCancellation = new CancellationTokenSource();
+        enumerationCancellation.Cancel();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            enumerationCancellation.Token,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        var move = enumerator.MoveNextAsync();
+        Ensure(move.IsCompleted && move.IsCanceled,
+            "a pre-canceled enumeration token must complete MoveNextAsync synchronously as canceled, not faulted");
+
+        var task = enumerator.MoveNextAsync().AsTask();
+        Ensure(task.IsCompleted && task.IsCanceled && !task.IsFaulted,
+            "MoveNextAsync().AsTask() must observe the canceled completion for a canceled enumeration token");
+
+        var failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
+        Ensure(failure is OperationCanceledException,
+            "awaiting the canceled MoveNextAsync must surface the original OperationCanceledException");
+
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task MoveNextAsync_RemoteTerminalCancellation_CompletesAsCanceled()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        dispatcher.Complete(new OperationCanceledException("remote stream canceled"));
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        var move = enumerator.MoveNextAsync();
+        Ensure(move.IsCompleted && move.IsCanceled,
+            "a remote terminal OperationCanceledException must complete the terminal fast path as canceled, not faulted");
+
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
     public void PoolShouldRetainAtMost1024DispatchersAfterBurst()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -132,7 +179,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task LargeBufferShouldShrinkAndClearReferencesBeforePooling()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -154,7 +200,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task PoolReturnShouldClearCodecCallbacksAndCancellationRegistration()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -177,7 +222,563 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
+    public async Task PoolReturnShouldReleaseCompletedWaitContinuationFromCollectibleLoadContext()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var references = await CompleteCollectibleWaitContinuationAndReturnToPoolAsync();
+
+        for (var attempt = 0;
+             attempt < 12 && (references.Owner.IsAlive || references.LoadContext.IsAlive);
+             attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Yield();
+        }
+
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the exercised dispatcher must remain a static pool root during collection");
+        Ensure(!references.Owner.IsAlive && !references.LoadContext.IsAlive,
+            "a pooled dispatcher must clear completed wait continuation state before retaining itself");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task SignaledUnconsumedWaitTokenShouldBlockPoolReturnAndCrossGenerationReuse()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var wait = CreateDirectWait(first);
+        using var continuationEntered = new ManualResetEventSlim();
+        using var releaseContinuation = new ManualResetEventSlim();
+        var continuationCompleted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        wait.GetAwaiter().OnCompleted(() =>
+        {
+            continuationEntered.Set();
+            releaseContinuation.Wait();
+            _ = wait.GetAwaiter().GetResult();
+            continuationCompleted.TrySetResult();
+        });
+
+        first.Complete(exception: null);
+        Ensure(continuationEntered.Wait(RaceCoordinationTimeout),
+            "the signaled continuation must be queued before disposal");
+        await first.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "a signaled but unconsumed wait token must keep its dispatcher out of the pool");
+
+        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(!ReferenceEquals(first, second),
+            "a later Rent must not reuse a dispatcher whose previous token is still unconsumed");
+
+        releaseContinuation.Set();
+        await continuationCompleted.Task.WaitAsync(RaceCoordinationTimeout);
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "consuming the old token must make the terminal old generation eligible for return");
+        second.Complete(exception: null);
+        await second.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task LateConsumerWaitAcquireShouldRejectReturnedAndRentedGeneration()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var oldEnumerator = first.GetAsyncEnumerator();
+        using var acquireEntered = new ManualResetEventSlim();
+        using var releaseAcquire = new ManualResetEventSlim();
+        first.SetBeforeConsumerWaitOwnerAcquireForTests(() =>
+        {
+            acquireEntered.Set();
+            releaseAcquire.Wait();
+        });
+        var oldMove = Task.Run(async () => await oldEnumerator.MoveNextAsync());
+        Ensure(acquireEntered.Wait(RaceCoordinationTimeout),
+            "the old MoveNext must pause after reading old-generation state and before acquiring its wait owner");
+
+        first.Complete(exception: null);
+        await first.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the old lease must return before its deliberately late owner increment");
+        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(first, second),
+            "the test must rent the same dispatcher as a new generation");
+        var newEnumerator = second.GetAsyncEnumerator();
+        await second.DispatchAsync(Payload);
+
+        releaseAcquire.Set();
+        var oldFailure = await CaptureFailureAsync(oldMove.WaitAsync(RaceCoordinationTimeout));
+        Ensure(oldFailure is ObjectDisposedException,
+            "a late old-generation wait owner must fail before it can wait on or read the new lease");
+        Ensure(await newEnumerator.MoveNextAsync() && newEnumerator.Current is not null,
+            "the stale owner rollback must leave the new generation item and Current intact");
+
+        second.Complete(exception: null);
+        await newEnumerator.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the stale count must be balanced so the new terminal lease can still return");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task LateProducerAcquireShouldRejectAReturnedLeaseBeforeRerent()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        using var acquireEntered = new ManualResetEventSlim();
+        using var releaseAcquire = new ManualResetEventSlim();
+        first.SetBeforeProducerOperationAcquireForTests(() =>
+        {
+            acquireEntered.Set();
+            releaseAcquire.Wait();
+        });
+        var oldDispatch = Task.Run(async () => await first.DispatchAsync(Payload));
+        Ensure(acquireEntered.Wait(RaceCoordinationTimeout),
+            "the old dispatch must pause after reading Active and before acquiring producer ownership");
+
+        first.Complete(exception: null);
+        await first.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the old lease must enter the pool while the deliberately late producer has no ownership");
+
+        releaseAcquire.Set();
+        var oldFailure = await CaptureFailureAsync(oldDispatch.WaitAsync(RaceCoordinationTimeout));
+#if DEBUG
+        Ensure(oldFailure is ObjectDisposedException,
+            "a producer that increments after Returned must be rejected as an old lease");
+#else
+        Ensure(oldFailure is null,
+            "Release builds must silently discard a producer that increments after Returned");
+#endif
+
+        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(first, second),
+            "the returned instance must remain reusable after balancing the stale producer increment");
+        second.Complete(exception: null);
+        await second.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the rejected producer must not strand the later lease outside the pool");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task LateProducerAcquireShouldNotPolluteARentedGeneration()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        using var acquireEntered = new ManualResetEventSlim();
+        using var releaseAcquire = new ManualResetEventSlim();
+        first.SetBeforeProducerOperationAcquireForTests(() =>
+        {
+            acquireEntered.Set();
+            releaseAcquire.Wait();
+        });
+        var oldDispatch = Task.Run(async () => await first.DispatchAsync(Payload));
+        Ensure(acquireEntered.Wait(RaceCoordinationTimeout),
+            "the old dispatch must pause before its producer increment");
+
+        first.Complete(exception: null);
+        await first.DisposeAsync();
+        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(first, second),
+            "the test must rent the same dispatcher as a new generation before releasing the old producer");
+        var newEnumerator = second.GetAsyncEnumerator();
+
+        releaseAcquire.Set();
+        var oldFailure = await CaptureFailureAsync(oldDispatch.WaitAsync(RaceCoordinationTimeout));
+#if DEBUG
+        Ensure(oldFailure is ObjectDisposedException,
+            "a late producer from the old generation must be rejected after rerent");
+#else
+        Ensure(oldFailure is null,
+            "Release builds must silently discard a late producer from the old generation");
+#endif
+
+        await second.DispatchAsync(Payload);
+        second.Complete(exception: null);
+        Ensure(await newEnumerator.MoveNextAsync() && newEnumerator.Current is not null,
+            "the old producer rollback must not corrupt the new generation item or Current");
+        Ensure(!await newEnumerator.MoveNextAsync(),
+            "the new generation must contain exactly its own item");
+        await newEnumerator.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "balancing the stale producer count must leave the new terminal lease returnable");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task FinalReturnCheckShouldRejectProducersStillOwnedAfterTheReturnPrecheck()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        using var producerAcquireEntered = new CountdownEvent(2);
+        using var releaseProducerAcquire = new ManualResetEventSlim();
+        using var producerDecodeEntered = new CountdownEvent(2);
+        using var releaseProducerDecode = new ManualResetEventSlim();
+        using var returnPrecheckPassed = new ManualResetEventSlim();
+        using var allowReturnTransition = new ManualResetEventSlim();
+        using var returnedStatePublished = new ManualResetEventSlim();
+        using var allowFinalOwnerCheck = new ManualResetEventSlim();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec(
+                marker: null,
+                beforeDeserialize: () =>
+                {
+                    producerDecodeEntered.Signal();
+                    releaseProducerDecode.Wait();
+                }));
+        first.SetBeforeProducerOperationAcquireForTests(() =>
+        {
+            producerAcquireEntered.Signal();
+            releaseProducerAcquire.Wait();
+        });
+        first.SetBeforeReturnTransitionForTests(() =>
+        {
+            returnPrecheckPassed.Set();
+            allowReturnTransition.Wait();
+        });
+        first.SetAfterReturnTransitionForTests(() =>
+        {
+            returnedStatePublished.Set();
+            allowFinalOwnerCheck.Wait();
+        });
+
+        var producers = new[]
+        {
+            LongRunningTestWorker.RunAsync(() => first.DispatchAsync(Payload).AsTask()),
+            LongRunningTestWorker.RunAsync(() => first.DispatchAsync(Payload).AsTask())
+        };
+        Task? disposing = null;
+        PooledAsyncStreamDispatcher<ReferenceItem>? independent = null;
+        PooledAsyncStreamDispatcher<ReferenceItem>? reused = null;
+        try
+        {
+            Ensure(producerAcquireEntered.Wait(RaceCoordinationTimeout),
+                "both producers must read Active before disposal and pause before their owner increments");
+            disposing = LongRunningTestWorker.RunAsync(() => first.DisposeAsync().AsTask());
+            Ensure(returnPrecheckPassed.Wait(RaceCoordinationTimeout),
+                "pool return must pass its zero-owner precheck before the producers acquire");
+
+            releaseProducerAcquire.Set();
+            Ensure(producerDecodeEntered.Wait(RaceCoordinationTimeout),
+                "both producers must acquire the Disposing generation before the return CAS");
+            allowReturnTransition.Set();
+            Ensure(returnedStatePublished.Wait(RaceCoordinationTimeout),
+                "return must pause after publishing Returned and before its final owner check");
+
+            // Keep both producer owners inside Deserialize while the final check executes. Removing
+            // the post-CAS owner check would pool and expose this exact instance here.
+            allowFinalOwnerCheck.Set();
+            await disposing.WaitAsync(RaceCoordinationTimeout);
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+                "the final check must roll Returned back while producer owners are still active");
+            independent = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            Ensure(!ReferenceEquals(first, independent),
+                "Rent must not expose a dispatcher whose producer still owns the old generation");
+
+            releaseProducerDecode.Set();
+            await Task.WhenAll(producers).WaitAsync(RaceCoordinationTimeout);
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "the last producer releases must retry and return the old generation exactly once");
+
+            reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            Ensure(ReferenceEquals(first, reused),
+                "the balanced old generation must become reusable only after every producer releases");
+            var newEnumerator = reused.GetAsyncEnumerator();
+            await reused.DispatchAsync(Payload);
+            reused.Complete(exception: null);
+            Ensure(await newEnumerator.MoveNextAsync() && newEnumerator.Current is not null,
+                "the reused generation must preserve its own item and Current");
+            Ensure(!await newEnumerator.MoveNextAsync(),
+                "the reused generation must not receive a stale producer item");
+            await newEnumerator.DisposeAsync();
+
+            independent.Complete(exception: null);
+            await independent.DisposeAsync();
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 2,
+                "both independent terminal generations must return exactly once");
+        }
+        finally
+        {
+            releaseProducerAcquire.Set();
+            allowReturnTransition.Set();
+            allowFinalOwnerCheck.Set();
+            releaseProducerDecode.Set();
+            for (var index = 0; index < producers.Length; index++)
+                await LongRunningTestWorker.JoinAsync(producers[index], RaceCoordinationTimeout);
+            if (disposing is not null)
+                await LongRunningTestWorker.JoinAsync(disposing, RaceCoordinationTimeout);
+            if (reused is not null)
+            {
+                reused.Complete(exception: null);
+                await reused.DisposeAsync();
+            }
+            if (independent is not null && !ReferenceEquals(independent, reused))
+            {
+                independent.Complete(exception: null);
+                await independent.DisposeAsync();
+            }
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
+    public async Task FinalReturnCheckShouldRejectAConsumerAcquiredAfterTheReturnPrecheck()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var enumerator = first.GetAsyncEnumerator();
+        using var consumerAcquireEntered = new ManualResetEventSlim();
+        using var releaseConsumerAcquire = new ManualResetEventSlim();
+        using var consumerResultRead = new ManualResetEventSlim();
+        using var releaseOuterContinuation = new ManualResetEventSlim();
+        using var returnPrecheckPassed = new ManualResetEventSlim();
+        using var allowReturnTransition = new ManualResetEventSlim();
+        first.SetBeforeConsumerWaitOwnerAcquireForTests(() =>
+        {
+            consumerAcquireEntered.Set();
+            releaseConsumerAcquire.Wait();
+        });
+        first.SetAfterConsumerWaitResultForTests(() =>
+        {
+            consumerResultRead.Set();
+            releaseOuterContinuation.Wait();
+        });
+        first.SetBeforeReturnTransitionForTests(() =>
+        {
+            returnPrecheckPassed.Set();
+            allowReturnTransition.Wait();
+        });
+
+        var move = LongRunningTestWorker.RunAsync(() => enumerator.MoveNextAsync().AsTask());
+        Task? disposing = null;
+        PooledAsyncStreamDispatcher<ReferenceItem>? independent = null;
+        PooledAsyncStreamDispatcher<ReferenceItem>? reused = null;
+        try
+        {
+            Ensure(consumerAcquireEntered.Wait(RaceCoordinationTimeout),
+                "MoveNext must read Active and pause before taking consumer ownership");
+            disposing = LongRunningTestWorker.RunAsync(() => first.DisposeAsync().AsTask());
+            Ensure(returnPrecheckPassed.Wait(RaceCoordinationTimeout),
+                "return must pass its zero-consumer precheck before MoveNext acquires");
+
+            releaseConsumerAcquire.Set();
+            Ensure(consumerResultRead.Wait(RaceCoordinationTimeout),
+                "MoveNext must own the Disposing generation through its outer terminal-state read");
+            allowReturnTransition.Set();
+            await disposing.WaitAsync(RaceCoordinationTimeout);
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+                "the final check must roll Returned back while the consumer owner is active");
+            independent = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            Ensure(!ReferenceEquals(first, independent),
+                "Rent must not expose the dispatcher before MoveNext releases its outer owner");
+
+            releaseOuterContinuation.Set();
+            var failure = await CaptureFailureAsync(move.WaitAsync(RaceCoordinationTimeout));
+            Ensure(failure is OperationCanceledException,
+                "the old MoveNext must observe its original consumer-disposal terminal state");
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "MoveNext finally must retry return after releasing the last consumer owner");
+
+            reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            Ensure(ReferenceEquals(first, reused),
+                "the exact old dispatcher must become reusable after the consumer releases");
+            reused.Complete(exception: null);
+            await reused.DisposeAsync();
+            independent.Complete(exception: null);
+            await independent.DisposeAsync();
+        }
+        finally
+        {
+            releaseConsumerAcquire.Set();
+            allowReturnTransition.Set();
+            releaseOuterContinuation.Set();
+            await LongRunningTestWorker.JoinAsync(move, RaceCoordinationTimeout);
+            if (disposing is not null)
+                await LongRunningTestWorker.JoinAsync(disposing, RaceCoordinationTimeout);
+            if (reused is not null)
+            {
+                reused.Complete(exception: null);
+                await reused.DisposeAsync();
+            }
+            if (independent is not null && !ReferenceEquals(independent, reused))
+            {
+                independent.Complete(exception: null);
+                await independent.DisposeAsync();
+            }
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
+    public async Task RealMoveNextWaitOwnerShouldPreserveTerminalStateUntilOuterContinuationCompletes()
+    {
+        await AssertPausedMoveNextOwnerAsync(PausedMoveNextOutcome.RemoteCompletion);
+        await AssertPausedMoveNextOwnerAsync(PausedMoveNextOutcome.RemoteError);
+        await AssertPausedMoveNextOwnerAsync(PausedMoveNextOutcome.Cancellation);
+    }
+
+    [Test]
+    public async Task PoolReturnShouldClearActiveSegmentWhenFreeSegmentStackIsEmpty()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        await dispatcher.DispatchAsync(Payload);
+        Ensure(await enumerator.MoveNextAsync(), "the active-segment item must be consumable");
+        Ensure(IsFreeSegmentStackEmpty(dispatcher),
+            "a one-item stream must not create a recycled free segment");
+
+        // TryDequeue clears consumed slots, so seed stale state to exercise the pool cleanup itself.
+        var activeSegment = GetPrivateField(dispatcher, "_consumerSegment");
+        SeedStaleSegmentState(activeSegment);
+
+        dispatcher.Complete(exception: null);
+        await enumerator.DisposeAsync();
+
+        EnsureSegmentStateWasCleared(activeSegment, "the active segment");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pooling with an empty free-segment stack must not retain a stale item");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task PoolReturnShouldClearAndRecycleFreeSegmentsWhenStackIsNonempty()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        for (var index = 0; index < 17; index++)
+            await dispatcher.DispatchAsync(Payload);
+        for (var index = 0; index < 17; index++)
+            Ensure(await enumerator.MoveNextAsync(), $"item {index} must be consumable");
+
+        var recycledSegment = GetOnlyFreeSegment(dispatcher);
+        // TryDequeue clears consumed slots, so seed stale state to exercise the pool cleanup itself.
+        SeedStaleSegmentState(recycledSegment);
+
+        dispatcher.Complete(exception: null);
+        await enumerator.DisposeAsync();
+
+        EnsureSegmentStateWasCleared(recycledSegment, "the recycled free segment");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pooling with recycled free segments must not retain a stale item");
+
+        var reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(dispatcher, reused),
+            "the test must rent the dispatcher that owns the cleared recycled segment");
+        var reusedEnumerator = reused.GetAsyncEnumerator();
+        for (var index = 0; index < 33; index++)
+            await reused.DispatchAsync(Payload);
+        reused.Complete(exception: null);
+
+        var received = 0;
+        while (await reusedEnumerator.MoveNextAsync())
+            received++;
+        await reusedEnumerator.DisposeAsync();
+
+        Ensure(received == 33,
+            "the next lease must safely reuse every cleared free segment");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task PoolReturnShouldClearAndRecycleEveryFreeSegmentWhenStackIsNonempty()
+    {
+        const int FirstLeaseItemCount = 49;
+        const int ReusedLeaseItemCount = 112;
+
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        for (var index = 0; index < FirstLeaseItemCount; index++)
+            await dispatcher.DispatchAsync(Payload);
+        for (var index = 0; index < FirstLeaseItemCount; index++)
+            Ensure(await enumerator.MoveNextAsync(), $"item {index} must be consumable");
+
+        var recycledSegments = GetFreeSegments(dispatcher);
+        Ensure(recycledSegments.Length == 2,
+            "49 items must recycle the initial 16-slot and the next 32-slot segments");
+        foreach (var recycledSegment in recycledSegments)
+            SeedStaleSegmentState(recycledSegment);
+
+        dispatcher.Complete(exception: null);
+        await enumerator.DisposeAsync();
+
+        foreach (var recycledSegment in recycledSegments)
+            EnsureSegmentStateWasCleared(recycledSegment, "a recycled free segment");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pooling with multiple recycled free segments must not retain stale items");
+
+        var reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(dispatcher, reused),
+            "the test must rent the dispatcher that owns the cleared recycled segments");
+        var reusedEnumerator = reused.GetAsyncEnumerator();
+        for (var index = 0; index < ReusedLeaseItemCount; index++)
+            await reused.DispatchAsync(Payload);
+
+        var activeSegment = GetPrivateField(reused, "_consumerSegment");
+        var firstReusedFreeSegment = GetPrivateField(activeSegment, "Next");
+        var secondReusedFreeSegment = GetPrivateField(firstReusedFreeSegment, "Next");
+        Ensure(ContainsReference(recycledSegments, firstReusedFreeSegment),
+            "the next lease must reuse a cleared free segment after its active segment fills");
+        Ensure(ContainsReference(recycledSegments, secondReusedFreeSegment),
+            "the next lease must reuse the second cleared free segment after the first one fills");
+        Ensure(!ReferenceEquals(firstReusedFreeSegment, secondReusedFreeSegment),
+            "the next lease must traverse two distinct recycled free segments");
+
+        reused.Complete(exception: null);
+        var received = 0;
+        while (await reusedEnumerator.MoveNextAsync())
+            received++;
+        await reusedEnumerator.DisposeAsync();
+
+        Ensure(received == ReusedLeaseItemCount,
+            "the next lease must safely read across both recycled free segments");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
     public async Task CompletedEnumeratorShouldNotReturnBeforeCallerDisposesIt()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -197,11 +798,59 @@ public class PooledAsyncStreamDispatcherTests
         await enumerator.DisposeAsync();
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
             "repeated disposal must not return a dispatcher twice");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "an idempotent disposal after pool return must not retain a completion holder on the common path");
+
+        var reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(dispatcher, reused),
+            "a repeated disposal must not install stale completion state on the returned dispatcher");
+        reused.Complete(exception: null);
+        await reused.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the next lease must still complete and return after an idempotent old disposal");
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
     }
 
     [Test]
-    [NotInParallel]
+    public void SynchronousNoWaiterDisposeShouldNotAllocateCompletionState()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+
+        // Warm the exact terminal/disposal path before measuring it. The state intentionally
+        // remains attached during the measurement so ConcurrentStack pool-node allocation is
+        // excluded; this measures only the first no-waiter DisposeAsync coordination.
+        CompleteAndDisposeWhileAttached(codec);
+
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var lease = (IStreamDispatchLease)dispatcher;
+        var dispatchState = new AttachedDispatchState();
+        lease.BindDispatchState(dispatchState);
+        dispatcher.Complete(exception: null);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        dispatcher.DisposeAsync().GetAwaiter().GetResult();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Ensure(allocated == 0,
+            $"a synchronous no-waiter disposal allocated {allocated} bytes for completion coordination");
+        Ensure(dispatchState.CloseCount == 2,
+            "remote completion and consumer disposal must each close the attached dispatch state");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "the attached terminal state must prevent pool return until it is detached");
+
+        dispatchState.Detach();
+        lease.OnDispatchesDrained();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the finalized no-waiter dispatcher must return once detach completes");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pool return after a no-waiter disposal must not retain a completion holder");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
     public async Task DelayedOldPoolReturnShouldNotReturnOrClearReusedLease()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -256,7 +905,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task EarlyDisposeShouldNotPoolWhileProducerIsDecoding()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -294,7 +942,180 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
+    public async Task ConsumerDisposeShouldAwaitDispatchDrainBeforeFinalCreditAndAbandonmentCallback()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        using var dispatchEntered = new ManualResetEventSlim();
+        using var releaseDispatch = new ManualResetEventSlim();
+        var events = new List<string>();
+        var finalCredit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var abandonmentCallback = new TaskCompletionSource<IStreamDispatchState>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var abandonmentCallbackCount = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            null,
+            (_, _, _) =>
+            {
+                events.Add("final-credit");
+                finalCredit.TrySetResult();
+            },
+            null);
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec(
+                marker: null,
+                beforeDeserialize: () =>
+                {
+                    events.Add("dispatch-entered");
+                    dispatchEntered.Set();
+                    releaseDispatch.Wait(RaceCoordinationTimeout);
+                }));
+        const long requestId = 93;
+        manager.Register(requestId, dispatcher);
+        dispatcher.SetConsumerAbandonedCallback(
+            (abandonedRequestId, dispatchState) =>
+            {
+                var drainedDispatchState = dispatchState ?? throw new Exception(
+                    "the registered dispatcher must expose its dispatch state to abandonment cleanup");
+                Ensure(!drainedDispatchState.HasActiveDispatches,
+                    "the abandonment callback must observe the acquired dispatch as drained");
+                Interlocked.Increment(ref abandonmentCallbackCount);
+                events.Add("consumer-abandoned");
+                abandonmentCallback.TrySetResult(drainedDispatchState);
+                manager.Unregister(abandonedRequestId);
+                return ValueTask.CompletedTask;
+            },
+            requestId);
+
+        var producer = Task.Run(async () => await manager.DispatchChunkAsync(requestId, Payload));
+        Ensure(dispatchEntered.Wait(RaceCoordinationTimeout),
+            "the producer must hold the stream-manager dispatch lease before disposal starts");
+        var disposing = dispatcher.DisposeAsync().AsTask();
+        var concurrentDispose = dispatcher.DisposeAsync().AsTask();
+        Ensure(!disposing.IsCompleted && !concurrentDispose.IsCompleted &&
+               !finalCredit.Task.IsCompleted && !abandonmentCallback.Task.IsCompleted,
+            "consumer disposal callers must await the dispatch-drained signal before final credit or abandonment callback");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "the dispatcher must not return to the pool while its acquired dispatch is still active");
+
+        releaseDispatch.Set();
+        await Task.WhenAll(
+            producer,
+            finalCredit.Task,
+            abandonmentCallback.Task,
+            disposing,
+            concurrentDispose).WaitAsync(RaceCoordinationTimeout);
+
+        Ensure(events.Count == 3 &&
+               events[0] == "dispatch-entered" &&
+               events[1] == "final-credit" &&
+               events[2] == "consumer-abandoned",
+            "the acquired dispatch must publish final credit before consumer-abandoned cleanup");
+        Ensure(Volatile.Read(ref abandonmentCallbackCount) == 1,
+            "consumer abandonment must invoke its terminal callback exactly once across concurrent disposal callers");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the dispatcher must finalize and return only after the drain and abandonment callback complete");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task RemoteCompletionBeforeConsumerDisposeShouldSkipAbandonmentAndCompleteSynchronously()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var abandonmentCallbacks = 0;
+        dispatcher.SetConsumerAbandonedCallback(
+            _ => Interlocked.Increment(ref abandonmentCallbacks),
+            requestId: 94);
+
+        dispatcher.Complete(exception: null);
+        var disposing = dispatcher.DisposeAsync();
+        Ensure(disposing.IsCompletedSuccessfully,
+            "the normal no-waiter remote-completion path must not suspend consumer disposal");
+        await disposing;
+
+        Ensure(Volatile.Read(ref abandonmentCallbacks) == 0,
+            "a remote terminal completion must not be reported as consumer abandonment");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the normal remote-completion path must retain the completed dispatcher once");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task RemoteCompletionMustHoldConsumerDisposeUntilTerminalPublicationFinishes()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var state = new GatedCloseDispatchState();
+        ((IStreamDispatchLease)dispatcher).BindDispatchState(state);
+        var abandonmentCallbacks = 0;
+        dispatcher.SetConsumerAbandonedCallback(
+            _ => Interlocked.Increment(ref abandonmentCallbacks),
+            requestId: 95);
+
+        var remoteComplete = Task.Run(() => dispatcher.Complete(exception: null));
+        await state.FirstCloseEntered.WaitAsync(RaceCoordinationTimeout);
+        var consumerStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposing = Task.Run(async () =>
+        {
+            consumerStarted.TrySetResult();
+            await dispatcher.DisposeAsync();
+        });
+        try
+        {
+            await consumerStarted.Task.WaitAsync(RaceCoordinationTimeout);
+            Ensure(!disposing.IsCompleted,
+                "consumer disposal must not bypass a remote terminal publication that is still closing its dispatch state");
+            Ensure(!state.WasClosedConcurrently,
+                "consumer disposal must not race a remote terminal close before that terminal publication finishes");
+            Ensure(state.CloseCount == 1,
+                "the remote terminal must own exactly the first dispatch-state close before consumer disposal resumes");
+
+            state.ReleaseFirstClose();
+            await Task.WhenAll(remoteComplete, disposing).WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(Volatile.Read(ref abandonmentCallbacks) == 0,
+                "a remote terminal winner must not report consumer abandonment while disposal joins it");
+            Ensure(state.CloseCount == 2 && !state.WasClosedConcurrently,
+                "the consumer must perform its second dispatch-state close only after remote publication finishes");
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "pool return must wait for the remote terminal publication and consumer disposal to finish");
+        }
+        finally
+        {
+            state.ReleaseFirstClose();
+            await Task.WhenAll(remoteComplete, disposing).WaitAsync(RaceCoordinationTimeout);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
+    public async Task LateDispatchStateBindingAfterTerminalCompletionMustCloseTheState()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var state = new GatedCloseDispatchState(blockFirstClose: false);
+
+        dispatcher.Complete(exception: null);
+        ((IStreamDispatchLease)dispatcher).BindDispatchState(state);
+        Ensure(state.IsClosed,
+            "a dispatch state bound after terminal completion must be closed before it can accept another frame");
+
+        await dispatcher.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the late-bound closed state must still allow the completed dispatcher to return once");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
     public async Task AttachedDispatcherShouldNotReturnToPoolWhenPendingCompletionOwnsTheSlot()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -320,7 +1141,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task AsyncConsumerAbandonmentShouldJoinTerminalCleanupBeforeDisposeReturns()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -345,22 +1165,243 @@ public class PooledAsyncStreamDispatcherTests
 
         var disposing = dispatcher.DisposeAsync().AsTask();
         var state = await callbackEntered.Task.WaitAsync(RaceCoordinationTimeout);
-        Ensure(!disposing.IsCompleted && !state.IsDetached,
+        var deferredContinuations = new QueuedSynchronizationContext();
+        var originalContext = SynchronizationContext.Current;
+        Task concurrentDispose;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(deferredContinuations);
+            concurrentDispose = dispatcher.DisposeAsync().AsTask();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(originalContext);
+        }
+
+        Ensure(!disposing.IsCompleted && !concurrentDispose.IsCompleted && !state.IsDetached,
             "disposal must join asynchronous terminal cleanup before finalizing its lease");
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
             "an asynchronously cleaning dispatcher must not enter the pool");
 
         releaseCallback.TrySetResult();
         await disposing.WaitAsync(RaceCoordinationTimeout);
+        var reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(dispatcher, reused),
+            "the first disposal must return the exact old lease before the concurrent caller resumes");
+        await concurrentDispose.WaitAsync(RaceCoordinationTimeout);
+        Ensure(deferredContinuations.PostCount == 0,
+            "a concurrent disposal must await its generation-scoped completion instead of polling through a queued continuation");
         Ensure(state.IsDetached,
             "the terminal callback must detach the completed stream before disposal returns");
+        reused.Complete(exception: null);
+        await reused.DisposeAsync();
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
             "the dispatcher should become reusable only after terminal cleanup completes");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "the old generation's concurrent-dispose completion must not remain on the reused pooled dispatcher");
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
     }
 
     [Test]
-    [NotInParallel]
+    public async Task StaleConcurrentDisposeCompletionMustNotPoisonTheNextLease()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var firstCleanupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstCleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldWaiterAtInstall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOldWaiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var nextCleanupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseNextCleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
+        first.SetConsumerAbandonedCallback(
+            async (_, _) =>
+            {
+                firstCleanupEntered.TrySetResult();
+                await releaseFirstCleanup.Task.ConfigureAwait(false);
+            },
+            requestId: 97);
+
+        Task? firstDispose = null;
+        Task? oldConcurrentDispose = null;
+        Task? nextDispose = null;
+        Task? nextConcurrentDispose = null;
+        try
+        {
+            firstDispose = first.DisposeAsync().AsTask();
+            await firstCleanupEntered.Task.WaitAsync(RaceCoordinationTimeout);
+            first.SetBeforeConcurrentDisposeCompletionInstallForTests(() =>
+            {
+                oldWaiterAtInstall.TrySetResult();
+                releaseOldWaiter.Task.GetAwaiter().GetResult();
+            });
+
+            oldConcurrentDispose = Task.Run(async () => await first.DisposeAsync());
+            await oldWaiterAtInstall.Task.WaitAsync(RaceCoordinationTimeout);
+
+            releaseFirstCleanup.TrySetResult();
+            await firstDispose.WaitAsync(RaceCoordinationTimeout);
+            var next = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
+            Ensure(ReferenceEquals(first, next),
+                "the first lease must return before the deliberately delayed old waiter resumes");
+
+            releaseOldWaiter.TrySetResult();
+            await oldConcurrentDispose.WaitAsync(RaceCoordinationTimeout);
+
+            next.SetConsumerAbandonedCallback(
+                async (_, _) =>
+                {
+                    nextCleanupEntered.TrySetResult();
+                    await releaseNextCleanup.Task.ConfigureAwait(false);
+                },
+                requestId: 98);
+            nextDispose = next.DisposeAsync().AsTask();
+            await nextCleanupEntered.Task.WaitAsync(RaceCoordinationTimeout);
+            nextConcurrentDispose = next.DisposeAsync().AsTask();
+
+            Ensure(!nextConcurrentDispose.IsCompleted,
+                "a stale old-generation completion must be removed so the next lease's concurrent disposer waits for its own cleanup");
+
+            releaseNextCleanup.TrySetResult();
+            await Task.WhenAll(nextDispose, nextConcurrentDispose).WaitAsync(RaceCoordinationTimeout);
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1 &&
+                   !next.HasRetainedReferencesForTests,
+                "the recovered next lease must return once without retaining either generation's completion holder");
+        }
+        finally
+        {
+            releaseOldWaiter.TrySetResult();
+            releaseFirstCleanup.TrySetResult();
+            releaseNextCleanup.TrySetResult();
+            if (firstDispose is not null)
+                await CaptureFailureAsync(firstDispose);
+            if (oldConcurrentDispose is not null)
+                await CaptureFailureAsync(oldConcurrentDispose);
+            if (nextDispose is not null)
+                await CaptureFailureAsync(nextDispose);
+            if (nextConcurrentDispose is not null)
+                await CaptureFailureAsync(nextConcurrentDispose);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
+    public async Task CompleteRacingDisposeAwaitingRemoteTerminalPublicationMustAlwaysFinishDispose()
+    {
+        // Regression for issue #206: the remote-terminal publication double-check used plain
+        // Volatile.Reads on both sides, which lost the completion signal under x86
+        // store-buffer reordering and left DisposeAsync hanging forever (the hang then
+        // stranded the NotInParallel "dispatcher-pool" key and stalled the whole test engine).
+        // This test deterministically parks Complete between the publication state write's
+        // predecessor and successor so DisposeAsync must install its completion while the
+        // publication is still in flight, then verifies the publisher-side fenced re-read
+        // observes the installed completion.
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var publishGateReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePublish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completionInstalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? disposeTask = null;
+        try
+        {
+            dispatcher.SetBeforeRemoteTerminalPublicationPublishForTests(() =>
+            {
+                publishGateReached.TrySetResult();
+                releasePublish.Task.GetAwaiter().GetResult();
+            });
+            dispatcher.SetAfterRemoteTerminalPublicationCompletionInstallForTests(() =>
+                completionInstalled.TrySetResult());
+
+            var completeTask = Task.Run(() => dispatcher.Complete(exception: null));
+            await publishGateReached.Task.WaitAsync(RaceCoordinationTimeout);
+
+            disposeTask = dispatcher.DisposeAsync().AsTask();
+            await completionInstalled.Task.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!disposeTask.IsCompleted,
+                "the dispose must stay pending until the remote terminal publication is released");
+
+            releasePublish.TrySetResult();
+            await completeTask.WaitAsync(RaceCoordinationTimeout);
+            await disposeTask.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!dispatcher.HasRetainedReferencesForTests,
+                "the completed dispose must clear the remote-terminal publication holder before pooling");
+        }
+        finally
+        {
+            releasePublish.TrySetResult();
+            if (disposeTask is not null)
+                await CaptureFailureAsync(disposeTask);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
+    public async Task CompleteFinishingBeforeDisposeInstallsItsCompletionMustStillReleaseTheDispose()
+    {
+        // Regression for issue #206, second half of the double-check: the publisher's fenced
+        // re-read observed a null completion and the waiter installed afterwards — the waiter's
+        // own fenced re-check must then observe the already-published state and complete itself.
+        // This test parks the waiter before it installs its completion, lets Complete finish
+        // entirely (its re-read must find nothing), and then releases the waiter.
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var publishGateReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePublish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var installGateReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseInstall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? disposeTask = null;
+        try
+        {
+            dispatcher.SetBeforeRemoteTerminalPublicationPublishForTests(() =>
+            {
+                publishGateReached.TrySetResult();
+                releasePublish.Task.GetAwaiter().GetResult();
+            });
+            dispatcher.SetBeforeRemoteTerminalPublicationCompletionInstallForTests(() =>
+            {
+                installGateReached.TrySetResult();
+                releaseInstall.Task.GetAwaiter().GetResult();
+            });
+
+            var completeTask = Task.Run(() => dispatcher.Complete(exception: null));
+            await publishGateReached.Task.WaitAsync(RaceCoordinationTimeout);
+
+            // The install gate blocks synchronously inside DisposeAsync's sync prefix, so the
+            // dispose must run on its own thread or the test thread would park itself.
+            disposeTask = Task.Run(async () => await dispatcher.DisposeAsync());
+            await installGateReached.Task.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!disposeTask.IsCompleted,
+                "the dispose must stay pending while its completion install is parked");
+
+            releasePublish.TrySetResult();
+            await completeTask.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!disposeTask.IsCompleted,
+                "the parked dispose must not complete before its own re-check runs");
+
+            releaseInstall.TrySetResult();
+            await disposeTask.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!dispatcher.HasRetainedReferencesForTests,
+                "the completed dispose must clear the remote-terminal publication holder before pooling");
+        }
+        finally
+        {
+            releasePublish.TrySetResult();
+            releaseInstall.TrySetResult();
+            if (disposeTask is not null)
+                await CaptureFailureAsync(disposeTask);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
     public async Task RegistrationRetentionShouldPreventUnregisteredDispatcherReuse()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -384,7 +1425,51 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
+    public async Task RegistrationRetentionShouldAllowLateStreamManagerBindingAfterConsumerDispose()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var decodedItems = 0;
+        var manager = new StreamManager();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec(beforeDeserialize: () => Interlocked.Increment(ref decodedItems)));
+        var registrationLease = dispatcher.RetainForRegistration();
+        var registrationReleased = false;
+        const long requestId = 96;
+
+        try
+        {
+            await dispatcher.DisposeAsync();
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+                "registration retention must keep a disposed but unregistered dispatcher out of the pool");
+
+            manager.Register(requestId, dispatcher);
+            await manager.DispatchChunkAsync(requestId, Payload);
+            Ensure(Volatile.Read(ref decodedItems) == 0,
+                "late StreamManager binding after consumer disposal must close the entry before it accepts a frame");
+            Ensure(manager.ActiveStreamCount == 1,
+                "late registration must remain owned by StreamManager until its explicit detach");
+
+            manager.Unregister(requestId);
+            Ensure(manager.ActiveStreamCount == 0 &&
+                   PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+                "detach alone must not pool the dispatcher while registration retention is still held");
+
+            dispatcher.ReleaseRegistrationRetention(registrationLease);
+            registrationReleased = true;
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "releasing the retained registration owner must return the late-bound dispatcher exactly once");
+        }
+        finally
+        {
+            manager.Unregister(requestId);
+            if (!registrationReleased)
+                dispatcher.ReleaseRegistrationRetention(registrationLease);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
     public async Task RentResetMustFinishBeforeNewLeaseCanBeReturned()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -460,7 +1545,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task ConcurrentPoolLeasesShouldKeepItemsIsolated()
     {
         PooledAsyncStreamDispatcher<byte>.ClearPoolForTests();
@@ -501,7 +1585,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task ConcurrentProducerConsumerShouldDeliverEverySlotExactlyOnceAcrossLeases()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -537,7 +1620,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CompleteAllRacingAnIdleConsumerShouldAlwaysReleaseItsWaiter()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -572,7 +1654,6 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task LongStreamShouldRecycleSegmentsBeyondBufferedElementLimit()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -606,6 +1687,132 @@ public class PooledAsyncStreamDispatcherTests
             throw new Exception(message);
     }
 
+    private static void CompleteAndDisposeWhileAttached(ReferenceItemCodec codec)
+    {
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var lease = (IStreamDispatchLease)dispatcher;
+        var dispatchState = new AttachedDispatchState();
+        lease.BindDispatchState(dispatchState);
+        dispatcher.Complete(exception: null);
+        dispatcher.DisposeAsync().GetAwaiter().GetResult();
+        dispatchState.Detach();
+        lease.OnDispatchesDrained();
+    }
+
+    private static ValueTask<bool> CreateDirectWait(
+        PooledAsyncStreamDispatcher<ReferenceItem> dispatcher)
+    {
+        var waitMethod = typeof(PooledAsyncStreamDispatcher<ReferenceItem>).GetMethod(
+            "WaitForDataAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find dispatcher wait source seam");
+        return (ValueTask<bool>)waitMethod.Invoke(dispatcher, null)!;
+    }
+
+    private static async Task AssertPausedMoveNextOwnerAsync(PausedMoveNextOutcome outcome)
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        using var cancellation = new CancellationTokenSource();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            outcome == PausedMoveNextOutcome.Cancellation ? cancellation.Token : default,
+            new ReferenceItemCodec());
+        var enumerator = first.GetAsyncEnumerator();
+        using var resultConsumed = new ManualResetEventSlim();
+        using var releaseOuterContinuation = new ManualResetEventSlim();
+        first.SetAfterConsumerWaitResultForTests(() =>
+        {
+            resultConsumed.Set();
+            releaseOuterContinuation.Wait();
+        });
+        var move = enumerator.MoveNextAsync().AsTask();
+        var expectedError = new InvalidOperationException("phase15 paused remote error");
+        switch (outcome)
+        {
+            case PausedMoveNextOutcome.RemoteCompletion:
+                first.Complete(exception: null);
+                break;
+            case PausedMoveNextOutcome.RemoteError:
+                first.Complete(expectedError);
+                break;
+            case PausedMoveNextOutcome.Cancellation:
+                cancellation.Cancel();
+                break;
+            default:
+                throw new System.Diagnostics.UnreachableException();
+        }
+
+        Ensure(resultConsumed.Wait(RaceCoordinationTimeout),
+            $"{outcome} must pause after wait token consumption and before outer state reads");
+        await first.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            $"{outcome} MoveNext owner must block return after GetResult while outer continuation is paused");
+        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(!ReferenceEquals(first, second),
+            $"{outcome} must not let a new generation clear the paused continuation's terminal state");
+
+        releaseOuterContinuation.Set();
+        if (outcome == PausedMoveNextOutcome.RemoteCompletion)
+        {
+            Ensure(!await move.WaitAsync(RaceCoordinationTimeout),
+                "normal remote completion must retain its original false result");
+        }
+        else
+        {
+            var failure = await CaptureFailureAsync(move.WaitAsync(RaceCoordinationTimeout));
+            Ensure(outcome == PausedMoveNextOutcome.RemoteError
+                    ? ReferenceEquals(failure, expectedError)
+                    : failure is OperationCanceledException,
+                $"{outcome} must retain its original terminal failure");
+        }
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            $"{outcome} old generation may return only after MoveNext finally releases its owner");
+
+        second.Complete(exception: null);
+        await second.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<CollectibleContinuationReferences>
+        CompleteCollectibleWaitContinuationAndReturnToPoolAsync()
+    {
+        var loadContext = new DispatcherPluginLoadContext($"phase15-dispatcher-{Guid.NewGuid():N}");
+        var loadContextReference = new WeakReference(loadContext);
+        var assembly = loadContext.LoadFromAssemblyPath(typeof(RollbackMarker).Assembly.Location);
+        var owner = Activator.CreateInstance(
+            assembly.GetType(typeof(RollbackMarker).FullName!, throwOnError: true)!)!;
+        var ownerReference = new WeakReference(owner);
+        var continuationOwner = owner;
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var wait = CreateDirectWait(dispatcher);
+        var continuationCompleted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Action continuation = () =>
+        {
+            _ = wait.GetAwaiter().GetResult();
+            GC.KeepAlive(continuationOwner);
+            continuationCompleted.TrySetResult();
+        };
+        wait.GetAwaiter().OnCompleted(continuation);
+        continuation = null!;
+
+        dispatcher.Complete(exception: null);
+        await continuationCompleted.Task.WaitAsync(RaceCoordinationTimeout);
+        await dispatcher.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "terminal dispatcher must return to the pool after its waiter completes");
+
+        owner = null!;
+        assembly = null!;
+        loadContext.Unload();
+        loadContext = null!;
+        return new CollectibleContinuationReferences(ownerReference, loadContextReference);
+    }
+
     private static async Task<Exception?> CaptureFailureAsync(Task task)
     {
         try
@@ -619,6 +1826,24 @@ public class PooledAsyncStreamDispatcherTests
         }
     }
 
+    private sealed class DispatcherPluginLoadContext(string name)
+        : AssemblyLoadContext(name, isCollectible: true)
+    {
+        protected override System.Reflection.Assembly? Load(System.Reflection.AssemblyName assemblyName)
+            => null;
+    }
+
+    private readonly record struct CollectibleContinuationReferences(
+        WeakReference Owner,
+        WeakReference LoadContext);
+
+    private enum PausedMoveNextOutcome : byte
+    {
+        RemoteCompletion,
+        RemoteError,
+        Cancellation
+    }
+
     private static async Task<Exception?> CaptureDispatchFailureAsync(Func<ValueTask> dispatch)
     {
         try
@@ -630,6 +1855,107 @@ public class PooledAsyncStreamDispatcherTests
         {
             return exception;
         }
+    }
+
+    private static bool IsFreeSegmentStackEmpty(PooledAsyncStreamDispatcher<ReferenceItem> dispatcher)
+    {
+        var freeSegments = GetPrivateField(dispatcher, "_freeSegments");
+        var isEmpty = freeSegments.GetType().GetProperty(
+            "IsEmpty",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            ?? throw new Exception("cannot find the free-segment stack IsEmpty property");
+        return (bool)(isEmpty.GetValue(freeSegments)
+            ?? throw new Exception("cannot read the free-segment stack IsEmpty property"));
+    }
+
+    private static object GetOnlyFreeSegment(PooledAsyncStreamDispatcher<ReferenceItem> dispatcher)
+    {
+        var freeSegments = (System.Collections.IEnumerable)GetPrivateField(dispatcher, "_freeSegments");
+        var enumerator = freeSegments.GetEnumerator();
+        try
+        {
+            Ensure(enumerator.MoveNext(), "the test must create a recycled free segment");
+            var segment = enumerator.Current
+                ?? throw new Exception("the free-segment stack returned a null segment");
+            Ensure(!enumerator.MoveNext(), "the test must create exactly one recycled free segment");
+            return segment;
+        }
+        finally
+        {
+            (enumerator as IDisposable)?.Dispose();
+        }
+    }
+
+    private static object[] GetFreeSegments(PooledAsyncStreamDispatcher<ReferenceItem> dispatcher)
+    {
+        var freeSegments = (System.Collections.IEnumerable)GetPrivateField(dispatcher, "_freeSegments");
+        var segments = new List<object>();
+        var enumerator = freeSegments.GetEnumerator();
+        try
+        {
+            while (enumerator.MoveNext())
+            {
+                segments.Add(enumerator.Current
+                    ?? throw new Exception("the free-segment stack returned a null segment"));
+            }
+        }
+        finally
+        {
+            (enumerator as IDisposable)?.Dispose();
+        }
+        return [.. segments];
+    }
+
+    private static bool ContainsReference(object[] candidates, object candidate)
+    {
+        foreach (var item in candidates)
+        {
+            if (ReferenceEquals(item, candidate))
+                return true;
+        }
+        return false;
+    }
+
+    private static object GetPrivateField(object target, string fieldName)
+    {
+        var field = GetPrivateFieldInfo(target, fieldName);
+        return field.GetValue(target)
+            ?? throw new Exception($"private field {fieldName} was null");
+    }
+
+    private static System.Reflection.FieldInfo GetPrivateFieldInfo(object target, string fieldName)
+        => target.GetType().GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Public)
+            ?? throw new Exception($"cannot find private field {fieldName}");
+
+    private static void SeedStaleSegmentState(object segment)
+    {
+        var items = (ReferenceItem[])GetPrivateField(segment, "Items");
+        var encodedByteCounts = (int[])GetPrivateField(segment, "EncodedByteCounts");
+        var published = GetPrivateFieldInfo(segment, "Published");
+        var next = GetPrivateFieldInfo(segment, "Next");
+
+        items[0] = new ReferenceItem(new object());
+        encodedByteCounts[0] = 7;
+        published.SetValue(segment, 1);
+        next.SetValue(segment, segment);
+    }
+
+    private static void EnsureSegmentStateWasCleared(object segment, string segmentName)
+    {
+        var items = (ReferenceItem[])GetPrivateField(segment, "Items");
+        var encodedByteCounts = (int[])GetPrivateField(segment, "EncodedByteCounts");
+        var published = GetPrivateFieldInfo(segment, "Published");
+        var next = GetPrivateFieldInfo(segment, "Next");
+
+        Ensure(items[0] is null, $"{segmentName} must clear stale item references");
+        Ensure(encodedByteCounts[0] == 0, $"{segmentName} must clear stale byte counts");
+        Ensure((int)(published.GetValue(segment) ?? -1) == 0,
+            $"{segmentName} must reset its published count");
+        Ensure(next.GetValue(segment) is null, $"{segmentName} must clear stale links");
     }
 
     private sealed record ReferenceItem(object Marker);
@@ -666,10 +1992,101 @@ public class PooledAsyncStreamDispatcherTests
         public byte Deserialize(in ReadOnlySequence<byte> buffer) => buffer.FirstSpan[0];
     }
 
+    private sealed class GatedCloseDispatchState : IStreamDispatchState
+    {
+        private readonly TaskCompletionSource _firstCloseEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseFirstClose =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly bool _blockFirstClose;
+        private int _closeCount;
+        private int _firstCloseReleased;
+        private int _closedConcurrently;
+
+        internal GatedCloseDispatchState(bool blockFirstClose = true)
+        {
+            _blockFirstClose = blockFirstClose;
+        }
+
+        internal Task FirstCloseEntered => _firstCloseEntered.Task;
+
+        internal bool IsClosed => Volatile.Read(ref _closeCount) != 0;
+
+        internal int CloseCount => Volatile.Read(ref _closeCount);
+
+        internal bool WasClosedConcurrently => Volatile.Read(ref _closedConcurrently) != 0;
+
+        public bool HasActiveDispatches => false;
+
+        public bool IsDetached => true;
+
+        public ValueTask WaitForDispatchesDrainedAsync() => ValueTask.CompletedTask;
+
+        public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public void Close()
+        {
+            if (Interlocked.Increment(ref _closeCount) != 1)
+            {
+                if (Volatile.Read(ref _firstCloseReleased) == 0)
+                    Volatile.Write(ref _closedConcurrently, 1);
+                return;
+            }
+
+            _firstCloseEntered.TrySetResult();
+            if (_blockFirstClose)
+                _releaseFirstClose.Task.GetAwaiter().GetResult();
+        }
+
+        internal void ReleaseFirstClose()
+        {
+            Volatile.Write(ref _firstCloseReleased, 1);
+            _releaseFirstClose.TrySetResult();
+        }
+    }
+
+    private sealed class AttachedDispatchState : IStreamDispatchState
+    {
+        private int _closeCount;
+        private int _detached;
+
+        internal int CloseCount => Volatile.Read(ref _closeCount);
+
+        public bool HasActiveDispatches => false;
+
+        public bool IsDetached => Volatile.Read(ref _detached) != 0;
+
+        public ValueTask WaitForDispatchesDrainedAsync() => ValueTask.CompletedTask;
+
+        public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public void Close() => Interlocked.Increment(ref _closeCount);
+
+        internal void Detach() => Volatile.Write(ref _detached, 1);
+    }
+
+    private sealed class QueuedSynchronizationContext : SynchronizationContext
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _continuations = [];
+        private int _postCount;
+
+        internal int PostCount => Volatile.Read(ref _postCount);
+
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            _continuations.Enqueue((callback, state));
+            Interlocked.Increment(ref _postCount);
+        }
+    }
+
     private sealed class CoordinatedPoolReturnState : IStreamDispatchState, IDisposable
     {
         private readonly ManualResetEventSlim _bothPrechecksEntered = new();
         private readonly ManualResetEventSlim _releaseDelayedReturn = new();
+        private readonly TaskCompletionSource _detached =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _coordinateReturns;
         private int _detachedReads;
 
@@ -703,7 +2120,18 @@ public class PooledAsyncStreamDispatcherTests
         {
         }
 
-        public void CoordinateReturns() => Volatile.Write(ref _coordinateReturns, 1);
+        public ValueTask WaitForDispatchesDrainedAsync() => ValueTask.CompletedTask;
+
+        public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
+            => cancellationToken.CanBeCanceled
+                ? new ValueTask(_detached.Task.WaitAsync(cancellationToken))
+                : new ValueTask(_detached.Task);
+
+        public void CoordinateReturns()
+        {
+            Volatile.Write(ref _coordinateReturns, 1);
+            _detached.TrySetResult();
+        }
 
         public bool WaitForBothPrechecks(TimeSpan timeout) => _bothPrechecksEntered.Wait(timeout);
 

@@ -1,35 +1,21 @@
 namespace SharpLink.Runtime;
 
-public sealed partial class RpcSession
+internal sealed partial class RpcSession
 {
-    private ISharpLinkCompressionProvider? _compressionProvider;
-    private string? _compressionProfile;
-
-    internal string? CompressionProfile => Volatile.Read(ref _compressionProfile);
-
-    internal void EnableCompression(ISharpLinkCompressionProvider provider)
-        => EnableCompression(provider, provider.WireProfile);
-
-    internal void EnableCompression(
-        ISharpLinkCompressionProvider provider,
-        string wireProfile)
-    {
-        ArgumentNullException.ThrowIfNull(provider);
-        SharpLinkCompressionProfile.Validate(wireProfile, nameof(wireProfile));
-        if ((NegotiatedCapabilities & ProtocolV2Capabilities.Compression) == 0)
-            throw new InvalidOperationException("Compression was not negotiated for this session.");
-        if (Interlocked.CompareExchange(ref _compressionProvider, provider, null) is not null)
-            throw new InvalidOperationException("Compression is already enabled for this session.");
-        Volatile.Write(ref _compressionProfile, wireProfile);
-    }
+    internal string? CompressionProfile
+        => Volatile.Read(ref _protocolState).Options?.CompressionBinding?.WireProfile;
 
     private IRpcByteBufferWriter PrepareOutboundPacket(
         IRpcByteBufferWriter packet,
         CancellationToken cancellationToken)
     {
-        var provider = Volatile.Read(ref _compressionProvider);
+        var protocolState = Volatile.Read(ref _protocolState);
+        var compressionBinding = protocolState.Options?.CompressionBinding;
+        var provider = compressionBinding?.Provider;
         if (provider is null)
             return packet;
+        var compressionProfile = compressionBinding?.WireProfile;
+        var maxFramePayloadBytes = protocolState.Options!.MaxFramePayloadBytes;
 
         var written = packet.WrittenSpan;
         if (written.Length < ProtocolV2Constants.HeaderBytes)
@@ -45,17 +31,17 @@ public sealed partial class RpcSession
         if (prefixLength < 0)
             return packet;
         var originalLength = checked((int)payload.Length - prefixLength);
-        if ((long)prefixLength + originalLength > NegotiatedMaxFramePayloadBytes)
+        if ((long)prefixLength + originalLength > maxFramePayloadBytes)
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.ResourceExhausted,
-                $"Outbound frame payload exceeds the negotiated {NegotiatedMaxFramePayloadBytes}-byte limit.");
+                $"Outbound frame payload exceeds the negotiated {maxFramePayloadBytes}-byte limit.");
         }
         if (originalLength == 0 || originalLength < RuntimeContext.Compression.MinimumPayloadBytes)
             return packet;
 
         var candidate = RuntimeContext.Buffers.Rent(
-            checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes));
+            checked(ProtocolV2Constants.HeaderBytes + maxFramePayloadBytes));
         try
         {
             candidate.Write(packet.WrittenSpan[..(ProtocolV2Constants.HeaderBytes + prefixLength)]);
@@ -65,7 +51,7 @@ public sealed partial class RpcSession
             candidate.Advance(sizeof(uint));
 
             var compressedStart = candidate.WrittenCount;
-            var maxCompressedBytes = NegotiatedMaxFramePayloadBytes - prefixLength - sizeof(uint);
+            var maxCompressedBytes = maxFramePayloadBytes - prefixLength - sizeof(uint);
             SharpLinkCompressionResult result;
             try
             {
@@ -88,7 +74,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{CompressionProfile}' failed before the frame was queued.",
+                    $"Compression provider '{compressionProfile}' failed before the frame was queued.",
                     exception);
             }
 
@@ -97,7 +83,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{CompressionProfile}' reported inconsistent consumed or written bytes.");
+                    $"Compression provider '{compressionProfile}' reported inconsistent consumed or written bytes.");
             }
             if (!RuntimeContext.Compression.IsBeneficial(
                     originalLength,
@@ -132,11 +118,14 @@ public sealed partial class RpcSession
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0)
             return payload;
 
-        ValidateInboundPayloadEnvelope(type, flags, payload);
+        var protocolState = Volatile.Read(ref _protocolState);
+        ValidateInboundPayloadEnvelope(protocolState, type, flags, payload);
 
-        var provider = Volatile.Read(ref _compressionProvider);
+        var compressionBinding = protocolState.Options?.CompressionBinding;
+        var provider = compressionBinding?.Provider;
         if (provider is null)
             throw ProtocolV2FrameParser.Violation("A compressed frame has no negotiated provider.");
+        var compressionProfile = compressionBinding?.WireProfile;
 
         var prefixLength = GetBusinessPrefixLength(type, flags, payload);
 
@@ -175,14 +164,14 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DataLoss,
-                    $"Compressed payload for '{CompressionProfile}' is truncated, corrupt, or exceeds its declared length.",
+                    $"Compressed payload for '{compressionProfile}' is truncated, corrupt, or exceeds its declared length.",
                     exception);
             }
             catch (Exception exception)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{CompressionProfile}' failed while decoding a frame.",
+                    $"Compression provider '{compressionProfile}' failed while decoding a frame.",
                     exception);
             }
 
@@ -212,8 +201,18 @@ public sealed partial class RpcSession
     {
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0)
             return;
-        if (Volatile.Read(ref _compressionProvider) is null ||
-            (NegotiatedCapabilities & ProtocolV2Capabilities.Compression) == 0)
+        ValidateInboundPayloadEnvelope(Volatile.Read(ref _protocolState), type, flags, payload);
+    }
+
+    private static void ValidateInboundPayloadEnvelope(
+        RpcSessionProtocolState protocolState,
+        ProtocolV2FrameType type,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload)
+    {
+        var options = protocolState.Options;
+        if (options?.CompressionBinding?.Provider is null ||
+            (options.Capabilities & ProtocolV2Capabilities.Compression) == 0)
         {
             throw ProtocolV2FrameParser.Violation(
                 "A compressed frame was received without negotiated compression.");
@@ -230,7 +229,7 @@ public sealed partial class RpcSession
         var originalLength = unchecked((uint)originalLengthBits);
         if (originalLength == 0 || originalLength > int.MaxValue)
             throw ProtocolV2FrameParser.Violation("Compressed payload original length is outside the supported range.");
-        if ((long)prefixLength + originalLength > NegotiatedMaxFramePayloadBytes)
+        if ((long)prefixLength + originalLength > options.MaxFramePayloadBytes)
         {
             throw ProtocolV2FrameParser.Violation(
                 "Compressed payload original length exceeds the negotiated frame limit.");
@@ -263,6 +262,16 @@ public sealed partial class RpcSession
         return checked((int)unchecked((uint)originalLengthBits));
     }
 
+    internal static int ReadCompressedDecodedPayloadLength(
+        ProtocolV2FrameType type,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload)
+    {
+        var prefixLength = GetBusinessPrefixLength(type, flags, payload);
+        var originalLength = ReadCompressedOriginalLength(type, flags, payload);
+        return checked(prefixLength + originalLength);
+    }
+
     private static int GetBusinessPrefixLength(
         ProtocolV2FrameType type,
         ProtocolV2FrameFlags flags,
@@ -283,7 +292,7 @@ public sealed partial class RpcSession
         if (reader.Remaining < ProtocolV2Constants.RequestPrefixBytes)
             throw ProtocolV2FrameParser.Violation("Request routing prefix is truncated.");
         reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
-        if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
+        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
             if (reader.Remaining < sizeof(long))
                 throw ProtocolV2FrameParser.Violation("Request deadline is truncated.");

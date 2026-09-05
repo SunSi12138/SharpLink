@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.RateLimiting;
 using SharpLink.Server;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
@@ -123,6 +124,7 @@ public sealed class AdmissionControlTests
     [Test]
     public async Task ConcurrencyQueueShouldReleasePermitAndAccountingExactlyOnce()
     {
+        var provider = new ManualTimeProvider();
         var options = new SharpLinkAdmissionControlOptions
         {
             MaxQueuedCalls = 1,
@@ -130,7 +132,7 @@ public sealed class AdmissionControlTests
             MaxQueueDelay = TimeSpan.FromSeconds(2)
         };
         options.Global.UseConcurrency(1);
-        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
         var context = CreateContext();
 
         var first = await controller.AcquireAsync(context, 32, allowQueue: true, CancellationToken.None);
@@ -140,7 +142,7 @@ public sealed class AdmissionControlTests
         Ensure(controller.QueuedCalls == 1 && controller.QueuedBytes == 48, "bounded queue accounting");
 
         first.Lease!.Dispose();
-        var second = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var second = await pending.AsTask();
         Ensure(second.IsAcquired, "queued call acquired");
         Ensure(controller.QueuedCalls == 0 && controller.QueuedBytes == 0, "queue accounting released");
         second.Lease!.Dispose();
@@ -343,6 +345,7 @@ public sealed class AdmissionControlTests
     [Arguments("sliding")]
     public async Task CompositeQueueRetryShouldNotConsumeAnUpstreamRatePermitTwice(string policy)
     {
+        var provider = new ManualTimeProvider();
         var options = new SharpLinkAdmissionControlOptions
         {
             MaxQueuedCalls = 1,
@@ -378,7 +381,7 @@ public sealed class AdmissionControlTests
                 throw new ArgumentOutOfRangeException(nameof(policy));
         }
         options.AddContract(1, rule => rule.UseConcurrency(1));
-        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
         var context = CreateContext();
 
         var first = await controller.AcquireAsync(context, 1, allowQueue: true, CancellationToken.None);
@@ -386,7 +389,7 @@ public sealed class AdmissionControlTests
         Ensure(!pending.IsCompleted, "downstream concurrency should queue the second request");
 
         first.Lease!.Dispose();
-        var second = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var second = await pending.AsTask();
 
         Ensure(second.IsAcquired, "queued request should reuse its previously consumed rate permit");
         second.Lease!.Dispose();
@@ -497,11 +500,15 @@ public sealed class AdmissionControlTests
             RpcMethodKind.Unary,
             "connection",
             authenticationContext: null,
-            metadata: null,
-            DateTimeOffset.UtcNow.AddMilliseconds(50));
+            metadata: null);
+        var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(50), TimeProvider.System);
 
         var rejected = await controller.AcquireAsync(
-            deadlineContext, 1, allowQueue: true, CancellationToken.None);
+            deadlineContext,
+            retainedBytes: 1,
+            allowQueue: true,
+            deadline: deadline,
+            cancellationToken: CancellationToken.None);
 
         Ensure(!rejected.IsAcquired, "deadline-limited call should be rejected");
         Ensure(rejected.ErrorCode == SharpLinkErrorCode.DeadlineExceeded,
@@ -513,8 +520,185 @@ public sealed class AdmissionControlTests
         Ensure(controller.ActivePermits == 0, "deadline active permit released");
     }
 
+    [Test]
+    public async Task AdmissionDeadlineShouldRejectAtExactFakeEqualityAndReleaseEveryQueueCounter()
+    {
+        var provider = new ManualTimeProvider();
+        var options = QueuedConcurrencyOptions(TimeSpan.FromSeconds(10));
+        await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
+        var first = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: true, CancellationToken.None);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+        var pending = controller.AcquireAsync(
+            CreateContext(),
+            retainedBytes: 64,
+            allowQueue: true,
+            deadline: deadline,
+            cancellationToken: CancellationToken.None).AsTask();
+
+        Ensure(!pending.IsCompleted && controller.QueuedCalls == 1 &&
+               controller.QueuedBytes == 64 && controller.ActivePermits == 1,
+            "the deadline-limited request must hold exactly one bounded queue reservation");
+        Ensure(provider.ActiveTimerCount == 1,
+            "the queued deadline must own one provider timer");
+
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!pending.IsCompleted && controller.QueuedCalls == 1,
+            "one provider tick before the deadline must remain queued");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        var rejected = await pending;
+        Ensure(!rejected.IsAcquired &&
+               rejected.ErrorCode == SharpLinkErrorCode.DeadlineExceeded &&
+               rejected.Reason == "deadline",
+            "exact monotonic deadline equality must produce the stable deadline result");
+        Ensure(controller.QueuedCalls == 0 && controller.QueuedBytes == 0 &&
+               controller.ActivePermits == 1,
+            "the timeout winner must release queue accounting without stealing the held permit");
+        Ensure(provider.ActiveTimerCount == 0,
+            "the terminal admission result must dispose its provider timer");
+
+        provider.Advance(TimeSpan.FromHours(1));
+        Ensure(pending.IsCompletedSuccessfully && !pending.Result.IsAcquired,
+            "advancing after the deadline must not resurrect the rejected waiter");
+        first.Lease!.Dispose();
+        Ensure(controller.ActivePermits == 0,
+            "the independently held permit must remain releasable after the timeout");
+    }
+
+    [Test]
+    public async Task AdmissionMaxQueueDelayShouldRejectAtExactFakeEqualityWithoutAGhostPermit()
+    {
+        var provider = new ManualTimeProvider();
+        var options = QueuedConcurrencyOptions(TimeSpan.FromSeconds(5));
+        await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
+        var first = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: true, CancellationToken.None);
+        var pending = controller.AcquireAsync(
+            CreateContext(), 32, allowQueue: true, CancellationToken.None).AsTask();
+
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!pending.IsCompleted && controller.QueuedCalls == 1,
+            "the maximum queue delay must remain live immediately before equality");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        var rejected = await pending;
+        Ensure(!rejected.IsAcquired &&
+               rejected.ErrorCode == SharpLinkErrorCode.ResourceExhausted &&
+               rejected.Reason == "concurrency",
+            "max queue equality without a call deadline must preserve admission rejection semantics");
+        Ensure(controller.QueuedCalls == 0 && controller.QueuedBytes == 0 &&
+               controller.ActivePermits == 1 && provider.ActiveTimerCount == 0,
+            "queue timeout must release its reservation and timer without acquiring a ghost permit");
+
+        first.Lease!.Dispose();
+        var recovered = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: false, CancellationToken.None);
+        Ensure(recovered.IsAcquired,
+            "the permit must remain usable by the next request after a queue timeout");
+        recovered.Lease!.Dispose();
+        Ensure(controller.ActivePermits == 0,
+            "the recovered request must leave permit accounting balanced");
+    }
+
+    [Test]
+    public async Task AdmissionPartitionShouldReclaimAtExactProviderIdleEquality()
+    {
+        var provider = new ManualTimeProvider();
+        var key = "first";
+        var options = new SharpLinkAdmissionControlOptions();
+        options.UsePartition(
+            _ => key,
+            partition =>
+            {
+                partition.MaxPartitions = 1;
+                partition.IdleTimeout = TimeSpan.FromSeconds(5);
+                partition.UseConcurrency(1);
+            });
+        await using var controller = SharpLinkAdmissionController.Create(options, [], provider);
+        provider.Advance(TimeSpan.FromTicks(1));
+        var first = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: false, CancellationToken.None);
+        first.Lease!.Dispose();
+        key = "second";
+
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        var before = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: false, CancellationToken.None);
+        Ensure(!before.IsAcquired && before.Reason == "partition_capacity" &&
+               controller.ActivePartitions == 1,
+            "one provider tick before idle expiry must retain the original partition");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        var atEquality = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: false, CancellationToken.None);
+        Ensure(atEquality.IsAcquired && controller.ActivePartitions == 1,
+            "exact IdleTimeout equality must reclaim the old entry and admit the new partition");
+        atEquality.Lease!.Dispose();
+        Ensure(controller.ActivePermits == 0 && provider.ActiveTimerCount == 0,
+            "partition reclamation must balance its permit and must not create timers");
+    }
+
+    [Test]
+    public async Task AdmissionControllersWithDifferentProvidersShouldAdvanceIndependently()
+    {
+        var firstProvider = new ManualTimeProvider();
+        var secondProvider = new ManualTimeProvider();
+        var firstOptions = QueuedConcurrencyOptions(TimeSpan.FromSeconds(5));
+        var secondOptions = QueuedConcurrencyOptions(TimeSpan.FromSeconds(5));
+        await using var firstController = SharpLinkAdmissionController.Create(
+            firstOptions, [], firstProvider);
+        await using var secondController = SharpLinkAdmissionController.Create(
+            secondOptions, [], secondProvider);
+        var firstOwner = await firstController.AcquireAsync(
+            CreateContext(), 1, allowQueue: true, CancellationToken.None);
+        var secondOwner = await secondController.AcquireAsync(
+            CreateContext(), 1, allowQueue: true, CancellationToken.None);
+        var firstPending = firstController.AcquireAsync(
+            CreateContext(), 16, allowQueue: true, CancellationToken.None).AsTask();
+        var secondPending = secondController.AcquireAsync(
+            CreateContext(), 24, allowQueue: true, CancellationToken.None).AsTask();
+
+        firstProvider.Advance(TimeSpan.FromSeconds(5));
+        var firstRejected = await firstPending;
+        Ensure(!firstRejected.IsAcquired &&
+               firstController.QueuedCalls == 0 &&
+               firstProvider.ActiveTimerCount == 0,
+            "advancing the first provider must expire only its queued admission");
+        Ensure(!secondPending.IsCompleted &&
+               secondController.QueuedCalls == 1 &&
+               secondController.QueuedBytes == 24 &&
+               secondProvider.ActiveTimerCount == 1,
+            "the second controller must remain queued on its independent provider");
+
+        secondOwner.Lease!.Dispose();
+        var secondAdmitted = await secondPending;
+        Ensure(secondAdmitted.IsAcquired &&
+               secondController.QueuedCalls == 0 &&
+               secondProvider.ActiveTimerCount == 0,
+            "releasing the second controller permit must complete normally without advancing time");
+        secondAdmitted.Lease!.Dispose();
+        firstOwner.Lease!.Dispose();
+        Ensure(firstController.ActivePermits == 0 && secondController.ActivePermits == 0,
+            "both independent permit domains must return to zero");
+    }
+
+    private static SharpLinkAdmissionControlOptions QueuedConcurrencyOptions(TimeSpan maxQueueDelay)
+    {
+        var options = new SharpLinkAdmissionControlOptions
+        {
+            MaxQueuedCalls = 1,
+            MaxQueuedBytes = 1024,
+            MaxQueueDelay = maxQueueDelay
+        };
+        options.Global.UseConcurrency(1);
+        return options;
+    }
+
     private static SharpLinkAdmissionContext CreateContext()
-        => new(1, 2, RpcMethodKind.Unary, "connection", null, null, null);
+        => new(1, 2, RpcMethodKind.Unary, "connection", null, null);
 
     private static void Ensure(bool condition, string message)
     {

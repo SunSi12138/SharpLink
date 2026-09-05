@@ -10,10 +10,13 @@
 
 ```csharp
 var client = SharpLinkMultiClusterClientBuilder.Create()
+    .UseRequestTimeout()
     .AddCluster("orders", child => child.UseTcp("127.0.0.1", 19091))
     .AddCluster("payments", child => child.UseTcp("127.0.0.1", 19092))
     .Build();
 ```
+
+Coordinator 也必须显式选择 child Client 的 request-timeout policy。`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 fallback；slot 配置委托仍可为该 child 显式覆盖 coordinator policy。运行时 Add/Replace 同样继承当前 coordinator policy，除非对应 child 配置覆盖它。
 
 路由粒度是“拥有契约的程序集”，不是单个接口。一个契约程序集只能静态归属一个 cluster；需要不同目的地时拆分契约程序集。`demo/MultiCluster` 用两个独立契约项目证明 orders/payments 路由。
 
@@ -106,6 +109,6 @@ NativeAOT 不支持运行时加载未知插件，动态模块只适用于 JIT �
 
 动态模块的 runnable 证据位于 `test/SharpLink.DynamicContracts`、`SharpLink.DynamicServices`、`SharpLink.RollbackPlugin` 和 `RuntimeAssemblyIntegrationTests`，覆盖注册、冲突、替换、调用排空、取消、回滚、cleanup failure、弱引用与 collectible ALC 回收。
 
-运行时 slot 的 unit 与真实 TCP 证据位于 `SharpLinkMultiClusterClientTests` 和
+运行时 slot 的 unit 与真实 TCP 证据位于 `test/SharpLink.UnitTests/Client/SharpLinkMultiCluster*Tests.cs` 和
 `RuntimeMultiClusterIntegrationTests`，覆盖 Created/Ready 状态、connect-before-publish、失败回滚、
 预算、Proxy 一次绑定、Add/Replace/Remove 和删除后的资源释放结果。

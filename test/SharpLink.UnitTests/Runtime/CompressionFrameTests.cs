@@ -135,8 +135,9 @@ public class CompressionFrameTests
     public async Task OversizedOriginalPayloadShouldBeRejectedBeforeCompression()
     {
         var provider = new ThrowIfCompressedProvider();
-        await using var session = CreateSession(provider);
-        session.SetNegotiatedMaxFramePayloadBytes(SharpLinkProtocolOptions.MinMaxFramePayloadBytes);
+        await using var session = CreateSession(
+            provider,
+            maxFramePayloadBytes: SharpLinkProtocolOptions.MinMaxFramePayloadBytes);
         var writer = session.RuntimeContext.Buffers.Rent(
             ProtocolV2Constants.HeaderBytes + SharpLinkProtocolOptions.MinMaxFramePayloadBytes + 1);
         using (writer.BeginPacketScope(
@@ -158,9 +159,7 @@ public class CompressionFrameTests
     public async Task CompressionFailureShouldReturnAcquiredStreamCredit()
     {
         var provider = new ThrowIfCompressedProvider();
-        await using var session = CreateSession(provider);
-        session.NegotiatedCapabilities |= ProtocolV2Capabilities.FlowControl;
-        session.EnableStreamFlowControl(4096, 4096);
+        await using var session = CreateSession(provider, enableFlowControl: true);
 
         var exception = await CaptureSharpLinkExceptionAsync(
             session.SendStreamChunkAsync(
@@ -176,25 +175,31 @@ public class CompressionFrameTests
 
     private static RpcSession CreateSession(
         ISharpLinkCompressionProvider provider,
-        bool enableCompression = true)
+        bool enableCompression = true,
+        bool enableFlowControl = false,
+        int? maxFramePayloadBytes = null)
     {
         var context = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.Compression.Providers.Add(provider))
             .Build();
         var input = new Pipe();
         var output = new Pipe();
-        var session = new RpcSession(
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "compression-frame-test",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true);
-        session.BindRuntimeContext(context);
-        if (enableCompression)
-        {
-            session.NegotiatedCapabilities = ProtocolV2Capabilities.Compression;
-            session.EnableCompression(provider);
-        }
+            RpcSessionTestFixture.ClientOptions(context),
+            completeHandshake: false);
+        var capabilities =
+            (enableCompression ? ProtocolV2Capabilities.Compression : ProtocolV2Capabilities.None) |
+            (enableFlowControl ? ProtocolV2Capabilities.FlowControl : ProtocolV2Capabilities.None);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            capabilities,
+            maxFramePayloadBytes,
+            streamReceiveWindowBytes: enableFlowControl ? 4096 : null,
+            connectionReceiveWindowBytes: enableFlowControl ? 4096 : null,
+            compressionBinding: enableCompression ? context.Compression.ProviderBindings[0] : null);
         return session;
     }
 

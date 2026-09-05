@@ -101,6 +101,72 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task TcpServerShouldRejectLegacyProtocolMinorBeforeRpcTraffic()
+    {
+        using var serverCts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseTcp(0, IPAddress.Loopback.ToString());
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            await socket.ConnectAsync(IPAddress.Loopback, port);
+            await using var stream = new NetworkStream(socket, ownsSocket: false);
+
+            using var frame = new PooledByteBufferWriter();
+            var limits = new SharpLinkProtocolOptions();
+            var token = ProtocolV2FrameWriter.BeginFrame(
+                frame,
+                ProtocolV2FrameType.HandshakeRequest,
+                ProtocolV2FrameFlags.None,
+                0);
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(
+                frame,
+                new ProtocolV2HandshakeRequest(
+                    checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)),
+                    ProtocolV2Capabilities.None,
+                    ProtocolV2Capabilities.None,
+                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
+                    1024 * 1024,
+                    16 * 1024 * 1024,
+                    ReadOnlyMemory<byte>.Empty),
+                limits);
+            ProtocolV2FrameWriter.EndFrame(frame, token);
+            await stream.WriteAsync(frame.WrittenMemory);
+            await stream.FlushAsync();
+
+            var received = new byte[4096];
+            using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var count = await stream.ReadAsync(received, readCts.Token);
+            Ensure(count > 0, "legacy peer should receive an explicit handshake rejection");
+            var sequence = new ReadOnlySequence<byte>(received.AsMemory(0, count));
+            Ensure(ProtocolV2FrameParser.TryReadFrame(
+                ref sequence,
+                limits,
+                out var header,
+                out var payload),
+                "legacy handshake rejection frame");
+            Ensure(header.Type == ProtocolV2FrameType.HandshakeResponse, "legacy handshake response type");
+            Ensure((header.Flags & ProtocolV2FrameFlags.Error) != 0, "legacy handshake must be rejected");
+            var error = ProtocolV2PayloadCodec.ReadError(
+                payload,
+                header.Flags,
+                limits.MaxErrorMessageBytes);
+            Ensure(error.Code == SharpLinkErrorCode.Unimplemented,
+                "pre-TimeBudget protocol minor should be rejected as incompatible");
+        }
+        finally
+        {
+            await serverCts.CancelAsync();
+            await server.DisposeAsync();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
     [NotInParallel]
     public async Task ServerProtocolViolationShouldReleaseItsReadBeforeCompletingTheReader()
     {
@@ -152,7 +218,6 @@ public class TransportConnectionIntegrationTests
             await serverCts.CancelAsync();
             await server.DisposeAsync();
             await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
-            await connection.DisposeAsync();
         }
     }
 
@@ -190,7 +255,6 @@ public class TransportConnectionIntegrationTests
             await serverCts.CancelAsync();
             await server.DisposeAsync();
             await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
-            await connection.DisposeAsync();
         }
     }
 
@@ -199,7 +263,7 @@ public class TransportConnectionIntegrationTests
     public async Task ClientMalformedHandshakeShouldReleaseItsReadBeforeCompletingTheReader()
     {
         var connection = new CompletionJoiningTransportConnection();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTransport(new SingleConnectionClientFactory(connection))
             .Build();
 
@@ -226,7 +290,6 @@ public class TransportConnectionIntegrationTests
         {
             connection.Reader.ReleaseCompletion();
             await client.DisposeAsync();
-            await connection.DisposeAsync();
         }
     }
 
@@ -262,6 +325,35 @@ public class TransportConnectionIntegrationTests
 
         var value = await svc.PingAsync(11);
         Ensure(value == 12, "uds ping");
+    }
+
+    [Test]
+    public async Task UdsHarnessShouldPublishAnOwnerOnlySocketAndCleanItUp()
+    {
+        if (OperatingSystem.IsWindows() || !Socket.OSSupportsUnixDomainSockets)
+            return;
+
+        string path;
+        await using (var harness = await TransportHarness.CreateAsync(TransportKind.Uds))
+        {
+            path = harness.Endpoint.UdsPath;
+            Ensure(File.Exists(path), "filesystem UDS path should exist while the server runs");
+
+            var mode = File.GetUnixFileMode(path);
+            Ensure(
+                (mode & (UnixFileMode.UserRead | UnixFileMode.UserWrite)) ==
+                (UnixFileMode.UserRead | UnixFileMode.UserWrite),
+                "filesystem UDS must allow owner read/write");
+            Ensure(
+                (mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                         UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) == 0,
+                "filesystem UDS must deny group and other access");
+
+            var svc = harness.Client.Get<IConnectionBehaviorService>();
+            Ensure(await svc.PingAsync(13) == 14, "uds rpc with hardened socket permissions");
+        }
+
+        Ensure(!File.Exists(path), "dispose should remove the owned UDS path");
     }
 
     [Test]
@@ -352,7 +444,7 @@ public class TransportConnectionIntegrationTests
     public async Task TcpConnectWithoutServerShouldThrowSocketException()
     {
         var port = GetFreePort();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -372,7 +464,7 @@ public class TransportConnectionIntegrationTests
     public async Task NamedPipeConnectWithoutServerShouldHonorCancellation()
     {
         var pipeName = $"sharplink-int-no-server-{Guid.NewGuid():N}";
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseNamedPipe(pipeName)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -398,7 +490,7 @@ public class TransportConnectionIntegrationTests
             return;
 
         var socketPath = GetUniqueUdsPath();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseUds(socketPath)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -419,7 +511,7 @@ public class TransportConnectionIntegrationTests
     public async Task TcpConnectWithCanceledTokenShouldThrowOperationCanceledException()
     {
         var port = GetFreePort();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -457,7 +549,7 @@ public class TransportConnectionIntegrationTests
             {
             }
         }, CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120))
@@ -499,7 +591,7 @@ public class TransportConnectionIntegrationTests
             {
             }
         }, CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromSeconds(5))
@@ -581,7 +673,7 @@ public class TransportConnectionIntegrationTests
             await stream.FlushAsync();
         });
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
@@ -720,7 +812,7 @@ public class TransportConnectionIntegrationTests
             await stream.FlushAsync();
         });
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.MaxFramePayloadBytes = maxFramePayloadBytes)
@@ -781,7 +873,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
@@ -832,7 +924,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("unexpected-token"))
@@ -885,7 +977,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expired-token"))
@@ -927,7 +1019,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
 
@@ -966,7 +1058,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
 
@@ -1003,7 +1095,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .Build();
@@ -1037,7 +1129,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(static options => options.MaxMetadataBytes = maxAuthenticationBytes)
@@ -1099,7 +1191,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
@@ -1145,12 +1237,12 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var firstClient = SharpClientBuilder.Create()
+        var firstClient = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("connection-a"))
             .Build();
-        var secondClient = SharpClientBuilder.Create()
+        var secondClient = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("connection-b"))
@@ -1225,7 +1317,7 @@ public class TransportConnectionIntegrationTests
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
@@ -1506,7 +1598,7 @@ public class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
             .UseProtocol(options => options.MaxFramePayloadBytes = clientLimit)
@@ -1539,7 +1631,7 @@ public class TransportConnectionIntegrationTests
 
     private static ISharpLinkClient BuildClientForEndpoint(TransportEndpoint endpoint)
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
@@ -1617,7 +1709,7 @@ public class TransportConnectionIntegrationTests
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
-            var clientBuilder = SharpClientBuilder.Create()
+            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
@@ -1627,37 +1719,37 @@ public class TransportConnectionIntegrationTests
             switch (kind)
             {
                 case TransportKind.Tcp:
-                {
-                    serverBuilder.UseTcp(endpoint.Port, IPAddress.Loopback.ToString());
-                    var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-                    clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
-                    resolvedEndpoint = new TransportEndpoint(kind, port, string.Empty, string.Empty);
-                    break;
-                }
+                    {
+                        serverBuilder.UseTcp(endpoint.Port, IPAddress.Loopback.ToString());
+                        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+                        clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
+                        resolvedEndpoint = new TransportEndpoint(kind, port, string.Empty, string.Empty);
+                        break;
+                    }
                 case TransportKind.NamedPipe:
-                {
-                    var pipeName = string.IsNullOrWhiteSpace(endpoint.PipeName)
-                        ? $"sharplink-int-{Guid.NewGuid():N}"
-                        : endpoint.PipeName;
-                    serverBuilder.UseNamedPipe(pipeName);
-                    clientBuilder.UseNamedPipe(pipeName);
-                    resolvedEndpoint = new TransportEndpoint(kind, 0, pipeName, string.Empty);
-                    break;
-                }
+                    {
+                        var pipeName = string.IsNullOrWhiteSpace(endpoint.PipeName)
+                            ? $"sharplink-int-{Guid.NewGuid():N}"
+                            : endpoint.PipeName;
+                        serverBuilder.UseNamedPipe(pipeName);
+                        clientBuilder.UseNamedPipe(pipeName);
+                        resolvedEndpoint = new TransportEndpoint(kind, 0, pipeName, string.Empty);
+                        break;
+                    }
                 case TransportKind.Uds:
-                {
-                    if (!Socket.OSSupportsUnixDomainSockets)
-                        throw new PlatformNotSupportedException("Unix domain sockets are not supported on this platform.");
+                    {
+                        if (!Socket.OSSupportsUnixDomainSockets)
+                            throw new PlatformNotSupportedException("Unix domain sockets are not supported on this platform.");
 
-                    var udsPath = string.IsNullOrWhiteSpace(endpoint.UdsPath)
-                        ? GetUniqueUdsPath()
-                        : endpoint.UdsPath;
-                    serverBuilder.UseUds(udsPath);
-                    clientBuilder.UseUds(udsPath);
-                    resolvedEndpoint = new TransportEndpoint(kind, 0, string.Empty, udsPath);
-                    cleanup = () => TryDeleteFile(udsPath);
-                    break;
-                }
+                        var udsPath = string.IsNullOrWhiteSpace(endpoint.UdsPath)
+                            ? GetUniqueUdsPath()
+                            : endpoint.UdsPath;
+                        serverBuilder.UseUds(udsPath);
+                        clientBuilder.UseUds(udsPath);
+                        resolvedEndpoint = new TransportEndpoint(kind, 0, string.Empty, udsPath);
+                        cleanup = () => TryDeleteFile(udsPath);
+                        break;
+                    }
             }
 
             var server = serverBuilder.Build();
@@ -1799,9 +1891,22 @@ internal sealed class CompletionJoiningTransportConnection : ITransportConnectio
 
     public async ValueTask DisposeAsync()
     {
-        Reader.ReleaseCompletion();
-        await _input.Writer.CompleteAsync();
-        await _output.Reader.CompleteAsync();
+        try
+        {
+            await Output.CompleteAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            try
+            {
+                await Reader.CompleteAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                await _input.Writer.CompleteAsync().ConfigureAwait(false);
+                await _output.Reader.CompleteAsync().ConfigureAwait(false);
+            }
+        }
     }
 }
 

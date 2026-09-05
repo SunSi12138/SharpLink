@@ -7,12 +7,12 @@ internal sealed class DoubleCodec : IRpcCodec<double>
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in double value, IBufferWriter<byte> writer) { Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value); writer.Advance(Size); }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double Deserialize(in ReadOnlySequence<byte> buffer)
     {
         CodecHelpers.EnsureExactSize(buffer, Size);
-        if (buffer.FirstSpan.Length >= Size) 
+        if (buffer.FirstSpan.Length >= Size)
             return Unsafe.ReadUnaligned<double>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
@@ -54,7 +54,7 @@ internal sealed class NullableDoubleCodec : IRpcCodec<double?>
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        
+
         if (!CodecHelpers.ReadNullablePresence(ref MemoryMarshal.GetReference(temp), Size - 1)) return null;
         return Unsafe.ReadUnaligned<double>(ref Unsafe.Add(ref MemoryMarshal.GetReference(temp), 1));
     }

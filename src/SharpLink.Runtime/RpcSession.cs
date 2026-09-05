@@ -1,190 +1,109 @@
-﻿using System.Diagnostics;
-
 namespace SharpLink.Runtime;
 
 /// <summary>Owns protocol state, buffering, flow control, and lifecycle for one RPC transport connection.</summary>
-public sealed partial class RpcSession : IRpcSession
+internal sealed partial class RpcSession
 {
-    /// <inheritdoc />
-    public string Id { get; }
+    internal string Id { get; }
     /// <summary>Gets the instance-owned runtime services used by this session.</summary>
-    public SharpLinkRuntimeContext RuntimeContext { get; private set; } = SharpLinkRuntimeContext.Default;
-    internal ProtocolV2Capabilities NegotiatedCapabilities { get; set; }
-    private int _negotiatedMaxFramePayloadBytes = SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes;
-    internal int NegotiatedMaxFramePayloadBytes => Volatile.Read(ref _negotiatedMaxFramePayloadBytes);
-    IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
-    private long _lastActiveTimestamp = Stopwatch.GetTimestamp();
-    /// <inheritdoc />
-    public DateTime LastActive { get; set; } = DateTime.UtcNow;
+    internal SharpLinkRuntimeContext RuntimeContext { get; }
+    internal RpcSessionRole Role { get; }
+    private RpcSessionProtocolState _protocolState = RpcSessionProtocolState.Handshaking;
+    private int _handshakeCompletionStarted;
+    internal NegotiatedSessionOptions? NegotiatedOptions
+        => Volatile.Read(ref _protocolState).Options;
+    internal ProtocolV2Capabilities NegotiatedCapabilities
+        => Volatile.Read(ref _protocolState).Options?.Capabilities ?? ProtocolV2Capabilities.None;
+    internal int NegotiatedMaxFramePayloadBytes
+        => Volatile.Read(ref _protocolState).Options?.MaxFramePayloadBytes ??
+            RuntimeContext.Protocol.MaxFramePayloadBytes;
+    internal RpcSessionProtocolPhase ProtocolPhase
+        => Volatile.Read(ref _protocolState).Phase;
+    internal bool HasStreamFlowControl
+        => Volatile.Read(ref _protocolState).FlowController is not null;
+    private long _lastActiveTimestamp;
+    private long _lastActiveUtcTicks;
+    internal DateTime LastActive
+    {
+        get => new(Volatile.Read(ref _lastActiveUtcTicks), DateTimeKind.Utc);
+        set
+        {
+            Volatile.Write(
+                ref _lastActiveUtcTicks,
+                value.Kind == DateTimeKind.Local
+                    ? value.ToUniversalTime().Ticks
+                    : value.Ticks);
+        }
+    }
     internal TimeSpan TimeSinceLastActivity
-        => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
-    /// <inheritdoc />
-    public PipeReader Input { get; }
-    private PipeWriter Output { get; }
+        => RuntimeContext.TimeProvider.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
+    internal PipeReader Input => _transport.Input;
+    private PipeWriter Output => _transport.Output;
 
     private readonly CancellationTokenSource _cts = new();
-    private readonly ITransportConnection? _transportConnection;
-    internal EndPoint? LocalEndPoint => _transportConnection?.LocalEndPoint;
-    internal EndPoint? RemoteEndPoint => _transportConnection?.RemoteEndPoint;
+    private readonly CancellationToken _lifetimeToken;
+    private readonly ITransportConnection _transport;
+    internal EndPoint? LocalEndPoint => _transport.LocalEndPoint;
+    internal EndPoint? RemoteEndPoint => _transport.RemoteEndPoint;
     private SessionTerminal? _terminal;
     private int _cleanupStarted;
     private int _stopped;
     private readonly TaskCompletionSource<bool> _stoppedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lock _ctsGate = new();
+    private bool _ctsCancellationSignaled;
     private readonly Lock _transportDisposeGate = new();
     private Task? _transportDisposeTask;
 
-    /// <inheritdoc />
-    public IStreamManager StreamManager { get; private set; } = new StreamManager();
-    /// <inheritdoc />
-    public bool IsConnected => Volatile.Read(ref _terminal) is null &&
-                               (_transportConnection is not null || _isConnected());
-    private readonly Action _disconnect;
-    private readonly Func<bool> _isConnected;
+    internal StreamManager StreamManager { get; }
+    internal bool IsConnected => Volatile.Read(ref _terminal) is null;
+    internal CancellationToken LifetimeToken => _lifetimeToken;
 
     private readonly Lock _pumpGate = new();
     private readonly RpcSessionFlushOptions? _flushOptions;
     private SendPump? _pump;
-    private StreamFlowController? _streamFlowControl;
-    private int _activeRequests;
-    private int _draining;
-    private string _telemetrySide = "unknown";
+    private readonly string _telemetrySide;
     private int _telemetryConnectionState;
     private const int TelemetryNotOpened = 0;
     private const int TelemetryOpened = 1;
     private const int TelemetryClosed = 2;
-    internal Func<long, long, long, Exception, SharpLinkException>? ServiceExceptionMapper { get; set; }
 
     internal void MarkActive()
     {
-        Volatile.Write(ref _lastActiveTimestamp, Stopwatch.GetTimestamp());
-        LastActive = DateTime.UtcNow;
-    }
-
-    internal void SetTelemetrySide(string side)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(side);
-        _telemetrySide = side;
-    }
-
-    internal SharpLinkException MapServiceException(
-        long requestId,
-        long contractId,
-        long methodId,
-        Exception exception)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
-        if (ServiceExceptionMapper is { } mapper)
-        {
-            try
-            {
-                return mapper(requestId, contractId, methodId, exception);
-            }
-            catch
-            {
-                // A mapper is never allowed to break the session write path.
-            }
-        }
-        return exception as SharpLinkException ?? new SharpLinkException(
-            SharpLinkErrorCode.Internal,
-            "Internal service error.",
-            exception);
-    }
-
-    /// <summary>Creates a session over caller-owned pipelines and connection lifecycle callbacks.</summary>
-    /// <param name="id">The non-empty diagnostic session identifier.</param>
-    /// <param name="reader">The transport input reader.</param>
-    /// <param name="writer">The transport output writer.</param>
-    /// <param name="disconnect">The callback that closes the underlying connection.</param>
-    /// <param name="isConnected">The callback that reports underlying connection state.</param>
-    /// <param name="flushOptions">Optional session flush policy.</param>
-    public RpcSession(
-        string id,
-        PipeReader reader,
-        PipeWriter writer,
-        Action disconnect,
-        Func<bool> isConnected,
-        RpcSessionFlushOptions? flushOptions = null)
-    {
-        if (flushOptions is { } configuredFlushOptions)
-        {
-            RpcSessionFlushOptions.Validate(
-                configuredFlushOptions.FlushSizeThreshold,
-                configuredFlushOptions.MaxLatency);
-        }
-
-        Id = id;
-        Input = reader;
-        Output = writer;
-
-        _disconnect = disconnect;
-        _isConnected = isConnected;
-        _flushOptions = flushOptions;
+        var timeProvider = RuntimeContext.TimeProvider;
+        Volatile.Write(ref _lastActiveTimestamp, timeProvider.GetTimestamp());
+        Volatile.Write(ref _lastActiveUtcTicks, timeProvider.GetUtcNow().UtcDateTime.Ticks);
     }
 
     /// <summary>Creates an RPC session that owns one transport connection.</summary>
     /// <param name="connection">The independently owned transport connection.</param>
-    /// <param name="flushOptions">Optional session flush policy.</param>
-    public RpcSession(ITransportConnection connection, RpcSessionFlushOptions? flushOptions = null)
-        : this(
-            (connection ?? throw new ArgumentNullException(nameof(connection))).Id,
-            connection.Input,
-            connection.Output,
-            static () => { },
-            static () => true,
-            flushOptions)
+    /// <param name="creationOptions">The complete immutable session configuration.</param>
+    internal RpcSession(ITransportConnection connection, RpcSessionCreationOptions creationOptions)
     {
-        _transportConnection = connection;
-    }
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(creationOptions);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connection.Id);
+        ArgumentNullException.ThrowIfNull(connection.Input);
+        ArgumentNullException.ThrowIfNull(connection.Output);
 
-    /// <summary>Binds the instance-owned runtime context before the session begins RPC I/O.</summary>
-    /// <param name="runtimeContext">The context owned by the connecting client or accepting server.</param>
-    public void BindRuntimeContext(SharpLinkRuntimeContext runtimeContext)
-    {
-        ArgumentNullException.ThrowIfNull(runtimeContext);
-        if (Volatile.Read(ref _terminal) is not null)
-            throw GetTerminalException();
-
-        lock (_pumpGate)
-        {
-            if (_pump is not null)
-                throw new InvalidOperationException("Runtime context must be bound before the first outbound frame.");
-            RuntimeContext = runtimeContext;
-            Volatile.Write(ref _negotiatedMaxFramePayloadBytes, runtimeContext.Protocol.MaxFramePayloadBytes);
-            StreamManager = new StreamManager(
-                runtimeContext.Concurrency,
-                AcceptReceivedStreamBytes,
-                OnStreamBytesConsumed,
-                OnReceiveStreamCompleted);
-        }
-    }
-
-    internal void SetNegotiatedMaxFramePayloadBytes(int value)
-    {
-        if (value < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
-            value > RuntimeContext.Protocol.MaxFramePayloadBytes)
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"Negotiated frame limit {value} is outside the local protocol limits.");
-        }
-        Volatile.Write(ref _negotiatedMaxFramePayloadBytes, value);
+        _transport = connection;
+        _lifetimeToken = _cts.Token;
+        Id = connection.Id;
+        Role = creationOptions.Role;
+        RuntimeContext = creationOptions.RuntimeContext;
+        _lastActiveTimestamp = RuntimeContext.TimeProvider.GetTimestamp();
+        _lastActiveUtcTicks = RuntimeContext.TimeProvider.GetUtcNow().UtcDateTime.Ticks;
+        StreamManager = new StreamManager(
+            creationOptions.RuntimeContext.Concurrency,
+            AcceptReceivedStreamBytes,
+            OnStreamBytesConsumed,
+            OnReceiveStreamCompleted,
+            creationOptions.RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection,
+            Fault);
+        _flushOptions = creationOptions.FlushOptions;
+        _telemetrySide = creationOptions.TelemetrySide;
     }
 
     internal IRpcByteBufferWriter RentFrameWriter()
         => RuntimeContext.Buffers.Rent(checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes));
-
-    internal void EnableStreamFlowControl(int streamWindowBytes, int connectionWindowBytes)
-    {
-        if ((NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) == 0)
-            throw new InvalidOperationException("Flow control was not negotiated for this session.");
-        var controller = new StreamFlowController(
-            streamWindowBytes,
-            connectionWindowBytes,
-            NegotiatedMaxFramePayloadBytes,
-            RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
-        if (Interlocked.CompareExchange(ref _streamFlowControl, controller, null) is not null)
-            throw new InvalidOperationException("Stream flow control is already enabled for this session.");
-    }
 
     internal ValueTask AcquireStreamSendCreditAsync(
         long requestId,
@@ -192,36 +111,36 @@ public sealed partial class RpcSession : IRpcSession
         int encodedBytes,
         CancellationToken cancellationToken)
     {
-        var controller = Volatile.Read(ref _streamFlowControl);
+        var controller = Volatile.Read(ref _protocolState).FlowController;
         return controller is null
             ? ValueTask.CompletedTask
             : controller.AcquireSendCreditAsync(requestId, streamId, encodedBytes, cancellationToken);
     }
 
     internal void ReturnUnsentStreamCredit(long requestId, ushort streamId, int encodedBytes)
-        => Volatile.Read(ref _streamFlowControl)?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
+        => Volatile.Read(ref _protocolState).FlowController?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
 
     internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
     {
-        var controller = Volatile.Read(ref _streamFlowControl) ??
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
+        var controller = Volatile.Read(ref _protocolState).FlowController ??
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
                 "WindowUpdate was received without negotiated flow control.");
         controller.ApplyWindowUpdate(requestId, update.StreamId, checked((int)update.Credit));
     }
 
     internal void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
-        => Volatile.Read(ref _streamFlowControl)?.CompleteSendStream(requestId, streamId, exception);
+        => Volatile.Read(ref _protocolState).FlowController?.CompleteSendStream(requestId, streamId, exception);
 
     internal void AbortSendStreams(long requestId, Exception exception)
-        => Volatile.Read(ref _streamFlowControl)?.AbortSendStreams(requestId, exception);
+        => Volatile.Read(ref _protocolState).FlowController?.AbortSendStreams(requestId, exception);
 
     private void AcceptReceivedStreamBytes(long requestId, ushort streamId, int encodedBytes)
-        => Volatile.Read(ref _streamFlowControl)?.AcceptReceived(requestId, streamId, encodedBytes);
+        => Volatile.Read(ref _protocolState).FlowController?.AcceptReceived(requestId, streamId, encodedBytes);
 
     private void OnStreamBytesConsumed(long requestId, ushort streamId, int encodedBytes)
     {
-        var controller = Volatile.Read(ref _streamFlowControl);
+        var controller = Volatile.Read(ref _protocolState).FlowController;
         var credit = controller?.RecordConsumed(requestId, streamId, encodedBytes) ?? 0;
         if (credit != 0)
             TrySendWindowUpdate(requestId, streamId, credit);
@@ -230,7 +149,7 @@ public sealed partial class RpcSession : IRpcSession
 
     private void OnReceiveStreamCompleted(long requestId, ushort streamId)
     {
-        var controller = Volatile.Read(ref _streamFlowControl);
+        var controller = Volatile.Read(ref _protocolState).FlowController;
         var credit = controller?.FlushConsumed(requestId, streamId) ?? 0;
         if (credit != 0)
             TrySendWindowUpdate(requestId, streamId, credit);
@@ -258,7 +177,7 @@ public sealed partial class RpcSession : IRpcSession
         }
     }
 
-    internal void SendPacket(IRpcByteBufferWriter packet)
+    internal void SendPacket(IRpcByteBufferWriter packet, RpcDeadline deadline = default)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -278,7 +197,8 @@ public sealed partial class RpcSession : IRpcSession
         }
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
-        var result = GetOrCreatePump().TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
+        var result = GetOrCreatePumpOrReturn(packet)
+            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null, deadline));
         if (result == SendEnqueueResult.Full)
         {
             throw SharpLinkResourceExhaustion.Create(
@@ -294,6 +214,19 @@ public sealed partial class RpcSession : IRpcSession
         CancellationToken ct = default)
         => await SendPacketAsync(packet, waitForCapacity: true, forceFlush: true, ct).ConfigureAwait(false);
 
+    internal ValueTask SendPacketAndObserveEmissionAsync(
+        IRpcByteBufferWriter packet,
+        RpcDeadline deadline,
+        CancellationToken ct = default)
+        => SendPacketAsync(
+            packet,
+            waitForCapacity: false,
+            forceFlush: false,
+            ct,
+            allowEmpty: false,
+            deadline,
+            waitForEmission: true);
+
     internal async ValueTask FlushSendQueueAsync(CancellationToken ct = default)
     {
         var marker = RuntimeContext.Buffers.Rent();
@@ -306,7 +239,9 @@ public sealed partial class RpcSession : IRpcSession
         bool waitForCapacity,
         bool forceFlush,
         CancellationToken ct = default,
-        bool allowEmpty = false)
+        bool allowEmpty = false,
+        RpcDeadline deadline = default,
+        bool waitForEmission = false)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -329,11 +264,11 @@ public sealed partial class RpcSession : IRpcSession
         }
         ValidateOutboundPacketOrReturn(packet, allowEmpty);
 
-        var completion = forceFlush
+        var completion = forceFlush || waitForEmission
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
-        var frame = new OwnedFrame(packet, forceFlush, completion);
-        var pump = GetOrCreatePump();
+        var frame = CreateFrame(packet, forceFlush, completion, deadline);
+        var pump = GetOrCreatePumpOrReturn(packet);
         var result = waitForCapacity
             ? await pump.EnqueueAsync(frame, ct).ConfigureAwait(false)
             : pump.TryEnqueue(frame);
@@ -347,7 +282,22 @@ public sealed partial class RpcSession : IRpcSession
             throw GetTerminalException();
 
         if (completion is not null)
-            await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+        {
+            try
+            {
+                await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The pump still owns the frame and completes this waiter during teardown.
+                // Task.WaitAsync does not observe a source fault that arrives after its own
+                // cancellation (an already-cancelled token cancels the wait without
+                // registering on the source), so observe the late fault here to keep it off
+                // the finalizer (issue #216).
+                ObserveAbandonedFlushCompletion(completion.Task);
+                throw;
+            }
+        }
     }
 
     internal ValueTask SendPacketWithBackpressureAsync(
@@ -374,8 +324,8 @@ public sealed partial class RpcSession : IRpcSession
             }
             ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
-            var frame = new OwnedFrame(packet, forceFlush: false, flushCompletion: null);
-            var pump = GetOrCreatePump();
+            var frame = CreateFrame(packet, forceFlush: false, flushCompletion: null);
+            var pump = GetOrCreatePumpOrReturn(packet);
             var result = pump.TryEnqueueForBackpressure(frame);
             if (result == SendEnqueueResult.Accepted)
                 return ValueTask.CompletedTask;
@@ -399,10 +349,60 @@ public sealed partial class RpcSession : IRpcSession
             throw GetTerminalException();
     }
 
+    private static OwnedFrame CreateFrame(
+        IRpcByteBufferWriter packet,
+        bool forceFlush,
+        TaskCompletionSource<bool>? flushCompletion,
+        RpcDeadline deadline = default)
+        => new(
+            packet,
+            forceFlush,
+            flushCompletion,
+            IsProtocolProgressFrame(packet.WrittenSpan),
+            deadline);
+
+    private static void ObserveAbandonedFlushCompletion(Task flushCompletion)
+        => _ = ObserveAbandonedFlushCompletionAsync(flushCompletion);
+
+    private static async Task ObserveAbandonedFlushCompletionAsync(Task flushCompletion)
+    {
+        try
+        {
+            await flushCompletion.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Observation only: the cancelled enqueuer already surfaced its own cancellation.
+        }
+    }
+
+    /// <summary>
+    /// Classifies protocol progress frames by their header type. Progress
+    /// frames carry connection liveness, flow-control credit, and drain state
+    /// and must remain timely while bulk stream data saturates the send
+    /// queue. RPC data frames, responses, stream-complete frames, and cancels
+    /// stay in the normal class: a cancel must never overtake the request it
+    /// cancels, because the peer discards cancels for requests it has not
+    /// dispatched yet (StreamData before StreamComplete is likewise preserved).
+    /// </summary>
+    private static bool IsProtocolProgressFrame(ReadOnlySpan<byte> frame)
+    {
+        if (frame.Length < ProtocolV2Constants.HeaderBytes)
+            return false;
+        return (ProtocolV2FrameType)frame[5] is
+            ProtocolV2FrameType.Ping or
+            ProtocolV2FrameType.Pong or
+            ProtocolV2FrameType.WindowUpdate or
+            ProtocolV2FrameType.GoAway;
+    }
+
     private void ValidateOutboundPacketOrReturn(IRpcByteBufferWriter packet, bool allowEmpty)
     {
         try
         {
+            if (Volatile.Read(ref _terminal) is { } terminal)
+                throw terminal.Exception;
+
             var length = packet.WrittenCount;
             if (length == 0)
             {
@@ -413,17 +413,26 @@ public sealed partial class RpcSession : IRpcSession
             if (length < ProtocolV2Constants.HeaderBytes)
                 throw new InvalidOperationException("Outbound frame is shorter than the protocol header.");
 
+            var protocolState = Volatile.Read(ref _protocolState);
+            if (protocolState.Phase is RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal &&
+                Volatile.Read(ref _terminal) is { } phaseTerminal)
+            {
+                throw phaseTerminal.Exception;
+            }
+            var maxFramePayloadBytes = protocolState.Options?.MaxFramePayloadBytes ??
+                RuntimeContext.Protocol.MaxFramePayloadBytes;
             var payloadLength = length - ProtocolV2Constants.HeaderBytes;
-            if (payloadLength > NegotiatedMaxFramePayloadBytes)
+            if (payloadLength > maxFramePayloadBytes)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.ResourceExhausted,
-                    $"Outbound frame payload exceeds the negotiated {NegotiatedMaxFramePayloadBytes}-byte limit.");
+                    $"Outbound frame payload exceeds the negotiated {maxFramePayloadBytes}-byte limit.");
             }
 
             var span = packet.WrittenSpan;
             if (span[0] != ProtocolV2Constants.Magic)
                 throw new InvalidOperationException("Outbound frame has an invalid protocol magic byte.");
+            EnsureOutboundFrameAllowed(protocolState.Phase, (ProtocolV2FrameType)span[5]);
             var encodedPayloadLength = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(1, sizeof(int)));
             if (encodedPayloadLength != payloadLength)
                 throw new InvalidOperationException("Outbound frame payload length does not match its header.");
@@ -437,42 +446,59 @@ public sealed partial class RpcSession : IRpcSession
 
     internal long QueuedSendBytes => Volatile.Read(ref _pump)?.QueuedBytes ?? 0;
 
-    internal int ActiveRequestCount => Volatile.Read(ref _activeRequests);
-
-    internal bool IsDraining => Volatile.Read(ref _draining) != 0;
+    internal bool IsDraining => ProtocolPhase == RpcSessionProtocolPhase.Draining;
 
     internal bool CanAcceptCalls =>
-        !IsDraining && IsConnected;
+        ProtocolPhase == RpcSessionProtocolPhase.Ready && IsConnected;
 
-    internal void AddActiveRequest()
+    /// <summary>
+    /// Validates a stable Session lifecycle snapshot at a transition or test boundary.
+    /// This intentionally does not run for every frame or request.
+    /// </summary>
+    internal void AssertStateInvariant()
     {
-        if (!CanAcceptCalls)
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The connection is draining.");
-        Interlocked.Increment(ref _activeRequests);
-        if (!CanAcceptCalls)
+        var phase = ProtocolPhase;
+        var acceptsCalls = CanAcceptCalls;
+        if (phase == RpcSessionProtocolPhase.Ready && !acceptsCalls)
         {
-            Interlocked.Decrement(ref _activeRequests);
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The connection is draining.");
+            throw new InvalidOperationException(
+                "A Ready RPC session must remain connected and accept new calls at a stable lifecycle boundary.");
         }
-    }
-
-    internal void ReleaseActiveRequest()
-    {
-        var remaining = Interlocked.Decrement(ref _activeRequests);
-        if (remaining < 0)
+        if (acceptsCalls && phase is (
+                RpcSessionProtocolPhase.Draining or
+                RpcSessionProtocolPhase.Stopping or
+                RpcSessionProtocolPhase.Terminal))
         {
-            Interlocked.Exchange(ref _activeRequests, 0);
-            throw new InvalidOperationException("Connection active request count became negative.");
+            throw new InvalidOperationException(
+                "A draining or terminal RPC session must not accept a new call at a stable lifecycle boundary.");
+        }
+        if (phase is RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal)
+        {
+            if (Volatile.Read(ref _terminal) is null)
+            {
+                throw new InvalidOperationException(
+                    "A stopping or terminal RPC session must publish its terminal reason before the stable lifecycle boundary.");
+            }
+            if (!StreamManager.IsTerminated)
+            {
+                throw new InvalidOperationException(
+                    "A stopping or terminal RPC session must publish receive-stream termination before the stable lifecycle boundary.");
+            }
+            if (Volatile.Read(ref _pump) is { } pump && !pump.IsStopRequested)
+            {
+                throw new InvalidOperationException(
+                    "A stopping or terminal RPC session must request send-pump stop before the stable lifecycle boundary.");
+            }
         }
     }
 
     internal void MarkDraining()
-        => Volatile.Write(ref _draining, 1);
+        => TransitionProtocolPhase(
+            RpcSessionProtocolPhase.Ready,
+            RpcSessionProtocolPhase.Draining);
 
-    /// <inheritdoc />
-    public event Action? OnConnected;
-    /// <inheritdoc />
-    public void NotifyConnected()
+    internal event Action? OnConnected;
+    internal void NotifyConnected()
     {
         if (Volatile.Read(ref _terminal) is not null ||
             Interlocked.CompareExchange(
@@ -491,10 +517,8 @@ public sealed partial class RpcSession : IRpcSession
         }
         OnConnected?.Invoke();
     }
-    /// <inheritdoc />
-    public event Action<Exception?>? OnDisconnected;
-    /// <inheritdoc />
-    public void NotifyDisconnected(Exception? exception = null)
+    internal event Action<Exception?>? OnDisconnected;
+    internal void NotifyDisconnected(Exception? exception = null)
         => Fault(exception ?? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed."));
 
     private void Fault(Exception exception)
@@ -505,12 +529,13 @@ public sealed partial class RpcSession : IRpcSession
         if (Interlocked.CompareExchange(ref _terminal, terminal, null) is not null)
             return;
 
+        TransitionProtocolPhaseToTerminal();
         RecordTelemetryConnectionClosed();
-        _cts.Cancel();
-        Volatile.Read(ref _streamFlowControl)?.Complete(structured);
+        CancelSession();
+        Volatile.Read(ref _protocolState).FlowController?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
         CompleteReceiveStreams(structured);
-        _ = StartTransportDispose();
+        ObserveTransportDispose(StartTransportDispose());
         try
         {
             OnDisconnected?.Invoke(structured);
@@ -520,8 +545,7 @@ public sealed partial class RpcSession : IRpcSession
         }
     }
 
-    /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    internal async ValueTask DisposeAsync()
     {
         BeginShutdown();
 
@@ -536,7 +560,7 @@ public sealed partial class RpcSession : IRpcSession
         {
             try
             {
-                _cts.Cancel();
+                CancelSession();
             }
             catch (Exception exception)
             {
@@ -557,30 +581,6 @@ public sealed partial class RpcSession : IRpcSession
 
             try
             {
-                await Output.CompleteAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException or ArgumentNullException)
-            {
-            }
-            catch (Exception exception)
-            {
-                cleanupException = CombineCleanupExceptions(cleanupException, exception);
-            }
-
-            try
-            {
-                await Input.CompleteAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException)
-            {
-            }
-            catch (Exception exception)
-            {
-                cleanupException = CombineCleanupExceptions(cleanupException, exception);
-            }
-
-            try
-            {
                 await StartTransportDispose().ConfigureAwait(false);
             }
             catch (Exception exception)
@@ -590,8 +590,8 @@ public sealed partial class RpcSession : IRpcSession
         }
         finally
         {
-            Volatile.Write(ref _stopped, 1);
-            _cts.Dispose();
+            TransitionProtocolPhaseToTerminal();
+            DisposeSessionCancellation();
             if (cleanupException is null)
                 _stoppedTcs.TrySetResult(true);
             else
@@ -599,7 +599,13 @@ public sealed partial class RpcSession : IRpcSession
         }
 
         if (cleanupException is not null)
+        {
+            // A single-owner dispose has no other observer for the faulted TCS task: the
+            // rethrow below surfaces only a copy to the caller, so observe the task here
+            // to keep the fault off the finalizer (issue #216).
+            _ = _stoppedTcs.Task.Exception;
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
+        }
     }
 
     internal void BeginShutdown()
@@ -612,9 +618,11 @@ public sealed partial class RpcSession : IRpcSession
         if (existing is null)
             RecordTelemetryConnectionClosed();
 
+        TransitionProtocolPhaseToStopping();
+
         // These registrations can race the terminal transition during handshake. Repeat the
         // idempotent signal on every caller so a late publication cannot keep shutdown joined.
-        Volatile.Read(ref _streamFlowControl)?.Complete(terminal.Exception);
+        Volatile.Read(ref _protocolState).FlowController?.Complete(terminal.Exception);
         CompleteReceiveStreams(terminal.Exception);
         if (existing is null)
         {
@@ -627,6 +635,28 @@ public sealed partial class RpcSession : IRpcSession
             }
         }
         Volatile.Read(ref _pump)?.Stop();
+    }
+
+    private void CancelSession()
+    {
+        lock (_ctsGate)
+        {
+            if (_ctsCancellationSignaled)
+                return;
+
+            // Publish ownership before callbacks run so cancellation cannot re-enter this path.
+            _ctsCancellationSignaled = true;
+            _cts.Cancel();
+        }
+    }
+
+    private void DisposeSessionCancellation()
+    {
+        lock (_ctsGate)
+        {
+            _cts.Dispose();
+            Volatile.Write(ref _stopped, 1);
+        }
     }
 
     private static Exception CombineCleanupExceptions(Exception? first, Exception next)
@@ -676,11 +706,27 @@ public sealed partial class RpcSession : IRpcSession
                 RuntimeContext.PerformanceProfile,
                 RuntimeContext.FlowControl.MaxSendQueueBytes,
                 _flushOptions,
+                RuntimeContext.TimeProvider,
                 _cts.Token,
                 ReturnBuffer,
                 Fault);
             Volatile.Write(ref _pump, pump);
             return pump;
+        }
+    }
+
+    private SendPump GetOrCreatePumpOrReturn(IRpcByteBufferWriter packet)
+    {
+        try
+        {
+            if (Volatile.Read(ref _terminal) is { } terminal)
+                throw terminal.Exception;
+            return GetOrCreatePump();
+        }
+        catch
+        {
+            RuntimeContext.Buffers.Return(packet);
+            throw;
         }
     }
 
@@ -691,31 +737,34 @@ public sealed partial class RpcSession : IRpcSession
             if (_transportDisposeTask is not null)
                 return _transportDisposeTask;
 
-            if (_transportConnection is not null)
+            try
             {
-                try
-                {
-                    _transportDisposeTask = _transportConnection.DisposeAsync().AsTask();
-                }
-                catch (Exception ex)
-                {
-                    _transportDisposeTask = Task.FromException(ex);
-                }
+                _transportDisposeTask = _transport.DisposeAsync().AsTask();
             }
-            else
+            catch (Exception ex)
             {
-                try
-                {
-                    _disconnect();
-                    _transportDisposeTask = Task.CompletedTask;
-                }
-                catch (Exception ex) when (ex is ObjectDisposedException or IOException or SocketException or ArgumentException)
-                {
-                    _transportDisposeTask = Task.CompletedTask;
-                }
+                _transportDisposeTask = Task.FromException(ex);
             }
 
             return _transportDisposeTask;
+        }
+    }
+
+    private static void ObserveTransportDispose(Task disposeTask)
+    {
+        if (!disposeTask.IsCompletedSuccessfully)
+            _ = ObserveTransportDisposeAsync(disposeTask);
+    }
+
+    private static async Task ObserveTransportDisposeAsync(Task disposeTask)
+    {
+        try
+        {
+            await disposeTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // DisposeAsync awaits the same single-flight task and preserves this failure for the owner.
         }
     }
 

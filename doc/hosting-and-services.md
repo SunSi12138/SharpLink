@@ -6,12 +6,16 @@
 
 ```csharp
 services.AddSharpLinkServer(builder => builder.UseTcp(19090));
-services.AddSharpLinkClient(builder => builder.UseTcp("127.0.0.1", 19090));
+services.AddSharpLinkClient(builder => builder
+    .UseTcp("127.0.0.1", 19090)
+    .UseRequestTimeout());
 ```
 
-Host 启动 Client/Server，停止时执行有界排空和异步释放。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client；不要在容器构建期间同步阻塞获取连接。
+Hosted Client 与直接构建的 Client 一样，必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；未指定会在 Host materialize Client 时失败。
 
-健康检查名称默认是 `sharplink_server` 和 `sharplink_remote`，tag 为 `ready`。Server readiness 表示接收路径已启动；remote readiness 表示 Client 可用，不保证某个具体业务依赖健康。
+Host 启动 Client/Server，停止时执行有界排空和异步释放。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client；不要在容器构建期间同步阻塞获取连接。Accessor 在 topology-specific `ConnectAsync` connectivity boundary 完成后发布 Client，保持快速启动与 dynamic accepted-empty 语义；若应用要求多 endpoint 收敛，应在取得 Client 后显式调用 `WaitForReadinessAsync`。
+
+健康检查名称默认是 `sharplink_server` 和 `sharplink_remote`，tag 为 `ready`。Server readiness 表示接收路径已启动；remote readiness 通过协议健康检查表示远端可用，不等同于 Client 的多 endpoint topology readiness，也不保证某个具体业务依赖健康。
 
 ## 自动服务注册
 

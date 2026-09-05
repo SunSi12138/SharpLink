@@ -16,34 +16,48 @@ public class ServerConnectionStateTests
         var authentication = new SharpLinkAuthenticationContext(subject: "alice");
 
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Handshaking, "initial state");
+        Ensure(!state.TryAcquireCall(1),
+            "a handshaking connection must not admit a business invocation");
+        Ensure(!state.TryRecordAcceptedRequest(1),
+            "a handshaking connection must not publish a business request ID");
         Ensure(state.DefaultCallContext is null, "handshaking connection must not publish a call context");
         Ensure(state.MarkReady(authentication), "handshake should mark the connection ready");
+        state.Session.AssertStateInvariant();
+        state.AssertStateInvariant();
         Ensure(ReferenceEquals(authentication, state.AuthenticationContext), "authentication must belong to the connection");
         var callContext = state.DefaultCallContext ??
             throw new Exception("ready connection must publish a default call context");
         Ensure(callContext.SessionId == state.Session.Id, "call context session ID");
         Ensure(ReferenceEquals(authentication, callContext.Authentication), "call context authentication");
-        Ensure(callContext.Deadline is null, "default call context deadline");
+        Ensure(!callContext.LocalRpcDeadline.HasValue, "default call context deadline");
         Ensure(callContext.Metadata is null, "default call context metadata");
-        Ensure(ReferenceEquals(callContext, state.GetCallContextSnapshot(null, null)),
+        Ensure(ReferenceEquals(callContext, state.GetCallContextSnapshot(default, null)),
             "plain calls must reuse the default call context");
 
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(30), TimeProvider.System);
         var deadlineContext = state.GetCallContextSnapshot(deadline, null);
         Ensure(!ReferenceEquals(callContext, deadlineContext), "deadline calls must not reuse the default context");
-        Ensure(deadlineContext.Deadline == deadline, "deadline call context");
+        Ensure(deadlineContext.LocalRpcDeadline.HasValue &&
+               deadlineContext.LocalRpcDeadline.Timestamp == deadline.Timestamp,
+            "deadline call context");
 
         var metadata = new SharpLinkMetadata();
-        var metadataContext = state.GetCallContextSnapshot(null, metadata);
+        var metadataContext = state.GetCallContextSnapshot(default, metadata);
         Ensure(!ReferenceEquals(callContext, metadataContext), "metadata calls must not reuse the default context");
         Ensure(ReferenceEquals(metadata, metadataContext.Metadata), "metadata call context");
         Ensure(state.TryRecordAcceptedRequest(42), "ready connection should accept request IDs");
         Ensure(state.LastAcceptedRequestId == 42, "last accepted request ID");
 
         state.MarkDraining();
+        state.Session.AssertStateInvariant();
+        state.AssertStateInvariant();
         Ensure(!state.TryRecordAcceptedRequest(43), "draining connection must reject new request IDs");
+        Ensure(state.Session.ProtocolPhase == RpcSessionProtocolPhase.Draining,
+            "server connection draining must update the shared Session protocol phase");
 
         await Task.WhenAll(state.CloseAsync().AsTask(), state.CloseAsync().AsTask());
+        state.Session.AssertStateInvariant();
+        state.AssertStateInvariant();
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
         Ensure(state.SessionTask.IsCompletedSuccessfully, "session completion should be published");
         Ensure(state.AuthenticationContext is null, "closed connection must release authentication context");
@@ -57,17 +71,17 @@ public class ServerConnectionStateTests
         var input = new Pipe();
         var reader = new CompletionTrackingPipeReader(input.Reader);
         var output = new Pipe();
-        var disconnectCount = 0;
-        var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             Guid.NewGuid().ToString("N"),
             reader,
-            output.Writer,
-            () => Interlocked.Increment(ref disconnectCount),
-            static () => true);
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
         var state = new ServerConnectionState(
             session,
-            new RuntimeConcurrencyOptions(),
-            CancellationToken.None);
+            new RpcSessionGeneratedServerBridge(session),
+            CreateCallCancellations(),
+            CancellationToken.None,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider);
         var stream = new ShutdownJoiningDispatcher();
         session.StreamManager.Register(7, 1, stream);
         var streamDispatch = session.StreamManager.DispatchChunkAsync(
@@ -88,13 +102,13 @@ public class ServerConnectionStateTests
         await streamDispatch.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(stream.CompleteCount == 1,
             "the pre-disposal shutdown phase must release a read loop blocked in stream dispatch");
-        Ensure(reader.CompleteCount == 0 && disconnectCount == 0,
+        Ensure(reader.CompleteCount == 0 && transport.DisposeCount == 0,
             "PipeReader and transport completion must wait until the read buffer has been released");
 
         state.MarkSessionLoopCompleted();
         await close.WaitAsync(TimeSpan.FromSeconds(2));
 
-        Ensure(reader.CompleteCount == 1 && disconnectCount == 1,
+        Ensure(reader.CompleteCount == 1 && transport.DisposeCount == 1,
             "PipeReader and transport completion should resume after the loop releases its buffer");
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
         await input.Writer.CompleteAsync();
@@ -147,6 +161,8 @@ public class ServerConnectionStateTests
         var second = CreateState(static () => { });
         Ensure(first.MarkReady(null), "first ready");
         Ensure(second.MarkReady(null), "second ready");
+        first.AssertStateInvariant();
+        second.AssertStateInvariant();
 
         Ensure(first.TryAcquireCall(1), "first call should acquire capacity");
         Ensure(!first.TryAcquireCall(1), "same connection should enforce its limit");
@@ -213,14 +229,27 @@ public class ServerConnectionStateTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             Guid.NewGuid().ToString("N"),
             input.Reader,
             output.Writer,
-            disconnect,
-            static () => true);
-        return new ServerConnectionState(session, new RuntimeConcurrencyOptions(), serverToken);
+            () =>
+            {
+                disconnect();
+                return ValueTask.CompletedTask;
+            });
+        var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
+        return new ServerConnectionState(
+            session,
+            new RpcSessionGeneratedServerBridge(session),
+            CreateCallCancellations(),
+            serverToken,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider);
     }
+
+    private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations()
+        => new(RpcSessionTestFixture.RuntimeContext.Concurrency);
 
     private static ServiceRegistration CreateConnectionRegistration(ThrowingService service)
         => ServiceRegistration.CreateConnection(
@@ -350,16 +379,16 @@ public class ServerConnectionStateTests
     private sealed class StubMarker : IRpcStub
     {
         public long InterfaceHash => 1;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
-        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output)
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => ValueTask.CompletedTask;
-        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }
 

@@ -23,7 +23,7 @@ public class RuntimeHotPathBenchmarks
     private readonly SharpLinkProtocolOptions _limits = new();
     private readonly SharpLinkCallContextSnapshot _callContext =
         new("benchmark", authentication: null);
-    private readonly DateTimeOffset _deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+    private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
     private byte[] _responsePayload = null!;
     private ReadOnlySequence<byte> _requestFrame;
@@ -33,8 +33,12 @@ public class RuntimeHotPathBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        var context = new SharpLinkRuntimeContextBuilder().Build();
-        _pending = new PendingRequestTable(65_536, context.Codecs);
+        _context = new SharpLinkRuntimeContextBuilder().Build();
+        _pending = new PendingRequestTable(
+            65_536,
+            _context.Codecs,
+            BenchmarkPendingCallOwner.Instance,
+            TimeProvider.System);
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
         _requestFrame = new ReadOnlySequence<byte>(CreateRequestFrame(includeMetadata: false));
@@ -49,6 +53,7 @@ public class RuntimeHotPathBenchmarks
     {
         _frameWriter.Dispose();
         _pending.Dispose();
+        _context.Dispose();
     }
 
     [Benchmark]
@@ -94,16 +99,6 @@ public class RuntimeHotPathBenchmarks
         _ = SharpLinkCallContext.Current;
     }
 
-    [Benchmark]
-    public void CreateDeadlinePushAndRestoreCallContext()
-    {
-        var callContext = new SharpLinkCallContextSnapshot(
-            "benchmark",
-            authentication: null,
-            _deadline);
-        using var scope = SharpLinkCallContext.Push(callContext);
-        _ = SharpLinkCallContext.Current;
-    }
 
     [Benchmark]
     public void PushAndRestoreCallContext()
@@ -237,6 +232,88 @@ public class FlowControlHotPathBenchmarks
 }
 
 [MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation")]
+public class ReceiveFlowStateAllocationBenchmarks
+{
+    private ReceiveFlowStateShortWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerStream { get; set; }
+
+    [Params(1, 8, 32, 128)]
+    public int ActiveStreams { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+        => _workload = new ReceiveFlowStateShortWorkload(ItemsPerStream);
+
+    [Benchmark]
+    public int ReceiveAndCompleteShortStreams()
+        => _workload.Run(ActiveStreams);
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation", "LongLivedControl")]
+public class ReceiveFlowStateLongLivedBenchmarks
+{
+    private ReceiveFlowStateLongLivedWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerInvocation { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+        => _workload = new ReceiveFlowStateLongLivedWorkload(ItemsPerInvocation);
+
+    [Benchmark]
+    public int ReceiveOnExistingStream()
+        => _workload.Run();
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation", "Send")]
+public class SendFlowStateAllocationBenchmarks
+{
+    private SendFlowStateShortWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerStream { get; set; }
+
+    [Params(1, 8, 32, 128)]
+    public int ActiveStreams { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+        => _workload = new SendFlowStateShortWorkload(ItemsPerStream);
+
+    [Benchmark]
+    public int SendAndCompleteShortStreams()
+        => _workload.Run(ActiveStreams);
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation", "LongLivedControl", "Send")]
+public class SendFlowStateLongLivedBenchmarks
+{
+    private SendFlowStateLongLivedWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerInvocation { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+        => _workload = new SendFlowStateLongLivedWorkload(ItemsPerInvocation);
+
+    [Benchmark]
+    public int SendOnExistingStream()
+        => _workload.Run();
+}
+
+[MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 15)]
 public class CodecAndPreAdmissionHotPathBenchmarks
 {
@@ -363,14 +440,31 @@ public class CodecAndPreAdmissionHotPathBenchmarks
 public class ServerCallCancellationStateBenchmarks
 {
     private static readonly long SDeadlineOffset = 30L * Stopwatch.Frequency;
+    private StripedLongMap<ServerCallCancellationState> _scheduledCalls = null!;
+    private ServerCallDeadlineScheduler _scheduler = null!;
+    private long _nextRequestId;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _scheduledCalls = new StripedLongMap<ServerCallCancellationState>(
+            new RuntimeConcurrencyOptions());
+        _scheduler = new ServerCallDeadlineScheduler(
+            _scheduledCalls,
+            maxCalls: 1024,
+            TimeProvider.System);
+    }
+
+    [GlobalCleanup]
+    public void Cleanup() => _scheduler.Dispose();
 
     [Benchmark(Baseline = true)]
     public void NoDeadline()
     {
         var state = ServerCallCancellationState.Rent(
             1,
-            null,
-            0,
+            default,
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: false);
@@ -382,8 +476,8 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             2,
-            DateTimeOffset.UtcNow.AddSeconds(30),
-            Stopwatch.GetTimestamp() + SDeadlineOffset,
+            RpcDeadline.FromTimestamp(Stopwatch.GetTimestamp() + SDeadlineOffset),
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
@@ -395,8 +489,8 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             3,
-            DateTimeOffset.UtcNow.AddSeconds(30),
-            Stopwatch.GetTimestamp() + SDeadlineOffset,
+            RpcDeadline.FromTimestamp(Stopwatch.GetTimestamp() + SDeadlineOffset),
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: false);
@@ -408,12 +502,67 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             4,
-            null,
-            0,
+            default,
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
         state.TryCancel(ServerCallCancellationReason.RemoteCancel);
         state.Dispose();
     }
+
+    [Benchmark]
+    public void ScheduleDeadlineRegisterAndComplete()
+    {
+        var requestId = ++_nextRequestId;
+        var state = ServerCallCancellationState.Rent(
+            requestId,
+            RpcDeadline.FromTimestamp(long.MaxValue),
+            TimeProvider.System,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        _scheduledCalls.Set(requestId, state);
+        _scheduler.Register(state);
+        if (!_scheduledCalls.TryRemove(requestId, state))
+            throw new InvalidOperationException("Scheduled benchmark call was not removed.");
+        state.Dispose();
+    }
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class RuntimeTimingHotPathBenchmarks
+{
+    private SharpLinkCircuitBreaker _breaker = null!;
+    private SharpLinkEndpointCandidate _endpoint;
+    private RpcMethodDescriptor _method;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions().CloneValidated());
+        _endpoint = new SharpLinkEndpointCandidate(
+            new SharpLinkEndpoint
+            {
+                Id = "timing-benchmark",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+            },
+            readyConnectionCount: 1,
+            activeCallCount: 0,
+            generation: 1);
+        _method = new RpcMethodDescriptor(
+            1,
+            2,
+            RpcMethodKind.Unary,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: false,
+            MethodTimeout: null);
+        _ = _breaker.TryAcquire(_endpoint, _method);
+    }
+
+    [Benchmark]
+    public SharpLinkEndpointAdmissionDecision CircuitBreakerClosedTryAcquire()
+        => _breaker.TryAcquire(_endpoint, _method);
 }

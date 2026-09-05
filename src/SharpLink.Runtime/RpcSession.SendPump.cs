@@ -1,11 +1,25 @@
 namespace SharpLink.Runtime;
 
-public sealed partial class RpcSession
+internal sealed partial class RpcSession
 {
     private sealed class SendPump
     {
         private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
-        private static readonly long MaximumTimerStopwatchTicks = ToStopwatchTicks(MaximumTimerDelay);
+
+        // Protocol-progress isolation constants (issue #163): the normal class
+        // cannot occupy the final ProgressReserveBytes of the queue, and the
+        // pump drains the progress queue at the loop top and between every
+        // NormalFramesPerInterleave normal frames. The interleave frequency
+        // bounds progress service, and ProgressFramesPerDrain bounds each
+        // drain so a concurrent progress producer cannot starve the normal
+        // queue forever (observable under LowLatency, where every flush
+        // releases capacity and the progress channel never observes empty).
+        private const int NormalFramesPerInterleave = 64;
+        private const int ProgressFramesPerDrain = 256;
+        private const int ProgressReserveMinimumBytes = 4 * 1024;
+        private const int ProgressReserveMaximumBytes = 64 * 1024;
+        private const int ProgressReserveDivisor = 512;
+
         private enum FlushMode
         {
             LowLatency,
@@ -16,25 +30,41 @@ public sealed partial class RpcSession
         private readonly PipeWriter _output;
         private readonly FlushMode _flushMode;
         private readonly int _flushSizeThreshold;
-        private readonly long _maxLatencyTicks;
+        private readonly TimeSpan _maxLatency;
         private readonly int _maxQueuedBytes;
+        private readonly int _normalQueueLimit;
+        private readonly TimeProvider _timeProvider;
         private readonly CancellationToken _sessionCancellation;
         private readonly Action<IRpcByteBufferWriter> _returnBuffer;
         private readonly Action<Exception> _onTransportFaulted;
-        private readonly Channel<OwnedFrame> _queue;
+        private readonly Channel<OwnedFrame> _progressQueue;
+        private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
+        private readonly DeadlineReadRace _deadlineRace;
+        private readonly WakeupSignal _wakeup = new();
         private readonly Task _pumpTask;
+        // When the caller configured an explicit MaxLatency through RpcSessionFlushOptions the
+        // pump batches until that deadline even while frames keep arriving. The profile-default
+        // TimedBatch deliberately skips the deadline wait instead: it flushes as soon as the
+        // queue drains (like Balanced, with a larger threshold), because waiting out a batching
+        // window on every drain pass interlocks the two peers' windows into a low-throughput
+        // ping-pong under continuous RPC load (measured: ~1/3 of the balanced QPS at c128).
+        private readonly bool _deadlineBatchingEnabled;
         private TaskCompletionSource<bool>? _capacityChanged;
         private Task<bool>? _pendingReadWait;
+        private Task<bool>? _pendingProgressReadWait;
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
+
+        internal bool IsStopRequested => Volatile.Read(ref _stopped) != 0;
 
         public SendPump(
             PipeWriter output,
             SharpLinkPerformanceProfile performanceProfile,
             int maxQueuedBytes,
             RpcSessionFlushOptions? flushOptions,
+            TimeProvider timeProvider,
             CancellationToken sessionCancellation,
             Action<IRpcByteBufferWriter> returnBuffer,
             Action<Exception> onTransportFaulted)
@@ -43,6 +73,8 @@ public sealed partial class RpcSession
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxQueuedBytes);
             _output = output;
             _maxQueuedBytes = maxQueuedBytes;
+            _normalQueueLimit = maxQueuedBytes - ComputeProgressReserveBytes(maxQueuedBytes);
+            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
             _sessionCancellation = sessionCancellation;
             _returnBuffer = returnBuffer ?? throw new ArgumentNullException(nameof(returnBuffer));
             _onTransportFaulted = onTransportFaulted ?? throw new ArgumentNullException(nameof(onTransportFaulted));
@@ -51,38 +83,71 @@ public sealed partial class RpcSession
             {
                 _flushMode = FlushMode.TimedBatch;
                 _flushSizeThreshold = custom.FlushSizeThreshold;
-                _maxLatencyTicks = ToStopwatchTicks(custom.MaxLatency);
+                _maxLatency = custom.MaxLatency;
+                _deadlineBatchingEnabled = true;
             }
             else
             {
+                _deadlineBatchingEnabled = false;
                 switch (performanceProfile)
                 {
                     case SharpLinkPerformanceProfile.LowLatency:
                         _flushMode = FlushMode.LowLatency;
                         _flushSizeThreshold = 1;
-                        _maxLatencyTicks = 0;
+                        _maxLatency = TimeSpan.Zero;
                         break;
                     case SharpLinkPerformanceProfile.Throughput:
+                        // Throughput keeps the large coalescing threshold but flushes the
+                        // moment the queue drains: frames of an active RPC pipeline leave
+                        // immediately, and only a genuinely idle queue would ever want the
+                        // MaxLatency deadline (which is therefore reserved for callers that
+                        // configure RpcSessionFlushOptions explicitly).
                         _flushMode = FlushMode.TimedBatch;
                         _flushSizeThreshold = 64 * 1024;
-                        _maxLatencyTicks = ToStopwatchTicks(TimeSpan.FromMilliseconds(1));
+                        _maxLatency = TimeSpan.FromMilliseconds(1);
                         break;
                     default:
                         _flushMode = FlushMode.Balanced;
                         _flushSizeThreshold = 16 * 1024;
-                        _maxLatencyTicks = 0;
+                        _maxLatency = TimeSpan.Zero;
                         break;
                 }
             }
 
-            _queue = Channel.CreateUnbounded<OwnedFrame>(new UnboundedChannelOptions
+            _progressQueue = CreateFrameQueue();
+            _normalQueue = CreateFrameQueue();
+            _deadlineRace = new DeadlineReadRace(_timeProvider);
+            _pumpTask = RunAsync();
+        }
+
+        private static int ComputeProgressReserveBytes(int maxQueuedBytes)
+        {
+            // The headroom applies to production-sized queues. Below this
+            // floor the queue is smaller than realistic frames and reserving a
+            // slice would change the single-frame admission semantics that the
+            // runtime's own small-queue tests rely on.
+            if (maxQueuedBytes < 32 * 1024)
+                return 0;
+            var reserve = Math.Clamp(
+                maxQueuedBytes / ProgressReserveDivisor,
+                ProgressReserveMinimumBytes,
+                ProgressReserveMaximumBytes);
+            // Keep at least three quarters of a small queue available to the
+            // normal class so a degenerate queue cannot become progress-only.
+            return Math.Min(reserve, maxQueuedBytes / 4);
+        }
+
+        private bool HasProgressFrames() => _progressQueue.Reader.TryPeek(out _);
+
+        private bool HasNormalFrames() => _normalQueue.Reader.TryPeek(out _);
+
+        private static Channel<OwnedFrame> CreateFrameQueue()
+            => Channel.CreateUnbounded<OwnedFrame>(new UnboundedChannelOptions
             {
                 SingleReader = true,
                 SingleWriter = false,
                 AllowSynchronousContinuations = false
             });
-            _pumpTask = RunAsync();
-        }
 
         public SendEnqueueResult TryEnqueue(OwnedFrame frame)
             => TryEnqueue(frame, returnFrameWhenFull: true);
@@ -97,7 +162,7 @@ public sealed partial class RpcSession
                 ReturnUnreserved(frame, CreateTransportClosedException());
                 return SendEnqueueResult.Closed;
             }
-            if (!TryReserve(frame.Length))
+            if (!TryReserve(frame.Length, frame.IsProtocolProgress))
             {
                 if (returnFrameWhenFull)
                 {
@@ -107,8 +172,12 @@ public sealed partial class RpcSession
                 }
                 return SendEnqueueResult.Full;
             }
-            if (_queue.Writer.TryWrite(frame))
+            var queue = frame.IsProtocolProgress ? _progressQueue : _normalQueue;
+            if (queue.Writer.TryWrite(frame))
+            {
+                _wakeup.Signal();
                 return SendEnqueueResult.Accepted;
+            }
 
             CompleteReserved(frame, CreateTransportClosedException());
             return SendEnqueueResult.Closed;
@@ -120,7 +189,7 @@ public sealed partial class RpcSession
         {
             try
             {
-                await ReserveAsync(frame.Length, cancellationToken).ConfigureAwait(false);
+                await ReserveAsync(frame.Length, frame.IsProtocolProgress, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -128,8 +197,12 @@ public sealed partial class RpcSession
                 throw;
             }
 
-            if (Volatile.Read(ref _stopped) == 0 && _queue.Writer.TryWrite(frame))
+            if (Volatile.Read(ref _stopped) == 0 &&
+                (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
+            {
+                _wakeup.Signal();
                 return SendEnqueueResult.Accepted;
+            }
 
             CompleteReserved(frame, exception: null, completeFlushWaiter: false);
             return SendEnqueueResult.Closed;
@@ -140,43 +213,143 @@ public sealed partial class RpcSession
             var pending = new List<OwnedFrame>(32);
             Exception terminalException = CreateTransportClosedException();
             var bytesAccumulated = 0;
-            var batchStart = 0L;
+            var batchDeadline = 0L;
+            var writtenCount = 0;
+            var deferWrites = false;
 
             try
             {
-                while (await WaitToReadAsync().ConfigureAwait(false))
+                while (true)
                 {
-                    while (_queue.Reader.TryRead(out var frame))
+                    if (!HasProgressFrames() && !HasNormalFrames())
+                    {
+                        if (Volatile.Read(ref _stopped) != 0)
+                            break;
+
+                        // Arm the reusable wakeup signal and always await it. WaitAsync
+                        // consumes any signal that arrived before the arm was published,
+                        // so a frame written between the empty-queue check above and the
+                        // arm cannot leave the await hanging, and the arm never has to be
+                        // abandoned (abandoning an armed ManualResetValueTaskSourceCore
+                        // and re-arming it crashed the CI Load Smoke with a completion
+                        // sentinel InvalidOperationException). This replaces the dual-read
+                        // Task.WhenAny wake-up with a claim-token value-task source that
+                        // allocates nothing per wake.
+                        var wakeup = _wakeup.WaitAsync();
+                        await wakeup.ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (await DrainProgressQueueAsync(pending, deferWrites).ConfigureAwait(false))
+                    {
+                        // Progress frames must not wait for a full batch:
+                        // flush whatever the batch still holds (LowLatency
+                        // already flushed per frame inside the drain).
+                        if (!deferWrites)
+                            writtenCount = pending.Count;
+                        if (pending.Count > 0)
+                        {
+                            await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
+                            bytesAccumulated = 0;
+                            writtenCount = 0;
+                            deferWrites = false;
+                        }
+                        batchDeadline = 0;
+                    }
+
+                    var normalFramesSinceInterleave = 0;
+                    while (_normalQueue.Reader.TryRead(out var frame))
                     {
                         if (pending.Count == 0)
-                            batchStart = Stopwatch.GetTimestamp();
+                        {
+                            batchDeadline = SharpLinkTime.AddDuration(
+                                _timeProvider.GetTimestamp(),
+                                _maxLatency,
+                                _timeProvider.TimestampFrequency);
+                        }
 
-                        WriteFrame(frame);
+                        // Take ownership of the frame before any write can fail: a fault during
+                        // WriteFrame/FlushAsync must still release the frame and complete its
+                        // flush waiter through the terminal ReleaseBatch in the finally block.
                         pending.Add(frame);
+                        var hasTimeBudget = HasTimeBudget(frame);
+                        if (!deferWrites)
+                        {
+                            if (hasTimeBudget)
+                                deferWrites = true;
+                            else
+                            {
+                                WriteFrame(frame);
+                                writtenCount++;
+                            }
+                        }
                         bytesAccumulated += frame.Length;
 
-                        if (frame.ForceFlush ||
+                        // A deadline-bearing Request is a publication boundary. Its retained
+                        // process-local deadline is sampled only after output span/copy has
+                        // completed, and no later frame may perform local work before the flush
+                        // that publishes that budget snapshot.
+                        if (hasTimeBudget ||
+                            frame.ForceFlush ||
                             _flushMode == FlushMode.LowLatency ||
                             bytesAccumulated >= _flushSizeThreshold)
                         {
-                            await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                            await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                             bytesAccumulated = 0;
-                            batchStart = 0;
+                            batchDeadline = 0;
+                            writtenCount = 0;
+                            deferWrites = false;
+                        }
+
+                        // Bounded progress interleave: the progress check is
+                        // independent of flush boundaries, otherwise frames at
+                        // or above the flush threshold would flush every time
+                        // and the interleave would never fire, starving the
+                        // progress queue while the normal queue never empties.
+                        normalFramesSinceInterleave++;
+                        if (normalFramesSinceInterleave >= NormalFramesPerInterleave)
+                        {
+                            normalFramesSinceInterleave = 0;
+                            if (await DrainProgressQueueAsync(pending, deferWrites).ConfigureAwait(false))
+                            {
+                                if (!deferWrites)
+                                    writtenCount = pending.Count;
+                                if (pending.Count > 0)
+                                {
+                                    await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
+                                    bytesAccumulated = 0;
+                                    writtenCount = 0;
+                                    deferWrites = false;
+                                }
+                                batchDeadline = 0;
+                            }
                         }
                     }
 
                     if (pending.Count == 0)
                         continue;
 
+                    // Profile-default TimedBatch treats the queue drain as the flush point
+                    // (see _deadlineBatchingEnabled): only an explicitly configured
+                    // MaxLatency enters the deadline wait, keeping the public
+                    // RpcSessionFlushOptions contract for latency-bounded batching.
                     if (_flushMode == FlushMode.TimedBatch &&
-                        await WaitForMoreUntilDeadlineAsync(batchStart).ConfigureAwait(false))
+                        _deadlineBatchingEnabled &&
+                        await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false) &&
+                        (HasProgressFrames() || HasNormalFrames()))
                     {
+                        // More frames followed the deadline win: keep batching.
+                        // A stale retained read can win without new data, and
+                        // skipping the flush then would strand the batch until
+                        // more frames arrive.
                         continue;
                     }
 
-                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                    await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                     bytesAccumulated = 0;
-                    batchStart = 0;
+                    batchDeadline = 0;
+                    writtenCount = 0;
+                    deferWrites = false;
                 }
             }
             catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
@@ -189,10 +362,58 @@ public sealed partial class RpcSession
             }
             finally
             {
+                _deadlineRace.Dispose();
+                // The retained reads stay registered on their channels until the channel
+                // completes them. A faulted teardown (ReportFaultOnce) completes both
+                // channels with terminalException while the reads are still pending, so
+                // abandon them with observation here: a faulted channel-read task that
+                // reaches the Task finalizer unobserved fires the unobserved-task event
+                // and trips the chaos harness's zero-tolerance gate (issue #216).
+                ObserveDroppedRead(_pendingReadWait);
+                ObserveDroppedRead(_pendingProgressReadWait);
+                _pendingReadWait = null;
+                _pendingProgressReadWait = null;
                 ReleaseBatch(pending, terminalException);
                 DrainQueuedFrames(terminalException);
                 PulseCapacityWaiters();
             }
+        }
+
+        private async ValueTask<bool> DrainProgressQueueAsync(
+            List<OwnedFrame> pending,
+            bool deferWrites)
+        {
+            // The drain runs until the progress queue is empty so the service
+            // rate always matches the arrival rate. If an earlier deadline-bearing
+            // frame is deferred, progress stays behind it; otherwise preserve the
+            // original immediate-copy ordering and only delay the transport flush.
+            var drained = false;
+            var drainedCount = 0;
+            while (drainedCount < ProgressFramesPerDrain &&
+                   _progressQueue.Reader.TryRead(out var frame))
+            {
+                pending.Add(frame);
+                if (!deferWrites)
+                    WriteFrame(frame);
+                drained = true;
+                drainedCount++;
+                if (_flushMode == FlushMode.LowLatency)
+                {
+                    await FlushAndReleaseAsync(
+                        pending,
+                        deferWrites ? 0 : pending.Count).ConfigureAwait(false);
+                }
+            }
+            return drained;
+        }
+
+        private static bool HasTimeBudget(OwnedFrame frame)
+        {
+            var source = frame.Memory.Span;
+            return source.Length >=
+                       ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes + sizeof(long) &&
+                   (ProtocolV2FrameType)source[5] == ProtocolV2FrameType.Request &&
+                   (((ProtocolV2FrameFlags)source[6]) & ProtocolV2FrameFlags.HasTimeBudget) != 0;
         }
 
         private void WriteFrame(OwnedFrame frame)
@@ -206,67 +427,210 @@ public sealed partial class RpcSession
             _output.Advance(source.Length);
         }
 
-        private async ValueTask FlushAndReleaseAsync(List<OwnedFrame> pending)
+        private bool TryWriteFrameAtEmission(OwnedFrame frame)
         {
+            var source = frame.Memory.Span;
+            if (source.IsEmpty)
+                return true;
+            if (!HasTimeBudget(frame))
+            {
+                WriteFrame(frame);
+                return true;
+            }
+            if (!frame.Deadline.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "A Request carrying TimeBudget must retain its process-local RpcDeadline until emission.");
+            }
+
+            var budgetOffset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
+
+            // GetSpan/copy are still local pre-publication work and may be supplied by a
+            // custom PipeWriter. Finish that work before sampling the remaining budget so
+            // it cannot silently extend the peer's lifetime.
+            var destination = _output.GetSpan(source.Length);
+            source.CopyTo(destination);
+            var remaining = frame.Deadline.GetRemaining(_timeProvider);
+            if (remaining <= TimeSpan.Zero)
+                return false;
+
+            SharpLinkTelemetry.RecordSentBytes(source.Length);
+            BinaryPrimitives.WriteInt64LittleEndian(
+                destination.Slice(budgetOffset, sizeof(long)),
+                remaining.Ticks);
+            _output.Advance(source.Length);
+            return true;
+        }
+
+        private async ValueTask FlushAndReleaseAsync(
+            List<OwnedFrame> pending,
+            int writtenCount)
+        {
+            // Only the suffix beginning with the first deadline-bearing request stays in
+            // owned buffers. Stamp its remaining TimeBudget from retained deadline metadata
+            // at the last possible point before FlushAsync.
+            for (var index = writtenCount; index < pending.Count;)
+            {
+                var frame = pending[index];
+                if (TryWriteFrameAtEmission(frame))
+                {
+                    index++;
+                    continue;
+                }
+
+                pending.RemoveAt(index);
+                CompleteReserved(
+                    frame,
+                    new SharpLinkException(
+                        SharpLinkErrorCode.DeadlineExceeded,
+                        "Request deadline expired before transport emission."),
+                    completeFlushWaiter: true);
+            }
+
+            if (pending.Count == 0)
+                return;
+
             var result = await _output.FlushAsync(_sessionCancellation).ConfigureAwait(false);
             if (result.IsCanceled || result.IsCompleted)
                 throw CreateTransportClosedException();
             ReleaseBatch(pending, exception: null);
         }
 
-        private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchStart)
+        /// <summary>
+        /// Returns the retained progress-channel read used by the deadline race,
+        /// registering a fresh one when the retained read has completed. The pump
+        /// loop itself wakes through <see cref="WakeupSignal"/> instead.
+        /// </summary>
+        private Task<bool> GetProgressRead()
         {
-            var waitToRead = _queue.Reader.WaitToReadAsync(_sessionCancellation);
-            if (waitToRead.IsCompletedSuccessfully)
-                return waitToRead.Result;
+            if (_pendingProgressReadWait is { IsCompleted: false } retained)
+                return retained;
+            ObserveDroppedRead(_pendingProgressReadWait);
+            _pendingProgressReadWait = null;
+            return _pendingProgressReadWait =
+                _progressQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
+        }
 
-            var pendingRead = waitToRead.AsTask();
-            _pendingReadWait = pendingRead;
-            while (true)
+        private Task<bool> GetNormalRead()
+        {
+            if (_pendingReadWait is { IsCompleted: false } retained)
+                return retained;
+            ObserveDroppedRead(_pendingReadWait);
+            _pendingReadWait = null;
+            return _pendingReadWait =
+                _normalQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
+        }
+
+        /// <summary>
+        /// Marks a replaced or abandoned retained read observed: a cancelled or faulted
+        /// task that completes unobserved fires the unobserved-task event and
+        /// can fail diagnostics that treat it as a leak (chaos smoke).
+        /// </summary>
+        private static void ObserveDroppedRead(Task<bool>? read)
+        {
+            if (read is null || read.IsCompletedSuccessfully)
+                return;
+            if (read.IsCompleted)
             {
-                var remainingTicks = _maxLatencyTicks - (Stopwatch.GetTimestamp() - batchStart);
-                if (remainingTicks <= 0)
-                    return false;
+                _ = read.Exception;
+                return;
+            }
 
-                var timerTicks = Math.Min(remainingTicks, MaximumTimerStopwatchTicks);
-                var delay = TimeSpan.FromSeconds((double)timerTicks / Stopwatch.Frequency);
-                using var delayCancellation = new CancellationTokenSource();
-                var delayTask = Task.Delay(delay, delayCancellation.Token);
-                if (await Task.WhenAny(pendingRead, delayTask).ConfigureAwait(false) == pendingRead)
-                {
-                    _pendingReadWait = null;
-                    await delayCancellation.CancelAsync().ConfigureAwait(false);
-                    return await pendingRead.ConfigureAwait(false);
-                }
+            // A read abandoned while still pending cannot be faulted by the pump anymore
+            // (queue faulting runs before the pump loop's finally block), but observe a
+            // late fault anyway so no future completion path can hand an exception to the
+            // finalizer unobserved.
+            _ = ObserveLateReadFaultAsync(read);
+        }
 
-                if (remainingTicks <= MaximumTimerStopwatchTicks)
-                    return false;
+        private static async Task ObserveLateReadFaultAsync(Task<bool> read)
+        {
+            try
+            {
+                await read.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Observation only: the fault belongs to the pump that abandoned the read.
             }
         }
 
-        private ValueTask<bool> WaitToReadAsync()
+        private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
         {
-            var pendingRead = _pendingReadWait;
-            if (pendingRead is null)
-                return _queue.Reader.WaitToReadAsync(_sessionCancellation);
+            // Reuse the retained reads: a read registered for an earlier wait
+            // stays registered on its channel, and the TryPeek fast path in
+            // WaitForFramesAsync can leave one behind. Re-creating reads every
+            // deadline cycle would abandon one registered read per cycle; a
+            // stale completed read (data already drained) is replaced by the
+            // helpers and a closed channel surfaces its result here.
+            var pendingRead = GetNormalRead();
+            if (pendingRead.IsCompleted)
+                return pendingRead.Result;
+            // The progress read ends the batching deadline immediately so protocol
+            // progress is not delayed by the batch window; it is retained across
+            // timer chunks like the normal read.
+            var progressRead = GetProgressRead();
+            while (true)
+            {
+                var remaining = SharpLinkTime.GetRemaining(
+                    batchDeadline,
+                    _timeProvider.GetTimestamp(),
+                    _timeProvider.TimestampFrequency);
+                if (remaining == TimeSpan.Zero)
+                    return false;
 
-            _pendingReadWait = null;
-            return new ValueTask<bool>(pendingRead);
+                var delay = remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
+                if (await _deadlineRace
+                        .WaitForReadsOrTimeout(pendingRead, progressRead, delay)
+                        .ConfigureAwait(false))
+                {
+                    if (_deadlineRace.Outcome == DeadlineReadRace.RaceOutcome.ProgressAvailable)
+                        _pendingProgressReadWait = null;
+                    else
+                        _pendingReadWait = null;
+                    return true;
+                }
+
+                switch (_deadlineRace.Outcome)
+                {
+                    case DeadlineReadRace.RaceOutcome.ReadClosed:
+                        _pendingReadWait = null;
+                        _pendingProgressReadWait = null;
+                        return false;
+                    case DeadlineReadRace.RaceOutcome.TimedOut when remaining > MaximumTimerDelay:
+                        // A chunk of a very long deadline expired: re-arm the same retained reads.
+                        continue;
+                    default:
+                        // The deadline expired and the pending reads were not consumed: they stay
+                        // retained in _pendingReadWait/_pendingProgressReadWait for re-observation.
+                        return false;
+                }
+            }
         }
 
-        private bool TryReserve(int bytes)
+        private bool TryReserve(int bytes, bool isProtocolProgress)
         {
             if (bytes < 0)
                 return false;
             if (bytes == 0)
                 return true;
 
+            // Protocol-progress frames may use the full queue budget; normal
+            // frames may not occupy the reserved progress headroom. A normal
+            // frame larger than its limit is rejected, even on an empty queue,
+            // so it cannot consume the reserve and break liveness isolation
+            // under transport saturation. When the queue is too small to hold
+            // any reserve the headroom does not exist and the base single-frame
+            // oversized exception is preserved; progress frames keep the base
+            // oversized semantics (admitted once when the queue is empty).
+            var limit = isProtocolProgress ? _maxQueuedBytes : _normalQueueLimit;
+
             while (true)
             {
                 var current = Volatile.Read(ref _queuedBytes);
-                var canReserve = bytes <= _maxQueuedBytes
-                    ? current <= _maxQueuedBytes - bytes
-                    : current == 0;
+                var canReserve = bytes <= limit
+                    ? current <= limit - bytes
+                    : current == 0 && (isProtocolProgress || _normalQueueLimit == _maxQueuedBytes);
                 if (!canReserve)
                     return false;
                 if (Interlocked.CompareExchange(ref _queuedBytes, current + bytes, current) == current)
@@ -277,14 +641,17 @@ public sealed partial class RpcSession
             }
         }
 
-        private async ValueTask ReserveAsync(int bytes, CancellationToken cancellationToken)
+        private async ValueTask ReserveAsync(
+            int bytes,
+            bool isProtocolProgress,
+            CancellationToken cancellationToken)
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (Volatile.Read(ref _stopped) != 0)
                     throw CreateTransportClosedException();
-                if (TryReserve(bytes))
+                if (TryReserve(bytes, isProtocolProgress))
                     return;
 
                 Task waitTask;
@@ -292,7 +659,7 @@ public sealed partial class RpcSession
                 {
                     if (Volatile.Read(ref _stopped) != 0)
                         throw CreateTransportClosedException();
-                    if (TryReserve(bytes))
+                    if (TryReserve(bytes, isProtocolProgress))
                         return;
                     _capacityChanged ??= new TaskCompletionSource<bool>(
                         TaskCreationOptions.RunContinuationsAsynchronously);
@@ -311,7 +678,9 @@ public sealed partial class RpcSession
 
         private void DrainQueuedFrames(Exception exception)
         {
-            while (_queue.Reader.TryRead(out var frame))
+            while (_progressQueue.Reader.TryRead(out var frame))
+                CompleteReserved(frame, exception, completeFlushWaiter: true);
+            while (_normalQueue.Reader.TryRead(out var frame))
                 CompleteReserved(frame, exception, completeFlushWaiter: true);
         }
 
@@ -364,7 +733,9 @@ public sealed partial class RpcSession
         {
             if (Interlocked.Exchange(ref _stopped, 1) != 0)
                 return;
-            _queue.Writer.TryComplete();
+            _progressQueue.Writer.TryComplete();
+            _normalQueue.Writer.TryComplete();
+            _wakeup.Signal();
             PulseCapacityWaiters();
         }
 
@@ -373,17 +744,11 @@ public sealed partial class RpcSession
             if (Interlocked.Exchange(ref _faulted, 1) != 0)
                 return;
             Interlocked.Exchange(ref _stopped, 1);
-            _queue.Writer.TryComplete(exception);
+            _progressQueue.Writer.TryComplete(exception);
+            _normalQueue.Writer.TryComplete(exception);
+            _wakeup.Signal();
             PulseCapacityWaiters();
             _onTransportFaulted(exception);
-        }
-
-        private static long ToStopwatchTicks(TimeSpan value)
-        {
-            var ticks = value.TotalSeconds * Stopwatch.Frequency;
-            return ticks >= long.MaxValue
-                ? long.MaxValue
-                : Math.Max(1L, (long)Math.Ceiling(ticks));
         }
 
         private static SharpLinkException NormalizeTransportException(Exception exception)

@@ -10,11 +10,9 @@ public class SharpLinkClientCancellationTests
     public async Task InvokeWithDefaultTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
         var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromMilliseconds(80));
+            builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
 
@@ -31,11 +29,9 @@ public class SharpLinkClientCancellationTests
     public async Task InvokeCancellableNoPayloadAsyncShouldUseOperationCanceledWhenUserTokenCancels()
     {
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromSeconds(5));
+            builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(5)));
 
         await client.ConnectAsync();
 
@@ -56,11 +52,9 @@ public class SharpLinkClientCancellationTests
     public async Task ReceiveCancelPacketShouldNotBreakPendingRequest()
     {
         var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromSeconds(2));
+            builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(2)));
 
         await client.ConnectAsync();
 
@@ -79,11 +73,9 @@ public class SharpLinkClientCancellationTests
     public async Task InvokeOneWayNoPayloadShouldNotCreateTimeoutCancel()
     {
         var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromMilliseconds(80));
+            builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
 
@@ -94,6 +86,8 @@ public class SharpLinkClientCancellationTests
     }
 
     [Test]
+    // ActivityListener registration is process-wide, so this assertion must own that listener window.
+    [NotInParallel]
     public async Task EarlyServerStreamDisposalShouldSendConsumerAbandonedReason()
     {
         using var telemetryListener = new ActivityListener
@@ -107,11 +101,9 @@ public class SharpLinkClientCancellationTests
         ActivitySource.AddActivityListener(telemetryListener);
 
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromSeconds(5));
+            builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(5)));
 
         await client.ConnectAsync();
         var stream = ClientInvokerTestHelper.InvokeServerStreaming(client);

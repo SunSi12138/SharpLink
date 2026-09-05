@@ -110,6 +110,13 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetStaticSingleton(out object service)
+        => TryGetStaticSingleton(generatedBridge: null, requestId: 0, out service);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryGetStaticSingleton(
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId,
+        out object service)
     {
         if (Module is not null || Lifetime != SharpLinkServiceLifetime.Singleton)
         {
@@ -118,13 +125,27 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
 
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton();
+        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
         return true;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryAcquireDynamicSingleton(
         bool isStream,
+        out object service,
+        out SharpLinkDynamicModuleLease moduleLease)
+        => TryAcquireDynamicSingleton(
+            isStream,
+            generatedBridge: null,
+            requestId: 0,
+            out service,
+            out moduleLease);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryAcquireDynamicSingleton(
+        bool isStream,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId,
         out object service,
         out SharpLinkDynamicModuleLease moduleLease)
     {
@@ -144,7 +165,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
                 "RPC module is draining");
         }
 
-        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton();
+        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
         return true;
     }
 
@@ -188,6 +209,13 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             null, scopeFactory, factory, disposeService, module);
 
     internal ValueTask<ServiceLease> AcquireAsync(ServerConnectionState connection, bool isStream)
+        => AcquireAsync(connection, isStream, generatedBridge: null, requestId: 0);
+
+    internal ValueTask<ServiceLease> AcquireAsync(
+        ServerConnectionState connection,
+        bool isStream,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         SharpLinkDynamicModuleLease moduleLease = default;
@@ -201,12 +229,14 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         try
         {
             if (_rootProvider is not null)
-                return ValueTask.FromResult(new ServiceLease(GetOrCreateSingleton(), moduleLease: moduleLease));
+                return ValueTask.FromResult(new ServiceLease(
+                    GetOrCreateSingleton(generatedBridge, requestId),
+                    moduleLease: moduleLease));
             if (_singleton is not null)
                 return ValueTask.FromResult(new ServiceLease(_singleton, moduleLease: moduleLease));
             if (Lifetime == SharpLinkServiceLifetime.Connection)
-                return connection.AcquireServiceAsync(this, moduleLease);
-            return AcquirePerCallAsync(moduleLease);
+                return connection.AcquireServiceAsync(this, moduleLease, generatedBridge, requestId);
+            return AcquirePerCallAsync(moduleLease, generatedBridge, requestId);
         }
         catch
         {
@@ -215,12 +245,19 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
     }
 
-    internal async ValueTask<ConnectionServiceInstance> CreateConnectionServiceAsync()
+    internal ValueTask<ConnectionServiceInstance> CreateConnectionServiceAsync()
+        => CreateConnectionServiceAsync(generatedBridge: null, requestId: 0);
+
+    internal async ValueTask<ConnectionServiceInstance> CreateConnectionServiceAsync(
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
     {
+        EnsureUserCodeEntry(generatedBridge, requestId);
         var scope = (_scopeFactory ?? throw new InvalidOperationException("Service scope factory is unavailable."))
             .CreateScope();
         try
         {
+            EnsureUserCodeEntry(generatedBridge, requestId);
             var service = (_factory ?? throw new InvalidOperationException("Service factory is unavailable."))
                 .Invoke(scope.ServiceProvider) ??
                 throw new InvalidOperationException("The SharpLink service factory returned null.");
@@ -240,13 +277,18 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
     }
 
-    private async ValueTask<ServiceLease> AcquirePerCallAsync(SharpLinkDynamicModuleLease moduleLease)
+    private async ValueTask<ServiceLease> AcquirePerCallAsync(
+        SharpLinkDynamicModuleLease moduleLease,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
     {
         IServiceScope? scope = null;
         try
         {
+            EnsureUserCodeEntry(generatedBridge, requestId);
             scope = (_scopeFactory ?? throw new InvalidOperationException("Service scope factory is unavailable."))
                 .CreateScope();
+            EnsureUserCodeEntry(generatedBridge, requestId);
             var service = (_factory ?? throw new InvalidOperationException("Service factory is unavailable."))
                 .Invoke(scope.ServiceProvider) ??
                 throw new InvalidOperationException("The SharpLink service factory returned null.");
@@ -282,7 +324,9 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             await ServiceLease.DisposeServiceAsync(singleton).ConfigureAwait(false);
     }
 
-    private object GetOrCreateSingleton()
+    private object GetOrCreateSingleton(
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
     {
         var singleton = Volatile.Read(ref _singleton);
         if (singleton is not null)
@@ -294,6 +338,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             singleton = _singleton;
             if (singleton is not null)
                 return singleton;
+            EnsureUserCodeEntry(generatedBridge, requestId);
             singleton = (_factory ?? throw new InvalidOperationException("Service factory is unavailable."))
                 .Invoke(_rootProvider!) ??
                 throw new InvalidOperationException("The SharpLink service factory returned null.");
@@ -301,6 +346,11 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             return singleton;
         }
     }
+
+    private static void EnsureUserCodeEntry(
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
+        => generatedBridge?.EnsureUserCodeEntry(requestId);
 }
 
 internal sealed class ConnectionServiceInstance : IAsyncDisposable

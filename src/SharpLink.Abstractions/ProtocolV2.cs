@@ -13,7 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 3;
+    public const ushort MinorVersion = 6;
+
+    /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
+    public const ushort MinimumCompatibleMinorVersion = 6;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -57,8 +60,8 @@ public enum ProtocolV2FrameFlags : byte
     Error = 1 << 0,
     /// <summary>The payload was truncated to remain within a configured limit.</summary>
     Truncated = 1 << 1,
-    /// <summary>The request prefix contains a deadline.</summary>
-    HasDeadline = 1 << 2,
+    /// <summary>The request prefix contains a remaining RPC time budget.</summary>
+    HasTimeBudget = 1 << 2,
     /// <summary>The request contains metadata.</summary>
     HasMetadata = 1 << 3,
     /// <summary>The payload uses the negotiated compression profile.</summary>
@@ -154,10 +157,12 @@ public readonly record struct ProtocolV2WindowUpdate(
     uint Credit);
 
 /// <summary>Decoded binary error payload.</summary>
-/// <param name="Code">The machine-readable error classification.</param>
+/// <param name="Code">The coarse machine-readable error classification.</param>
+/// <param name="DetailCode">The stable detail code scoped by <paramref name="Code"/>.</param>
 /// <param name="Message">The diagnostic message returned by the endpoint.</param>
 /// <param name="IsTruncated">Whether the endpoint truncated <paramref name="Message"/>.</param>
 public readonly record struct ProtocolV2Error(
     SharpLinkErrorCode Code,
+    ushort DetailCode,
     string Message,
     bool IsTruncated);

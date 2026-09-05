@@ -4,6 +4,7 @@
     <IsPackable>false</IsPackable>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)Generated</CompilerGeneratedFilesOutputPath>
+    <DefineConstants Condition="'$(Configuration)' == 'Release'">$(DefineConstants);SHARPLINK_RELEASE_BUILD</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,11 +15,22 @@
     <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Serializer.SharpPack\SharpLink.Serializer.SharpPack.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\SharpLink.DynamicContracts\SharpLink.DynamicContracts.csproj" />
+    <ProjectReference Include="..\SharpLink.DynamicServices\SharpLink.DynamicServices.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\SharpLink.LoadTestBase\SharpLink.LoadTestBase.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\SharpLink.DynamicServices\bin\$(Configuration)\$(TargetFramework)\SharpLink.DynamicPlugin.Services.dll"
+          Link="SharpLink.DynamicPlugin.Services.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="SharpPack" />
   </ItemGroup>

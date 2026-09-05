@@ -9,7 +9,8 @@ using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[NotInParallel]
+// Every test in this fixture coordinates through RollbackState and SHARPLINK_ROLLBACK_* process state.
+[NotInParallel("rollback-plugin")]
 public class DynamicRollbackTests
 {
     [Test]
@@ -17,7 +18,9 @@ public class DynamicRollbackTests
     {
         await RollbackState.TestIsolation.WaitAsync();
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-        var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
+            .UseTransport(new NoopClientTransport()).Build();
         SharpLinkDynamicModuleLease lease = default;
         var leaseReleased = false;
         try
@@ -50,6 +53,9 @@ public class DynamicRollbackTests
                 "a huge positive graceful timeout must not overflow the native delay range");
             Ensure(failure is null && result is { ReferencesReleased: true },
                 "the unregister operation must complete after its active lease drains");
+            module.AssertAccountingInvariant();
+            Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+                "successful unregister must release every retained dynamic-module lease exactly once");
         }
         finally
         {
@@ -62,12 +68,147 @@ public class DynamicRollbackTests
     }
 
     [Test]
+    public async Task ClientUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider()
+    {
+        await RollbackState.TestIsolation.WaitAsync();
+        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+        var ownerProvider = new ManualTimeProvider();
+        var unrelatedProvider = new ManualTimeProvider();
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
+            .UseTimeProvider(ownerProvider)
+            .UseTransport(new NoopClientTransport())
+            .Build();
+        SharpLinkDynamicModuleLease lease = default;
+        try
+        {
+            var assembly = typeof(RollbackMarker).Assembly;
+            Ensure(client.RegisterAssembly(assembly).Succeeded, "dynamic Client registration");
+            var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)typeof(SharpLinkClient)
+                .GetField("_dynamicModules", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client)!;
+            var module = modules[assembly];
+            Ensure(module.TryAcquire(stream: false, out lease), "retained Client module lease");
+            var forcedCancellationCount = 0;
+            using var registration = module.ForcedCancellation.Register(
+                () => Interlocked.Increment(ref forcedCancellationCount));
+
+            var unregister = client.UnregisterAssemblyAsync(
+                assembly,
+                TimeSpan.FromSeconds(5)).AsTask();
+            unrelatedProvider.Advance(TimeSpan.FromDays(1));
+            ownerProvider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+            await Task.Yield();
+
+            Ensure(!unregister.IsCompleted && forcedCancellationCount == 0,
+                "an unrelated clock and the owner tick before the deadline must not force Client calls");
+            Ensure(ownerProvider.ActiveTimerCount == 1 && unrelatedProvider.ActiveTimerCount == 0,
+                "the retained Client lease timeout must be owned only by its RuntimeContext provider");
+
+            ownerProvider.Advance(TimeSpan.FromTicks(1));
+            var result = await unregister;
+            Ensure(result is { ReferencesReleased: false, RemainingCalls: 1 } &&
+                   forcedCancellationCount == 1,
+                "exact equality must force-cancel the retained Client lease once and report deferred release");
+
+            lease.Dispose();
+            lease = default;
+            await module.WaitForDrainAsync();
+            module.AssertAccountingInvariant();
+            Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+                "the Client unregister drain must leave both module counters exactly zero");
+            await client.StopAsync();
+            await ownerProvider.WaitForTimersDrainedAsync();
+            Ensure(module.State == SharpLinkDynamicModuleState.Released && !modules.ContainsKey(assembly),
+                "Client module must be released after its retained lease and framework owner drain");
+            Ensure(ownerProvider.ActiveTimerCount == 0 && forcedCancellationCount == 1,
+                "Client deferred release must leave no provider timer or duplicate forced cancellation");
+        }
+        finally
+        {
+            if (lease.IsAcquired)
+                lease.Dispose();
+            try { await client.DisposeAsync(); } catch { }
+            ClearEnvironment();
+            RollbackState.TestIsolation.Release();
+        }
+    }
+
+    [Test]
+    public async Task ServerUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider()
+    {
+        await RollbackState.TestIsolation.WaitAsync();
+        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+        var ownerProvider = new ManualTimeProvider();
+        var unrelatedProvider = new ManualTimeProvider();
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .UseTimeProvider(ownerProvider)
+            .UseTransport(new NoopServerTransport())
+            .Build();
+        SharpLinkDynamicModuleLease lease = default;
+        try
+        {
+            var assembly = typeof(RollbackMarker).Assembly;
+            Ensure(server.RegisterAssembly(assembly).Succeeded, "dynamic Server registration");
+            var registry = (ServerServiceModuleRegistry)typeof(SharpLinkServer)
+                .GetField("_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(server)!;
+            Ensure(registry.DynamicModules.TryGetValue(assembly, out var module), "registered Server module");
+            Ensure(module.TryAcquire(stream: false, out lease), "retained Server module lease");
+            var forcedCancellationCount = 0;
+            using var registration = module.ForcedCancellation.Register(
+                () => Interlocked.Increment(ref forcedCancellationCount));
+
+            var unregister = server.UnregisterAssemblyAsync(
+                assembly,
+                TimeSpan.FromSeconds(5)).AsTask();
+            unrelatedProvider.Advance(TimeSpan.FromDays(1));
+            ownerProvider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+            await Task.Yield();
+
+            Ensure(!unregister.IsCompleted && forcedCancellationCount == 0,
+                "an unrelated clock and the owner tick before the deadline must not force Server calls");
+            Ensure(ownerProvider.ActiveTimerCount == 1 && unrelatedProvider.ActiveTimerCount == 0,
+                "the retained Server lease timeout must be owned only by its RuntimeContext provider");
+
+            ownerProvider.Advance(TimeSpan.FromTicks(1));
+            var result = await unregister;
+            Ensure(result is { ReferencesReleased: false, RemainingCalls: 1 } &&
+                   forcedCancellationCount == 1,
+                "exact equality must force-cancel the retained Server lease once and report deferred release");
+
+            lease.Dispose();
+            lease = default;
+            await module.WaitForDrainAsync();
+            module.AssertAccountingInvariant();
+            Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+                "the Server unregister drain must leave both module counters exactly zero");
+            await server.StopAsync(TimeSpan.Zero);
+            await ownerProvider.WaitForTimersDrainedAsync();
+            Ensure(module.State == SharpLinkDynamicModuleState.Released && !registry.DynamicModules.ContainsKey(assembly),
+                "Server module must be released after its retained lease and framework owner drain");
+            Ensure(ownerProvider.ActiveTimerCount == 0 && forcedCancellationCount == 1,
+                "Server deferred release must leave no provider timer or duplicate forced cancellation");
+        }
+        finally
+        {
+            if (lease.IsAcquired)
+                lease.Dispose();
+            try { await server.DisposeAsync(); } catch { }
+            ClearEnvironment();
+            RollbackState.TestIsolation.Release();
+        }
+    }
+
+    [Test]
     public async Task ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure()
     {
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .DisableRequestTimeout()
+                .UseTransport(new NoopClientTransport()).Build();
             using var loaded = LoadPlugin("client-registration");
             try
             {
@@ -98,7 +239,7 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
+            var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopServerTransport()).Build();
             using var loaded = LoadPlugin("server-registration");
             try
             {
@@ -129,7 +270,9 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .DisableRequestTimeout()
+                .UseTransport(new NoopClientTransport()).Build();
             using var oldPlugin = LoadPlugin("client-old");
             using var newPlugin = LoadPlugin("client-new");
             try
@@ -165,7 +308,7 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
+            var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopServerTransport()).Build();
             using var oldPlugin = LoadPlugin("server-old");
             using var newPlugin = LoadPlugin("server-new");
             try
@@ -204,10 +347,10 @@ public class DynamicRollbackTests
             Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "server-build-schema");
             RollbackState.ScopeDisposeCount = 0;
             var manifest = new RollbackManifest();
-            SharpLinkGeneratedAssemblyCatalog.Register(manifest);
             try
             {
                 var failure = Capture(() => SharpLinkServerBuilder.Create()
+                    .UseGeneratedManifestSource(new FixedGeneratedManifestSource([manifest]))
                     .UseTransport(new ThrowingProfileServerTransport())
                     .Build());
 
@@ -217,7 +360,6 @@ public class DynamicRollbackTests
             }
             finally
             {
-                RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
                 ClearEnvironment();
                 GC.KeepAlive(manifest);
             }

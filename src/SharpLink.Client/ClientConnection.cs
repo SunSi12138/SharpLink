@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Client;
 
 internal enum ClientConnectionState : byte
@@ -13,14 +11,16 @@ internal enum ClientConnectionState : byte
 internal sealed class ClientConnection :
     IPendingCallOwner,
     IRpcClientStreamSink,
+    IStreamConsumerDeliveryGate,
     IAsyncDisposable
 {
     private readonly SharpLinkClient _client;
+    private readonly TimeProvider _timeProvider;
     private readonly CancellationTokenSource _cancellation;
     private readonly Func<long, IStreamDispatchState?, ValueTask> _consumerAbandonedCallback;
     private LateResponseLogLimiter _lateResponseLogLimiter;
     private int _state = (int)ClientConnectionState.Ready;
-    private int _activeCallCount;
+    private int _auxiliaryActiveCallCount;
     private int _disposed;
 
     public ClientConnection(
@@ -28,15 +28,22 @@ internal sealed class ClientConnection :
         RpcSession session,
         CancellationTokenSource cancellation,
         int maxPendingCalls,
-        IRpcCodecProvider codecs,
+        SharpLinkRuntimeContext runtimeContext,
         string? endpointId = null,
         long endpointGeneration = 0)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         Session = session ?? throw new ArgumentNullException(nameof(session));
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
+        ArgumentNullException.ThrowIfNull(runtimeContext);
+        _timeProvider = runtimeContext.TimeProvider;
+        _lateResponseLogLimiter = new LateResponseLogLimiter(_timeProvider.TimestampFrequency);
         _consumerAbandonedCallback = OnConsumerAbandonedAsync;
-        PendingCalls = new PendingRequestTable(maxPendingCalls, codecs, this);
+        PendingCalls = new PendingRequestTable(
+            maxPendingCalls,
+            runtimeContext.Codecs,
+            this,
+            runtimeContext.TimeProvider);
         EndpointId = endpointId;
         EndpointGeneration = endpointGeneration;
     }
@@ -57,15 +64,43 @@ internal sealed class ClientConnection :
     public bool CanAcceptCalls
         => State == ClientConnectionState.Ready && Session.CanAcceptCalls;
 
-    public int ActiveCallCount => Volatile.Read(ref _activeCallCount);
+    public int ActiveCallCount
+        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
+
+    /// <summary>
+    /// Validates a stable connection lifecycle snapshot at a transition or test boundary.
+    /// This intentionally stays outside the per-frame and selection hot paths.
+    /// </summary>
+    internal void AssertStateInvariant()
+    {
+        var activeCalls = ActiveCallCount;
+        if (activeCalls < 0)
+            throw new InvalidOperationException("Client connection active call count became negative.");
+
+        var state = State;
+        var sessionAcceptsCalls = Session.CanAcceptCalls;
+        if (state == ClientConnectionState.Ready && !sessionAcceptsCalls)
+        {
+            throw new InvalidOperationException(
+                "A Ready client connection must reference a Session that accepts new calls at a stable lifecycle boundary.");
+        }
+        if (state == ClientConnectionState.Draining && sessionAcceptsCalls)
+        {
+            throw new InvalidOperationException(
+                "A Draining client connection must not reference a Session that accepts new calls at a stable lifecycle boundary.");
+        }
+    }
 
     public CancellationToken CancellationToken => _cancellation.Token;
 
     public Func<long, IStreamDispatchState?, ValueTask> ConsumerAbandonedCallback
         => _consumerAbandonedCallback;
 
+    bool IStreamConsumerDeliveryGate.TryAcceptStreamDelivery(long requestId)
+        => PendingCalls.TryAcceptStreamData(requestId);
+
     internal bool ShouldLogLateResponse(out int suppressedCount)
-        => _lateResponseLogLimiter.ShouldLog(Stopwatch.GetTimestamp(), out suppressedCount);
+        => _lateResponseLogLimiter.ShouldLog(_timeProvider.GetTimestamp(), out suppressedCount);
 
     public bool MarkDraining()
     {
@@ -116,45 +151,90 @@ internal sealed class ClientConnection :
         if (!CanAcceptCalls)
             return false;
 
-        Interlocked.Increment(ref _activeCallCount);
+        Interlocked.Increment(ref _auxiliaryActiveCallCount);
         if (CanAcceptCalls)
             return true;
 
-        ReleaseActiveCall();
+        ReleaseAuxiliaryActiveCall();
         return false;
     }
 
-    public void EndUntrackedCall() => ReleaseActiveCall();
+    public void EndUntrackedCall() => ReleaseAuxiliaryActiveCall();
 
     public async Task SendClientStreamAsync<T>(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
+        IRpcCodec<T> codec,
         CancellationToken cancellationToken = default)
     {
-        if (!PendingCalls.Contains(requestId))
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(codec);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
         try
         {
-            await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
+            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+            while (true)
             {
-                await Session.SendStreamChunkAsync(
+                // MoveNextAsync is user-code re-entry. Claim progress before invoking it so an
+                // already-terminal/expired call cannot execute another producer side effect.
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.DeadlineExceeded,
+                        "RPC deadline exceeded during client stream production.");
+
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    break;
+
+                await Session.SendClientStreamChunkAsync(
                     requestId,
                     streamId,
-                    item,
+                    enumerator.Current,
+                    codec,
+                    deadline,
+                    _timeProvider,
                     cancellationToken).ConfigureAwait(false);
             }
 
-            Session.SendStreamCompleteAsync(requestId, streamId);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.DeadlineExceeded,
+                    "RPC deadline exceeded before client stream completion.");
+            Session.SendClientStreamComplete(
+                requestId,
+                streamId,
+                deadline,
+                _timeProvider,
+                cancellationToken);
         }
         catch (Exception exception)
         {
             try
             {
-                Session.SendStreamErrorAsync(requestId, streamId, exception);
+                var protocolError = exception as SharpLinkException ?? new SharpLinkException(
+                    SharpLinkErrorCode.Internal,
+                    "Internal client stream error.",
+                    exception);
+                Session.SendClientStreamError(
+                    requestId,
+                    streamId,
+                    protocolError,
+                    deadline,
+                    _timeProvider,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The owning pending call already selected a terminal result. Error-form
+                // StreamComplete is cleanup and cannot publish after that terminal.
             }
             catch (SharpLinkException sendException) when (sendException.Code is
+                SharpLinkErrorCode.DeadlineExceeded or
                 SharpLinkErrorCode.ConnectionClosed or
                 SharpLinkErrorCode.ResourceExhausted or
                 SharpLinkErrorCode.Unavailable)
@@ -175,17 +255,24 @@ internal sealed class ClientConnection :
         // flushed receive credit and detached its dispatcher. Remove the map entry if it
         // is still published, then join the winning completion before a late Cancel.
         Session.StreamManager.Unregister(requestId, 0);
-        if (dispatchState is null || dispatchState.IsDetached || !Session.IsConnected)
+        if (dispatchState is null || dispatchState.IsDetached)
         {
-            TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
+            if (Session.IsConnected)
+                TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
             return ValueTask.CompletedTask;
         }
+
+        if (!Session.IsConnected)
+            return ValueTask.CompletedTask;
 
         return AwaitRemoteCompletionAndSendCancelAsync(requestId, dispatchState);
     }
 
     void IPendingCallOwner.OnPendingCallRegistered()
-        => Interlocked.Increment(ref _activeCallCount);
+    {
+        // PendingRequestTable owns the capacity count, which also supplies the connection's
+        // pending-call contribution to ActiveCallCount. Avoid a second atomic increment here.
+    }
 
     void IPendingCallOwner.OnPendingCallCompleted(in PendingCallCompletion completion)
     {
@@ -203,28 +290,54 @@ internal sealed class ClientConnection :
             }
             else if (shouldSendCancel)
             {
+                var localAbort = completion.Dispatcher as IStreamLocalAbortDispatcher;
                 ValueTask drain;
                 try
                 {
-                    drain = Session.StreamManager is StreamManager manager
-                        ? manager.CompleteStreamAfterDispatchesAsync(
-                            completion.RequestId,
-                            0,
-                            completion.Exception)
-                        : ValueTask.CompletedTask;
+                    // Local lifetime termination is stronger than peer StreamComplete: publish
+                    // it to the dispatcher before route teardown so buffered delivery and the
+                    // terminal result arbitrate at the same dequeue boundary.
+                    localAbort?.CompleteLocalAbort(completion.Exception);
+                    drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(
+                        completion.RequestId,
+                        0,
+                        completion.Exception);
+                    if (drain.IsCompletedSuccessfully)
+                        localAbort?.RetireLocalAbortBuffer();
                 }
                 catch (Exception exception)
                 {
-                    Fail(exception);
-                    ReleaseActiveCall();
+                    try
+                    {
+                        Fail(exception);
+                    }
+                    finally
+                    {
+                        _client.HandleConnectionFatalFailure(this, exception);
+                    }
                     return;
                 }
                 if (!drain.IsCompletedSuccessfully)
                 {
-                    _client.TrackBackgroundTask(FinishCancellationAfterDispatchesAsync(
-                        drain,
-                        completion.RequestId,
-                        GetCancelReason(completion.Reason)));
+                    // PendingRequestTable releases its capacity only after this callback returns.
+                    // Transfer lifecycle ownership to an auxiliary count before that release so a
+                    // draining connection cannot retire while dispatch cleanup is still running.
+                    Interlocked.Increment(ref _auxiliaryActiveCallCount);
+                    try
+                    {
+                        _client.TrackFrameworkTask(
+                            FinishCancellationAfterDispatchesAsync(
+                                drain,
+                                completion.RequestId,
+                                GetCancelReason(completion.Reason),
+                                localAbort),
+                            "CancellationDispatchCleanup");
+                    }
+                    catch
+                    {
+                        ReleaseAuxiliaryActiveCall();
+                        throw;
+                    }
                     return;
                 }
             }
@@ -241,30 +354,40 @@ internal sealed class ClientConnection :
         // so the peer observes the final WindowUpdate before it reclaims the aborted stream.
         if (shouldSendCancel)
             TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason));
-
-        ReleaseActiveCall();
     }
 
     void IPendingCallOwner.OnProducerCancellationCallbackFailed(Exception exception)
         => _client.ReportProducerCancellationCallbackFailure(exception);
 
+    void IPendingCallOwner.OnPendingCallCapacityIdle()
+        => _client.RetireDrainingConnectionIfIdle(this);
+
     private async Task FinishCancellationAfterDispatchesAsync(
         ValueTask drain,
         long requestId,
-        ProtocolV2CancelReason reason)
+        ProtocolV2CancelReason reason,
+        IStreamLocalAbortDispatcher? localAbort)
     {
         try
         {
             await drain.ConfigureAwait(false);
+            localAbort?.RetireLocalAbortBuffer();
             TrySendCancel(requestId, reason);
         }
         catch (Exception exception)
         {
-            Fail(exception);
+            try
+            {
+                Fail(exception);
+            }
+            finally
+            {
+                _client.HandleConnectionFatalFailure(this, exception);
+            }
         }
         finally
         {
-            ReleaseActiveCall();
+            ReleaseAuxiliaryActiveCall();
         }
     }
 
@@ -272,9 +395,17 @@ internal sealed class ClientConnection :
         long requestId,
         IStreamDispatchState dispatchState)
     {
-        while (!dispatchState.IsDetached && Session.IsConnected)
-            await Task.Yield();
-        TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
+        try
+        {
+            await dispatchState.WaitForDetachedAsync(Session.LifetimeToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!Session.IsConnected)
+        {
+            return;
+        }
+
+        if (Session.IsConnected)
+            TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
     }
 
     public ValueTask DisposeAsync()
@@ -290,11 +421,11 @@ internal sealed class ClientConnection :
         return Session.DisposeAsync();
     }
 
-    private void ReleaseActiveCall()
+    private void ReleaseAuxiliaryActiveCall()
     {
-        var remaining = Interlocked.Decrement(ref _activeCallCount);
+        var remaining = Interlocked.Decrement(ref _auxiliaryActiveCallCount);
         if (remaining < 0)
-            throw new InvalidOperationException("Client connection active call count underflowed.");
+            throw new InvalidOperationException("Client connection auxiliary active call count underflowed.");
         if (remaining == 0)
             _client.RetireDrainingConnectionIfIdle(this);
     }
@@ -334,10 +465,20 @@ internal sealed partial class SharpLinkClient
 
 internal struct LateResponseLogLimiter
 {
-    internal static readonly long IntervalTimestampTicks = 5L * Stopwatch.Frequency;
-
+    private readonly long _intervalTimestampTicks;
     private long _nextLogTimestamp;
     private int _suppressedCount;
+
+    internal LateResponseLogLimiter(long timestampFrequency)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timestampFrequency);
+        _intervalTimestampTicks = timestampFrequency > long.MaxValue / 5
+            ? long.MaxValue
+            : timestampFrequency * 5;
+        _nextLogTimestamp = long.MinValue;
+    }
+
+    internal long IntervalTimestampTicks => _intervalTimestampTicks;
 
     internal bool ShouldLog(long timestamp, out int suppressedCount)
     {
@@ -351,9 +492,9 @@ internal struct LateResponseLogLimiter
                 return false;
             }
 
-            var newNext = timestamp > long.MaxValue - IntervalTimestampTicks
+            var newNext = timestamp > long.MaxValue - _intervalTimestampTicks
                 ? long.MaxValue
-                : timestamp + IntervalTimestampTicks;
+                : timestamp + _intervalTimestampTicks;
             if (Interlocked.CompareExchange(ref _nextLogTimestamp, newNext, next) != next)
                 continue;
 

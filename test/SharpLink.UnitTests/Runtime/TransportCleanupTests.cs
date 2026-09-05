@@ -41,7 +41,7 @@ public class TransportCleanupTests
             "stream disposal must not complete its PipeReader while a consumer owns a ReadResult");
 
         reader.AdvanceTo(result.Buffer.End);
-        await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+        await dispose;
         Ensure(!stream.CanRead,
             "the owned stream should be disposed after the consumer releases its ReadResult");
     }
@@ -60,11 +60,13 @@ public class TransportCleanupTests
     }
 
     [Test]
-    public async Task SessionShouldDisposeTransportAfterPipelineCompletionFailure()
+    public async Task SessionShouldObserveTransportOwnedPipelineCompletionFailure()
     {
         var transport = new PipelineFailingTransport();
         transport.Output.Write(new byte[1]);
-        var session = new RpcSession(transport);
+        var session = new RpcSession(
+            transport,
+            RpcSessionTestFixture.ClientOptions());
 
         var failure = await CaptureAsync(session.DisposeAsync);
 
@@ -89,6 +91,7 @@ public class TransportCleanupTests
     }
 
     [Test]
+    // The assertion compares the process-wide active shared-memory mapping counter.
     [NotInParallel]
     public async Task SharedMemoryConnectionShouldReleaseMappingAfterControlCleanupFailure()
     {
@@ -179,10 +182,39 @@ public class TransportCleanupTests
         internal PipelineFailingTransport()
             => Output = PipeWriter.Create(_outputStream, new StreamPipeWriterOptions(leaveOpen: true));
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _disposeCount);
-            return ValueTask.CompletedTask;
+            Exception? failure = null;
+            try
+            {
+                await Output.CompleteAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            try
+            {
+                await Input.CompleteAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                failure = failure is null ? exception : new AggregateException(failure, exception);
+            }
+
+            try
+            {
+                await _outputStream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                failure = failure is null ? exception : new AggregateException(failure, exception);
+            }
+
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 

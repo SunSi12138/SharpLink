@@ -6,10 +6,19 @@ public static class TransportExtensions
     extension(SharpClientBuilder builder)
     {
         /// <summary>Connects through a local or Windows named pipe.</summary>
-        public SharpClientBuilder UseNamedPipe(string name)
+        /// <param name="name">The logical pipe name.</param>
+        /// <param name="configure">Optional named-pipe options, such as allowing cross-user access.</param>
+        public SharpClientBuilder UseNamedPipe(
+            string name,
+            Action<NamedPipeTransportOptions>? configure = null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            return builder.UseTransport(new NamedPipeClientTransportFactory(name));
+            var options = new NamedPipeTransportOptions();
+            configure?.Invoke(options);
+            return builder.UseTransport(new NamedPipeClientTransportFactory(
+                name,
+                ".",
+                options.ToPipeOptions()));
         }
 
         /// <summary>Connects to a TCP endpoint without TLS.</summary>

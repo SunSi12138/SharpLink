@@ -16,7 +16,7 @@ public sealed class DynamicEndpointIntegrationTests
         var selector = new ZoneSelector("blue");
         var factoryCreates = 0;
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(
@@ -78,24 +78,200 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task EmptyDynamicTopologyShouldRecoverWhenTheResolverPublishesAnEndpoint()
+    public async Task DynamicReadinessShouldTrackTopologyChangesAndKeepWaiterCancellationLocal()
     {
-        await using var server = await TcpServerScope.StartAsync("recovered");
-        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, []));
-        await using var client = SharpClientBuilder.Create()
-
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        await using var third = await TcpServerScope.StartAsync("third");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("second", second.Port, "green")
+        ]));
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
+            .UseEndpointSelector(new IdSelector("third"))
+            .UseCluster(options =>
+            {
+                options.MaxEndpoints = 3;
+                options.MinReadyEndpoints = 3;
+                options.MaxConnections = 3;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
             .Build();
 
         await client.ConnectAsync();
-        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 0, "empty topology has no ready connection");
+        var initial = await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureReadiness(
+            initial,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "initial two-endpoint topology");
+
+        using var canceledWaitCancellation = new CancellationTokenSource();
+        var canceledWait = client.WaitForReadinessAsync(3, canceledWaitCancellation.Token).AsTask();
+        var survivingWait = client.WaitForReadinessAsync(3).AsTask();
+        Ensure(!canceledWait.IsCompleted && !survivingWait.IsCompleted,
+            "configured MinReadyEndpoints=3 must allow waits to remain pending while only two endpoints exist");
+
+        canceledWaitCancellation.Cancel();
+        await CaptureCancellation(canceledWait.WaitAsync(TimeSpan.FromSeconds(3)));
+        Ensure(!survivingWait.IsCompleted, "canceling one readiness waiter must not cancel another waiter");
+        EnsureReadiness(
+            client.GetReadinessSnapshot(),
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "topology after local waiter cancellation");
+
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(2,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("second", second.Port, "green"),
+            Endpoint("third", third.Port, "red")
+        ]));
+        var added = await survivingWait.WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureReadiness(
+            added,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 3,
+            readyEndpoints: 3,
+            readyConnections: 3,
+            targetReadyEndpoints: 3,
+            meetsTarget: true,
+            "two-to-three endpoint addition");
+
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(
+            3,
+            [Endpoint("first", first.Port, "blue")]));
+        var removed = await client.WaitForReadinessAsync(1).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureReadiness(
+            removed,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 1,
+            readyEndpoints: 1,
+            readyConnections: 1,
+            targetReadyEndpoints: 1,
+            meetsTarget: true,
+            "three-to-one endpoint removal");
+
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(4,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("second", second.Port, "green")
+        ]));
+        var beforeReplacement = await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureReadiness(
+            beforeReplacement,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "A/B topology before replacement");
+
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(5,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("third", third.Port, "red")
+        ]));
+        var replacement = await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureReadiness(
+            replacement,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "A/C replacement topology");
+        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+            "the replacement topology must route to the new C endpoint generation");
+
+        var lastAccepted = client.GetReadinessSnapshot();
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(4,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("second", second.Port, "green")
+        ]));
+        Ensure(client.GetReadinessSnapshot() == lastAccepted,
+            "a stale resolver snapshot must leave readiness facts unchanged");
+        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+            "a stale resolver snapshot must not restore the retired B endpoint");
+
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(6,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("second", second.Port, "green"),
+            Endpoint("third", third.Port, "red"),
+            Endpoint("overflow", third.Port, "yellow")
+        ]));
+        Ensure(client.GetReadinessSnapshot() == lastAccepted,
+            "a rejected resolver snapshot must leave readiness facts unchanged");
+        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+            "a rejected resolver snapshot must retain the last accepted topology");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task EmptyDynamicTopologyShouldRecoverWhenTheResolverPublishesAnEndpoint()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, []));
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        EnsureReadiness(
+            client.GetReadinessSnapshot(),
+            SharpLinkConnectionState.Reconnecting,
+            activeEndpoints: 0,
+            readyEndpoints: 0,
+            readyConnections: 0,
+            targetReadyEndpoints: 0,
+            meetsTarget: false,
+            "accepted empty topology");
         var repeatedConnect = client.ConnectAsync();
         Ensure(repeatedConnect.IsCompletedSuccessfully,
             "repeated ConnectAsync on an accepted empty topology must complete without waiting for recovery");
         await repeatedConnect;
-        resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("recovered", server.Port, "blue")]));
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered", "topology recovery RPC");
+
+        var readiness = client.WaitForReadinessAsync(2).AsTask();
+        Ensure(!readiness.IsCompleted, "readiness wait must remain pending while the accepted topology is empty");
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(2,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("second", second.Port, "green")
+        ]));
+        var recovered = await readiness.WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureReadiness(
+            recovered,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "empty-to-two endpoint recovery");
+        var endpointId = await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync();
+        Ensure(endpointId is "first" or "second", "topology recovery RPC");
     }
 
     [Test]
@@ -109,20 +285,48 @@ public sealed class DynamicEndpointIntegrationTests
             Endpoint("first", first.Port, "blue"),
             Endpoint("second", second.Port, "green")
         ]));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(new IdSelector("first"))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
             .Build();
 
         await client.ConnectAsync();
+        var initial = await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        EnsureReadiness(
+            initial,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 2,
+            readyEndpoints: 2,
+            readyConnections: 2,
+            targetReadyEndpoints: 2,
+            meetsTarget: true,
+            "two active endpoints before retirement");
         var service = client.Get<IConnectionBehaviorService>();
-        await using var stream = service.SlowRangeAsync(3, 80, CancellationToken.None).GetAsyncEnumerator();
+        await using var stream = service.SlowRangeAsync(3, 500, CancellationToken.None).GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first stream item");
 
-        resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("second", second.Port, "green")]));
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
+        await resolver.PublishAndWaitAsync(
+            new SharpLinkEndpointSnapshot(2, [Endpoint("second", second.Port, "green")]));
+        var retired = await client.WaitForReadinessAsync(1).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        Ensure(((SharpLinkClient)client).ActiveClientStreamCount == 1,
+            "the removed endpoint generation must still be draining its accepted stream");
+        EnsureReadiness(
+            retired,
+            SharpLinkConnectionState.Ready,
+            activeEndpoints: 1,
+            readyEndpoints: 1,
+            readyConnections: 1,
+            targetReadyEndpoints: 1,
+            meetsTarget: true,
+            "retired old generation excluded while draining");
         Ensure(await service.GetEndpointIdAsync() == "second", "new call after endpoint removal");
         Ensure(await stream.MoveNextAsync() && stream.Current == 1, "draining stream second item");
         Ensure(await stream.MoveNextAsync() && stream.Current == 2, "draining stream third item");
@@ -138,7 +342,7 @@ public sealed class DynamicEndpointIntegrationTests
             new SharpLinkEndpointSnapshot(1, [Endpoint("retiring", server.Port, "blue")]));
         using var selector = new PausingSelector();
         var admission = new TrackingLifecycleAdmissionPolicy();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(selector)
             .UseEndpointAdmission(admission)
@@ -179,7 +383,7 @@ public sealed class DynamicEndpointIntegrationTests
             Endpoint("east", east.Port, "east"),
             Endpoint("west", west.Port, "west")
         ]));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(new ZoneSelector("west"))
@@ -212,7 +416,7 @@ public sealed class DynamicEndpointIntegrationTests
         var sockets = SharpLinkTransportFactories.Sockets();
         TrackingTransportFactory? factory = null;
         var factoryCreates = 0;
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(
                 resolver,
@@ -252,7 +456,7 @@ public sealed class DynamicEndpointIntegrationTests
     {
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("failed", 1, "red")]));
         var factory = new FailingConnectFactory();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => factory)
             .Build();
 
@@ -287,7 +491,7 @@ public sealed class DynamicEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id switch
             {
@@ -324,7 +528,7 @@ public sealed class DynamicEndpointIntegrationTests
     public async Task DynamicRecoveryToAnEmptyTopologyShouldReleaseConnectWaiters()
     {
         var resolver = new FailingThenEmptyResolver();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => new FailingConnectFactory())
             .Build();
 
@@ -349,7 +553,7 @@ public sealed class DynamicEndpointIntegrationTests
         await using var server = await TcpServerScope.StartAsync("recovered");
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("recovered", server.Port, "green")]));
         var factory = new FailOnceConnectFactory(SharpLinkTransportFactories.Sockets()(Endpoint("recovered", server.Port, "green")));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, _ => factory)
             .Build();
@@ -378,7 +582,7 @@ public sealed class DynamicEndpointIntegrationTests
         var throwingFactory = new ThrowingDisposeFactory();
         var remainingFactory = new FailingConnectFactory();
         var factoryCreates = 0;
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(
                 resolver,
@@ -434,7 +638,7 @@ public sealed class DynamicEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("first", first.Port, "blue")]));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
@@ -480,7 +684,7 @@ public sealed class DynamicEndpointIntegrationTests
         ]));
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "bad" ? failing : sockets(endpoint))
             .UseCluster(options =>
@@ -505,7 +709,7 @@ public sealed class DynamicEndpointIntegrationTests
     {
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("blocked", 1, "red")]));
         var blocking = new BlockingConnectFactory();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => blocking)
             .Build();
 
@@ -513,6 +717,7 @@ public sealed class DynamicEndpointIntegrationTests
         {
             var connect = client.ConnectAsync().AsTask();
             await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            var readiness = client.WaitForReadinessAsync(1).AsTask();
 
             var stop = client.StopAsync().AsTask();
             await Task.Delay(100);
@@ -520,6 +725,9 @@ public sealed class DynamicEndpointIntegrationTests
 
             blocking.Release();
             await CaptureCancellation(connect);
+            var readinessFailure = await CaptureSharpLinkException(readiness);
+            Ensure(readinessFailure.Code == SharpLinkErrorCode.ConnectionClosed,
+                "dynamic readiness must map the joined Connect shutdown result to ConnectionClosed");
             await stop.WaitAsync(TimeSpan.FromSeconds(2));
             Ensure(((SharpLinkClient)client).State == SharpLinkConnectionState.Stopped,
                 "dynamic cluster must stop after the initial connect worker exits");
@@ -539,7 +747,7 @@ public sealed class DynamicEndpointIntegrationTests
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("blocked", 1, "red")]));
         var blocking = new BlockingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "blocked" ? blocking : sockets(endpoint))
             .UseCluster(options =>
@@ -576,7 +784,7 @@ public sealed class DynamicEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
         var replacementFactory = new CountingConnectFactory(sockets(Endpoint("replacement", replacement.Port, "green")));
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "blocked" ? blocking : replacementFactory)
             .UseCluster(options =>
@@ -624,7 +832,7 @@ public sealed class DynamicEndpointIntegrationTests
         var sockets = SharpLinkTransportFactories.Sockets();
         var blocking = new BlockAfterFirstConnectFactory(sockets(Endpoint("first", first.Port, "blue")));
         var unavailable = new FailingConnectFactory();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id == "first" ? blocking : unavailable)
             .UseCluster(options =>
@@ -660,7 +868,7 @@ public sealed class DynamicEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var surplus = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, endpoint => endpoint.Id switch
             {
@@ -702,7 +910,7 @@ public sealed class DynamicEndpointIntegrationTests
         var resolver = new RestartingResolver(
             new SharpLinkEndpointSnapshot(1, [Endpoint("first", first.Port, "blue")]),
             new SharpLinkEndpointSnapshot(2, [Endpoint("recovered", recovered.Port, "green")]));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
             .Build();
@@ -719,7 +927,7 @@ public sealed class DynamicEndpointIntegrationTests
     public async Task DnsEndpointHelperShouldResolveLocalhostAndPreserveHostnameAuthority()
     {
         await using var server = await TcpServerScope.StartAsync("dns");
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
 
             .UseDnsEndpoints(
                 "localhost",
@@ -778,6 +986,27 @@ public sealed class DynamicEndpointIntegrationTests
             throw new Exception(message);
     }
 
+    private static void EnsureReadiness(
+        SharpLinkClientReadinessSnapshot actual,
+        SharpLinkConnectionState state,
+        int activeEndpoints,
+        int readyEndpoints,
+        int readyConnections,
+        int targetReadyEndpoints,
+        bool meetsTarget,
+        string scenario)
+    {
+        var expected = new SharpLinkClientReadinessSnapshot(
+            state,
+            activeEndpoints,
+            readyEndpoints,
+            readyConnections,
+            targetReadyEndpoints);
+        Ensure(actual == expected, $"{scenario}: expected {expected}, actual {actual}");
+        Ensure(actual.MeetsTarget == meetsTarget,
+            $"{scenario}: expected MeetsTarget={meetsTarget}, actual {actual.MeetsTarget}");
+    }
+
     private static async Task<SharpLinkException> CaptureSharpLinkException(Task task)
     {
         try
@@ -805,7 +1034,7 @@ public sealed class DynamicEndpointIntegrationTests
 
     private sealed class ControllableResolver(SharpLinkEndpointSnapshot initial) : ISharpLinkEndpointResolver
     {
-        private readonly Channel<SharpLinkEndpointSnapshot> _snapshots = Channel.CreateUnbounded<SharpLinkEndpointSnapshot>();
+        private readonly Channel<ResolverUpdate> _snapshots = Channel.CreateUnbounded<ResolverUpdate>();
         private int _disposeCount;
 
         public int DisposeCount => Volatile.Read(ref _disposeCount);
@@ -816,12 +1045,23 @@ public sealed class DynamicEndpointIntegrationTests
         public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken)
         {
-            await foreach (var snapshot in _snapshots.Reader.ReadAllAsync(cancellationToken))
-                yield return snapshot;
+            await foreach (var update in _snapshots.Reader.ReadAllAsync(cancellationToken))
+            {
+                yield return update.Snapshot;
+                update.Processed?.TrySetResult();
+            }
         }
 
         public void Publish(SharpLinkEndpointSnapshot snapshot)
-            => _snapshots.Writer.TryWrite(snapshot);
+            => _snapshots.Writer.TryWrite(new ResolverUpdate(snapshot, Processed: null));
+
+        public async Task PublishAndWaitAsync(SharpLinkEndpointSnapshot snapshot)
+        {
+            var processed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Ensure(_snapshots.Writer.TryWrite(new ResolverUpdate(snapshot, processed)),
+                "resolver update channel must accept the test snapshot");
+            await processed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        }
 
         public ValueTask DisposeAsync()
         {
@@ -829,6 +1069,10 @@ public sealed class DynamicEndpointIntegrationTests
                 _snapshots.Writer.TryComplete();
             return ValueTask.CompletedTask;
         }
+
+        private readonly record struct ResolverUpdate(
+            SharpLinkEndpointSnapshot Snapshot,
+            TaskCompletionSource? Processed);
     }
 
     private sealed class TrackingTransportFactory(IClientTransportFactory inner) : IClientTransportFactory

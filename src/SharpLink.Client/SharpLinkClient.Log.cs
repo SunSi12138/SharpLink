@@ -19,8 +19,8 @@ internal sealed partial class SharpLinkClient
 
     [Conditional(CompileSymbols.Debug)]
     private static void DebugLogServerCancelIgnored(ILogger logger) => LogServerCancelIgnored(logger);
-    
-    
+
+
 
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatReceived, Level = LogLevel.Debug, Message = "Receive heartbeat from server.")]
     private static partial void LogServerHeartbeatReceived(ILogger logger);

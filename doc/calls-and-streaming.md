@@ -1,14 +1,24 @@
 # 调用、流式与取消
 
-## 超时与 deadline
+## 超时、RpcDeadline 与 TimeBudget
 
-Client 默认请求超时为 30 秒。有效 deadline 取调用方 token、`SharpLinkCallOptions`、Client 默认超时和方法 `[Timeout]` 中最早者。可用 `UseRequestTimeout` 修改默认值，或 `DisableRequestTimeout` 关闭默认值；显式 deadline 和方法 timeout 仍生效。
+Client 不再隐式选择请求超时 fallback。每个 `SharpClientBuilder` 必须在 Build 前显式三选一：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 Client-wide fallback；保持未指定状态会使 Build 失败。这个 Client-wide fallback 只自动应用于普通 Unary 调用；OneWay、ClientStreaming、ServerStreaming 和 Duplex 不自动继承它。流式/OneWay 调用若要携带本地 `TimeBudget`，应使用方法 `[Timeout]`，或继承已有父调用 lifetime。方法 `[Timeout]` 是方法级策略，会覆盖 Client fallback；例如 Client custom fallback 为 30 秒、方法 `[Timeout(120)]` 时，该方法的本地策略为 120 秒，而不是两者取最小值。无参数 `[Timeout]` 继续表示使用 Client fallback，因此 Client 选择 `DisableRequestTimeout()` 时不能凭空产生一个 fallback。
 
-超时在 wire 上使用绝对 deadline，但本地调度和心跳使用 monotonic clock。到期错误为 `DeadlineExceeded`，调用方显式取消为 `Cancelled`。`demo/Timeout` 和 `demo/Cancel` 展示两种终止路径。
+Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock 的 `RpcDeadline`。请求真正发出前再计算剩余 `TimeBudget` 并写入 wire；Server 收到后用自己的 monotonic clock 解析新的本地 `RpcDeadline`。因此 Client/Server 不依赖墙钟同步，wire 也不再传播绝对 UTC deadline。
+
+当服务处理一个已有上游 `TimeBudget` 的 RPC 并继续发起下游 RPC 时，上游剩余 lifetime 是真正的上限：先选择下游方法/Client 的本地 timeout policy，再用父调用的剩余 `TimeBudget` 做 cap。中间 hop 不会重启原始 timeout。到期错误为 `DeadlineExceeded`，调用方显式取消为 `Cancelled`。Client Activity 使用低基数 `rpc.sharplink.lifetime_source` 标识实际 lifetime 来源：`method_timeout`、`client_recommended_timeout`、`client_custom_timeout` 或 `inherited_time_budget`。`demo/Timeout` 和 `demo/Cancel` 展示两种终止路径。
 
 ## Metadata
 
-`SharpLinkCallOptions.Metadata` 随请求发送，受 `MaxMetadataBytes` 限制。服务端可从 `SharpLinkCallContext.Current?.Metadata` 或 Interceptor context 读取。Metadata 适合低基数路由/诊断信息，不适合大对象、凭据日志或无限增长标签。
+Metadata 是 RPC envelope state，不是业务合同参数。需要由调用方为某一次 invocation 明确选择 metadata 时，使用窄能力 `GetWithMetadata<TContract>(SharpLinkMetadata)` 获取绑定该 metadata 的 proxy，再正常调用业务方法；它不会恢复通用 options bag，也不会使用 ambient/global state。例如：
+
+```csharp
+var tenantProxy = client.GetWithMetadata<IMyService>(
+    new SharpLinkMetadata(new("tenant", "tenant-a")));
+await tenantProxy.GetAsync(id, cancellationToken);
+```
+
+Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为横切策略补充/变换当前逻辑调用的 metadata；不要用调用顺序或全局可变 interceptor 状态模拟 caller-selected metadata。服务端从 `SharpLinkCallContext.Current?.Metadata` 或 Server interceptor context 读取。Metadata 受 `MaxMetadataBytes` 限制，适合低基数路由/诊断信息，不适合大对象、凭据日志或无限增长标签。
 
 ## Streaming
 

@@ -9,6 +9,7 @@ namespace SharpLink.Benchmarks;
 [RpcContract]
 public interface IBenchmarkRpc : IService
 {
+    [Idempotent]
     [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
     [NonCancellable]
@@ -34,6 +35,13 @@ public interface IBenchmarkRpc : IService
     IAsyncEnumerable<string> DuplexAsync(IAsyncEnumerable<string> values);
     [NonCancellable]
     ValueTask<int> MergeStreamsAsync(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right);
+
+    [NonCancellable]
+    ValueTask<long> UploadPayloadsAsync(IAsyncEnumerable<byte[]> payloads);
+    [NonCancellable]
+    IAsyncEnumerable<byte[]> DownloadPayloadsAsync(int count, int payloadSize);
+    [NonCancellable]
+    IAsyncEnumerable<byte[]> DuplexPayloadsAsync(IAsyncEnumerable<byte[]> payloads);
 }
 
 [SharpPackable]

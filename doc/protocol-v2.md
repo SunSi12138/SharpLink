@@ -2,7 +2,7 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-当前 protocol minor 为 3，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 取双方较小值；1.0.0 只承诺与采用相同 minor-3 握手布局的对端互操作。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
 
 ## 固定帧头
 
@@ -25,7 +25,7 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 | `HandshakeRequest` | 0 | minor、supported/required capabilities、本端 frame/window 限制、有界压缩算法列表、认证载荷 |
 | `HandshakeResponse` | 0 | 协商后的 minor、capabilities、frame/window 限制和唯一压缩 token；失败时为二进制错误 |
 | `Ping` / `Pong` | 0 | 发送端 monotonic timestamp (`int64`) |
-| `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 deadline、metadata 和业务 payload |
+| `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 TimeBudget、metadata 和业务 payload |
 | `Response` | 非 0 | 成功时直接为返回 payload；`Error` 时为二进制错误 |
 | `Cancel` | 非 0 | 未协商 `CancellationReason` 时为空；协商后固定一个有效 reason byte |
 | `StreamData` | 非 0 | `streamId:uint16 + item payload` |
@@ -41,8 +41,8 @@ Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID
 
 - `Error`：载荷使用二进制错误格式。
 - `Truncated`：错误消息已在 UTF-8 字符边界截断，只能与 `Error` 同时出现。
-- `HasDeadline`：Request 路由前缀后包含绝对 UTC deadline（Unix milliseconds，`int64`）。
-- `HasMetadata`：deadline 后包含 `varuint length + metadata bytes`；metadata payload 为 `entryCount:varuint`，随后重复 UTF-8 key/value 的 `varuint length + bytes`。
+- `HasTimeBudget`：Request 路由前缀后包含发送瞬间剩余 RPC lifetime（`TimeSpan.Ticks`，非负 `int64`）；它是 duration，不是 UTC timestamp。
+- `HasMetadata`：TimeBudget 后包含 `varuint length + metadata bytes`；metadata payload 为 `entryCount:varuint`，随后重复 UTF-8 key/value 的 `varuint length + bytes`。
 - `Compressed`：对应载荷已压缩，必须先通过能力协商。
 - `Cancellable`：调用允许远端取消。
 - `OneWay`：单向请求，不得同时设置 `HasReturn`。
@@ -62,7 +62,9 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 3: protocol health check
 - bit 4: cancellation reason
 
-minor 3 的 `HandshakeRequest` 在三个固定限制字段后编码：
+当前 wire generation 只接受 `minor 5`（`MinimumCompatibleMinorVersion == MinorVersion == 5`）；minor 因此只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
+
+minor 4 的 `HandshakeRequest` 在三个固定限制字段后编码：
 
 ```text
 profileCount:uint8
@@ -78,10 +80,10 @@ wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感�
 
 ## 压缩载荷
 
-压缩只覆盖 Generated Codec 产生的业务 payload，路由、deadline、metadata 和 stream ID 始终保持未压缩，便于在分配前完成路由、资源与长度校验：
+压缩只覆盖 Generated Codec 产生的业务 payload，路由、TimeBudget、metadata 和 stream ID 始终保持未压缩，便于在分配前完成路由、资源与长度校验：
 
 ```text
-Request    = route/deadline/metadata envelope + originalBodyLength:uint32 + compressedBody
+Request    = route/TimeBudget/metadata envelope + originalBodyLength:uint32 + compressedBody
 Response   = originalBodyLength:uint32 + compressedBody
 StreamData = streamId:uint16 + originalItemLength:uint32 + compressedBody
 ```

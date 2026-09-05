@@ -4,7 +4,6 @@ permissions:
   contents: read
 
 on:
-  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -12,26 +11,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  codec-compatibility:
+    uses: ./.github/workflows/codec-compatibility.yml
+
   quick:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
-      - name: Build
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Debug
+        run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
+
+      - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
 
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
@@ -50,7 +64,7 @@ jobs:
           --maximum-parallel-tests 1
           --timeout 120s
 
-      - name: Run Independent-process Shared-memory AOT Smoke
+      - name: Run NativeAOT Transport and Topology Smoke
         env:
           SHARPLINK_AOT_RID: linux-x64
         run: ./eng/run-shared-memory-aot-process-smoke.sh
@@ -58,21 +72,11 @@ jobs:
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
 
-      - name: Verify SDK Contains Generator
-        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
 
-      - name: Verify package metadata, XML documentation, and symbols
-        run: ./eng/verify-packages.sh artifacts/nuget
-
-      - name: Restore Package Smoke
-        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
-        env:
-          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
-
-      - name: Run Package Smoke
-        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
-        env:
-          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
 
       - name: Demo Oneway
         run: dotnet run -c Release --no-build --project demo/Oneway

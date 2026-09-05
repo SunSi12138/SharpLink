@@ -1,0 +1,201 @@
+namespace SharpLink.IntegrationTests;
+
+public class RuntimeInterceptorFaultRaceIntegrationTests
+{
+    [Test]
+    public async Task ClientReplacementShouldSerializeWithFaultPublication()
+    {
+        var transport = new GatedFailClientTransportFactory();
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseTransport(transport)
+            .Build();
+
+        var connectTask = client.ConnectAsync().AsTask();
+        await transport.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        var replacementStateGateEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseReplacement = new ManualResetEventSlim();
+        SetPrivateField(
+            client,
+            "_replacementStateGateEnteredForTesting",
+            (Action)(() =>
+            {
+                replacementStateGateEntered.TrySetResult();
+                releaseReplacement.Wait();
+            }));
+
+        var replacementTask = Task.Run(() => Capture(() =>
+            client.ReplaceInterceptors([new PassThroughClientInterceptor()])));
+
+        try
+        {
+            await replacementStateGateEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Ensure(!replacementTask.IsCompleted,
+                "client replacement must pause at the explicit lifecycle handshake");
+
+            transport.Fail();
+            var connectFailure = await CaptureAsync(connectTask);
+            Ensure(connectFailure is InvalidOperationException { Message: "client connect failed" },
+                "client connect failure must surface");
+            Ensure(client.State == SharpLinkConnectionState.Faulted,
+                "client fault must publish while replacement is paused before the readiness gate");
+        }
+        finally
+        {
+            releaseReplacement.Set();
+        }
+
+        var replacementFailure = await replacementTask.WaitAsync(TimeSpan.FromSeconds(3));
+        Ensure(replacementFailure is InvalidOperationException,
+            "replacement must reject the Faulted state published before its readiness-gate check");
+    }
+
+    [Test]
+    public async Task ServerFaultPublicationShouldSerializeWithReplacementGate()
+    {
+        var listener = new GatedFailServerTransportListener();
+        await using var server = SharpLinkServerBuilder.Create()
+            .UseTransport(listener)
+            .Build();
+
+        var runTask = server.RunAsync().AsTask();
+        await listener.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Ensure(server.HealthStatus == SharpLinkHealthStatus.Ready,
+            "server must be running before the injected accept failure");
+
+        var stateGate = ((SharpLinkServer)server).LifecycleForDiagnostics.StateGate;
+        stateGate.Enter();
+        try
+        {
+            listener.Fail();
+            Ensure(listener.Throwing.Task.Wait(TimeSpan.FromSeconds(1)),
+                "server listener did not release the injected failure");
+
+            var faultPublishedWhileGateHeld = SpinWait.SpinUntil(
+                () => server.HealthStatus != SharpLinkHealthStatus.Ready,
+                TimeSpan.FromMilliseconds(250));
+            Ensure(!faultPublishedWhileGateHeld,
+                "server fault publication must wait for the replacement lifecycle gate");
+        }
+        finally
+        {
+            stateGate.Exit();
+        }
+
+        var runFailure = await CaptureAsync(runTask);
+        Ensure(runFailure is InvalidOperationException { Message: "server accept failed" },
+            "server accept failure must surface");
+        Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
+            "server must publish Faulted after the accept loop failure");
+        Ensure(Capture(() => server.ReplaceInterceptors([new PassThroughServerInterceptor()]))
+                is InvalidOperationException,
+            "server replacement after fault must be rejected");
+    }
+
+    private static void SetPrivateField<T>(object target, string fieldName, T value)
+    {
+        var field = target.GetType().GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find private field '{fieldName}'");
+        field.SetValue(target, value);
+    }
+
+    private static Exception? Capture(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static async Task<Exception?> CaptureAsync(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(3));
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static void Ensure(bool condition, string name)
+    {
+        if (!condition)
+            throw new Exception($"assert failed: {name}");
+    }
+
+    private sealed class GatedFailClientTransportFactory : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _started =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _fail =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Started => _started;
+
+        public void Fail() => _fail.TrySetResult();
+
+        public async ValueTask<ITransportConnection> ConnectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            _started.TrySetResult();
+            await _fail.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException("client connect failed");
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class GatedFailServerTransportListener : IServerTransportListener
+    {
+        private readonly TaskCompletionSource _started =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _fail =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _throwing =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public EndPoint? LocalEndPoint => null;
+        public TaskCompletionSource Started => _started;
+        public TaskCompletionSource Throwing => _throwing;
+
+        public void Fail() => _fail.TrySetResult();
+
+        public async ValueTask<ITransportConnection> AcceptAsync(
+            CancellationToken cancellationToken = default)
+        {
+            _started.TrySetResult();
+            await _fail.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            _throwing.TrySetResult();
+            throw new InvalidOperationException("server accept failed");
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PassThroughClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+            => next(context);
+    }
+
+    private sealed class PassThroughServerInterceptor : ISharpLinkServerInterceptor
+    {
+        public ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+            => next(context);
+    }
+}
