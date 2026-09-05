@@ -65,13 +65,7 @@ internal sealed partial class SharpLinkClient
                 if (attempt == options.MaxAttempts)
                     throw;
 
-                var attemptOutcome = outcome.CreateRetryOutcome(exception);
-                var context = new SharpLinkRetryContext(
-                    method,
-                    attempt,
-                    attemptOutcome.ErrorCode,
-                    attemptOutcome.ResponseObserved,
-                    attemptOutcome.Elapsed);
+                var context = outcome.CreateRetryContext(attempt, exception);
                 SharpLinkRetryDecision decision;
                 try
                 {
@@ -93,8 +87,7 @@ internal sealed partial class SharpLinkClient
                         "The retry policy returned a negative delay.");
                 }
                 var delay = decision.Delay;
-                if (outcome.ShouldHonorAdmissionRetryAfter &&
-                    outcome.RetryAfter is { } admissionDelay && admissionDelay > delay)
+                if (outcome.RetryAfter is { } admissionDelay && admissionDelay > delay)
                     delay = admissionDelay;
                 if (delay == TimeSpan.Zero)
                 {
@@ -187,7 +180,6 @@ internal sealed partial class SharpLinkClient
             EnsureLogicalCallProgress(control);
             var connection = GetReadyConnection(method, selection, outcome);
             EnsureLogicalCallProgress(control);
-            outcome.SetConnection(connection);
             var operation = connection.PendingCalls.Rent(
                 responseCodec,
                 PendingCallKind.Unary,

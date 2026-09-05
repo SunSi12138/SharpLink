@@ -125,7 +125,6 @@ internal sealed partial class SharpLinkClient
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
-                    attemptOutcome?.SetConnection(connection);
                     if (connection.ActiveCallCount != 0)
                         EnsureExpansion(endpoint);
                     return connection;
