@@ -160,4 +160,62 @@ public partial class SourceExternalUnionFormatter
                 StringComparison.Ordinal),
             "external-union nested external child sidecar is registered into the generated scope");
     }
+
+    [Test]
+    public void SharpPackOpenGenericExternalUnionShouldResolveTagDependencies()
+    {
+        var vendor = CreateSharpPackVendorReference("""
+namespace Vendor;
+
+public sealed class ExternalChild
+{
+    public int Id { get; set; }
+}
+""");
+        var source = BuildSharpPackContractSource(
+            """
+    global::System.Threading.Tasks.Task<ISourceGenericExternalUnion<string>> EchoAsync(
+        ISourceGenericExternalUnion<string> request,
+        global::System.Threading.CancellationToken cancellationToken);
+""",
+            """
+[global::SharpPack.SharpPackable(global::SharpPack.GenerateType.NoGenerate)]
+public partial interface ISourceGenericExternalUnion<T>
+{
+}
+
+[global::SharpPack.SharpPackable]
+public partial class SourceGenericExternalUnionValue<T> : ISourceGenericExternalUnion<T>
+{
+    [global::SharpPack.SharpPackAllowSerialize]
+    public global::Vendor.ExternalChild? Child { get; set; }
+}
+
+[global::SharpPack.SharpPackUnionFormatter(typeof(ISourceGenericExternalUnion<>))]
+[global::SharpPack.SharpPackUnion(9, typeof(SourceGenericExternalUnionValue<>))]
+public partial class SourceGenericExternalUnionFormatter<T>
+{
+}
+""");
+
+        var result = RunSharpPackAndCompile(
+            "SharpPackOpenGenericExternalUnionDependency",
+            source,
+            [vendor]);
+        EnsureNoSharpPackErrors(result);
+        var generated = GetSharpPackGeneratedSource(result.DriverRunResult);
+
+        Ensure(!generated.Contains(
+                "SharpPackFormatter<global::ISourceGenericExternalUnion<string>>",
+                StringComparison.Ordinal),
+            "open generic external-union target remains owned by SharpPack's generated factory");
+        Ensure(generated.Contains(
+                "SharpPackFormatter<global::Vendor.ExternalChild>",
+                StringComparison.Ordinal),
+            "open generic union tags are closed over the routed target arguments before dependency analysis");
+        Ensure(generated.Contains(
+                "builder.Register<global::Vendor.ExternalChild>",
+                StringComparison.Ordinal),
+            "generic external-union nested external child sidecar is registered");
+    }
 }
