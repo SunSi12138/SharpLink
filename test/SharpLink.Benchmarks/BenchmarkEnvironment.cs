@@ -51,8 +51,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var localService = new BenchmarkRpcService();
 
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
-            ;
+            .UseTcp(0, IPAddress.Loopback.ToString());
         if (configureServerRuntime is not null)
             serverBuilder.UseRuntime(configureServerRuntime);
         configureServer?.Invoke(serverBuilder);
@@ -89,12 +88,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var rpc = builtClient.Get<IBenchmarkRpc>();
         return new BenchmarkEnvironment(
-            rpc,
-            localService,
-            shutdown,
-            serverTask,
-            server,
-            builtClient);
+            rpc, localService, shutdown, serverTask, server, builtClient);
     }
 
     public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync()
@@ -104,6 +98,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
+        serverBuilder.ReplaceService<IBenchmarkRpc>(localService);
         var server = serverBuilder.Build();
         var shutdown = new CancellationTokenSource();
         var serverTask = Task.Run(async () =>
@@ -126,12 +121,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
             return new BenchmarkEnvironment(
-                client.Get<IBenchmarkRpc>(),
-                localService,
-                shutdown,
-                serverTask,
-                server,
-                client);
+                client.Get<IBenchmarkRpc>(), localService, shutdown, serverTask, server, client);
         }
         catch
         {
@@ -148,10 +138,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _shutdown.Cancel();
-
         await _client.StopAsync();
         await _server.StopAsync(TimeSpan.Zero);
-
         await Task.WhenAny(_serverTask, Task.Delay(500));
         _shutdown.Dispose();
     }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -29,18 +30,7 @@ internal static class AllocationGateRunner
     internal static async Task RunAsync(string[] args)
     {
         var options = GateOptions.Parse(args);
-        var report = new AllocationGateReport
-        {
-            SchemaVersion = SchemaVersion,
-            RuntimeVersion = Environment.Version.ToString(),
-            RuntimeMajor = Environment.Version.Major,
-            Configuration = IsReleaseBuild ? "Release" : "NonRelease",
-            BudgetPath = options.BudgetPath,
-            Filter = options.Filter,
-            InjectedBytesPerOperation = options.InjectedBytesPerOperation,
-            StartedAtUtc = DateTimeOffset.UtcNow
-        };
-
+        var report = CreateReport(options, "gate");
         try
         {
             EnsureReleaseBuild();
@@ -49,20 +39,19 @@ internal static class AllocationGateRunner
             if (budgets.RuntimeMajor != Environment.Version.Major)
             {
                 throw new InvalidOperationException(
-                    $"Allocation budgets target .NET major {budgets.RuntimeMajor}, but the active runtime is {Environment.Version}. " +
-                    "Rebaseline explicitly when the runtime major changes.");
+                    $"Budgets target .NET {budgets.RuntimeMajor}, active runtime is {Environment.Version}; explicit rebaseline required.");
             }
 
             var selected = ResolveCases(options.Filter);
             foreach (var definition in selected)
             {
                 if (!budgets.Cases.TryGetValue(definition.Name, out var budget))
-                    throw new InvalidDataException($"Missing allocation budget for case '{definition.Name}'.");
+                    throw new InvalidDataException($"Missing budget for '{definition.Name}'.");
                 ValidateBudget(definition.Name, budget);
             }
 
-            var rpcCases = selected.Where(static item => item.Kind is CaseKind.Add or CaseKind.OneWay).ToArray();
-            if (rpcCases.Length != 0)
+            var rpcCases = selected.Where(static item => item.Kind != CaseKind.SendPumpIdleWake).ToArray();
+            if (rpcCases.Length > 0)
             {
                 await using var environment = await BenchmarkEnvironment.CreateSharedMemoryAsync().ConfigureAwait(false);
                 foreach (var definition in rpcCases)
@@ -83,9 +72,9 @@ internal static class AllocationGateRunner
                     options.InjectedBytesPerOperation).ConfigureAwait(false));
             }
 
-            report.Passed = report.Cases.Count != 0 && report.Cases.All(static item => item.Passed);
+            report.Passed = report.Cases.Count > 0 && report.Cases.All(static item => item.Passed);
             if (!report.Passed)
-                report.Errors.Add("One or more allocation cases exceeded their absolute or stability budget.");
+                report.Errors.Add("One or more allocation cases failed their budget or stability check.");
         }
         catch (Exception exception)
         {
@@ -94,9 +83,7 @@ internal static class AllocationGateRunner
         }
         finally
         {
-            report.CompletedAtUtc = DateTimeOffset.UtcNow;
-            WriteReport(options.OutputPath, report);
-            PrintReport(report, options.OutputPath);
+            CompleteAndWrite(report, options.OutputPath);
         }
 
         if (!report.Passed)
@@ -105,18 +92,8 @@ internal static class AllocationGateRunner
 
     internal static void RunSelfTests(string[] args)
     {
-        var options = GateOptions.Parse(args, allowBudgetless: true);
-        var report = new AllocationGateReport
-        {
-            SchemaVersion = SchemaVersion,
-            RuntimeVersion = Environment.Version.ToString(),
-            RuntimeMajor = Environment.Version.Major,
-            Configuration = IsReleaseBuild ? "Release" : "NonRelease",
-            BudgetPath = options.BudgetPath,
-            Filter = "self-test",
-            StartedAtUtc = DateTimeOffset.UtcNow
-        };
-
+        var options = GateOptions.Parse(args);
+        var report = CreateReport(options, "self-test");
         try
         {
             EnsureReleaseBuild();
@@ -130,14 +107,25 @@ internal static class AllocationGateRunner
         }
         finally
         {
-            report.CompletedAtUtc = DateTimeOffset.UtcNow;
-            WriteReport(options.OutputPath, report);
-            PrintReport(report, options.OutputPath);
+            CompleteAndWrite(report, options.OutputPath);
         }
 
         if (!report.Passed)
             Environment.ExitCode = 1;
     }
+
+    private static AllocationGateReport CreateReport(GateOptions options, string mode) => new()
+    {
+        SchemaVersion = SchemaVersion,
+        Mode = mode,
+        RuntimeVersion = Environment.Version.ToString(),
+        RuntimeMajor = Environment.Version.Major,
+        Configuration = IsReleaseBuild ? "Release" : "NonRelease",
+        BudgetPath = options.BudgetPath,
+        Filter = options.Filter,
+        InjectedBytesPerOperation = options.InjectedBytesPerOperation,
+        StartedAtUtc = DateTimeOffset.UtcNow
+    };
 
     private static async Task<AllocationCaseReport> RunRpcCaseAsync(
         CaseDefinition definition,
@@ -145,18 +133,24 @@ internal static class AllocationGateRunner
         BenchmarkEnvironment environment,
         int injectedBytesPerOperation)
     {
-        Func<ValueTask> operation = definition.Kind switch
+        Func<ValueTask> operation;
+        if (definition.Kind == CaseKind.Add)
         {
-            CaseKind.Add => () => AddOnceAsync(environment.Rpc),
-            CaseKind.OneWay => () => environment.Rpc.PublishEventAsync(7, 11, "allocation-gate"),
-            _ => throw new InvalidOperationException($"Unsupported RPC case kind {definition.Kind}.")
-        };
+            operation = () => AddOnceAsync(environment.Rpc);
+        }
+        else
+        {
+            var nextPublished = environment.LocalService.PublishedCount;
+            operation = async () =>
+            {
+                var target = Interlocked.Increment(ref nextPublished);
+                await environment.Rpc.PublishEventAsync(7, 11, "allocation-gate").ConfigureAwait(false);
+                WaitUntilPublished(environment.LocalService, target);
+            };
+        }
 
         return await RunMeasuredCaseAsync(
-            definition,
-            budget,
-            operation,
-            injectedBytesPerOperation).ConfigureAwait(false);
+            definition, budget, operation, injectedBytesPerOperation).ConfigureAwait(false);
     }
 
     private static async Task<AllocationCaseReport> RunSendPumpCaseAsync(
@@ -175,18 +169,33 @@ internal static class AllocationGateRunner
             {
                 var queued = await benchmark.IdleWakeForceFlushCycle().ConfigureAwait(false);
                 if (queued != 0)
-                    throw new InvalidOperationException($"Send pump did not drain: {queued} bytes remain queued.");
+                    throw new InvalidOperationException($"Send pump left {queued} bytes queued.");
             }
 
             return await RunMeasuredCaseAsync(
-                definition,
-                budget,
-                Operation,
-                injectedBytesPerOperation).ConfigureAwait(false);
+                definition, budget, Operation, injectedBytesPerOperation).ConfigureAwait(false);
         }
         finally
         {
             await benchmark.Cleanup().ConfigureAwait(false);
+        }
+    }
+
+    private static async ValueTask AddOnceAsync(IBenchmarkRpc rpc)
+    {
+        if (await rpc.AddAsync(20, 22).ConfigureAwait(false) != 42)
+            throw new InvalidOperationException("Tiny unary allocation fixture returned the wrong value.");
+    }
+
+    private static void WaitUntilPublished(BenchmarkRpcService service, long target)
+    {
+        var deadline = Stopwatch.GetTimestamp() + 5L * Stopwatch.Frequency;
+        var spin = new SpinWait();
+        while (service.PublishedCount < target)
+        {
+            if (Stopwatch.GetTimestamp() >= deadline)
+                throw new TimeoutException($"OneWay fixture did not publish operation {target} within five seconds.");
+            spin.SpinOnce();
         }
     }
 
@@ -202,35 +211,27 @@ internal static class AllocationGateRunner
             operation,
             injectedBytesPerOperation).ConfigureAwait(false);
 
-        var samples = new List<double>(budget.Samples);
-        var rawSamples = new List<AllocationSampleReport>(budget.Samples);
-        for (var sampleIndex = 0; sampleIndex < budget.Samples; sampleIndex++)
+        var samples = new List<AllocationSampleReport>(budget.Samples);
+        for (var index = 0; index < budget.Samples; index++)
         {
             ForceGc();
-            var sample = await MeasureAsync(
+            samples.Add(await MeasureAsync(
+                index,
                 definition.OperationsPerSample,
                 definition.Concurrency,
                 operation,
-                injectedBytesPerOperation).ConfigureAwait(false);
-            samples.Add(sample.BytesPerOperation);
-            rawSamples.Add(new AllocationSampleReport
-            {
-                Index = sampleIndex,
-                CompletedOperations = sample.CompletedOperations,
-                AllocatedBytes = sample.AllocatedBytes,
-                BytesPerOperation = sample.BytesPerOperation
-            });
+                injectedBytesPerOperation).ConfigureAwait(false));
         }
 
-        samples.Sort();
-        var median = Median(samples);
-        var min = samples[0];
-        var max = samples[^1];
+        var ordered = samples.Select(static item => item.BytesPerOperation).OrderBy(static value => value).ToArray();
+        var median = Median(ordered);
+        var min = ordered[0];
+        var max = ordered[^1];
         var spread = max - min;
-        var enoughSamples = samples.Count >= 5;
-        var withinAllocationBudget = median <= budget.MaxBytesPerOperation;
+        var enough = ordered.Length >= 5;
+        var within = median <= budget.MaxBytesPerOperation;
         var stable = spread <= budget.MaxSpreadBytesPerOperation;
-        var passed = enoughSamples && withinAllocationBudget && stable;
+        var passed = enough && within && stable;
 
         return new AllocationCaseReport
         {
@@ -238,7 +239,7 @@ internal static class AllocationGateRunner
             Concurrency = definition.Concurrency,
             WarmupOperations = definition.WarmupOperations,
             OperationsPerSample = definition.OperationsPerSample,
-            SampleCount = samples.Count,
+            SampleCount = ordered.Length,
             MaxBytesPerOperation = budget.MaxBytesPerOperation,
             MaxSpreadBytesPerOperation = budget.MaxSpreadBytesPerOperation,
             MedianBytesPerOperation = median,
@@ -246,21 +247,13 @@ internal static class AllocationGateRunner
             MaxBytesPerOperationObserved = max,
             SpreadBytesPerOperation = spread,
             Passed = passed,
-            Failure = passed
-                ? null
-                : BuildFailure(enoughSamples, withinAllocationBudget, stable, median, spread, budget),
-            Samples = rawSamples
+            Failure = passed ? null : BuildFailure(enough, within, stable, median, spread, budget),
+            Samples = samples
         };
     }
 
-    private static async ValueTask AddOnceAsync(IBenchmarkRpc rpc)
-    {
-        var value = await rpc.AddAsync(20, 22).ConfigureAwait(false);
-        if (value != 42)
-            throw new InvalidOperationException($"Allocation gate RPC returned {value} instead of 42.");
-    }
-
-    private static async Task<Measurement> MeasureAsync(
+    private static async Task<AllocationSampleReport> MeasureAsync(
+        int sampleIndex,
         int operations,
         int concurrency,
         Func<ValueTask> operation,
@@ -269,28 +262,28 @@ internal static class AllocationGateRunner
         var counter = new CompletionCounter();
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var workers = CreateWorkers(
-            operations,
-            concurrency,
-            start.Task,
-            operation,
-            injectedBytesPerOperation,
-            counter);
+            operations, concurrency, start.Task, operation, injectedBytesPerOperation, counter);
         var completion = Task.WhenAll(workers);
 
         var before = GC.GetTotalAllocatedBytes(precise: true);
         start.TrySetResult();
         await completion.ConfigureAwait(false);
         var after = GC.GetTotalAllocatedBytes(precise: true);
-
         var completed = Volatile.Read(ref counter.Completed);
         if (completed != operations)
         {
             throw new InvalidOperationException(
-                $"Allocation sample completed {completed} successful operations out of {operations}; refusing a false denominator.");
+                $"Sample completed {completed}/{operations} operations; refusing a false denominator.");
         }
 
         var allocated = Math.Max(0, after - before);
-        return new Measurement(completed, allocated, ComputeBytesPerOperation(allocated, completed, operations));
+        return new AllocationSampleReport
+        {
+            Index = sampleIndex,
+            CompletedOperations = completed,
+            AllocatedBytes = allocated,
+            BytesPerOperation = ComputeBytesPerOperation(allocated, completed, operations)
+        };
     }
 
     private static Task ExecuteWorkersAsync(
@@ -301,12 +294,7 @@ internal static class AllocationGateRunner
     {
         var counter = new CompletionCounter();
         return Task.WhenAll(CreateWorkers(
-            operations,
-            concurrency,
-            Task.CompletedTask,
-            operation,
-            injectedBytesPerOperation,
-            counter));
+            operations, concurrency, Task.CompletedTask, operation, injectedBytesPerOperation, counter));
     }
 
     private static Task[] CreateWorkers(
@@ -317,20 +305,17 @@ internal static class AllocationGateRunner
         int injectedBytesPerOperation,
         CompletionCounter counter)
     {
-        if (operations <= 0)
+        if (operations <= 0 || concurrency <= 0 || concurrency > operations)
             throw new ArgumentOutOfRangeException(nameof(operations));
-        if (concurrency <= 0 || concurrency > operations)
-            throw new ArgumentOutOfRangeException(nameof(concurrency));
 
         var workers = new Task[concurrency];
         var baseCount = operations / concurrency;
         var remainder = operations % concurrency;
-        for (var workerIndex = 0; workerIndex < workers.Length; workerIndex++)
+        for (var index = 0; index < workers.Length; index++)
         {
-            var count = baseCount + (workerIndex < remainder ? 1 : 0);
-            workers[workerIndex] = RunWorkerAsync(
+            workers[index] = RunWorkerAsync(
                 start,
-                count,
+                baseCount + (index < remainder ? 1 : 0),
                 operation,
                 injectedBytesPerOperation,
                 counter);
@@ -361,42 +346,26 @@ internal static class AllocationGateRunner
     private static double ComputeBytesPerOperation(long allocatedBytes, int completed, int requested)
     {
         if (requested <= 0 || completed != requested)
-            throw new InvalidOperationException("Only fully completed samples may be normalized per operation.");
+            throw new InvalidOperationException("Only fully completed samples may be normalized.");
         return allocatedBytes / (double)completed;
     }
 
     private static string BuildFailure(
-        bool enoughSamples,
-        bool withinAllocationBudget,
+        bool enough,
+        bool within,
         bool stable,
         double median,
         double spread,
         AllocationBudget budget)
     {
-        var reasons = new List<string>(3);
-        if (!enoughSamples)
+        var reasons = new List<string>();
+        if (!enough)
             reasons.Add("fewer than five samples");
-        if (!withinAllocationBudget)
-        {
-            reasons.Add(
-                $"median {median:F3} B/op exceeds budget {budget.MaxBytesPerOperation:F3} B/op");
-        }
+        if (!within)
+            reasons.Add($"median {median:F3} B/op exceeds {budget.MaxBytesPerOperation:F3} B/op");
         if (!stable)
-        {
-            reasons.Add(
-                $"sample spread {spread:F3} B/op exceeds stability budget {budget.MaxSpreadBytesPerOperation:F3} B/op");
-        }
+            reasons.Add($"spread {spread:F3} B/op exceeds {budget.MaxSpreadBytesPerOperation:F3} B/op");
         return string.Join("; ", reasons);
-    }
-
-    private static double Median(IReadOnlyList<double> sorted)
-    {
-        if (sorted.Count == 0)
-            throw new InvalidOperationException("Cannot compute the median of an empty sample set.");
-        var middle = sorted.Count / 2;
-        return sorted.Count % 2 == 0
-            ? (sorted[middle - 1] + sorted[middle]) / 2d
-            : sorted[middle];
     }
 
     private static void ForceGc()
@@ -406,14 +375,23 @@ internal static class AllocationGateRunner
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
     }
 
+    private static double Median(IReadOnlyList<double> ordered)
+    {
+        if (ordered.Count == 0)
+            throw new InvalidOperationException("No allocation samples were produced.");
+        var middle = ordered.Count / 2;
+        return ordered.Count % 2 == 0
+            ? (ordered[middle - 1] + ordered[middle]) / 2d
+            : ordered[middle];
+    }
+
     private static AllocationBudgetDocument LoadBudgets(string path)
     {
         if (!File.Exists(path))
             throw new FileNotFoundException("Allocation budget file was not found.", path);
-        var json = File.ReadAllText(path);
         try
         {
-            return JsonSerializer.Deserialize<AllocationBudgetDocument>(json, JsonOptions)
+            return JsonSerializer.Deserialize<AllocationBudgetDocument>(File.ReadAllText(path), JsonOptions)
                 ?? throw new InvalidDataException("Allocation budget document is empty.");
         }
         catch (JsonException exception)
@@ -425,11 +403,9 @@ internal static class AllocationGateRunner
     private static void ValidateBudgetDocument(AllocationBudgetDocument document)
     {
         if (document.SchemaVersion != SchemaVersion)
-            throw new InvalidDataException($"Unsupported allocation budget schema {document.SchemaVersion}.");
-        if (document.RuntimeMajor <= 0)
-            throw new InvalidDataException("runtimeMajor must be a positive integer.");
-        if (document.Cases.Count == 0)
-            throw new InvalidDataException("Allocation budget document contains no cases.");
+            throw new InvalidDataException($"Unsupported budget schema {document.SchemaVersion}.");
+        if (document.RuntimeMajor <= 0 || document.Cases.Count == 0)
+            throw new InvalidDataException("Budget document must define runtimeMajor and at least one case.");
         foreach (var pair in document.Cases)
             ValidateBudget(pair.Key, pair.Value);
     }
@@ -437,90 +413,75 @@ internal static class AllocationGateRunner
     private static void ValidateBudget(string name, AllocationBudget budget)
     {
         if (budget.Samples < 5)
-            throw new InvalidDataException($"Allocation case '{name}' must use at least five samples.");
+            throw new InvalidDataException($"'{name}' must use at least five samples.");
         if (budget.MaxBytesPerOperation < 0 || budget.MaxSpreadBytesPerOperation < 0)
-            throw new InvalidDataException($"Allocation case '{name}' contains a negative budget.");
+            throw new InvalidDataException($"'{name}' contains a negative budget.");
     }
 
     private static IReadOnlyList<CaseDefinition> ResolveCases(string? filter)
     {
         if (string.IsNullOrWhiteSpace(filter))
             return Cases;
-
         var requested = filter.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         if (requested.Length == 0)
-            throw new ArgumentException("Allocation gate filter is empty.", nameof(filter));
+            throw new ArgumentException("Allocation filter is empty.", nameof(filter));
         var selected = Cases.Where(item => requested.Contains(item.Name, StringComparer.Ordinal)).ToArray();
-        if (selected.Length == 0)
-            throw new InvalidOperationException($"Allocation gate filter '{filter}' matched no cases.");
-        if (selected.Length != requested.Distinct(StringComparer.Ordinal).Count())
-        {
-            var missing = requested.Where(name => selected.All(item => item.Name != name)).Distinct(StringComparer.Ordinal);
-            throw new InvalidOperationException($"Unknown allocation gate case(s): {string.Join(", ", missing)}.");
-        }
+        var missing = requested.Where(name => selected.All(item => item.Name != name)).Distinct(StringComparer.Ordinal).ToArray();
+        if (selected.Length == 0 || missing.Length > 0)
+            throw new InvalidOperationException($"Unknown allocation case(s): {string.Join(", ", missing)}.");
         return selected;
     }
 
     private static void RunPolicySelfTests()
     {
         if (ComputeBytesPerOperation(0, 100, 100) != 0)
-            throw new InvalidOperationException("Zero-allocation normalization self-test failed.");
+            throw new InvalidOperationException("Zero-allocation self-test failed.");
 
         var before = GC.GetAllocatedBytesForCurrentThread();
-        const int allocationIterations = 2_048;
-        for (var index = 0; index < allocationIterations; index++)
+        for (var index = 0; index < 2_048; index++)
         {
             var payload = new byte[128];
             GC.KeepAlive(payload);
         }
-        var deliberate = GC.GetAllocatedBytesForCurrentThread() - before;
-        if (deliberate < 128L * allocationIterations)
-            throw new InvalidOperationException("Deliberate new byte[128] allocation self-test was not observed.");
+        if (GC.GetAllocatedBytesForCurrentThread() - before < 128L * 2_048)
+            throw new InvalidOperationException("new byte[128] self-test was not observed.");
 
         ExpectFailure(() => ComputeBytesPerOperation(1_000, 99, 100), "false denominator");
-        ExpectFailure(() => ResolveCases("does-not-exist"), "empty case filter");
-        ExpectFailure(
-            () => JsonSerializer.Deserialize<AllocationBudgetDocument>("{ broken", JsonOptions),
-            "malformed JSON");
+        ExpectFailure(() => ResolveCases("does-not-exist"), "unknown filter");
+        ExpectFailure(() => JsonSerializer.Deserialize<AllocationBudgetDocument>("{broken", JsonOptions), "malformed budget");
         ExpectFailure(
             () => LoadBudgets(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json")),
-            "missing budget file");
+            "missing budget");
+        ExpectFailure(
+            () => ValidateBudget("insufficient", new AllocationBudget
+            {
+                Samples = 4,
+                MaxBytesPerOperation = 100,
+                MaxSpreadBytesPerOperation = 10
+            }),
+            "insufficient samples");
 
-        var passBudget = new AllocationBudget { Samples = 5, MaxBytesPerOperation = 100, MaxSpreadBytesPerOperation = 10 };
-        var passSamples = new[] { 95d, 96d, 97d, 98d, 99d };
-        AssertSyntheticEvaluation(passSamples, passBudget, expected: true);
-        AssertSyntheticEvaluation(new[] { 100d, 101d, 102d, 103d, 104d }, passBudget, expected: false);
-        AssertSyntheticEvaluation(new[] { 90d, 91d, 92d, 93d, 110d }, passBudget, expected: false);
-        ExpectFailure(() => ValidateBudget("insufficient", new AllocationBudget
-        {
-            Samples = 4,
-            MaxBytesPerOperation = 100,
-            MaxSpreadBytesPerOperation = 10
-        }), "insufficient samples");
+        AssertSynthetic(new[] { 95d, 96d, 97d, 98d, 99d }, 100, 10, expected: true);
+        AssertSynthetic(new[] { 100d, 101d, 102d, 103d, 104d }, 100, 10, expected: false);
+        AssertSynthetic(new[] { 90d, 91d, 92d, 93d, 110d }, 100, 10, expected: false);
 
-        var json = JsonSerializer.Serialize(new AllocationGateReport
-        {
-            SchemaVersion = SchemaVersion,
-            Passed = true,
-            RuntimeVersion = Environment.Version.ToString()
-        }, JsonOptions);
-        if (!json.Contains("\"passed\": true", StringComparison.Ordinal))
-            throw new InvalidOperationException("JSON report serialization self-test failed.");
+        var serialized = JsonSerializer.Serialize(new AllocationGateReport { Passed = true }, JsonOptions);
+        if (!serialized.Contains("\"passed\": true", StringComparison.Ordinal))
+            throw new InvalidOperationException("JSON serialization self-test failed.");
     }
 
-    private static void AssertSyntheticEvaluation(
+    private static void AssertSynthetic(
         IReadOnlyList<double> samples,
-        AllocationBudget budget,
+        double maxBytes,
+        double maxSpread,
         bool expected)
     {
-        var ordered = samples.Order().ToArray();
-        var median = Median(ordered);
-        var spread = ordered[^1] - ordered[0];
+        var ordered = samples.OrderBy(static value => value).ToArray();
         var actual = ordered.Length >= 5 &&
-                     median <= budget.MaxBytesPerOperation &&
-                     spread <= budget.MaxSpreadBytesPerOperation;
+                     Median(ordered) <= maxBytes &&
+                     ordered[^1] - ordered[0] <= maxSpread;
         if (actual != expected)
-            throw new InvalidOperationException("Allocation budget pass/fail self-test failed.");
+            throw new InvalidOperationException("Budget pass/fail self-test failed.");
     }
 
     private static void ExpectFailure(Action action, string name)
@@ -533,26 +494,22 @@ internal static class AllocationGateRunner
         {
             return;
         }
-        throw new InvalidOperationException($"Allocation gate self-test '{name}' did not fail closed.");
+        throw new InvalidOperationException($"Self-test '{name}' did not fail closed.");
     }
 
-    private static void WriteReport(string path, AllocationGateReport report)
+    private static void CompleteAndWrite(AllocationGateReport report, string outputPath)
     {
-        var directory = Path.GetDirectoryName(path);
+        report.CompletedAtUtc = DateTimeOffset.UtcNow;
+        var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
-        File.WriteAllText(path, JsonSerializer.Serialize(report, JsonOptions));
-    }
-
-    private static void PrintReport(AllocationGateReport report, string outputPath)
-    {
+        File.WriteAllText(outputPath, JsonSerializer.Serialize(report, JsonOptions));
         foreach (var item in report.Cases)
         {
             Console.WriteLine(
                 $"[AllocationGate] {item.Name}: median={item.MedianBytesPerOperation:F3} B/op " +
                 $"range={item.MinBytesPerOperation:F3}..{item.MaxBytesPerOperationObserved:F3} " +
-                $"spread={item.SpreadBytesPerOperation:F3} budget={item.MaxBytesPerOperation:F3} " +
-                $"stability={item.MaxSpreadBytesPerOperation:F3} => {(item.Passed ? "PASS" : "FAIL")}");
+                $"spread={item.SpreadBytesPerOperation:F3} => {(item.Passed ? "PASS" : "FAIL")}");
         }
         foreach (var error in report.Errors)
             Console.Error.WriteLine($"[AllocationGate] {error}");
@@ -562,7 +519,7 @@ internal static class AllocationGateRunner
     private static void EnsureReleaseBuild()
     {
         if (!IsReleaseBuild)
-            throw new InvalidOperationException("Allocation regression gates must run from a Release build.");
+            throw new InvalidOperationException("Allocation gate must run from a Release build.");
     }
 
     private static bool IsReleaseBuild
@@ -577,12 +534,7 @@ internal static class AllocationGateRunner
         }
     }
 
-    private enum CaseKind
-    {
-        Add,
-        OneWay,
-        SendPumpIdleWake
-    }
+    private enum CaseKind { Add, OneWay, SendPumpIdleWake }
 
     private sealed record CaseDefinition(
         string Name,
@@ -591,15 +543,7 @@ internal static class AllocationGateRunner
         int OperationsPerSample,
         CaseKind Kind);
 
-    private sealed class CompletionCounter
-    {
-        internal int Completed;
-    }
-
-    private readonly record struct Measurement(
-        int CompletedOperations,
-        long AllocatedBytes,
-        double BytesPerOperation);
+    private sealed class CompletionCounter { internal int Completed; }
 
     private sealed class GateOptions
     {
@@ -608,10 +552,10 @@ internal static class AllocationGateRunner
         internal string? Filter { get; private init; }
         internal int InjectedBytesPerOperation { get; private init; }
 
-        internal static GateOptions Parse(string[] args, bool allowBudgetless = false)
+        internal static GateOptions Parse(string[] args)
         {
-            var budgetPath = "eng/perf/allocation-budgets.json";
-            var outputPath = "artifacts/perf/allocation-gate.json";
+            var budget = "eng/perf/allocation-budgets.json";
+            var output = "artifacts/perf/allocation-gate.json";
             string? filter = null;
             var injected = 0;
             for (var index = 0; index < args.Length; index++)
@@ -619,38 +563,33 @@ internal static class AllocationGateRunner
                 switch (args[index])
                 {
                     case "--budgets":
-                        budgetPath = RequireValue(args, ref index, "--budgets");
+                        budget = Value(args, ref index, "--budgets");
                         break;
                     case "--output":
-                        outputPath = RequireValue(args, ref index, "--output");
+                        output = Value(args, ref index, "--output");
                         break;
                     case "--filter":
-                        filter = RequireValue(args, ref index, "--filter");
+                        filter = Value(args, ref index, "--filter");
                         break;
                     case "--inject-bytes-per-operation":
-                        var value = RequireValue(args, ref index, "--inject-bytes-per-operation");
-                        if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out injected) || injected < 0)
-                            throw new ArgumentException("Injected bytes per operation must be a non-negative integer.");
+                        var text = Value(args, ref index, "--inject-bytes-per-operation");
+                        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out injected) || injected < 0)
+                            throw new ArgumentException("Injected bytes must be a non-negative integer.");
                         break;
                     default:
                         throw new ArgumentException($"Unknown allocation gate argument '{args[index]}'.");
                 }
             }
-
-            if (!allowBudgetless && string.IsNullOrWhiteSpace(budgetPath))
-                throw new ArgumentException("Allocation budget path is required.");
-            if (string.IsNullOrWhiteSpace(outputPath))
-                throw new ArgumentException("Allocation gate output path is required.");
             return new GateOptions
             {
-                BudgetPath = budgetPath,
-                OutputPath = outputPath,
+                BudgetPath = budget,
+                OutputPath = output,
                 Filter = filter,
                 InjectedBytesPerOperation = injected
             };
         }
 
-        private static string RequireValue(string[] args, ref int index, string option)
+        private static string Value(string[] args, ref int index, string option)
         {
             if (++index >= args.Length || string.IsNullOrWhiteSpace(args[index]))
                 throw new ArgumentException($"{option} requires a value.");
@@ -676,6 +615,7 @@ internal static class AllocationGateRunner
     {
         public int SchemaVersion { get; set; }
         public bool Passed { get; set; }
+        public string Mode { get; set; } = string.Empty;
         public string RuntimeVersion { get; set; } = string.Empty;
         public int RuntimeMajor { get; set; }
         public string Configuration { get; set; } = string.Empty;
