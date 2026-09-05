@@ -42,6 +42,8 @@ public partial class RpcGenerator
                 AppendAdapterCodecFactory(sb, codec);
             else if (codec.Kind == GeneratedCodecKind.Custom)
                 AppendCustomCodecFactory(sb, codec);
+            else if (codec.Kind == GeneratedCodecKind.Union)
+                AppendUnionCodec(sb, codec);
             else if (codec.Kind == GeneratedCodecKind.Dto)
             {
                 if (!dtoByCodecName.TryGetValue(codec.CodecName, out var dto))
