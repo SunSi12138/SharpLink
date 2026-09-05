@@ -202,6 +202,7 @@ public partial class RpcGenerator
                 continue;
             }
 
+            ValidateSharpPackSidecarMetadata(compilation, analysis, rootType);
             analysis.AnalyzeRoot(rootType);
         }
 
