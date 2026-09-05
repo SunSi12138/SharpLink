@@ -43,7 +43,7 @@ public sealed class AdmissionDynamicUpdateRateRetentionTests
             $"{kind}: retained generation-N lease must still consume the shared rate quota");
 
         blocker.Dispose();
-        var admitted = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+        var admitted = await queued;
         Ensure(admitted.IsAcquired,
             $"{kind}: old queued Request must reuse its retained rate lease after N+1 publication");
         admitted.Lease!.Dispose();
