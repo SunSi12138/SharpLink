@@ -1,0 +1,179 @@
+name: Issue 410 generation-scoped prototype
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-prototype-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  prototype-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Apply generation-scoped rate prototype in workspace only
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+
+          def replace_once(text, old, new, label):
+              if text.count(old) != 1:
+                  raise RuntimeError(f'{label}: expected exactly one match, found {text.count(old)}')
+              return text.replace(old, new, 1)
+
+          # AdmissionDynamicRateState: keep steady-state algorithms/waiter ownership, delete
+          # cross-generation history migration and give each generation its own lock.
+          path = 'src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs'
+          text = Path(path).read_text(encoding='utf-8')
+          class_marker = 'internal sealed class AdmissionDynamicRateState : IDisposable'
+          class_index = text.index(class_marker)
+          summary_index = text.rfind('/// <summary>', 0, class_index)
+          text = text[:summary_index] + '''/// <summary>\n/// SharpLink-owned deterministic state for one immutable rate-policy generation. Mutable quota,\n/// waiters, and timers are generation-local; no rate history is translated into a successor.\n/// </summary>\n''' + text[class_index:]
+          text = replace_once(text,
+              'internal sealed class AdmissionDynamicRateState : IDisposable\n{\n    private readonly AdmissionRateStateDefinition _definition;',
+              'internal sealed class AdmissionDynamicRateState : IDisposable\n{\n    private readonly Lock _gate = new();\n    private readonly AdmissionRateStateDefinition _definition;',
+              'add generation-local gate')
+          for line in [
+              '    private long _tokenTransitionCredit;\n',
+              '    private long _transitionDebt;\n',
+              '    private long _transitionDebtExpiry;\n',
+              '    private long _latestGrantTimestamp = long.MinValue;\n',
+          ]:
+              if line not in text:
+                  raise RuntimeError(f'missing transition field: {line.strip()}')
+              text = text.replace(line, '', 1)
+          text = replace_once(text,
+              '    internal AdmissionDynamicRateState(\n        AdmissionRateStateDefinition definition,\n        TimeProvider timeProvider,\n        AdmissionRateTransitionLineage? lineage = null)\n',
+              '    internal AdmissionDynamicRateState(\n        AdmissionRateStateDefinition definition,\n        TimeProvider timeProvider)\n',
+              'constructor signature')
+          text = replace_once(text,
+              '        Lineage = lineage ?? new AdmissionRateTransitionLineage();\n', '', 'remove lineage assignment')
+          text = replace_once(text,
+              '        if (lineage is null)\n            Lineage.AttachFresh(this);\n', '', 'remove lineage attach')
+          text = replace_once(text,
+              '    internal AdmissionRateTransitionLineage Lineage { get; }\n\n', '', 'remove lineage property')
+          text = text.replace('lock (Lineage.Gate)', 'lock (_gate)')
+
+          start = text.index('    internal long TransitionDebtForDiagnostics')
+          end = text.index('    internal RateLimitLease AttemptAcquire', start)
+          text = text[:start] + text[end:]
+
+          start = text.index('    internal void CommitTransitionTo')
+          end = text.index('    private void RecordGrantLocked', start)
+          text = text[:start] + text[end:]
+
+          start = text.index('    private void RecordGrantLocked')
+          end = text.index('    private void RecordOwnGrantLocked', start)
+          text = text[:start] + '''    private void RecordGrantLocked(long now)\n    {\n        _ = now;\n        RecordOwnGrantLocked();\n    }\n\n''' + text[end:]
+
+          start = text.index('    private void RecordLegacyGrantLocked')
+          end = text.index('    private bool CanGrantLocked', start)
+          text = text[:start] + text[end:]
+          text = replace_once(text,
+              '    private bool CanGrantLocked()\n        => GetBurdenLocked() < _definition.Limit;\n\n    private long GetBurdenLocked()\n        => SaturatingAdd(_transitionDebt, GetOwnBurdenLocked());\n',
+              '    private bool CanGrantLocked()\n        => GetOwnBurdenLocked() < _definition.Limit;\n',
+              'generation-local burden')
+
+          start = text.index('    private long GetDebtExpiryLocked')
+          end = text.index('    private void AdvanceLocked', start)
+          text = text[:start] + text[end:]
+
+          start = text.index('    private void AdvanceLocked')
+          end = text.index('    private void AdvanceTokenBucketLocked', start)
+          text = text[:start] + '''    private void AdvanceLocked(long now)\n    {\n        switch (_definition.Kind)\n        {\n            case AdmissionRateStateKind.TokenBucket:\n                AdvanceTokenBucketLocked(now);\n                break;\n            case AdmissionRateStateKind.FixedWindow:\n                AdvanceFixedWindowLocked(now);\n                break;\n            case AdmissionRateStateKind.SlidingWindow:\n                AdvanceSlidingWindowLocked(now);\n                break;\n        }\n    }\n\n''' + text[end:]
+
+          start = text.index('    private void AdvanceTokenBucketLocked')
+          end = text.index('    private void AdvanceFixedWindowLocked', start)
+          text = text[:start] + '''    private void AdvanceTokenBucketLocked(long now)\n    {\n        var period = GetPeriodTimestampTicks();\n        var elapsed = now - _tokenAnchor;\n        if (elapsed < period)\n            return;\n\n        var periods = elapsed / period;\n        var credit = SaturatingMultiply(periods, _definition.Secondary);\n        if (_tokenDebt != 0)\n            _tokenDebt -= Math.Min(_tokenDebt, credit);\n        _tokenAnchor = SaturatingAdd(_tokenAnchor, SaturatingMultiply(periods, period));\n    }\n\n''' + text[end:]
+
+          text = replace_once(text,
+              '        var next = _transitionDebt == 0 ? long.MaxValue : _transitionDebtExpiry;\n',
+              '        var next = long.MaxValue;\n',
+              'next availability')
+          text = text.replace('var requiredReduction = GetBurdenLocked() - _definition.Limit + 1;',
+                              'var requiredReduction = _tokenDebt - _definition.Limit + 1;')
+          text = replace_once(text,
+              '            Lineage.DetachIfCurrentLocked(this);\n', '', 'remove lineage detach')
+          start = text.index('    private long GetBarrierHorizonTimestampTicks')
+          end = text.index('    private long GetPeriodTimestampTicks', start)
+          text = text[:start] + text[end:]
+          for forbidden in ['AdmissionRateTransitionLineage', '_transitionDebt', '_transitionDebtExpiry', '_tokenTransitionCredit', '_latestGrantTimestamp', 'Lineage.Gate', 'RecordLegacyGrantLocked', 'InitializeTransitionLocked']:
+              if forbidden in text:
+                  raise RuntimeError(f'prototype left migration symbol in dynamic state: {forbidden}')
+          write(path, text)
+
+          # AdmissionRateState remains the wrapper boundary for now. Each replacement gets a unique
+          # generation identity; compatibility plumbing becomes a no-op in the prototype.
+          path = 'src/SharpLink.Server/Admission/AdmissionLimiterState.cs'
+          text = Path(path).read_text(encoding='utf-8')
+          text = replace_once(text,
+              '    internal AdmissionRateTransitionLineage Lineage => _state.Lineage;\n',
+              '    internal object Lineage { get; } = new();\n',
+              'wrapper lineage token')
+          text = replace_once(text,
+              '    internal long TransitionDebtForDiagnostics => _state.TransitionDebtForDiagnostics;\n',
+              '    internal long TransitionDebtForDiagnostics => 0;\n',
+              'diagnostic debt')
+          text = replace_once(text,
+              '    internal long TransitionBarrierExpiryForDiagnostics => _state.TransitionBarrierExpiryForDiagnostics;\n',
+              '    internal long TransitionBarrierExpiryForDiagnostics => 0;\n',
+              'diagnostic barrier')
+          text = replace_once(text,
+              '        var state = new AdmissionDynamicRateState(\n            definition,\n            timeProvider,\n            transitionSource?.Lineage);\n',
+              '        _ = transitionSource;\n        var state = new AdmissionDynamicRateState(definition, timeProvider);\n',
+              'fresh generation state')
+          text = replace_once(text,
+              '    internal void CommitTransitionTo(AdmissionRateState? target)\n        => _state.CommitTransitionTo(target?._state);\n',
+              '    internal void CommitTransitionTo(AdmissionRateState? target)\n        => _ = target;\n',
+              'no-op compatibility transition')
+          write(path, text)
+
+          # A fresh Enable after Disable must never attach to an old still-draining rate generation.
+          path = 'src/SharpLink.Server/Admission/AdmissionStateKernel.cs'
+          text = Path(path).read_text(encoding='utf-8')
+          old = '''        if (_hasPublishedRateLineage)\n        {\n            if (_publishedRateStates.TryGetValue(scope, out var published) &&\n                published.Definition == definition)\n            {\n                AddRateReferenceLocked(scope, published);\n                return published;\n            }\n            return CreateRateLocked(scope, options, transitionSource: null);\n        }\n'''
+          new = '''        if (_hasPublishedRateLineage)\n            return CreateRateLocked(scope, options, transitionSource: null);\n'''
+          text = replace_once(text, old, new, 'fresh enable rate generation')
+          write(path, text)
+          PY
+
+          mkdir -p artifacts/issue410
+          git diff --stat > artifacts/issue410/prototype-stat.txt
+          git diff -- src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
+                     src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
+                     src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            > artifacts/issue410/prototype.patch
+          {
+            echo "transition symbols after prototype:"
+            grep -R -n -E 'transitionDebt|AdmissionRateTransitionLineage|InitializeTransitionLocked|RecordLegacyGrantLocked' \
+              src/SharpLink.Server/Admission || true
+          } > artifacts/issue410/symbol-audit.txt
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Upload prototype evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-prototype-build-${{ github.sha }}
+          path: artifacts/issue410
+          if-no-files-found: warn
+          retention-days: 14
