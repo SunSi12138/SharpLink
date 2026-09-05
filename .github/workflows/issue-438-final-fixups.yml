@@ -1,0 +1,101 @@
+name: Issue 438 Final Fixups
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-final-fixups
+
+permissions:
+  contents: write
+
+jobs:
+  fixups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix/issue-438-sendpump-mailbox
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Apply final source and evidence-text fixups
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          wake = Path('src/SharpLink.Runtime/WakeupSignal.cs')
+          text = wake.read_text()
+          old = '            CancelDeadline(s);\n            _core.SetResult(true);'
+          new = '            CancelDeadline(s & ~Latched);\n            _core.SetResult(true);'
+          if old not in text:
+              raise SystemExit('WakeupSignal fast-path deadline cancellation target not found')
+          wake.write_text(text.replace(old, new, 1))
+
+          tests = Path('test/SharpLink.UnitTests/Runtime/SendPumpTests.cs')
+          text = tests.read_text()
+          text = text.replace(
+              'TimedBatchShouldDeliverFrameSentAfterDeadlineFlushThroughRetainedRead',
+              'TimedBatchShouldDeliverFrameSentAfterDeadlineFlushThroughWakeupSignal')
+          text = text.replace(
+              '// The pump must have kept the unconsumed pending read and re-observed it: the next\n'
+              '// frame wakes the pump through that retained registration. Dropping the read would\n'
+              '// leave the fresh registration waiting behind the stale one and time this out.\n',
+              '// After a deadline flush, the next frame must still wake the pump through the single\n'
+              '// WakeupSignal authority; there is no retained Channel registration to re-observe.\n')
+          text = text.replace(
+              '"a frame after a deadline flush must be delivered through the retained pending read"',
+              '"a frame after a deadline flush must be delivered through the wakeup signal"')
+          tests.write_text(text)
+
+          bench = Path('test/SharpLink.Benchmarks/SendPumpIdleWakeBenchmarks.cs')
+          text = bench.read_text()
+          text = text.replace(
+              'pump parked in <c>WaitToReadAsync</c> → producer enqueue → pump wake → drain → pump wait again.',
+              'pump parked on <c>WakeupSignal</c> → producer enqueue → pump wake → drain → pump wait again.')
+          text = text.replace(
+              '<c>WaitForMoreUntilDeadlineAsync</c> (pending read + <c>Task.WhenAny</c> + timer). The manual',
+              '<c>WaitForMoreUntilDeadlineAsync</c> (one wake arm completed by producer or timer). The manual')
+          bench.write_text(text)
+          PY
+
+          # No active SendPump evidence text should describe the removed retained-read/race machinery.
+          if grep -R -nE 'DeadlineReadRace|retained (channel|pending) read|WaitToReadAsync' \
+              src/SharpLink.Runtime/RpcSession.SendPump.cs \
+              src/SharpLink.Runtime/WakeupSignal.cs \
+              test/SharpLink.UnitTests/Runtime/SendPump*.cs \
+              test/SharpLink.Benchmarks/SendPump*.cs; then
+            echo 'stale SendPump coordination description remains' >&2
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Commit verified fixups
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/SharpLink.Runtime/WakeupSignal.cs \
+                  test/SharpLink.UnitTests/Runtime/SendPumpTests.cs \
+                  test/SharpLink.Benchmarks/SendPumpIdleWakeBenchmarks.cs
+          if git diff --cached --quiet; then
+            echo 'No fixups to commit'
+            exit 0
+          fi
+          git commit -m "test(runtime): align send-pump evidence with unified wake"
+          git push origin HEAD:fix/issue-438-sendpump-mailbox
