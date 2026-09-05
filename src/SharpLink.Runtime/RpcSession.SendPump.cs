@@ -484,6 +484,15 @@ internal sealed partial class RpcSession
                 if (HasProgressFrames() || HasNormalFrames())
                     return true;
 
+                // Signals coalesce while the pump is busy, so the frames just drained can leave
+                // a latch behind. That latch is already accounted for and must not terminate the
+                // explicit MaxLatency window. Consume it, then re-check both queues before
+                // arming: a producer whose signal crosses this CAS has already published its
+                // frame, so the re-check preserves the no-lost-wakeup guarantee.
+                _wakeup.ConsumeLatched();
+                if (HasProgressFrames() || HasNormalFrames())
+                    return true;
+
                 var remaining = SharpLinkTime.GetRemaining(
                     batchDeadline,
                     _timeProvider.GetTimestamp(),
