@@ -53,4 +53,52 @@ public partial class SourceSharpPackRoot
                 StringComparison.Ordinal),
             "the current-compilation SharpPack-generated root remains owned by SharpPack");
     }
+
+    [Test]
+    public void SharpPackGeneratedCollectionShouldIgnoreUnrelatedGenericInterfaces()
+    {
+        var source = BuildSharpPackContractSource(
+            """
+    global::System.Threading.Tasks.Task<SourceSharpPackCollection> EchoAsync(
+        SourceSharpPackCollection request,
+        global::System.Threading.CancellationToken cancellationToken);
+""",
+            """
+[global::SharpPack.SharpPackable(global::SharpPack.GenerateType.Collection)]
+public partial class SourceSharpPackCollection :
+    global::System.Collections.Generic.ICollection<int>,
+    global::System.IEquatable<object>
+{
+    private readonly global::System.Collections.Generic.List<int> _items = new();
+
+    public int Count => _items.Count;
+    public bool IsReadOnly => false;
+
+    public void Add(int item) => _items.Add(item);
+    public void Clear() => _items.Clear();
+    public bool Contains(int item) => _items.Contains(item);
+    public void CopyTo(int[] array, int arrayIndex) => _items.CopyTo(array, arrayIndex);
+    public bool Remove(int item) => _items.Remove(item);
+    public global::System.Collections.Generic.IEnumerator<int> GetEnumerator() => _items.GetEnumerator();
+    global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    public bool Equals(object? other) => global::System.Object.ReferenceEquals(this, other);
+}
+""");
+
+        var result = RunSharpPackAndCompile(
+            "SharpPackCollectionDependencySelection",
+            source,
+            []);
+        EnsureNoSharpPackErrors(result);
+        var generated = GetSharpPackGeneratedSource(result.DriverRunResult);
+
+        Ensure(!generated.Contains(
+                "builder.Register<object>",
+                StringComparison.Ordinal),
+            "unrelated IEquatable<object> must not become a SharpPack collection dependency");
+        Ensure(!generated.Contains(
+                "SharpPackFormatter<object>",
+                StringComparison.Ordinal),
+            "unrelated generic-interface arguments must not receive sidecars");
+    }
 }
