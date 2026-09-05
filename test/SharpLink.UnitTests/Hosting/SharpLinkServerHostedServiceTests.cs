@@ -285,6 +285,7 @@ public class SharpLinkServerHostedServiceTests
             .UseTimeProvider(provider)
             .UseTransport(transport)
             .Build();
+        var concrete = (SharpLinkServer)server;
         var runTask = server.RunAsync().AsTask();
 
         var stop = server.StopAsync(TimeSpan.Zero).AsTask();
@@ -294,24 +295,22 @@ public class SharpLinkServerHostedServiceTests
         await Task.Yield();
         Ensure(!stop.IsCompleted,
             "framework cleanup must remain pending one provider tick before its budget");
-        Ensure(((SharpLinkServer)server).DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver is null,
+        Ensure(concrete.DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver is null,
             "the deferred cleanup observer must not be published before the framework budget expires");
 
         provider.Advance(TimeSpan.FromTicks(1));
         await stop;
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
             "framework cleanup timeout must leave the server unhealthy");
-        var deferred = ((SharpLinkServer)server).DeferredTaskSnapshotForDiagnostics;
+        var deferred = concrete.DeferredTaskSnapshotForDiagnostics;
         Ensure(deferred.ShutdownCleanupObserver is not null and not TaskStatus.RanToCompletion,
             "timed-out framework cleanup must remain continuously observed and diagnosable");
-        var shutdownCleanupObserver = (Task)(typeof(SharpLinkServer).GetField(
-            "_shutdownCleanupObserver",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(server) ?? throw new Exception("cannot find Server shutdown cleanup observer owner"));
+        var shutdownCleanupObserver = concrete.LifecycleForDiagnostics.ShutdownCleanupObserverTaskForDiagnostics
+            ?? throw new Exception("cannot find lifecycle shutdown cleanup observer owner");
 
         transport.ReleaseDispose();
         await shutdownCleanupObserver;
-        Ensure(((SharpLinkServer)server).DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver ==
+        Ensure(concrete.DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver ==
                TaskStatus.RanToCompletion,
             "framework cleanup observer must complete after the listener owner releases");
         await runTask;
@@ -328,6 +327,7 @@ public class SharpLinkServerHostedServiceTests
             .UseTransport(new BlockingTransport())
             .Build();
         var concrete = (SharpLinkServer)server;
+        var lifecycle = concrete.LifecycleForDiagnostics;
         var runTask = server.RunAsync().AsTask();
         var callAdmission = typeof(SharpLinkServer).GetField(
             "_callAdmission",
@@ -338,10 +338,7 @@ public class SharpLinkServerHostedServiceTests
             "_globalActiveCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find admission active-call counter");
-        var callsDrained = (TaskCompletionSource<bool>)(typeof(SharpLinkServer).GetField(
-            "_callsDrained",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(server) ?? throw new Exception("cannot find Server call-drain signal"));
+        var callsDrained = lifecycle.CallsDrainedSignalForTesting;
         activeCalls.SetValue(callAdmission, 1);
 
         var stop = server.StopAsync(TimeSpan.FromSeconds(5)).AsTask();
@@ -357,10 +354,8 @@ public class SharpLinkServerHostedServiceTests
         Ensure(concrete.DeferredTaskSnapshotForDiagnostics.DeferredServiceCleanup is not null and
                not TaskStatus.RanToCompletion,
             "forced active-call cleanup must remain continuously observed until the call owner releases");
-        var deferredCleanup = (Task)(typeof(SharpLinkServer).GetField(
-            "_deferredServiceCleanupTask",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(server) ?? throw new Exception("cannot find Server deferred service cleanup owner"));
+        var deferredCleanup = lifecycle.DeferredServiceCleanupTaskForDiagnostics
+            ?? throw new Exception("cannot find lifecycle deferred service cleanup owner");
 
         activeCalls.SetValue(callAdmission, 0);
         callsDrained.TrySetResult(true);
@@ -376,19 +371,13 @@ public class SharpLinkServerHostedServiceTests
     [Test]
     public async Task TimerRangeExceedingServerGracefulWaitShouldRemainPending()
     {
-        var method = typeof(SharpLinkServer).GetMethod(
-            "WaitUntilWithProviderAsync",
-            BindingFlags.Static | BindingFlags.NonPublic,
-            binder: null,
-            types: [typeof(Task), typeof(long), typeof(TimeProvider)],
-            modifiers: null)
-            ?? throw new Exception("cannot find Server graceful wait helper");
         var provider = new ManualTimeProvider();
         var owner = new TaskCompletionSource<bool>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var wait = (Task<bool>)method.Invoke(
-            null,
-            [owner.Task, long.MaxValue, provider])!;
+        var wait = SharpLinkServer.ServerLifecycleCoordinator.WaitUntilWithProviderForDiagnosticsAsync(
+            owner.Task,
+            long.MaxValue,
+            provider);
 
         Ensure(provider.ActiveTimerCount == 1,
             "a timer-range-exceeding graceful wait must own one provider timer");

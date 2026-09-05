@@ -64,7 +64,7 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Ready,
             "server must be running before the injected accept failure");
 
-        var stateGate = GetPrivateLock(server, "_stateGate");
+        var stateGate = ((SharpLinkServer)server).LifecycleForDiagnostics.StateGate;
         stateGate.Enter();
         try
         {
@@ -91,16 +91,6 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
         Ensure(Capture(() => server.ReplaceInterceptors([new PassThroughServerInterceptor()]))
                 is InvalidOperationException,
             "server replacement after fault must be rejected");
-    }
-
-    private static System.Threading.Lock GetPrivateLock(object target, string fieldName)
-    {
-        var field = target.GetType().GetField(
-            fieldName,
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
-            ?? throw new Exception($"cannot find private lock '{fieldName}'");
-        return (System.Threading.Lock)(field.GetValue(target)
-            ?? throw new Exception($"private lock '{fieldName}' is null"));
     }
 
     private static void SetPrivateField<T>(object target, string fieldName, T value)
