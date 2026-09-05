@@ -261,6 +261,7 @@ public partial class RpcGenerator
 
     private static bool RequiresGeneratedFactory(FinalCodecPlan plan)
         => plan is FinalGeneratedDtoCodecPlan or
+            FinalUnionCodecPlan or
             FinalCustomCodecPlan or
             FinalAdapterCodecPlan or
             FinalCollectionCodecPlan { WireStrategy: FinalCollectionWireStrategy.ChildCodec };
@@ -269,6 +270,7 @@ public partial class RpcGenerator
         => plan switch
         {
             FinalGeneratedDtoCodecPlan => codec.Kind == GeneratedCodecKind.Dto,
+            FinalUnionCodecPlan => codec.Kind == GeneratedCodecKind.Union,
             FinalCustomCodecPlan custom =>
                 codec.Kind == GeneratedCodecKind.Custom &&
                 string.Equals(codec.CustomCodecType, custom.CodecTypeName, StringComparison.Ordinal),
@@ -309,7 +311,7 @@ public partial class RpcGenerator
             {
                 if (!RequiresGeneratedFactory(plan) || scopedTypes.Contains(plan.TypeName))
                     continue;
-                if (DtoAnalysisState.GetFinalCodecPlanDependencies(plan).Any(scopedTypes.Contains))
+                if (DtoAnalysisState.GetFinalCodecDependenciesIncludingUnion(plan).Any(scopedTypes.Contains))
                     changed |= scopedTypes.Add(plan.TypeName);
             }
         }
@@ -688,7 +690,7 @@ public partial class RpcGenerator
                 }
 
                 var dependencies = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var dependencyTypeName in GetFinalCodecPlanDependencies(plan))
+                foreach (var dependencyTypeName in GetFinalCodecDependenciesIncludingUnion(plan))
                 {
                     if (localFactoryTypes.Contains(dependencyTypeName) ||
                         !symbolsByType.TryGetValue(dependencyTypeName, out var dependencyType))
@@ -723,6 +725,14 @@ public partial class RpcGenerator
             if (_models.TryGetValue(typeName, out var finalModel) &&
                 finalModel.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
             {
+                return;
+            }
+            if (_models.TryGetValue(typeName, out finalModel) &&
+                finalModel.Kind == GeneratedCodecKind.Union &&
+                TryGetNativeUnionCases(type, reportDiagnostics: false, out var unionCases))
+            {
+                foreach (var unionCase in unionCases)
+                    CollectFinalBindingTypes(unionCase.Type, reachable, seen, depth + 1);
                 return;
             }
             if (type is IArrayTypeSymbol array)
