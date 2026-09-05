@@ -6,6 +6,7 @@ public partial class RpcGenerator
     {
         internal ImmutableArray<GeneratedCodecHashModel> BuildFinalCodecHashes(FinalCodecGraph graph)
         {
+            graph = ApplySharpPackSidecarCodecIdentities(graph);
             var cache = new Dictionary<string, RpcHashValue>(StringComparer.Ordinal);
             return graph.Plans
                 .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
