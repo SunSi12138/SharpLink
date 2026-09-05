@@ -1,0 +1,112 @@
+name: Issue 247 admission candidate source gates v5
+
+on:
+  push:
+    branches:
+      - tmp/issue247-buildfix-v5-20260905
+
+permissions:
+  contents: write
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BASE_SHA: ed03b9a3a9ae7f3eecc3963d0655f299faf7e4c2
+      CANDIDATE_BRANCH: tmp/issue247-candidate-v5-20260905
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout v3 candidate script source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: tmp/issue247-allocation-sweep-v3-20260905
+          fetch-depth: 2
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Recreate candidate and add local assertion helper
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/issue247-v5
+          cp .github/workflows/issue247-allocation-sweep-v3-temp.yml /tmp/v3.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('/tmp/v3.yml').read_text()
+          marker = "          python3 - <<'PY'\n"
+          start = text.index(marker) + len(marker)
+          end = text.index("\n          PY\n", start)
+          block = text[start:end]
+          block = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in block.splitlines())
+          Path('/tmp/apply-candidate.py').write_text(block + "\n")
+          PY
+          git fetch origin "$BASE_SHA" --depth=1
+          git reset --hard "$BASE_SHA"
+          python3 /tmp/apply-candidate.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('test/SharpLink.UnitTests/Server/AdmissionAllocationRegressionTests.cs')
+          s = p.read_text()
+          index = s.rfind('\n}')
+          if index < 0:
+              raise SystemExit('test class closing brace missing')
+          helper = '''
+
+              private static void Ensure(bool condition, string message)
+              {
+                  if (!condition)
+                      throw new InvalidOperationException(message);
+              }
+          '''
+          p.write_text(s[:index] + helper + s[index:])
+          PY
+          git diff --check
+          git status --short | tee artifacts/issue247-v5/candidate-status.txt
+          git diff > artifacts/issue247-v5/tracked.patch
+          git diff --no-index /dev/null src/SharpLink.Server/Admission/SharpLinkAdmissionController.FastInput.cs > artifacts/issue247-v5/fast-input.patch || true
+          git diff --no-index /dev/null test/SharpLink.UnitTests/Server/AdmissionAllocationRegressionTests.cs > artifacts/issue247-v5/tests.patch || true
+
+      - name: Run source build and unit gates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          dotnet restore Sharplink.slnx
+          python3 eng/check-project-reference-boundaries.py
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+          ./eng/verify-generated-assembly-dependencies.sh
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build \
+            | tee artifacts/issue247-v5/unit-tests.log
+
+      - name: Publish temporary candidate tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(git status --short | wc -l)" -eq 5
+          git switch -C "$CANDIDATE_BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+            src/SharpLink.Server/Admission/SharpLinkAdmissionController.FastInput.cs \
+            src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs \
+            test/SharpLink.UnitTests/Server/AdmissionAllocationRegressionTests.cs
+          git commit -m "test: stage issue247 admission allocation candidate"
+          git push --force origin HEAD:refs/heads/$CANDIDATE_BRANCH
+          git rev-parse HEAD | tee artifacts/issue247-v5/candidate-sha.txt
+
+      - name: Upload source evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue247-source-gate-v5-evidence
+          path: artifacts/issue247-v5
+          if-no-files-found: error
+          retention-days: 30
