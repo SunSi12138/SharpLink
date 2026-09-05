@@ -265,7 +265,14 @@ public interface IContract : SharpLink.Sdk.IService
             "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]"
         };
         attributes.AddRange(extraAssemblyAttributes);
-        return AddAssemblyAttributes(source, attributes.ToArray());
+
+        const string marker = "namespace SharpLink.Sdk";
+        var insertionIndex = source.IndexOf(marker, StringComparison.Ordinal);
+        if (insertionIndex < 0)
+            throw new InvalidOperationException("SharpLink.Sdk fixture marker was not found.");
+        return source.Insert(
+            insertionIndex,
+            string.Join(Environment.NewLine, attributes) + Environment.NewLine + Environment.NewLine);
     }
 
     private static MetadataReference CreateSharpPackVendorReference(string source)
@@ -294,11 +301,22 @@ public interface IContract : SharpLink.Sdk.IService
         var compilation = GeneratorTestHarness.CreateCompilation(assemblyName, source, additionalReferences);
         IIncrementalGenerator generator = new RpcGenerator();
         GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
-        driver = driver.RunGeneratorsAndUpdateCompilation(
-            compilation,
-            out var outputCompilation,
-            out var driverDiagnostics);
-        return new GeneratorExecution(driver.GetRunResult(), outputCompilation, driverDiagnostics);
+        driver = driver.RunGenerators(compilation);
+        var runResult = driver.GetRunResult();
+
+        var integrationCompilation = compilation;
+        foreach (var generated in runResult.Results
+                     .SelectMany(static item => item.GeneratedSources)
+                     .Where(static item => item.HintName == "SharpLink.SharpPackIntegration.g.cs"))
+        {
+            integrationCompilation = integrationCompilation.AddSyntaxTrees(
+                CSharpSyntaxTree.ParseText(
+                    generated.SourceText.ToString(),
+                    CSharpParseOptions.Default,
+                    generated.HintName));
+        }
+
+        return new GeneratorExecution(runResult, integrationCompilation, runResult.Diagnostics);
     }
 
     private static string GetSharpPackGeneratedSource(GeneratorDriverRunResult result)
