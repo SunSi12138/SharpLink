@@ -42,11 +42,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/issue410-dynamic-fixed-integration.py
+          python3 .github/issue410-dynamic-fixed-integration-split.py
           cp .github/issue410-dynamic-fixed-integration-tests.cs \
             test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs
           cp .github/issue410-dynamic-fixed-integration-benchmarks.cs \
             test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedBenchmarks.cs
           git add -N \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.Types.cs \
             test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs \
             test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedBenchmarks.cs
 
@@ -92,6 +94,7 @@ jobs:
             src/SharpLink.Server/Admission/DynamicFixedWindowRateLimiter.cs \
             src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
             src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
+            src/SharpLink.Server/Admission/AdmissionStateKernel.Types.cs \
             src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
             src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs \
             test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs \
