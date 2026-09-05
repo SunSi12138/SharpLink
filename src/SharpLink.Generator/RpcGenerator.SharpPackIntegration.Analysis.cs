@@ -65,7 +65,36 @@ public partial class RpcGenerator
             if (type is not INamedTypeSymbol named)
                 return Fail(typeName, path, "the CLR type shape is not a closed named type", location);
 
-            if (named.TypeKind == TypeKind.Enum || named.IsUnmanagedType || HasExistingSharpPackSupport(named))
+            if (named.TypeKind == TypeKind.Enum || named.IsUnmanagedType)
+            {
+                _states[typeName] = 2;
+                return true;
+            }
+
+            if (IsCurrentCompilationSharpPackGeneratedSupport(_compilation, named))
+            {
+                _states[typeName] = 1;
+                var ok = true;
+                foreach (var dependency in
+                         GetCurrentCompilationSharpPackGeneratedDependencies(
+                             _compilation,
+                             named))
+                {
+                    ValidateSharpPackSidecarMetadata(
+                        _compilation,
+                        this,
+                        dependency.Type);
+                    ok &= AnalyzeType(
+                        dependency.Type,
+                        path + " -> " + dependency.PathSegment,
+                        dependency.Location ?? location);
+                }
+
+                _states[typeName] = ok ? 2 : 3;
+                return ok;
+            }
+
+            if (HasExistingSharpPackSupport(named))
             {
                 _states[typeName] = 2;
                 return true;
@@ -367,16 +396,6 @@ public partial class RpcGenerator
 
         private bool HasExistingSharpPackSupport(INamedTypeSymbol type)
         {
-            var isCurrentAssembly = SymbolEqualityComparer.Default.Equals(
-                type.ContainingAssembly,
-                _compilation.Assembly);
-            if (isCurrentAssembly &&
-                (HasAttribute(type, "SharpPack", "SharpPackableAttribute") ||
-                 HasAttribute(type, "SharpPack", "SharpPackUnionAttribute")))
-            {
-                return true;
-            }
-
             foreach (var iface in type.AllInterfaces)
             {
                 if ((_sharpPackable is not null &&
@@ -457,28 +476,7 @@ public partial class RpcGenerator
         }
 
         private static bool HasSharpPackCustomFormatterAttribute(ISymbol symbol)
-        {
-            foreach (var attribute in symbol.GetAttributes())
-            {
-                for (var current = attribute.AttributeClass;
-                     current is not null;
-                     current = current.BaseType)
-                {
-                    if (string.Equals(
-                            current.ContainingNamespace?.ToDisplayString(),
-                            "SharpPack",
-                            StringComparison.Ordinal) &&
-                        string.Equals(
-                            current.MetadataName,
-                            "SharpPackCustomFormatterAttribute`1",
-                            StringComparison.Ordinal))
-                    {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
+            => HasSharpPackMemberCustomFormatterAttribute(symbol);
 
         private bool Fail(string typeName, string path, string reason, Location? location)
         {
