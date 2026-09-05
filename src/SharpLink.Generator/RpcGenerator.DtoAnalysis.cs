@@ -87,7 +87,10 @@ public partial class RpcGenerator
         }
 
         public DtoAnalysisPassResult Analyze()
-            => AnalyzeDtoCandidates();
+        {
+            ValidateDeclaredUnionRuntimeMappings();
+            return AnalyzeDtoCandidates();
+        }
 
         private void Report(
             DtoDiagnosticKind kind,
