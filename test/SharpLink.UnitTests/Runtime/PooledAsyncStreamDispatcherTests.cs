@@ -1501,12 +1501,12 @@ public class PooledAsyncStreamDispatcherTests
             },
             state: null);
         registrationField.SetValue(dispatcher, blockingRegistration);
-        var cancellationTask = Task.Run(cancellation.Cancel);
+        var cancellationTask = LongRunningTestWorker.Run(cancellation.Cancel);
         Ensure(callbackEntered.Wait(TimeSpan.FromSeconds(3)),
             "the synthetic old cancellation callback must be active");
 
         PooledAsyncStreamDispatcher<ReferenceItem>? rented = null;
-        var rentTask = Task.Run(() =>
+        var rentTask = LongRunningTestWorker.Run(() =>
         {
             rented = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
         });
@@ -1515,7 +1515,7 @@ public class PooledAsyncStreamDispatcherTests
                 TimeSpan.FromSeconds(3)),
             "the new rent must remove the dispatcher from the pool before reset blocks");
 
-        var delayedReturn = Task.Run(delayedOldLease.OnDispatchesDrained);
+        var delayedReturn = LongRunningTestWorker.Run(delayedOldLease.OnDispatchesDrained);
         try
         {
             var preparingLeaseState = (long)(leaseStateField.GetValue(dispatcher)
