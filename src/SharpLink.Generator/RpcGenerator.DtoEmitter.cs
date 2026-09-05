@@ -29,18 +29,7 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
-        foreach (var adapter in emittedCodecs
-                     .Where(static codec => codec.Kind == GeneratedCodecKind.Adapter)
-                     .GroupBy(static codec => codec.AdapterId, StringComparer.Ordinal)
-                     .Select(static group => group.First())
-                     .OrderBy(static codec => codec.AdapterId, StringComparer.Ordinal))
-        {
-            sb.AppendLine($"internal static class {GetAdapterHolderName(adapter.AdapterId!)}");
-            sb.AppendLine("{");
-            sb.AppendLine($"    internal static readonly IRpcCodecAdapter Instance = new {adapter.AdapterType}();");
-            sb.AppendLine("}");
-            sb.AppendLine();
-        }
+        AppendAdapterCodecHolders(sb, emittedCodecs);
 
         if (emittedCodecs.Any(static codec =>
                 codec.Kind == GeneratedCodecKind.Dto &&
@@ -67,88 +56,6 @@ public partial class RpcGenerator
         }
 
         return sb.ToString();
-    }
-
-    private static void AppendCustomCodecFactory(StringBuilder sb, GeneratedCodecModel model)
-    {
-        sb.AppendLine($"internal static class {model.CodecName}");
-        sb.AppendLine("{");
-        sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
-        sb.AppendLine("    {");
-        sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
-        AppendFactoryCodecHash(sb, model);
-        sb.AppendLine("        public string? AdapterId => null;");
-        sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
-        sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
-        sb.AppendLine("            if (adapterScope is not null)");
-        sb.AppendLine("                throw new ArgumentException(\"Custom Codec factories do not accept an adapter scope.\", nameof(adapterScope));");
-        sb.AppendLine($"            return new {model.CustomCodecType}();");
-        sb.AppendLine("        }");
-        sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
-        sb.AppendLine();
-    }
-
-    private static void AppendGeneratedUtf16Helper(StringBuilder sb)
-    {
-        sb.AppendLine("internal static class __SharpLinkGeneratedUtf16");
-        sb.AppendLine("{");
-        sb.AppendLine("    internal static int GetByteCount(string value) => checked(value.Length * sizeof(char));");
-        sb.AppendLine();
-        sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        var length = writer.GetSpan(sizeof(int));");
-        sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(length, byteCount);");
-        sb.AppendLine("        writer.Advance(sizeof(int));");
-        sb.AppendLine("        if (byteCount == 0)");
-        sb.AppendLine("            return;");
-        sb.AppendLine("        var payload = writer.GetSpan(byteCount);");
-        sb.AppendLine("        value.AsSpan().CopyTo(global::System.Runtime.InteropServices.MemoryMarshal.Cast<byte, char>(payload));");
-        sb.AppendLine("        writer.Advance(byteCount);");
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
-        sb.AppendLine();
-    }
-
-    private static void AppendAdapterCodecFactory(StringBuilder sb, GeneratedCodecModel model)
-    {
-        sb.AppendLine($"internal static class {model.CodecName}");
-        sb.AppendLine("{");
-        sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
-        sb.AppendLine("    {");
-        sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
-        AppendFactoryCodecHash(sb, model);
-        sb.AppendLine($"        public string? AdapterId => \"{EscapeString(model.AdapterId!)}\";");
-        sb.AppendLine($"        public IRpcCodecAdapter Adapter => {GetAdapterHolderName(model.AdapterId!)}.Instance;");
-        sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
-        sb.AppendLine("            ArgumentNullException.ThrowIfNull(adapterScope);");
-        sb.AppendLine($"            return adapterScope.CreateCodec<{model.TypeName}>();");
-        sb.AppendLine("        }");
-        sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
-        sb.AppendLine();
-    }
-
-    private static string GetAdapterHolderName(string adapterId)
-        => "__SharpLinkGeneratedAdapter_" + ComputeEmitterHash(adapterId).ToString("X16", InvariantCulture);
-
-    private static ulong ComputeEmitterHash(string value)
-    {
-        const ulong offset = 14695981039346656037UL;
-        const ulong prime = 1099511628211UL;
-        var hash = offset;
-        foreach (var character in value)
-        {
-            hash ^= character;
-            hash *= prime;
-        }
-        return hash;
     }
 
     private static void AppendDtoCodec(StringBuilder sb, DtoCodecAnalysisModel model)
