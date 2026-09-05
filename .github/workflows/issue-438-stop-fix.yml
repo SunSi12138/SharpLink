@@ -6,10 +6,10 @@ on:
       - tmp/issue-438-stop-fix
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-test-push:
+  patch-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -19,7 +19,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: fix/issue-438-sendpump-mailbox
-          fetch-depth: 0
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
       - name: Patch stop crossing
@@ -75,14 +74,8 @@ jobs:
                   {
                       session.SendPacket(frame);
                       await blockingWriter.Entered.WaitAsync(TimeSpan.FromSeconds(2));
-
-                      // The pump has dequeued the frame but is still inside WriteFrame. Stop now:
-                      // its wake is latched before WaitForMoreUntilDeadlineAsync can arm. Once the
-                      // write is released, stale data-wake cleanup must not swallow this stop and
-                      // park the pump on the effectively infinite MaxLatency timer.
                       var dispose = session.DisposeAsync().AsTask();
                       blockingWriter.Release();
-
                       await dispose.WaitAsync(TimeSpan.FromSeconds(2));
                       EnsureReturned(frame, "shutdown must return the staged frame owner");
                       Ensure(session.QueuedSendBytes == 0,
@@ -117,14 +110,8 @@ jobs:
 
               private static void EnsureReturned(IRpcByteBufferWriter writer, string message)
               {
-                  try
-                  {
-                      _ = writer.WrittenCount;
-                  }
-                  catch (ObjectDisposedException)
-                  {
-                      return;
-                  }
+                  try { _ = writer.WrittenCount; }
+                  catch (ObjectDisposedException) { return; }
                   throw new Exception(message);
               }
 
@@ -137,7 +124,6 @@ jobs:
 
                   internal Task Entered => _entered.Task;
                   internal void Release() => _release.Set();
-
                   public override void Advance(int bytes) => inner.Advance(bytes);
                   public override void CancelPendingFlush() => inner.CancelPendingFlush();
                   public override void Complete(Exception? exception = null) => inner.Complete(exception);
@@ -145,19 +131,16 @@ jobs:
                       => inner.CompleteAsync(exception);
                   public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
                       => inner.FlushAsync(cancellationToken);
-
                   public override Memory<byte> GetMemory(int sizeHint = 0)
                   {
                       BlockOnce();
                       return inner.GetMemory(sizeHint);
                   }
-
                   public override Span<byte> GetSpan(int sizeHint = 0)
                   {
                       BlockOnce();
                       return inner.GetSpan(sizeHint);
                   }
-
                   private void BlockOnce()
                   {
                       if (Interlocked.Exchange(ref _blockNext, 0) == 0)
@@ -173,11 +156,12 @@ jobs:
         run: dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
-      - name: Commit verified fix
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/SharpLink.Runtime/RpcSession.SendPump.cs test/SharpLink.UnitTests/Runtime/SendPumpTimedWaitStopTests.cs
-          git commit -m "fix(runtime): preserve stop wake across timed batching"
-          git push origin HEAD:fix/issue-438-sendpump-mailbox
+      - name: Package patched files
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-stop-fix-files
+          path: |
+            src/SharpLink.Runtime/RpcSession.SendPump.cs
+            test/SharpLink.UnitTests/Runtime/SendPumpTimedWaitStopTests.cs
+          if-no-files-found: error
