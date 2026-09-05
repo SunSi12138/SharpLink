@@ -45,6 +45,15 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>
         => Arm(deadline: null);
 
     /// <summary>
+    /// Discards a latched signal that the single consumer has already accounted for by
+    /// inspecting/draining its mailbox. The caller must re-check mailbox visibility after this
+    /// call before arming a wait: a producer crossing this CAS may have published new data while
+    /// its signal is being coalesced with the old latch.
+    /// </summary>
+    internal void ConsumeLatched()
+        => Interlocked.CompareExchange(ref _state, Idle, Latched);
+
+    /// <summary>
     /// Waits for a producer signal or for <paramref name="timeout"/> to expire. Both outcomes
     /// claim the same arm: <c>true</c> means producer data/stop/fault was signalled and
     /// <c>false</c> means the deadline won. The caller must await the returned value task before
