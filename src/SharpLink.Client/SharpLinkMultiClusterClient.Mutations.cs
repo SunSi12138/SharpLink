@@ -214,18 +214,17 @@ internal sealed partial class SharpLinkMultiClusterClient
 
             LogMutationStage(_logger, "replace", cluster.Value, "snapshot_published", "success", publishedBudget,
                 _timeProvider.GetElapsedTime(started).TotalMilliseconds);
-            var cleanup = TrackRetiredSlotCleanup(
+            var retirement = TrackRetiredSlotCleanup(
                 existingSlot!,
                 existingSlot!.ConfiguredConnectionBudget,
                 "replace",
                 cluster,
                 gracefulTimeout);
             failureStage = "retired_cleanup_wait";
-            var released = await WaitForRetiredCleanupAsync(
-                cleanup,
+            var released = await retirement.WaitAsync(
                 gracefulTimeout,
-                cancellationToken,
-                existingSlot!.Client).ConfigureAwait(false);
+                GetTimeProvider(existingSlot!.Client),
+                cancellationToken).ConfigureAwait(false);
             if (!released)
             {
                 LogMutationStage(_logger, "replace", cluster.Value, "forced_stop", "cleanup_pending",
@@ -297,18 +296,17 @@ internal sealed partial class SharpLinkMultiClusterClient
 
             LogMutationStage(_logger, "remove", cluster.Value, "snapshot_published", "success", publishedBudget,
                 _timeProvider.GetElapsedTime(started).TotalMilliseconds);
-            var cleanup = TrackRetiredSlotCleanup(
+            var retirement = TrackRetiredSlotCleanup(
                 existingSlot!,
                 existingSlot!.ConfiguredConnectionBudget,
                 "remove",
                 cluster,
                 gracefulTimeout);
             failureStage = "retired_cleanup_wait";
-            var released = await WaitForRetiredCleanupAsync(
-                cleanup,
+            var released = await retirement.WaitAsync(
                 gracefulTimeout,
-                cancellationToken,
-                existingSlot!.Client).ConfigureAwait(false);
+                GetTimeProvider(existingSlot!.Client),
+                cancellationToken).ConfigureAwait(false);
             if (!released)
             {
                 LogMutationStage(_logger, "remove", cluster.Value, "forced_stop", "cleanup_pending",
@@ -451,7 +449,7 @@ internal sealed partial class SharpLinkMultiClusterClient
         return nextRoutes.ToFrozenDictionary();
     }
 
-    private Task TrackRetiredSlotCleanup(
+    private SharpLinkRetirementHandle TrackRetiredSlotCleanup(
         SharpLinkClusterSlot retiredSlot,
         int connectionBudget,
         string operation,
@@ -465,7 +463,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             cluster,
             gracefulTimeout);
         TrackFrameworkTask(cleanup, $"MultiClusterRetiredSlot{operation}");
-        return cleanup;
+        return new SharpLinkRetirementHandle(cleanup);
     }
 
     private async Task CompleteRetiredSlotCleanupAsync(
@@ -526,17 +524,6 @@ internal sealed partial class SharpLinkMultiClusterClient
             }
         }
     }
-
-    private async Task<bool> WaitForRetiredCleanupAsync(
-        Task cleanup,
-        TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken,
-        ISharpLinkClient? client = null)
-        => await SharpLinkTimer.WaitAsync(
-            cleanup,
-            gracefulTimeout,
-            client is null ? _timeProvider : GetTimeProvider(client),
-            cancellationToken).ConfigureAwait(false);
 
     private void EndSlotMutation()
     {
