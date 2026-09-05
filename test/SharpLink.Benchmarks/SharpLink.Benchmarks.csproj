@@ -4,6 +4,7 @@
     <IsPackable>false</IsPackable>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)Generated</CompilerGeneratedFilesOutputPath>
+    <DefineConstants Condition="'$(Configuration)' == 'Release'">$(DefineConstants);SHARPLINK_RELEASE_BUILD</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

@@ -97,6 +97,52 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             builtClient);
     }
 
+    public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync()
+    {
+        var name = $"sharplink-allocation-{Guid.NewGuid():N}";
+        var localService = new BenchmarkRpcService();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseSharedMemory(name)
+            .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
+        var server = serverBuilder.Build();
+        var shutdown = new CancellationTokenSource();
+        var serverTask = Task.Run(async () =>
+        {
+            try
+            {
+                await server.RunAsync(shutdown.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+            {
+            }
+        }, CancellationToken.None);
+
+        var clientBuilder = SharpClientBuilder.Create()
+            .UseSharedMemory(name)
+            .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
+        clientBuilder.DisableRequestTimeout();
+        var client = clientBuilder.Build();
+        try
+        {
+            await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
+            return new BenchmarkEnvironment(
+                client.Get<IBenchmarkRpc>(),
+                localService,
+                shutdown,
+                serverTask,
+                server,
+                client);
+        }
+        catch
+        {
+            shutdown.Cancel();
+            await client.DisposeAsync().ConfigureAwait(false);
+            await server.DisposeAsync().ConfigureAwait(false);
+            shutdown.Dispose();
+            throw;
+        }
+    }
+
     public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
 
     public async ValueTask DisposeAsync()

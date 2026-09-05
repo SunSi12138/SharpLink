@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "runtimeMajor": 10,
+  "cases": {
+    "rpc-add-sharedmemory-c1": {
+      "samples": 5,
+      "maxBytesPerOperation": 1000000,
+      "maxSpreadBytesPerOperation": 1000000
+    },
+    "rpc-add-sharedmemory-c8": {
+      "samples": 5,
+      "maxBytesPerOperation": 1000000,
+      "maxSpreadBytesPerOperation": 1000000
+    },
+    "rpc-oneway-sharedmemory-c1": {
+      "samples": 5,
+      "maxBytesPerOperation": 1000000,
+      "maxSpreadBytesPerOperation": 1000000
+    },
+    "send-pump-idle-wake-balanced": {
+      "samples": 5,
+      "maxBytesPerOperation": 1000000,
+      "maxSpreadBytesPerOperation": 1000000
+    }
+  }
+}

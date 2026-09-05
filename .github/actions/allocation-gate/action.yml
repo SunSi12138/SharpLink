@@ -1,0 +1,56 @@
+name: Deterministic allocation gate
+description: Builds and runs the Release allocation regression harness.
+inputs:
+  artifact-directory:
+    description: Directory for JSON evidence.
+    required: false
+    default: artifacts/perf/allocation-gate
+  negative-control:
+    description: Run the injected-allocation negative control and require it to fail.
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Restore allocation gate
+      shell: bash
+      run: dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+
+    - name: Build allocation gate in Release
+      shell: bash
+      run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+
+    - name: Allocation gate harness self-tests
+      shell: bash
+      run: >-
+        dotnet run
+        --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+        -c Release
+        --no-build
+        --
+        --allocation-gate-self-test
+        --output "${{ inputs.artifact-directory }}/self-test.json"
+
+    - name: Enforce allocation budgets
+      shell: bash
+      env:
+        SHARPLINK_ALLOCATION_OUTPUT: ${{ inputs.artifact-directory }}/gate.json
+      run: ./eng/run-allocation-gate.sh
+
+    - name: Prove injected allocation is rejected
+      if: inputs.negative-control == 'true'
+      shell: bash
+      env:
+        SHARPLINK_ALLOCATION_OUTPUT: ${{ inputs.artifact-directory }}/negative-control.json
+      run: |
+        set +e
+        ./eng/run-allocation-gate.sh \
+          --filter rpc-add-sharedmemory-c1 \
+          --inject-bytes-per-operation 512
+        status=$?
+        set -e
+        if [[ $status -eq 0 ]]; then
+          echo "::error::Injected allocation negative control unexpectedly passed."
+          exit 1
+        fi
+        echo "Injected allocation was rejected as expected."
