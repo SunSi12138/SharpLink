@@ -148,7 +148,6 @@ public sealed class ExternalRequest
 public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "tests/fake/v1";
-    public string WireFormatId => "tests/fake-wire/v1";
     public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => new Scope();
 
     private sealed class Scope : SharpLink.Abstractions.IRpcCodecAdapterScope
@@ -158,7 +157,7 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     }
 }
 """,
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"tests/fake/v1\", \"tests/fake-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"tests/fake/v1\")]",
             "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(Vendor.ExternalRequest), typeof(FakeAdapter))]");
 
         var result = RunSharpPackAndCompile("SharpPackExplicitOverride", source, [vendor]);
@@ -207,9 +206,25 @@ public sealed class ExternalRequest
         string extraTypes = "",
         params string[] extraAssemblyAttributes)
     {
-        var source = BuildSource($$"""
+        var attributes = new List<string>
+        {
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter), \"sharplink.serializer.sharppack/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]"
+        };
+        attributes.AddRange(extraAssemblyAttributes);
+
+        return $$"""
+using System;
+
+{{string.Join(Environment.NewLine, attributes)}}
+
 namespace SharpLink.Sdk
 {
+    public interface IService { }
+
+    [AttributeUsage(AttributeTargets.Interface)]
+    public sealed class RpcContractAttribute : Attribute { }
+
     [Flags]
     public enum RpcCodecScope
     {
@@ -225,10 +240,41 @@ namespace SharpLink.Sdk
         public RpcCodecRouteAttribute(RpcCodecScope scope, Type adapterType) { }
     }
 
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+    public sealed class RpcCodecAdapterRegistrationAttribute : Attribute
+    {
+        public RpcCodecAdapterRegistrationAttribute(Type adapterType, string adapterId) { }
+        public Type? SelectorAttributeType { get; init; }
+    }
+
+    [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true)]
+    public sealed class RpcCodecAdapterAttribute : Attribute
+    {
+        public RpcCodecAdapterAttribute(Type adapterType) { }
+        public RpcCodecAdapterAttribute(Type targetType, Type adapterType) { }
+    }
+
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
     public sealed class RpcCodecSemanticIdentityAttribute : Attribute
     {
         public RpcCodecSemanticIdentityAttribute(ulong high, ulong low) { }
+    }
+}
+
+namespace SharpLink.Abstractions
+{
+    public interface IRpcCodec { }
+    public interface IRpcCodec<T> : IRpcCodec { }
+
+    public interface IRpcCodecAdapter
+    {
+        string AdapterId { get; }
+        IRpcCodecAdapterScope CreateScope();
+    }
+
+    public interface IRpcCodecAdapterScope : IDisposable
+    {
+        IRpcCodec<T> CreateCodec<T>();
     }
 }
 
@@ -245,7 +291,6 @@ namespace SharpLink.Serializer.SharpPack
     public sealed class SharpPackRpcCodecAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     {
         public string AdapterId => "sharplink.serializer.sharppack/v1";
-        public string WireFormatId => "sharppack/v1";
         public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotSupportedException();
     }
 }
@@ -257,22 +302,7 @@ public interface IContract : SharpLink.Sdk.IService
 }
 
 {{extraTypes}}
-""");
-
-        var attributes = new List<string>
-        {
-            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter), \"sharplink.serializer.sharppack/v1\", \"sharppack/v1\")]",
-            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]"
-        };
-        attributes.AddRange(extraAssemblyAttributes);
-
-        const string marker = "namespace SharpLink.Sdk";
-        var insertionIndex = source.IndexOf(marker, StringComparison.Ordinal);
-        if (insertionIndex < 0)
-            throw new InvalidOperationException("SharpLink.Sdk fixture marker was not found.");
-        return source.Insert(
-            insertionIndex,
-            string.Join(Environment.NewLine, attributes) + Environment.NewLine + Environment.NewLine);
+""";
     }
 
     private static MetadataReference CreateSharpPackVendorReference(string source)
