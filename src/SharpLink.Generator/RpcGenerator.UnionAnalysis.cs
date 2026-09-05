@@ -7,13 +7,19 @@ public partial class RpcGenerator
 
     private sealed partial class DtoAnalysisState
     {
+        private readonly Dictionary<string, INamedTypeSymbol> _nativeUnionTypes = new(StringComparer.Ordinal);
+
         private bool TryVisitNativeUnion(ITypeSymbol type, List<ITypeSymbol> stack, int depth)
         {
+            // Referenced generated identity remains assembly-owned and wins before any local
+            // native-union materialization, matching final Codec selection precedence.
+            if (HasReferencedGeneratedCodecIdentityCandidate(type))
+                return false;
             if (!TryGetNativeUnionCases(type, reportDiagnostics: true, out var cases))
                 return false;
 
             var typeName = GetTypeName(type);
-            if (cases.IsDefaultOrEmpty)
+            if (cases.IsDefaultOrEmpty || type is not INamedTypeSymbol unionType)
             {
                 _failed.Add(typeName);
                 return true;
@@ -39,6 +45,7 @@ public partial class RpcGenerator
                     .Append(GetTypeName(unionCase.Type));
             }
 
+            _nativeUnionTypes[typeName] = unionType;
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
                 GetCodecName(typeName, _contractMode),
