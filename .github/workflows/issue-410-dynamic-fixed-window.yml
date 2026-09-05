@@ -1,4 +1,4 @@
-name: Issue 410 dynamic fixed window integration
+name: Issue 410 dynamic fixed controller diagnostic
 
 on:
   push:
@@ -16,9 +16,9 @@ env:
   TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
 
 jobs:
-  validate-integration:
+  controller-diagnostic:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 35
     steps:
       - name: Checkout prototype branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,90 +28,65 @@ jobs:
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
 
-      - name: Record environment
-        shell: bash
-        run: |
-          mkdir -p artifacts/issue410-dynamic-fixed-integration/environment
-          git rev-parse HEAD > artifacts/issue410-dynamic-fixed-integration/environment/head-sha.txt
-          git merge-base HEAD origin/dev > artifacts/issue410-dynamic-fixed-integration/environment/base-sha.txt
-          dotnet --info > artifacts/issue410-dynamic-fixed-integration/environment/dotnet-info.txt
-          lscpu > artifacts/issue410-dynamic-fixed-integration/environment/cpu.txt
-
-      - name: Apply Global FixedWindow integration in workspace only
+      - name: Apply previously validated Global FixedWindow integration
         shell: bash
         run: |
           set -euo pipefail
           python3 .github/issue410-dynamic-fixed-integration.py
           python3 .github/issue410-dynamic-fixed-compile-fix.py
           python3 .github/issue410-dynamic-fixed-integration-split.py
-          cp .github/issue410-dynamic-fixed-integration-tests.cs \
-            test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs
-          cp .github/issue410-dynamic-fixed-integration-benchmarks.cs \
-            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedBenchmarks.cs
-          python3 .github/issue410-dynamic-fixed-benchmark-fix.py
+          cp .github/issue410-dynamic-fixed-controller-benchmarks.cs \
+            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedControllerBenchmarks.cs
           git add -N \
             src/SharpLink.Server/Admission/AdmissionStateKernel.Types.cs \
-            test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs \
-            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedBenchmarks.cs
+            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedControllerBenchmarks.cs
 
       - name: Restore
-        run: dotnet restore Sharplink.slnx
+        run: dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
 
       - name: Verify formatting
-        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+        run: dotnet format whitespace test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore --verify-no-changes --verbosity minimal
 
       - name: Maintainability gate
         run: |
           python3 eng/test-verify-maintainability.py
           bash eng/check-maintainability.sh
 
-      - name: Build Release
-        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Build benchmark and integrated server
+        run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
 
-      - name: Full Unit with integrated prototype
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-
-      - name: Integration regression
-        run: dotnet test --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release --no-build
-
-      - name: Integrated FixedWindow RPC benchmark
+      - name: Run integrated Controller FixedWindow matrix
         run: |
+          mkdir -p artifacts/issue410-dynamic-fixed-controller/environment
+          git rev-parse HEAD > artifacts/issue410-dynamic-fixed-controller/environment/head-sha.txt
+          git merge-base HEAD origin/dev > artifacts/issue410-dynamic-fixed-controller/environment/base-sha.txt
+          dotnet --info > artifacts/issue410-dynamic-fixed-controller/environment/dotnet-info.txt
+          lscpu > artifacts/issue410-dynamic-fixed-controller/environment/cpu.txt
           dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*DynamicFixedWindowIntegratedRpcBenchmarks*' \
+            --filter '*DynamicFixedWindowIntegratedControllerBenchmarks*' \
             --launchCount 1 --warmupCount 3 --iterationCount 10 \
-            --artifacts artifacts/issue410-dynamic-fixed-integration/rpc
+            --artifacts artifacts/issue410-dynamic-fixed-controller/controller
 
-      - name: Integrated FixedWindow update benchmark
-        run: |
-          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*DynamicFixedWindowIntegratedUpdateBenchmarks*' \
-            --launchCount 1 --warmupCount 3 --iterationCount 10 \
-            --artifacts artifacts/issue410-dynamic-fixed-integration/update
-
-      - name: Record workspace candidate
+      - name: Record integrated hot-path candidate
         if: always()
         shell: bash
         run: |
+          mkdir -p artifacts/issue410-dynamic-fixed-controller
           git diff -- \
-            src/SharpLink.Server/Admission/DynamicFixedWindowRateLimiter.cs \
             src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
             src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
             src/SharpLink.Server/Admission/AdmissionStateKernel.Types.cs \
             src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
             src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs \
-            test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs \
-            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedBenchmarks.cs \
-            > artifacts/issue410-dynamic-fixed-integration/integration.patch
-          git diff --stat > artifacts/issue410-dynamic-fixed-integration/integration-stat.txt
-          grep -R -n -E 'AdmissionDynamicFixedWindowUpdate|GlobalFixedWindowActivationModeForPrototype|LimiterForAdmission' \
-            src/SharpLink.Server/Admission \
-            > artifacts/issue410-dynamic-fixed-integration/integration-symbols.txt
+            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedControllerBenchmarks.cs \
+            > artifacts/issue410-dynamic-fixed-controller/integration.patch
+          git diff --stat > artifacts/issue410-dynamic-fixed-controller/integration-stat.txt
 
-      - name: Upload integration evidence
+      - name: Upload Controller diagnostic evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-410-dynamic-fixed-integration-${{ github.sha }}
-          path: artifacts/issue410-dynamic-fixed-integration
+          name: issue-410-dynamic-fixed-controller-${{ github.sha }}
+          path: artifacts/issue410-dynamic-fixed-controller
           if-no-files-found: warn
           retention-days: 30
