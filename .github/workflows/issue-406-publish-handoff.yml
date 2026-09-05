@@ -1,0 +1,74 @@
+name: Issue 406 publish handoff branch
+
+on:
+  push:
+    branches:
+      - tmp/issue-406-handoff-stage
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: tmp/issue-406-handoff-stage
+          fetch-depth: 1
+
+      - name: Materialize production implementation on latest dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch --depth=30 origin \
+            dev:refs/remotes/origin/dev \
+            tmp/issue-406-semantic-option2:refs/remotes/origin/tmp/issue-406-semantic-option2 \
+            tmp/issue-406-production-stage:refs/remotes/origin/tmp/issue-406-production-stage
+
+          for script in tmp-issue-406-option2.py tmp-issue-406-option2-fix.py tmp-issue-406-option2-server-context.py; do
+            git show "refs/remotes/origin/tmp/issue-406-semantic-option2:eng/$script" > "/tmp/$script"
+          done
+          git show "refs/remotes/origin/tmp/issue-406-production-stage:eng/tmp-issue-406-production-cleanup.py" > /tmp/tmp-issue-406-production-cleanup.py
+
+          git checkout -B feature/issue-406-publication-composition refs/remotes/origin/dev
+
+          python3 /tmp/tmp-issue-406-option2.py
+          python3 /tmp/tmp-issue-406-option2-fix.py
+          python3 /tmp/tmp-issue-406-option2-server-context.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/tmp-issue-406-production-cleanup.py')
+          text = path.read_text()
+          old = "    '### Changed\\n\\n',\n    '### Changed\\n\\n'"
+          new = "    '## [Unreleased]\\n\\n### Changed\\n\\n',\n    '## [Unreleased]\\n\\n### Changed\\n\\n'"
+          if text.count(old) != 1:
+              raise SystemExit(f'cleanup changelog anchor patch expected once, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          python3 /tmp/tmp-issue-406-production-cleanup.py
+
+          git diff --check
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+          test -n "$changed"
+          if printf '%s\n' "$changed" | grep -E '(^|/)(tmp-issue-406|issue-406-.*\.ya?ml)|^\.github/workflows/|^eng/tmp-'; then
+            echo 'temporary issue-406 scaffolding leaked into production diff' >&2
+            exit 1
+          fi
+          if printf '%s\n' "$changed" | grep -Ev '^(CHANGELOG\.md|src/|test/)'; then
+            echo 'unexpected path outside CHANGELOG/src/test in production diff' >&2
+            exit 1
+          fi
+
+          ! git grep -n -E 'ClientInterceptorContinuation|ClientContinuationState|ServerPipelineFacts|ServerInterceptorContinuation|ServerContinuationState|JoinAndReturnAsync' -- \
+            src/SharpLink.Client/SharpLinkClient.Interceptors.cs \
+            src/SharpLink.Server/SharpLinkServer.Interceptors.cs
+
+          git add -A
+          git commit -m "perf(interceptors): compose generations at publication time"
+          git push origin HEAD:refs/heads/feature/issue-406-publication-composition
