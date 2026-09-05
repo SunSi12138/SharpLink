@@ -42,6 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/issue410-dynamic-fixed-integration.py
+          python3 .github/issue410-dynamic-fixed-compile-fix.py
           python3 .github/issue410-dynamic-fixed-integration-split.py
           cp .github/issue410-dynamic-fixed-integration-tests.cs \
             test/SharpLink.UnitTests/Server/DynamicFixedWindowIntegrationPrototypeTests.cs
