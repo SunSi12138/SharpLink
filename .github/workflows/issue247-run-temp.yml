@@ -1,0 +1,37 @@
+name: Issue 247 final isolated evaluation
+
+on:
+  push:
+    branches:
+      - tmp/issue247-final-20260905
+
+permissions:
+  contents: write
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout temporary branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 6
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Run isolated source, correctness, performance, and allocation gates
+        shell: bash
+        run: bash .github/issue247-run-temp.sh
+
+      - name: Upload final issue evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue247-final-evidence
+          path: artifacts/issue247-final
+          if-no-files-found: error
+          retention-days: 30
