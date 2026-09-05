@@ -9,6 +9,67 @@ public partial class RpcGenerator
     {
         private readonly Dictionary<string, INamedTypeSymbol> _nativeUnionTypes = new(StringComparer.Ordinal);
 
+        private void ValidateDeclaredUnionRuntimeMappings()
+            => ValidateDeclaredUnionRuntimeMappings(_compilation.Assembly.GlobalNamespace);
+
+        private void ValidateDeclaredUnionRuntimeMappings(INamespaceSymbol namespaceSymbol)
+        {
+            foreach (var type in namespaceSymbol.GetTypeMembers())
+                ValidateDeclaredUnionRuntimeMappings(type);
+            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+                ValidateDeclaredUnionRuntimeMappings(nestedNamespace);
+        }
+
+        private void ValidateDeclaredUnionRuntimeMappings(INamedTypeSymbol unionType)
+        {
+            var candidates = unionType.GetAttributes()
+                .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcUnionCaseAttribute"))
+                .Select(attribute =>
+                {
+                    if (attribute.ConstructorArguments.Length != 2 ||
+                        attribute.ConstructorArguments[0].Value is not int discriminator ||
+                        attribute.ConstructorArguments[1].Value is not INamedTypeSymbol caseType ||
+                        GetInvalidUnionCaseDetail(unionType, discriminator, caseType, _compilation) is not null)
+                    {
+                        return null;
+                    }
+
+                    return new NativeUnionCaseSymbol(
+                        discriminator,
+                        caseType,
+                        attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ??
+                        unionType.Locations.FirstOrDefault());
+                })
+                .Where(static item => item is not null)
+                .Select(static item => item!)
+                .OrderBy(static item => item.Discriminator)
+                .ThenBy(static item => GetTypeName(item.Type), StringComparer.Ordinal)
+                .ToImmutableArray();
+
+            for (var leftIndex = 0; leftIndex < candidates.Length; leftIndex++)
+            {
+                for (var rightIndex = leftIndex + 1; rightIndex < candidates.Length; rightIndex++)
+                {
+                    var left = candidates[leftIndex];
+                    var right = candidates[rightIndex];
+                    if (SymbolEqualityComparer.Default.Equals(left.Type, right.Type) ||
+                        !HasAmbiguousRuntimeUnionMapping(left.Type, right.Type))
+                    {
+                        continue;
+                    }
+
+                    Report(
+                        DtoDiagnosticKind.Unsupported,
+                        unionType,
+                        $"case types '{GetTypeName(left.Type)}' and '{GetTypeName(right.Type)}' overlap by inheritance, so one runtime value could match multiple union discriminators",
+                        right.Location ?? left.Location);
+                }
+            }
+
+            foreach (var nested in unionType.GetTypeMembers())
+                ValidateDeclaredUnionRuntimeMappings(nested);
+        }
+
         private bool TryVisitNativeUnion(ITypeSymbol type, List<ITypeSymbol> stack, int depth)
         {
             // Referenced generated identity remains assembly-owned and wins before any local
