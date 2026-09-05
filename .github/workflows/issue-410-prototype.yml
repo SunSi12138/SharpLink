@@ -1,45 +1,45 @@
-name: Issue 410 same-runner performance
+name: Issue 410 isolated hot-path diagnostic
 
 on:
   push:
     branches:
-      - tmp/issue-410-prototype-20260906
+      - tmp/issue-410-hotpath-diagnostic-20260906
 
 permissions:
   contents: read
 
 concurrency:
-  group: issue-410-performance
+  group: issue-410-hotpath-diagnostic
   cancel-in-progress: true
 
 env:
-  ISSUE410_BASE: 21fd5afbd192f0e200a8c749e53d98b1f525ee90
+  ISSUE410_BASE: 735e500016a8640258bb5270bc3c3878f67036f7
   TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
 
 jobs:
-  same-runner-performance:
+  hotpath-diagnostic:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout temporary evidence branch
+      - name: Checkout temporary diagnostic branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
-      - name: Save validation inputs outside worktree
+      - name: Save diagnostic inputs outside worktree
         shell: bash
         run: |
           set -euo pipefail
           input="$RUNNER_TEMP/issue410-input"
-          perf="$RUNNER_TEMP/issue410-performance"
-          rm -rf "$input" "$perf"
-          mkdir -p "$input" "$perf/environment" "$perf/baseline" "$perf/candidate"
+          out="$RUNNER_TEMP/issue410-hotpath"
+          rm -rf "$input" "$out"
+          mkdir -p "$input" "$out/environment" "$out/baseline-default" "$out/baseline-no-pgo" "$out/candidate-default" "$out/candidate-no-pgo" "$out/baseline-after"
           cp .github/issue410-prototype.py "$input/"
           cp .github/issue410-cleanup.py "$input/"
           cp .github/issue410-partition.py "$input/"
-          cp .github/issue410-benchmarks.cs "$input/Issue410Benchmarks.cs"
-          printf '%s\n' "$ISSUE410_BASE" > "$perf/environment/base-sha.txt"
-          printf '%s\n' "${{ github.sha }}" > "$perf/environment/evidence-sha.txt"
+          cp .github/issue410-hotpath-benchmarks.cs "$input/Issue410HotPathBenchmarks.cs"
+          printf '%s\n' "$ISSUE410_BASE" > "$out/environment/base-sha.txt"
+          printf '%s\n' "${{ github.sha }}" > "$out/environment/evidence-sha.txt"
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -48,45 +48,52 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          perf="$RUNNER_TEMP/issue410-performance"
-          dotnet --info > "$perf/environment/dotnet-info.txt"
-          uname -a > "$perf/environment/uname.txt"
-          lscpu > "$perf/environment/cpu.txt"
+          out="$RUNNER_TEMP/issue410-hotpath"
+          dotnet --info > "$out/environment/dotnet-info.txt"
+          uname -a > "$out/environment/uname.txt"
+          lscpu > "$out/environment/cpu.txt"
+          env | grep -E '^(DOTNET|COMPlus)_' | sort > "$out/environment/dotnet-env.txt" || true
 
-      - name: Checkout exact dev baseline
+      - name: Checkout exact current dev baseline
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "$ISSUE410_BASE"
           git checkout --detach --force "$ISSUE410_BASE"
           git clean -ffdx
-          cp "$RUNNER_TEMP/issue410-input/Issue410Benchmarks.cs" test/SharpLink.Benchmarks/Issue410Benchmarks.cs
+          cp "$RUNNER_TEMP/issue410-input/Issue410HotPathBenchmarks.cs" test/SharpLink.Benchmarks/Issue410HotPathBenchmarks.cs
 
-      - name: Build exact dev benchmark baseline
+      - name: Build baseline diagnostic benchmark
         run: |
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
 
-      - name: Run exact dev baseline matrix
+      - name: Run baseline default JIT
         shell: bash
         run: |
           set -euo pipefail
-          root="$RUNNER_TEMP/issue410-performance/baseline"
+          root="$RUNNER_TEMP/issue410-hotpath/baseline-default"
           dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*AdmissionFreshRateRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/fresh-rate-rpc"
+            --filter '*Issue410DirectRate*' --launchCount 3 --warmupCount 8 --iterationCount 12 --artifacts "$root/perf"
           dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*AdmissionRateControllerBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/rate-controller"
-          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*AdmissionRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/admission-rpc"
-          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*Issue410*' --artifacts "$root/issue410-extra"
+            --filter '*Issue410DirectRatePermitBenchmarks*' --launchCount 1 --warmupCount 3 --iterationCount 3 --disasm --artifacts "$root/disasm"
 
-      - name: Reset exact base and apply candidate in workspace only
+      - name: Run baseline with Tiered PGO disabled
+        shell: bash
+        env:
+          DOTNET_TieredPGO: '0'
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/issue410-hotpath/baseline-no-pgo"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410DirectRate*' --launchCount 3 --warmupCount 8 --iterationCount 12 --artifacts "$root/perf"
+
+      - name: Apply generation-scoped candidate
         shell: bash
         run: |
           set -euo pipefail
-          perf="$RUNNER_TEMP/issue410-performance"
           input="$RUNNER_TEMP/issue410-input"
+          out="$RUNNER_TEMP/issue410-hotpath"
           git reset --hard "$ISSUE410_BASE"
           git clean -ffdx
           python3 "$input/issue410-prototype.py"
@@ -95,65 +102,76 @@ jobs:
           cleanup_status=$?
           set -e
           if [ "$cleanup_status" -ne 0 ]; then
-            printf '%s\n' "$cleanup_output" > "$perf/candidate/cleanup-output.txt"
+            printf '%s\n' "$cleanup_output" > "$out/candidate-default/cleanup-output.txt"
             if ! grep -Fq 'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs: migration symbol remains: CommitTransitionTo' <<< "$cleanup_output"; then
-              cat "$perf/candidate/cleanup-output.txt"
+              cat "$out/candidate-default/cleanup-output.txt"
               exit "$cleanup_status"
             fi
           fi
           python3 "$input/issue410-partition.py"
-          cp "$input/Issue410Benchmarks.cs" test/SharpLink.Benchmarks/Issue410Benchmarks.cs
-          git diff -- \
-            src/SharpLink.Server \
-            eng/maintainability/baseline.json \
-            > "$perf/candidate/product.patch"
-          git diff --stat -- \
-            src/SharpLink.Server \
-            eng/maintainability/baseline.json \
-            > "$perf/candidate/product-stat.txt"
-          sha256sum "$perf/candidate/product.patch" > "$perf/environment/candidate-patch-sha256.txt"
+          cp "$input/Issue410HotPathBenchmarks.cs" test/SharpLink.Benchmarks/Issue410HotPathBenchmarks.cs
+          git diff -- src/SharpLink.Server eng/maintainability/baseline.json > "$out/candidate-default/product.patch"
+          git diff --stat -- src/SharpLink.Server eng/maintainability/baseline.json > "$out/candidate-default/product-stat.txt"
           grep -R -n -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|CommitTransitionTo|InitializeTransitionLocked|RecordLegacyGrantLocked' \
-            src/SharpLink.Server/Admission \
-            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
-            > "$perf/candidate/migration-symbols.txt" || true
-          test ! -s "$perf/candidate/migration-symbols.txt"
+            src/SharpLink.Server/Admission src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > "$out/candidate-default/migration-symbols.txt" || true
+          test ! -s "$out/candidate-default/migration-symbols.txt"
 
-      - name: Build candidate benchmarks
+      - name: Build candidate diagnostic benchmark
         run: |
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
 
-      - name: Run same-runner candidate matrix
+      - name: Run candidate default JIT
         shell: bash
         run: |
           set -euo pipefail
-          root="$RUNNER_TEMP/issue410-performance/candidate"
+          root="$RUNNER_TEMP/issue410-hotpath/candidate-default"
           dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*AdmissionFreshRateRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/fresh-rate-rpc"
+            --filter '*Issue410DirectRate*' --launchCount 3 --warmupCount 8 --iterationCount 12 --artifacts "$root/perf"
           dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*AdmissionRateControllerBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/rate-controller"
-          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*AdmissionRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/admission-rpc"
-          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*Issue410*' --artifacts "$root/issue410-extra"
+            --filter '*Issue410DirectRatePermitBenchmarks*' --launchCount 1 --warmupCount 3 --iterationCount 3 --disasm --artifacts "$root/disasm"
 
-      - name: Verify A/B result presence
+      - name: Run candidate with Tiered PGO disabled
+        shell: bash
+        env:
+          DOTNET_TieredPGO: '0'
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/issue410-hotpath/candidate-no-pgo"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410DirectRate*' --launchCount 3 --warmupCount 8 --iterationCount 12 --artifacts "$root/perf"
+
+      - name: Restore baseline and rerun default JIT
         shell: bash
         run: |
           set -euo pipefail
-          perf="$RUNNER_TEMP/issue410-performance"
-          find "$perf/baseline" -type f | sort > "$perf/environment/baseline-files.txt"
-          find "$perf/candidate" -type f | sort > "$perf/environment/candidate-files.txt"
-          test -s "$perf/environment/baseline-files.txt"
-          test -s "$perf/environment/candidate-files.txt"
-          test "$(find "$perf/baseline" -path '*/results/*.csv' | wc -l)" -ge 4
-          test "$(find "$perf/candidate" -path '*/results/*.csv' | wc -l)" -ge 4
+          root="$RUNNER_TEMP/issue410-hotpath/baseline-after"
+          git reset --hard "$ISSUE410_BASE"
+          git clean -ffdx
+          cp "$RUNNER_TEMP/issue410-input/Issue410HotPathBenchmarks.cs" test/SharpLink.Benchmarks/Issue410HotPathBenchmarks.cs
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410DirectRate*' --launchCount 3 --warmupCount 8 --iterationCount 12 --artifacts "$root/perf"
 
-      - name: Upload same-runner A/B evidence
+      - name: Verify diagnostic evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/issue410-hotpath"
+          for dir in baseline-default baseline-no-pgo candidate-default candidate-no-pgo baseline-after; do
+            test "$(find "$out/$dir" -path '*/results/*.csv' | wc -l)" -ge 2
+          done
+          test "$(find "$out/baseline-default/disasm" -type f | wc -l)" -gt 0
+          test "$(find "$out/candidate-default/disasm" -type f | wc -l)" -gt 0
+          find "$out" -type f | sort > "$out/environment/files.txt"
+
+      - name: Upload hot-path diagnostic evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-410-same-runner-performance-${{ github.sha }}
-          path: ${{ runner.temp }}/issue410-performance
+          name: issue-410-hotpath-diagnostic-${{ github.sha }}
+          path: ${{ runner.temp }}/issue410-hotpath
           if-no-files-found: error
           retention-days: 30
