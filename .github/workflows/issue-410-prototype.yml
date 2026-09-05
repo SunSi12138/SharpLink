@@ -8,25 +8,47 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: issue-410-prototype
+  cancel-in-progress: true
+
+env:
+  ISSUE410_BASE: 21fd5afbd192f0e200a8c749e53d98b1f525ee90
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
 jobs:
-  candidate-unit:
+  current-dev-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    timeout-minutes: 35
     steps:
-      - name: Checkout
+      - name: Checkout temporary evidence branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Save workspace-only transforms and checkout exact dev baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/issue410-scripts
+          cp .github/issue410-prototype.py /tmp/issue410-scripts/
+          cp .github/issue410-cleanup.py /tmp/issue410-scripts/
+          cp .github/issue410-tests.py /tmp/issue410-scripts/
+          cp .github/issue410-adjust-stale-tests.py /tmp/issue410-scripts/
+          git fetch --no-tags --depth=1 origin "$ISSUE410_BASE"
+          git checkout --detach --force "$ISSUE410_BASE"
+          git clean -ffdx
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
 
-      - name: Apply serious generation-scoped candidate in workspace only
+      - name: Apply generation-scoped candidate and contract tests in workspace only
         shell: bash
         run: |
-          python3 .github/issue410-prototype.py
+          set -euo pipefail
+          python3 /tmp/issue410-scripts/issue410-prototype.py
           set +e
-          cleanup_output="$(python3 .github/issue410-cleanup.py 2>&1)"
+          cleanup_output="$(python3 /tmp/issue410-scripts/issue410-cleanup.py 2>&1)"
           cleanup_status=$?
           set -e
           if [ "$cleanup_status" -ne 0 ]; then
@@ -37,7 +59,6 @@ jobs:
           fi
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
           text = path.read_text(encoding='utf-8')
           old_create = '                    createdRate = AdmissionRateState.Create(target, _timeProvider, source.Rate);\n'
@@ -52,64 +73,386 @@ jobs:
           text = text[:start] + text[end:]
           path.write_text(text, encoding='utf-8')
           PY
-          mkdir -p artifacts/issue410
-          git diff --stat -- \
-            src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
-            src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
-            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
-            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
+          python3 /tmp/issue410-scripts/issue410-tests.py
+          python3 /tmp/issue410-scripts/issue410-adjust-stale-tests.py
+          mkdir -p artifacts/issue410/current-dev-validation
+          git diff --stat > artifacts/issue410/current-dev-validation/diff-stat.txt
+          git diff --numstat > artifacts/issue410/current-dev-validation/diff-numstat.txt
+          git diff > artifacts/issue410/current-dev-validation/candidate-and-tests.patch
+          grep -R -n -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|CommitTransitionTo|InitializeTransitionLocked|RecordLegacyGrantLocked' \
+            src/SharpLink.Server/Admission \
             src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
-            > artifacts/issue410/candidate-stat.txt
-          git diff --numstat -- \
-            src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
-            src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
-            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
-            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
-            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
-            > artifacts/issue410/candidate-numstat.txt
-          git diff -- \
-            src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs \
-            src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
-            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
-            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
-            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
-            > artifacts/issue410/candidate.patch
-          {
-            echo "rate migration symbols after full candidate transform:"
-            grep -R -n -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|CommitTransitionTo|InitializeTransitionLocked|RecordLegacyGrantLocked' \
-              src/SharpLink.Server/Admission \
-              src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs || true
-          } > artifacts/issue410/symbol-audit.txt
-          if grep -q -E 'AdmissionRateTransitionLineage|AdmissionRateTransition|transitionDebt|TransitionDebt|transitionSource|RetainedLineageAnchor|RecordPublishedRateLineage|CommitTransitionTo|InitializeTransitionLocked|RecordLegacyGrantLocked' artifacts/issue410/symbol-audit.txt; then
-            cat artifacts/issue410/symbol-audit.txt
-            exit 1
-          fi
-
-      - name: Replace migration-only tests with generation-scoped validation in workspace
-        run: |
-          python3 .github/issue410-tests.py
-          python3 .github/issue410-adjust-stale-tests.py
-          git diff --stat -- test/SharpLink.UnitTests/Server > artifacts/issue410/test-stat.txt
-          git diff -- test/SharpLink.UnitTests/Server/AdmissionGenerationScopedRateTests.cs > artifacts/issue410/generation-scoped-tests.patch
-          git diff -- test/SharpLink.UnitTests/Server > artifacts/issue410/all-test-changes.patch
+            > artifacts/issue410/current-dev-validation/migration-symbols.txt || true
+          test ! -s artifacts/issue410/current-dev-validation/migration-symbols.txt
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
+      - name: Verify formatting and maintainability
+        shell: bash
+        run: |
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          python3 eng/check-project-reference-boundaries.py
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+
       - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
-      - name: Full unit tests
+      - name: Unit, generator and load-test tests
         shell: bash
         run: |
           set -o pipefail
-          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build 2>&1 | tee artifacts/issue410/unit-tests.txt
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build 2>&1 | tee artifacts/issue410/current-dev-validation/unit.txt
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/issue410/current-dev-validation/generator.txt
+          dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/issue410/current-dev-validation/load-tests.txt
 
-      - name: Upload candidate evidence
+      - name: Integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1 --timeout 120s 2>&1 | tee artifacts/issue410/current-dev-validation/integration.txt
+
+      - name: NativeAOT transport/topology smoke
+        shell: bash
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: |
+          set -o pipefail
+          ./eng/run-shared-memory-aot-process-smoke.sh 2>&1 | tee artifacts/issue410/current-dev-validation/aot.txt
+
+      - name: Upload current-dev validation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-410-candidate-unit-${{ github.sha }}
-          path: artifacts/issue410
+          name: issue-410-current-dev-validation-${{ github.sha }}
+          path: artifacts/issue410/current-dev-validation
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
+
+  same-runner-performance:
+    needs: current-dev-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout temporary evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Save candidate transform and benchmark source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/issue410-scripts
+          cp .github/issue410-prototype.py /tmp/issue410-scripts/
+          cp .github/issue410-cleanup.py /tmp/issue410-scripts/
+          cat > /tmp/Issue410Benchmarks.cs <<'CS'
+          using System;
+          using System.Collections.Generic;
+          using System.Net;
+          using System.Threading;
+          using System.Threading.Tasks;
+          using BenchmarkDotNet.Attributes;
+          using BenchmarkDotNet.Diagnosers;
+          using BenchmarkDotNet.Engines;
+          using SharpLink.Abstractions;
+          using SharpLink.Server;
+
+          namespace SharpLink.Benchmarks;
+
+          [MemoryDiagnoser]
+          [ThreadingDiagnoser]
+          [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 2, iterationCount: 5)]
+          public class Issue410RateQueueBenchmarks
+          {
+              private SharpLinkAdmissionController _controller = null!;
+              private ManualTimeProvider _time = null!;
+              private SharpLinkAdmissionContext _context = null!;
+
+              [GlobalSetup]
+              public async Task Setup()
+              {
+                  _time = new ManualTimeProvider();
+                  _context = new SharpLinkAdmissionContext(1, 2, RpcMethodKind.Unary, "issue410-rate-queue", null, null);
+                  var options = new SharpLinkAdmissionControlOptions();
+                  options.Global.UseTokenBucket(rate =>
+                  {
+                      rate.TokenLimit = 1;
+                      rate.TokensPerPeriod = 1;
+                      rate.ReplenishmentPeriod = TimeSpan.FromSeconds(10);
+                  });
+                  options.MaxQueuedCalls = 1;
+                  options.MaxQueuedBytes = 1024;
+                  options.MaxQueueDelay = TimeSpan.FromMinutes(1);
+                  _controller = SharpLinkAdmissionController.Create(options, [], _time);
+                  var consumed = await _controller.AcquireAsync(_context, 1, false, CancellationToken.None);
+                  if (!consumed.IsAcquired)
+                      throw new InvalidOperationException("failed to consume initial token");
+                  consumed.Lease!.Dispose();
+              }
+
+              [Benchmark]
+              public async ValueTask QueueRateRequestAndRelease()
+              {
+                  var pending = _controller.AcquireAsync(_context, 1, true, CancellationToken.None).AsTask();
+                  if (pending.IsCompleted)
+                      throw new InvalidOperationException("rate request did not enter the waiter path");
+                  _time.Advance(TimeSpan.FromSeconds(10));
+                  var decision = await pending.ConfigureAwait(false);
+                  if (!decision.IsAcquired)
+                      throw new InvalidOperationException("queued rate request was not granted");
+                  decision.Lease!.Dispose();
+              }
+
+              [GlobalCleanup]
+              public ValueTask Cleanup() => _controller.DisposeAsync();
+
+              private sealed class ManualTimeProvider : TimeProvider
+              {
+                  private readonly object _gate = new();
+                  private readonly List<ManualTimer> _timers = [];
+                  private long _timestamp;
+
+                  public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+                  public override long GetTimestamp() => Volatile.Read(ref _timestamp);
+
+                  public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+                  {
+                      var timer = new ManualTimer(this, callback, state);
+                      lock (_gate)
+                          _timers.Add(timer);
+                      timer.Change(dueTime, period);
+                      return timer;
+                  }
+
+                  public void Advance(TimeSpan delta)
+                  {
+                      var now = Interlocked.Add(ref _timestamp, delta.Ticks);
+                      ManualTimer[] timers;
+                      lock (_gate)
+                          timers = [.. _timers];
+                      foreach (var timer in timers)
+                          timer.FireIfDue(now);
+                  }
+
+                  private sealed class ManualTimer(ManualTimeProvider owner, TimerCallback callback, object? state) : ITimer
+                  {
+                      private long _due = long.MaxValue;
+                      private int _disposed;
+
+                      public bool Change(TimeSpan dueTime, TimeSpan period)
+                      {
+                          if (Volatile.Read(ref _disposed) != 0)
+                              return false;
+                          var due = dueTime == Timeout.InfiniteTimeSpan
+                              ? long.MaxValue
+                              : owner.GetTimestamp() + Math.Max(1, dueTime.Ticks);
+                          Volatile.Write(ref _due, due);
+                          return true;
+                      }
+
+                      public void FireIfDue(long now)
+                      {
+                          if (Volatile.Read(ref _disposed) != 0 || now < Volatile.Read(ref _due))
+                              return;
+                          Volatile.Write(ref _due, long.MaxValue);
+                          callback(state);
+                      }
+
+                      public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+                      public ValueTask DisposeAsync()
+                      {
+                          Dispose();
+                          return ValueTask.CompletedTask;
+                      }
+                  }
+              }
+          }
+
+          [MemoryDiagnoser]
+          [ThreadingDiagnoser]
+          [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 2, iterationCount: 5)]
+          public class Issue410CompositeBenchmarks
+          {
+              private SharpLinkAdmissionController _controller = null!;
+              private SharpLinkAdmissionContext _context = null!;
+
+              [GlobalSetup]
+              public void Setup()
+              {
+                  _context = new SharpLinkAdmissionContext(1, 2, RpcMethodKind.Unary, "issue410-composite", null, null);
+                  var options = new SharpLinkAdmissionControlOptions();
+                  options.Global.UseConcurrency(1024);
+                  options.Global.UseTokenBucket(rate =>
+                  {
+                      rate.TokenLimit = 1_000_000_000;
+                      rate.TokensPerPeriod = 1_000_000_000;
+                      rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
+                  });
+                  _controller = SharpLinkAdmissionController.Create(options, []);
+              }
+
+              [Benchmark]
+              public void ConcurrencyAndRateImmediatePermit()
+              {
+                  var decision = _controller.AcquireAsync(_context, 1, false, CancellationToken.None).Result;
+                  if (!decision.IsAcquired)
+                      throw new InvalidOperationException("composite benchmark unexpectedly rejected");
+                  decision.Lease!.Dispose();
+              }
+
+              [GlobalCleanup]
+              public ValueTask Cleanup() => _controller.DisposeAsync();
+          }
+
+          [MemoryDiagnoser]
+          [ThreadingDiagnoser]
+          [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 2, iterationCount: 5)]
+          public class Issue410UpdateControlBenchmarks
+          {
+              private ISharpLinkServer _server = null!;
+              private bool _fixed;
+
+              [GlobalSetup]
+              public void Setup()
+              {
+                  var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback.ToString());
+                  _server = builder.Build();
+                  _server.EnableAdmissionControl(options => ConfigureToken(options, 1_000_000_000));
+              }
+
+              [Benchmark]
+              public void ReplaceRateAlgorithm()
+              {
+                  _fixed = !_fixed;
+                  if (_fixed)
+                  {
+                      _server.UpdateAdmissionControl(options => options.Global.UseFixedWindow(rate =>
+                      {
+                          rate.PermitLimit = 1_000_000_000;
+                          rate.Window = TimeSpan.FromHours(1);
+                      }));
+                  }
+                  else
+                  {
+                      _server.UpdateAdmissionControl(options => ConfigureToken(options, 1_000_000_000));
+                  }
+              }
+
+              [GlobalCleanup]
+              public ValueTask Cleanup() => _server.DisposeAsync();
+
+              private static void ConfigureToken(SharpLinkAdmissionControlOptions options, int limit)
+                  => options.Global.UseTokenBucket(rate =>
+                  {
+                      rate.TokenLimit = limit;
+                      rate.TokensPerPeriod = 10_000;
+                      rate.ReplenishmentPeriod = TimeSpan.FromHours(1);
+                  });
+          }
+          CS
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record environment and checkout exact dev baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/issue410/performance/environment
+          printf '%s\n' "$ISSUE410_BASE" > artifacts/issue410/performance/environment/base-sha.txt
+          printf '%s\n' "${{ github.sha }}" > artifacts/issue410/performance/environment/evidence-sha.txt
+          dotnet --info > artifacts/issue410/performance/environment/dotnet-info.txt
+          uname -a > artifacts/issue410/performance/environment/uname.txt
+          lscpu > artifacts/issue410/performance/environment/cpu.txt
+          git fetch --no-tags --depth=1 origin "$ISSUE410_BASE"
+          git checkout --detach --force "$ISSUE410_BASE"
+          git clean -ffdx
+          cp /tmp/Issue410Benchmarks.cs test/SharpLink.Benchmarks/Issue410Benchmarks.cs
+
+      - name: Build benchmark baseline
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+
+      - name: Run exact dev baseline benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/artifacts/issue410/performance/baseline"
+          mkdir -p "$root"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*AdmissionFreshRateRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/fresh-rate-rpc"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*AdmissionRateControllerBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/rate-controller"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*AdmissionRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/admission-rpc"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410*' --artifacts "$root/issue410-extra"
+
+      - name: Reset to exact dev and apply candidate in workspace only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git reset --hard "$ISSUE410_BASE"
+          git clean -ffdx
+          python3 /tmp/issue410-scripts/issue410-prototype.py
+          set +e
+          cleanup_output="$(python3 /tmp/issue410-scripts/issue410-cleanup.py 2>&1)"
+          cleanup_status=$?
+          set -e
+          if [ "$cleanup_status" -ne 0 ]; then
+            if ! grep -Fq 'src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs: migration symbol remains: CommitTransitionTo' <<< "$cleanup_output"; then
+              printf '%s\n' "$cleanup_output"
+              exit "$cleanup_status"
+            fi
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs')
+          text = path.read_text(encoding='utf-8')
+          old_create = '                    createdRate = AdmissionRateState.Create(target, _timeProvider, source.Rate);\n'
+          new_create = '                    createdRate = AdmissionRateState.Create(target, _timeProvider);\n'
+          if text.count(old_create) != 1:
+              raise RuntimeError(f'partition generation create: expected one match, found {text.count(old_create)}')
+          text = text.replace(old_create, new_create, 1)
+          start_marker = '        if (transition.Source.Rate is { } sourceRate &&\n'
+          end_marker = '        if (transition.ResizePermitLimit is { } permitLimit)\n'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          text = text[:start] + text[end:]
+          path.write_text(text, encoding='utf-8')
+          PY
+          cp /tmp/Issue410Benchmarks.cs test/SharpLink.Benchmarks/Issue410Benchmarks.cs
+          mkdir -p artifacts/issue410/performance/candidate
+          git diff -- src/SharpLink.Server > artifacts/issue410/performance/candidate/product.patch
+          sha256sum artifacts/issue410/performance/candidate/product.patch > artifacts/issue410/performance/environment/candidate-patch-sha256.txt
+
+      - name: Build benchmark candidate
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+
+      - name: Run same-runner candidate benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/artifacts/issue410/performance/candidate"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*AdmissionFreshRateRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/fresh-rate-rpc"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*AdmissionRateControllerBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/rate-controller"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*AdmissionRpcBenchmarks*' --launchCount 1 --warmupCount 2 --iterationCount 5 --artifacts "$root/admission-rpc"
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410*' --artifacts "$root/issue410-extra"
+
+      - name: Upload same-runner A/B evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-same-runner-performance-${{ github.sha }}
+          path: artifacts/issue410/performance
+          if-no-files-found: warn
+          retention-days: 30
