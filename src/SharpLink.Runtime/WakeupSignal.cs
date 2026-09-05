@@ -105,7 +105,7 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>
         if (s > Latched &&
             Interlocked.CompareExchange(ref _state, Idle, s) == s)
         {
-            CancelDeadline(s);
+            CancelDeadline(s & ~Latched);
             _core.SetResult(true);
             return;
         }
