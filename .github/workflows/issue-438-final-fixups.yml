@@ -55,6 +55,15 @@ jobs:
               '"a frame after a deadline flush must be delivered through the wakeup signal"')
           tests.write_text(text)
 
+          idle_shutdown = Path('test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs')
+          text = idle_shutdown.read_text()
+          text = text.replace(
+              '/// parked in <c>ChannelReader.WaitToReadAsync</c>, so the wait may safely become\n'
+              '/// non-cancellable and rely on Channel completion/fault alone.\n',
+              '/// parked on <c>WakeupSignal</c>. Stop/fault signals compete for the same live arm as\n'
+              '/// producer wakeups, so no separate Channel-read lifetime is required.\n')
+          idle_shutdown.write_text(text)
+
           bench = Path('test/SharpLink.Benchmarks/SendPumpIdleWakeBenchmarks.cs')
           text = bench.read_text()
           text = text.replace(
@@ -92,6 +101,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/SharpLink.Runtime/WakeupSignal.cs \
                   test/SharpLink.UnitTests/Runtime/SendPumpTests.cs \
+                  test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs \
                   test/SharpLink.Benchmarks/SendPumpIdleWakeBenchmarks.cs
           if git diff --cached --quiet; then
             echo 'No fixups to commit'
