@@ -5,6 +5,7 @@ internal enum FinalCodecPlanKind
     Primitive,
     Enum,
     GeneratedDto,
+    Union,
     Collection,
     UnsafeBlit,
     Custom,
@@ -68,6 +69,17 @@ internal sealed record FinalGeneratedDtoCodecPlan(
     bool IsReferenceType,
     ImmutableArray<FinalDtoMemberPlan> Members)
     : FinalCodecPlan(TypeName, FinalCodecPlanKind.GeneratedDto);
+
+internal readonly record struct FinalUnionCasePlan(
+    int Discriminator,
+    string CaseTypeName,
+    RpcHashValue CaseLogicalIdentity);
+
+internal sealed record FinalUnionCodecPlan(
+    string TypeName,
+    string WireSemantic,
+    ImmutableArray<FinalUnionCasePlan> Cases)
+    : FinalCodecPlan(TypeName, FinalCodecPlanKind.Union);
 
 internal sealed record FinalCollectionCodecPlan(
     string TypeName,
