@@ -190,7 +190,8 @@ public sealed class ServiceLifetimeIntegrationTests
         }
         catch (SharpLinkException exception)
         {
-            Ensure(exception.Code == SharpLinkErrorCode.Unimplemented, "filtered service route");
+            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
+                "filtered service contract acquisition");
         }
         await firstClient.StopAsync();
         await firstServer.StopAsync(TimeSpan.FromSeconds(2));

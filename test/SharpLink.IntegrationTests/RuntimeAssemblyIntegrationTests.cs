@@ -509,7 +509,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     {
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-dormant-streams");
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var serverStream = InvokeStream(
@@ -542,7 +542,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-server-stream-consumer-exit");
         plugin.ResetServiceState();
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var clientModule = GetDynamicModule(harness.Client, plugin.ContractAssembly);
@@ -606,7 +606,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     {
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-early-client-stream-response");
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
         plugin.ResetServiceState();
 
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
@@ -664,7 +664,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     {
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-disposal-failure");
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         const string firstContractName = "SharpLink.DynamicPlugin.IFirstThrowingDisposalService";
         const string secondContractName = "SharpLink.DynamicPlugin.ISecondThrowingDisposalService";
@@ -720,7 +720,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         ShutdownCleanupProbe.Reset();
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-stop-disposal-failure");
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         const string firstContractName = "SharpLink.DynamicPlugin.IFirstThrowingDisposalService";
         const string secondContractName = "SharpLink.DynamicPlugin.ISecondThrowingDisposalService";
@@ -774,7 +774,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     {
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-flaky-connection");
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         const string contractName = "SharpLink.DynamicPlugin.IFlakyConnectionService";
         const string serviceName = "SharpLink.DynamicPlugin.FlakyConnectionService";
@@ -817,7 +817,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     {
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-retired-connection");
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         const string contractName = "SharpLink.DynamicPlugin.IRetiredConnectionService";
         const string serviceName = "SharpLink.DynamicPlugin.RetiredConnectionService";
@@ -860,7 +860,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-draining");
         plugin.ResetServiceState();
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         using var callerCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -915,7 +915,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-synchronous-drain");
         plugin.ResetServiceState();
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
@@ -967,7 +967,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-cooperative-drain");
         plugin.ResetServiceState();
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
 
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
@@ -1039,7 +1039,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-cancelled-unregister-waits");
         plugin.ResetServiceState();
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
@@ -1078,6 +1078,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             (serverRegistration = harness.Server.RegisterAssembly(plugin.ServiceAssembly)).Succeeded);
         Ensure(serverRegistration.Succeeded,
             "server background drain removes the cancelled waiter's old registration");
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
         object? reRegisteredProxy = GetProxy(harness.Client, plugin.ContractType);
         Ensure(await InvokeValueTaskAsync<int>(
                 reRegisteredProxy,
@@ -1112,7 +1113,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-shared-unregister");
         plugin.ResetServiceState();
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
@@ -1155,7 +1156,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var oldPlugin = PluginBundle.Load("replace-dependency-old");
         using var newPlugin = PluginBundle.Load("replace-dependency-new");
-        RegisterAll(harness, oldPlugin);
+        await RegisterAllAsync(harness, oldPlugin);
         object? oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
 
         Ensure(string.Equals(
@@ -1196,7 +1197,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var oldPlugin = PluginBundle.Load("replace-safe-order-old");
         using var newPlugin = PluginBundle.Load("replace-safe-order-new");
-        RegisterAll(harness, oldPlugin);
+        await RegisterAllAsync(harness, oldPlugin);
 
         Ensure((await harness.Server.UnregisterAssemblyAsync(
             oldPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
@@ -1239,7 +1240,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     {
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("replace-validation");
-        RegisterAll(harness, plugin);
+        await RegisterAllAsync(harness, plugin);
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
 
         var result = await harness.Client.ReplaceAssemblyAsync(
@@ -1306,12 +1307,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(registrations.Where(static result => !result.Succeeded).All(static result =>
                 result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly),
             "all losing registrations are structured duplicates");
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
-        Ensure(proxy is not null, "published snapshot contains the whole proxy descriptor");
+        Ensure(HasLocalProxyDescriptor(harness.Client, plugin.ContractType),
+            "published snapshot contains the whole proxy descriptor");
         Ensure((await harness.Client.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.Zero)).ReferencesReleased, "concurrent registration snapshot releases");
-        proxy = null;
     }
 
     [Test]
@@ -1391,8 +1391,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static async Task<TrackedWeakReferences> LoadInvokeUnregisterAndUnloadAsync()
     {
         await using var harness = await DynamicHarness.CreateAsync();
-        var plugin = PluginBundle.Load("dynamic-unload");
-        RegisterAll(harness, plugin);
+        using var plugin = PluginBundle.Load("dynamic-unload");
+        await RegisterAllAsync(harness, plugin);
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         Ensure(InvokeProbeBlocking(proxy, plugin.ContractType) == 10, "ALC probe call");
         var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
@@ -1429,8 +1429,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static async Task<WeakReference> ExecuteDynamicStreamExitAndUnloadAsync(string exitMode)
     {
         await using var harness = await DynamicHarness.CreateAsync();
-        var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
-        RegisterAll(harness, plugin);
+        using var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
+        await RegisterAllAsync(harness, plugin);
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
 
         if (string.Equals(exitMode, "normal", StringComparison.Ordinal))
@@ -1650,12 +1650,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             .GetAwaiter()
             .GetResult();
 
-    private static void RegisterAll(DynamicHarness harness, PluginBundle plugin)
+    private static async Task RegisterAllAsync(DynamicHarness harness, PluginBundle plugin)
     {
         var client = harness.Client.RegisterAssembly(plugin.ContractAssembly);
         Ensure(client.Succeeded, $"client contract registration: {client.Error}");
         Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded, "server contract registration");
         Ensure(harness.Server.RegisterAssembly(plugin.ServiceAssembly).Succeeded, "server service registration");
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
     }
 
     private static void EnsureReplacementReleased(
@@ -1699,6 +1700,62 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         return modules[assembly] as SharpLinkDynamicModule
             ?? throw new InvalidOperationException(
                 $"Dynamic module was not found for '{assembly.FullName}'.");
+    }
+
+    private static async Task WaitForRemoteContractManifestAsync(
+        ISharpLinkClient client,
+        Type contractType)
+    {
+        var module = GetDynamicModule(client, contractType.Assembly);
+        var contract = module.Manifest.Contracts.Single(candidate =>
+            ReferenceEquals(candidate.ContractType, contractType));
+        var expectedHash = module.Manifest.RpcAssemblyHash;
+        var snapshotField = typeof(SharpLinkClient).GetField(
+            "_remoteContractManifestSnapshot",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Remote contract manifest snapshot field was not found.");
+        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 3d);
+
+        while (true)
+        {
+            var bindings = snapshotField.GetValue(client) as Array
+                ?? throw new InvalidOperationException("Remote contract manifest snapshot was unavailable.");
+            for (var index = 0; index < bindings.Length; index++)
+            {
+                var binding = bindings.GetValue(index)!;
+                var manifestProperty = binding.GetType().GetProperty(
+                    "Manifest",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?? throw new InvalidOperationException("Remote contract manifest binding was malformed.");
+                var manifest = (ProtocolV2ContractManifest)manifestProperty.GetValue(binding)!;
+                if (manifest.Contracts.TryGetValue(contract.ContractId, out var remoteHash) &&
+                    remoteHash == expectedHash)
+                {
+                    return;
+                }
+            }
+
+            if (Stopwatch.GetTimestamp() >= deadline)
+            {
+                throw new TimeoutException(
+                    $"Remote contract manifest did not publish '{contract.ContractName}' " +
+                    $"({contract.ContractId}) with RpcAssemblyHash '{expectedHash}'.");
+            }
+            await Task.Delay(10);
+        }
+    }
+
+    private static bool HasLocalProxyDescriptor(ISharpLinkClient client, Type contractType)
+    {
+        var snapshotField = typeof(SharpLinkClient).GetField(
+            "_proxies",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Client proxy snapshot field was not found.");
+        var snapshot = snapshotField.GetValue(client)
+            ?? throw new InvalidOperationException("Client proxy snapshot was unavailable.");
+        var containsKey = snapshot.GetType().GetMethod("ContainsKey", [typeof(Type)])
+            ?? throw new InvalidOperationException("Client proxy snapshot lookup method was not found.");
+        return (bool)containsKey.Invoke(snapshot, [contractType])!;
     }
 
     private static object GetProxy(ISharpLinkClient client, Type contractType)
