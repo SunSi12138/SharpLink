@@ -202,7 +202,7 @@ public class InboundStreamAbandonmentTests
     }
 
     [Test]
-    public async Task PromotionShouldCarryOneWayLocalRetentionIntoExistingAdmissionRoute()
+    public async Task ReconfigurationShouldCarryOneWayRetentionWithoutMigratingBufferedOwnership()
     {
         const long requestId = 30405;
         const ushort streamId = 1;
@@ -238,21 +238,23 @@ public class InboundStreamAbandonmentTests
             static _ => { },
             static () => { },
             retainUntilLocalCompletion: true);
-        Ensure(queuedBytes == 0,
-            "active promotion must settle admission queue-byte ownership before invocation");
+        Ensure(queuedBytes == encodedBytes,
+            "in-place reconfiguration must not migrate an already-buffered owner's accounting");
 
         var typed = PooledAsyncStreamDispatcher<int>.Rent(default, SCodecs);
         manager.Register(requestId, streamId, typed);
+        Ensure(queuedBytes == 0,
+            "typed replay should release the original admission owner exactly once");
         manager.CompletePeerStream(requestId, streamId, exception: null);
 
         Ensure(manager.ActiveStreamCount == 1,
-            "promoted OneWay retention must keep the typed route after peer terminal");
+            "OneWay retention must keep the typed route after peer terminal");
         Ensure(counters.Completed == 1 && counters.Consumed == 0,
             "peer terminal should publish while the typed buffer remains locally owned");
 
         manager.AbandonExistingRequestStreams(requestId, 1);
         Ensure(counters.Consumed == encodedBytes && manager.ActiveStreamCount == 0,
-            "local completion must dispose the promoted typed buffer and retire the route");
+            "local completion must dispose the typed buffer and retire the stable route");
     }
 
     [Test]
