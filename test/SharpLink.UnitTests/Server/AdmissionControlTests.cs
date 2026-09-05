@@ -174,8 +174,30 @@ public sealed class AdmissionControlTests
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         var bytesPerCall = allocated / iterations;
 
-        Ensure(bytesPerCall <= 320,
+        Ensure(bytesPerCall <= 224,
             $"immediate admission allocated {bytesPerCall} B/call after warm-up");
+    }
+
+    [Test]
+    public async Task DisposeAsyncShouldLazilyWaitForTheLastActivePermit()
+    {
+        var options = new SharpLinkAdmissionControlOptions();
+        options.Global.UseConcurrency(1);
+        var controller = SharpLinkAdmissionController.Create(options, []);
+        var active = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: false, CancellationToken.None);
+        Ensure(active.IsAcquired && controller.ActivePermits == 1,
+            "dispose drain test must start with one active permit");
+
+        var disposeTask = controller.DisposeAsync().AsTask();
+        await Task.Yield();
+        Ensure(!disposeTask.IsCompleted,
+            "controller disposal must wait while the final permit is still active");
+
+        active.Lease!.Dispose();
+        await disposeTask;
+        Ensure(controller.ActivePermits == 0,
+            "last permit release must complete the lazily-created drain waiter");
     }
 
     [Test]
