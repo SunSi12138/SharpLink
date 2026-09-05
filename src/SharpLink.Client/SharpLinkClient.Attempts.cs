@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkClient
     {
         private readonly SharpLinkClient _client;
         private readonly RpcMethodDescriptor _method;
-        private readonly long _attemptStarted;
+        private long _attemptStarted;
         private long _endpointStarted;
         private int _responseObserved;
         private SharpLinkEndpointCandidate _admissionEndpoint;
@@ -30,6 +30,20 @@ internal sealed partial class SharpLinkClient
         public TimeSpan? RetryAfter => _retryAfter;
 
         public bool ShouldHonorAdmissionRetryAfter => _retryAfter is not null;
+
+        public void ResetForRetryAttempt()
+        {
+            if (Volatile.Read(ref _hasAdmissionLease) != 0)
+                throw new InvalidOperationException("Cannot reset an attempt outcome while its admission lease is still active.");
+
+            _attemptStarted = _client._runtimeContext.TimeProvider.GetTimestamp();
+            Volatile.Write(ref _endpointStarted, 0);
+            Volatile.Write(ref _responseObserved, 0);
+            _admissionEndpoint = default;
+            _admissionToken = 0;
+            _retryAfter = null;
+            SharpLinkTelemetry.RecordClientAttempt();
+        }
 
         public bool TryAcquire(in SharpLinkEndpointCandidate endpoint)
         {
