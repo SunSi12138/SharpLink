@@ -211,7 +211,7 @@ public sealed class ExternalRequest
         var diagnostic = result.DriverDiagnostics.FirstOrDefault(static item => item.Id == "SLSP0001");
 
         Ensure(diagnostic is not null, "unsupported SharpPack graph produces SLSP0001");
-        Ensure(diagnostic.GetMessage().Contains("member 'Child'", StringComparison.Ordinal),
+        Ensure(diagnostic!.GetMessage().Contains("member 'Child'", StringComparison.Ordinal),
             "diagnostic contains the dependency member path");
         Ensure(diagnostic.GetMessage().Contains("constructor", StringComparison.OrdinalIgnoreCase),
             "diagnostic identifies construction as the unsupported capability");
