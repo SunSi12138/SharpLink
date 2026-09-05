@@ -88,8 +88,10 @@ jobs:
       - name: Replace migration-only tests with generation-scoped validation in workspace
         run: |
           python3 .github/issue410-tests.py
+          python3 .github/issue410-adjust-stale-tests.py
           git diff --stat -- test/SharpLink.UnitTests/Server > artifacts/issue410/test-stat.txt
           git diff -- test/SharpLink.UnitTests/Server/AdmissionGenerationScopedRateTests.cs > artifacts/issue410/generation-scoped-tests.patch
+          git diff -- test/SharpLink.UnitTests/Server > artifacts/issue410/all-test-changes.patch
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
