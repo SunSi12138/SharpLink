@@ -34,15 +34,22 @@ internal sealed partial class SharpLinkClient
         Exception? lastFailure = null;
         var selection = _cluster is null ? null : new EndpointRetrySelectionState();
         var requiresAttemptOutcome = _endpointAdmissionPolicy is not null || _retryPolicy is not null;
+        AttemptOutcomeState? outcome = null;
         for (var attempt = 1; attempt <= options.MaxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             EnsureLogicalCallProgress(control);
-            AttemptOutcomeState? outcome = null;
             if (requiresAttemptOutcome)
-                outcome = new AttemptOutcomeState(this, method);
+            {
+                if (outcome is null)
+                    outcome = new AttemptOutcomeState(this, method);
+                else
+                    outcome.ResetForRetryAttempt();
+            }
             else
+            {
                 SharpLinkTelemetry.RecordClientAttempt();
+            }
             var attemptScope = SharpLinkTelemetry.StartClientAttempt(method, attempt);
             try
             {
