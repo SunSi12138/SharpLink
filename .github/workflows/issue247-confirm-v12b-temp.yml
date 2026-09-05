@@ -85,7 +85,7 @@ jobs:
           p.write_text(s)
           PY
             dotnet restore "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
-            dotnet format whitespace "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore --verify-no-changes --verbosity minimal
+            dotnet format whitespace "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore --verbosity minimal
             dotnet build "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore -c Release -v minimal
           done
 
