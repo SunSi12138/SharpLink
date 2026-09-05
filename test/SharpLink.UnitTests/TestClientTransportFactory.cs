@@ -1,6 +1,8 @@
-using System.Net;
-using System.IO.Pipelines;
 using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.IO.Pipelines;
+using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Channels;
 
@@ -8,12 +10,20 @@ namespace SharpLink.UnitTests;
 
 internal sealed class TestClientTransportFactory : IClientTransportFactory
 {
+    private static readonly KeyValuePair<long, RpcHash128>[] DefaultContractManifest =
+    [
+        new(8_101, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL))
+    ];
+
     private readonly ProtocolV2Capabilities _negotiatedCapabilities;
+    private readonly KeyValuePair<long, RpcHash128>[] _contractManifest;
 
     internal TestClientTransportFactory(
-        ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None)
+        ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
+        IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null)
     {
         _negotiatedCapabilities = negotiatedCapabilities;
+        _contractManifest = contractManifest?.ToArray() ?? DefaultContractManifest;
     }
 
     public TestTransportConnection Connection { get; } = new();
@@ -23,18 +33,9 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
     public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _connectCount);
-        var payload = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
-            ProtocolV2Constants.MinorVersion,
+        await Connection.InjectSuccessfulHandshakeAsync(
             _negotiatedCapabilities,
-            4 * 1024 * 1024,
-            1024 * 1024,
-            16 * 1024 * 1024));
-        await Connection.InjectFrameAsync(
-            ProtocolV2FrameType.HandshakeResponse,
-            ProtocolV2FrameFlags.None,
-            0,
-            payload.WrittenMemory,
+            _contractManifest,
             cancellationToken);
         return Connection;
     }
@@ -44,6 +45,7 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
 
 internal sealed class TestTransportConnection : ITransportConnection
 {
+    private static readonly SharpLinkProtocolOptions ProtocolLimits = new();
     private readonly Pipe _inbound = new();
     private readonly Pipe _outbound = new();
     private readonly CallbackPipeWriter _output;
@@ -66,6 +68,39 @@ internal sealed class TestTransportConnection : ITransportConnection
 
     internal void RunOnNextOutputBufferRequest(Action callback)
         => _output.RunOnNextBufferRequest(callback);
+
+    internal async Task InjectSuccessfulHandshakeAsync(
+        ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
+        IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
+        CancellationToken cancellationToken = default)
+    {
+        negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
+        var responsePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, new ProtocolV2HandshakeResponse(
+            ProtocolV2Constants.MinorVersion,
+            negotiatedCapabilities,
+            4 * 1024 * 1024,
+            1024 * 1024,
+            16 * 1024 * 1024));
+        await InjectFrameAsync(
+            ProtocolV2FrameType.HandshakeResponse,
+            ProtocolV2FrameFlags.None,
+            0,
+            responsePayload.WrittenMemory,
+            cancellationToken);
+
+        var manifestPayload = new PooledByteBufferWriter();
+        ProtocolV2ContractManifestCodec.Write(
+            manifestPayload,
+            new ProtocolV2ContractManifest(0, contractManifest ?? []),
+            ProtocolLimits);
+        await InjectFrameAsync(
+            ProtocolV2FrameType.ContractManifest,
+            ProtocolV2FrameFlags.None,
+            0,
+            manifestPayload.WrittenMemory,
+            cancellationToken);
+    }
 
     public Task InjectPacketAsync(
         ProtocolV2FrameType type,
@@ -130,6 +165,10 @@ internal sealed class TestTransportConnection : ITransportConnection
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (ChannelClosedException)
         {
             return false;
         }

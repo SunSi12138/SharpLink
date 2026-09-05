@@ -105,6 +105,7 @@ internal sealed partial class SharpLinkServer
                         Volatile.Write(ref _services, candidate.Services);
                         _dynamicModules.Add(assembly, module);
                         _registryGeneration++;
+                        ScheduleContractManifestPublish();
                         published = true;
                         return SharpLinkAssemblyRegistrationResult.Success();
                     }
@@ -292,6 +293,7 @@ internal sealed partial class SharpLinkServer
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         Volatile.Write(ref _services, candidate.Services);
                         _registryGeneration++;
+                        ScheduleContractManifestPublish();
                         oldModule.TryBeginDraining();
                         published = true;
                         break;

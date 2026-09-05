@@ -48,7 +48,8 @@ internal static class RpcSessionProtocolRules
         ProtocolV2Capabilities.Compression |
         ProtocolV2Capabilities.FlowControl |
         ProtocolV2Capabilities.HealthCheck |
-        ProtocolV2Capabilities.CancellationReason;
+        ProtocolV2Capabilities.CancellationReason |
+        ProtocolV2Capabilities.ContractManifest;
 
     internal static bool IsFrameAllowed(
         RpcSessionProtocolPhase phase,
@@ -69,7 +70,8 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.WindowUpdate or
                     ProtocolV2FrameType.GoAway or
                     ProtocolV2FrameType.HealthCheck or
-                    ProtocolV2FrameType.HealthResponse,
+                    ProtocolV2FrameType.HealthResponse or
+                    ProtocolV2FrameType.ContractManifest,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or

@@ -143,8 +143,30 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            if (!connection.MarkReady(authResult.Context))
+            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractManifest) != 0)
+            {
+                // Registry mutation, the Ready transition, and bootstrap-manifest enqueue share
+                // one ordering boundary. A register/replace/drain either happens before this
+                // lock (and is represented by the bootstrap snapshot) or after Ready (and is
+                // published as a later manifest generation). The request loop is still stopped.
+                lock (_registryGate)
+                {
+                    if (CurrentState != ServerState.Running)
+                    {
+                        connection.MarkDraining();
+                        return;
+                    }
+                    if (!connection.MarkReady(authResult.Context))
+                        return;
+                    session.SendContractManifest(CreateContractManifestSnapshotLocked());
+                }
+
+                await session.FlushSendQueueAsync(ct).ConfigureAwait(false);
+            }
+            else if (!connection.MarkReady(authResult.Context))
+            {
                 return;
+            }
 
             // The handshake (TLS + Protocol v2 + authentication) is complete: release the
             // handshake slot while the connection slot follows the full connection lifetime.

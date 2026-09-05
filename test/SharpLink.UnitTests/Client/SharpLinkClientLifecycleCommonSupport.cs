@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Net.Sockets;
@@ -152,19 +151,7 @@ internal static class SharpLinkClientLifecycleSharedSupport
                 throw new SocketException((int)SocketError.ConnectionRefused);
 
             var connection = new TestTransportConnection();
-            var payload = new ArrayBufferWriter<byte>();
-            ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
-                ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.None,
-                4 * 1024 * 1024,
-                1024 * 1024,
-                16 * 1024 * 1024));
-            await connection.InjectFrameAsync(
-                ProtocolV2FrameType.HandshakeResponse,
-                ProtocolV2FrameFlags.None,
-                0,
-                payload.WrittenMemory,
-                cancellationToken);
+            await connection.InjectSuccessfulHandshakeAsync(cancellationToken: cancellationToken);
             if (connectNumber > 1 && connectNumber <= _immediatelyDrainedReconnects + 1)
             {
                 using var goAway = new PooledByteBufferWriter();

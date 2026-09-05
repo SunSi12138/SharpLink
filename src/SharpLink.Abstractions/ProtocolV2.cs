@@ -47,7 +47,9 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Requests the endpoint's health status.</summary>
     HealthCheck = 11,
     /// <summary>Returns the endpoint's health status.</summary>
-    HealthResponse = 12
+    HealthResponse = 12,
+    /// <summary>Publishes the server's current contract-to-assembly wire identities.</summary>
+    ContractManifest = 13
 }
 
 /// <summary>Protocol v2 frame flags.</summary>
@@ -89,7 +91,9 @@ public enum ProtocolV2Capabilities : ulong
     /// <summary>Supports protocol-level health checks.</summary>
     HealthCheck = 1UL << 3,
     /// <summary>Negotiates an explicit one-byte reason on Cancel frames.</summary>
-    CancellationReason = 1UL << 4
+    CancellationReason = 1UL << 4,
+    /// <summary>Publishes deterministic contract-assembly identities for bind-time compatibility checks.</summary>
+    ContractManifest = 1UL << 5
 }
 
 /// <summary>Identifies why a client abandoned an active RPC call.</summary>

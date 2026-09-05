@@ -77,6 +77,7 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.GoAway => ProtocolV2FrameType.GoAway,
         (byte)ProtocolV2FrameType.HealthCheck => ProtocolV2FrameType.HealthCheck,
         (byte)ProtocolV2FrameType.HealthResponse => ProtocolV2FrameType.HealthResponse,
+        (byte)ProtocolV2FrameType.ContractManifest => ProtocolV2FrameType.ContractManifest,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -97,7 +98,8 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.HandshakeResponse or
             ProtocolV2FrameType.Ping or
             ProtocolV2FrameType.Pong or
-            ProtocolV2FrameType.GoAway;
+            ProtocolV2FrameType.GoAway or
+            ProtocolV2FrameType.ContractManifest;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
         if (!controlFrame && requestId == 0)
@@ -125,6 +127,7 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.GoAway => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             ProtocolV2FrameType.HealthCheck => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.HealthResponse => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
             _ => ProtocolV2FrameFlags.None
         };
         if ((flags & ~allowed) != 0)
@@ -232,6 +235,9 @@ public static class ProtocolV2FrameParser
                 {
                     throw Violation($"Unknown health status {status}.");
                 }
+                break;
+            case ProtocolV2FrameType.ContractManifest:
+                ProtocolV2ContractManifestCodec.ValidatePayloadShape(payload, limits);
                 break;
         }
     }

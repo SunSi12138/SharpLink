@@ -146,6 +146,7 @@ internal sealed partial class SharpLinkServer
             Volatile.Write(ref _services, nextServices);
             _dynamicModules.Remove(assembly);
             _registryGeneration++;
+            ScheduleContractManifestPublish();
         }
 
         List<Exception>? failures = null;
