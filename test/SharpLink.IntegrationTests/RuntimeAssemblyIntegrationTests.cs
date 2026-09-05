@@ -120,7 +120,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var client = await CreateDynamicMultiClusterClientAsync(harness.Port);
         using var plugin = PluginBundle.Load("multi-cluster-cancelled-unregister");
         plugin.ResetServiceState();
-        RegisterMultiClusterPlugin(harness, client, plugin);
+        await RegisterMultiClusterPluginAsync(harness, client, plugin);
 
         var proxy = GetMultiClusterProxy(client, plugin.ContractType)
             ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
@@ -322,7 +322,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var oldPlugin = PluginBundle.Load("multi-cluster-cancelled-replacement-old");
         using var newPlugin = PluginBundle.Load("multi-cluster-cancelled-replacement-new");
         oldPlugin.ResetServiceState();
-        RegisterMultiClusterPlugin(harness, client, oldPlugin);
+        await RegisterMultiClusterPluginAsync(harness, client, oldPlugin);
 
         var proxy = GetMultiClusterProxy(client, oldPlugin.ContractType)
             ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
@@ -1853,7 +1853,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         return client;
     }
 
-    private static void RegisterMultiClusterPlugin(
+    private static async Task RegisterMultiClusterPluginAsync(
         DynamicHarness harness,
         ISharpLinkMultiClusterClient client,
         PluginBundle plugin)
@@ -1864,6 +1864,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "multi-cluster server service registration");
         Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
             "multi-cluster client contract registration");
+
+        var snapshotField = typeof(SharpLinkMultiClusterClient).GetField(
+            "_snapshot",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Multi-cluster snapshot field was not found.");
+        var snapshot = (MultiClusterSnapshot)(snapshotField.GetValue(client)
+            ?? throw new InvalidOperationException("Multi-cluster snapshot was unavailable."));
+        await WaitForRemoteContractManifestAsync(
+            snapshot.Clusters[new SharpLinkClusterKey("plugins")].Client,
+            plugin.ContractType);
     }
 
     private static async Task UnregisterMultiClusterPluginAsync(DynamicHarness harness, PluginBundle plugin)
