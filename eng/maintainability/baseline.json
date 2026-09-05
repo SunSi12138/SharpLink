@@ -84,18 +84,6 @@
     },
     {
       "domain": "source",
-      "path": "src/SharpLink.Client/SharpLinkClient.Interceptors.cs",
-      "maxLoc": 924,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "source",
-      "path": "src/SharpLink.Server/SharpLinkServer.Interceptors.cs",
-      "maxLoc": 916,
-      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Client/SharpLinkClient.StaticCluster.cs",
       "maxLoc": 908,
       "reason": "Existing dev debt captured by issue #350."

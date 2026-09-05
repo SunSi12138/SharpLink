@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
         => new UnaryInterceptorState<TRequest, TResponse>(
@@ -18,7 +18,7 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
@@ -31,7 +31,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
@@ -43,7 +43,7 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
@@ -60,7 +60,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
@@ -75,7 +75,7 @@ internal sealed partial class SharpLinkClient
     private abstract class ClientInterceptorState
     {
         private readonly SharpLinkClient _client;
-        private readonly ISharpLinkClientInterceptor[] _interceptors;
+        private readonly ClientInterceptorGeneration _interceptors;
         private readonly SharpLinkClientInvocationContext _context;
         private readonly ResolvedCallControl _control;
         private long _started;
@@ -84,7 +84,7 @@ internal sealed partial class SharpLinkClient
             SharpLinkClient client,
             RpcMethodDescriptor method,
             object? request,
-            ISharpLinkClientInterceptor[] interceptors,
+            ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
         {
@@ -93,6 +93,7 @@ internal sealed partial class SharpLinkClient
             _control = control;
             _context = new SharpLinkClientInvocationContext(
                 method, request, _control.Metadata, cancellationToken);
+            _context.InterceptorPipelineState = this;
         }
 
         protected SharpLinkClient Client => _client;
@@ -110,7 +111,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var result = await AwaitInvocationWithinFrozenDeadlineAsync(
-                    InvokeNextAsync(0, _context)).ConfigureAwait(false);
+                    _interceptors.Entry(_context)).ConfigureAwait(false);
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
                 return result;
@@ -132,7 +133,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var result = await AwaitInvocationWithinFrozenDeadlineAsync(
-                    InvokeNextAsync(0, _context)).ConfigureAwait(false);
+                    _interceptors.Entry(_context)).ConfigureAwait(false);
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
                 return result.GetValue<TResult>();
@@ -160,7 +161,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var result = await AwaitInvocationWithinFrozenDeadlineAsync(
-                    InvokeNextAsync(0, _context)).ConfigureAwait(false);
+                    _interceptors.Entry(_context)).ConfigureAwait(false);
                 ValidateResult(result);
                 MarkChainSucceeded(_context);
             }
@@ -208,8 +209,9 @@ internal sealed partial class SharpLinkClient
             catch { }
         }
 
-        private ValueTask<SharpLinkClientInvocationResult> InvokeNextAsync(
-            int index,
+        internal ValueTask<SharpLinkClientInvocationResult> InvokeComposedInterceptorAsync(
+            ISharpLinkClientInterceptor interceptor,
+            SharpLinkClientInvocationDelegate next,
             SharpLinkClientInvocationContext context)
         {
             if (_control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
@@ -218,211 +220,26 @@ internal sealed partial class SharpLinkClient
                     CreateDeadlineExceededException());
             }
 
-            if (index >= _interceptors.Length)
-                return InvokeTerminalTrackedAsync(context);
-
-            var continuation = new ClientInterceptorContinuation(
-                ClientContinuationState.Rent(this, index + 1));
-            ValueTask<SharpLinkClientInvocationResult> invocation;
             try
             {
-                invocation = _interceptors[index].InvokeAsync(context, continuation.InvokeAsync);
+                return interceptor.InvokeAsync(context, next);
             }
             catch (Exception exception)
             {
-                invocation = ValueTask.FromException<SharpLinkClientInvocationResult>(exception);
-            }
-            if (!invocation.IsCompletedSuccessfully)
-            {
-                if (continuation.IsSameInvocation(invocation))
-                    return invocation;
-                return AwaitInterceptorAndContinuationAsync(invocation, continuation);
-            }
-            var result = invocation.Result;
-            var continuationCompletion = continuation.JoinAsync();
-            return continuationCompletion.IsCompletedSuccessfully
-                ? ValueTask.FromResult(result)
-                : AwaitContinuationAsync(result, continuationCompletion);
-        }
-
-        private static async ValueTask<SharpLinkClientInvocationResult> AwaitContinuationAsync(
-            SharpLinkClientInvocationResult result,
-            ValueTask continuationCompletion)
-        {
-            await continuationCompletion.ConfigureAwait(false);
-            return result;
-        }
-
-        private static async ValueTask<SharpLinkClientInvocationResult> AwaitInterceptorAndContinuationAsync(
-            ValueTask<SharpLinkClientInvocationResult> invocation,
-            ClientInterceptorContinuation continuation)
-        {
-            SharpLinkClientInvocationResult result = default;
-            Exception? invocationException = null;
-            try
-            {
-                result = await invocation.ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                invocationException = exception;
-            }
-
-            try
-            {
-                await continuation.JoinAsync().ConfigureAwait(false);
-            }
-            catch (Exception continuationException) when (
-                ReferenceEquals(invocationException, continuationException))
-            {
-                // The interceptor awaited next and propagated the same failure.
-            }
-            catch (Exception continuationException) when (invocationException is not null)
-            {
-                throw new AggregateException(invocationException, continuationException);
-            }
-            if (invocationException is not null)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(invocationException).Throw();
-            return result;
-        }
-
-        private sealed class ClientInterceptorContinuation(ClientContinuationState state)
-        {
-            private int _invoked;
-            private ClientContinuationState? _state = state;
-
-            public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
-                SharpLinkClientInvocationContext context)
-            {
-                if (Interlocked.Exchange(ref _invoked, 1) != 0)
-                {
-                    return ValueTask.FromException<SharpLinkClientInvocationResult>(
-                        new InvalidOperationException("An interceptor continuation can only be invoked once."));
-                }
-                return (_state ?? throw new InvalidOperationException("The interceptor continuation has expired."))
-                    .InvokeAsync(context);
-            }
-
-            public ValueTask JoinAsync()
-            {
-                var state = Interlocked.Exchange(ref _state, null);
-                return state is null ? ValueTask.CompletedTask : state.JoinAndReturnAsync();
-            }
-
-            public bool IsSameInvocation(ValueTask<SharpLinkClientInvocationResult> invocation)
-            {
-                var state = _state;
-                if (state is null || !state.IsSameInvocation(invocation))
-                    return false;
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref _state, null, state), state))
-                    return false;
-                state.Return();
-                return true;
+                return ValueTask.FromException<SharpLinkClientInvocationResult>(exception);
             }
         }
 
-        private sealed class ClientContinuationState
+        internal ValueTask<SharpLinkClientInvocationResult> InvokeComposedTerminalAsync(
+            SharpLinkClientInvocationContext context)
         {
-            private const int MaxRetained = 4096;
-            private const int ShardCount = 32;
-            private static readonly Shard[] Shards = CreateShards();
-
-            private ClientInterceptorState? _owner;
-            private int _nextIndex;
-            private ValueTask<SharpLinkClientInvocationResult> _completion;
-            private int _completionAvailable;
-
-            public static ClientContinuationState Rent(ClientInterceptorState owner, int nextIndex)
+            if (_control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
             {
-                var shard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
-                ClientContinuationState state;
-                lock (shard.Gate)
-                {
-                    if (shard.Stack.TryPop(out state!))
-                    {
-                        shard.Retained--;
-                    }
-                    else
-                    {
-                        state = new ClientContinuationState();
-                    }
-                }
-                state._owner = owner;
-                state._nextIndex = nextIndex;
-                return state;
+                return ValueTask.FromException<SharpLinkClientInvocationResult>(
+                    CreateDeadlineExceededException());
             }
 
-            public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
-                SharpLinkClientInvocationContext context)
-            {
-                var invocation = (_owner ?? throw new InvalidOperationException("The interceptor continuation has expired."))
-                    .InvokeNextAsync(_nextIndex, context);
-                _completion = invocation;
-                Volatile.Write(ref _completionAvailable, 1);
-                return invocation;
-            }
-
-            public bool IsSameInvocation(ValueTask<SharpLinkClientInvocationResult> invocation)
-                => Volatile.Read(ref _completionAvailable) != 0 && _completion.Equals(invocation);
-
-            public ValueTask JoinAndReturnAsync()
-            {
-                if (Volatile.Read(ref _completionAvailable) == 0 || _completion.IsCompleted)
-                {
-                    Return();
-                    return ValueTask.CompletedTask;
-                }
-                return AwaitCompletionAndReturnAsync(this, _completion);
-            }
-
-            public void Return()
-            {
-                _owner = null;
-                _nextIndex = 0;
-                _completion = default;
-                Volatile.Write(ref _completionAvailable, 0);
-
-                var returnShard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
-                lock (returnShard.Gate)
-                {
-                    if (returnShard.Retained < returnShard.Max)
-                    {
-                        returnShard.Retained++;
-                        returnShard.Stack.Push(this);
-                    }
-                }
-            }
-
-            private static Shard[] CreateShards()
-            {
-                var shards = new Shard[ShardCount];
-                var perShard = MaxRetained / ShardCount;
-                for (var index = 0; index < ShardCount; index++)
-                    shards[index] = new Shard(perShard);
-                return shards;
-            }
-
-            private sealed class Shard(int max)
-            {
-                public readonly int Max = max;
-                public readonly Lock Gate = new();
-                public readonly Stack<ClientContinuationState> Stack = new(4);
-                public int Retained;
-            }
-
-            private static async ValueTask AwaitCompletionAndReturnAsync(
-                ClientContinuationState state,
-                ValueTask<SharpLinkClientInvocationResult> completion)
-            {
-                try
-                {
-                    _ = await completion.ConfigureAwait(false);
-                }
-                finally
-                {
-                    state.Return();
-                }
-            }
+            return InvokeTerminalTrackedAsync(context);
         }
 
         private ValueTask<SharpLinkClientInvocationResult> InvokeTerminalTrackedAsync(
@@ -493,7 +310,7 @@ internal sealed partial class SharpLinkClient
             TRequest request,
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
-            ISharpLinkClientInterceptor[] interceptors,
+            ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
             : base(client, method, request, interceptors, control, cancellationToken)
@@ -551,7 +368,7 @@ internal sealed partial class SharpLinkClient
             TRequest request,
             IRpcCodec<TRequest> requestCodec,
             TStreams streams,
-            ISharpLinkClientInterceptor[] interceptors,
+            ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
             : base(client, method, request, interceptors, control, cancellationToken)
@@ -611,7 +428,7 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
-            ISharpLinkClientInterceptor[] interceptors,
+            ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
             : base(client, method, request, interceptors, control, cancellationToken)
@@ -671,7 +488,7 @@ internal sealed partial class SharpLinkClient
             TRequest request,
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
-            ISharpLinkClientInterceptor[] interceptors,
+            ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
             : base(client, method, request, interceptors, control, cancellationToken)
@@ -727,7 +544,7 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
-            ISharpLinkClientInterceptor[] interceptors,
+            ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken)
             : base(client, method, request, interceptors, control, cancellationToken)

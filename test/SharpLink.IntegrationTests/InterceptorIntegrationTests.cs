@@ -246,46 +246,48 @@ public class InterceptorIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task ServerInterceptorMustJoinAnInvokedContinuation()
+    public async Task ServerInterceptorMayReturnContinuationDirectly()
     {
         InterceptorTestService.ResetDelayedCall();
         await using var harness = await InterceptorHarness.CreateAsync(
-            serverInterceptor: new AbandoningServerInterceptor());
+            serverInterceptor: new ReturningServerInterceptor());
         var call = harness.Client.Get<IInterceptorTestService>().DelayedAsync().AsTask();
         try
         {
             await InterceptorTestService.DelayedCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
             await Task.Delay(50);
-            Ensure(!call.IsCompleted, "server interceptor must not abandon its invoked continuation");
+            Ensure(!call.IsCompleted,
+                "a directly returned Server continuation must represent downstream completion");
         }
         finally
         {
             InterceptorTestService.ReleaseDelayedCall();
         }
         Ensure(await call.WaitAsync(TimeSpan.FromSeconds(3)) == 42,
-            "joined server continuation response");
+            "directly returned Server continuation response");
     }
 
     [Test]
     [NotInParallel]
-    public async Task ClientInterceptorMustJoinAnInvokedContinuation()
+    public async Task ClientInterceptorMayReturnContinuationDirectly()
     {
         InterceptorTestService.ResetDelayedCall();
         await using var harness = await InterceptorHarness.CreateAsync(
-            clientInterceptor: new AbandoningClientInterceptor(777));
+            clientInterceptor: new ReturningClientInterceptor());
         var call = harness.Client.Get<IInterceptorTestService>().DelayedAsync().AsTask();
         try
         {
             await InterceptorTestService.DelayedCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
             await Task.Delay(50);
-            Ensure(!call.IsCompleted, "client interceptor must not orphan its invoked continuation");
+            Ensure(!call.IsCompleted,
+                "a directly returned Client continuation must represent downstream completion");
         }
         finally
         {
             InterceptorTestService.ReleaseDelayedCall();
         }
-        Ensure(await call.WaitAsync(TimeSpan.FromSeconds(3)) == 777,
-            "joined client continuation may still transform the result");
+        Ensure(await call.WaitAsync(TimeSpan.FromSeconds(3)) == 42,
+            "directly returned Client continuation response");
     }
 
     [Test]
@@ -415,34 +417,26 @@ public class InterceptorIntegrationTests
     }
 
     [Test]
-    public async Task InterceptorContinuationShouldExecuteEachTerminalAtMostOnce()
+    public async Task CorrectContinuationUsageShouldExecuteEachTerminalOnce()
     {
         InterceptorTestService.ResetInvocationCount();
-        Exception? clientFailure;
         await using (var clientHarness = await InterceptorHarness.CreateAsync(
-                         clientInterceptor: new DoubleNextClientInterceptor()))
+                         clientInterceptor: new ReturningClientInterceptor()))
         {
-            var service = clientHarness.Client.Get<IInterceptorTestService>();
-            clientFailure = await CaptureException(service.CountInvocationAsync().AsTask());
+            _ = await clientHarness.Client.Get<IInterceptorTestService>().CountInvocationAsync();
         }
         var clientInvocationCount = InterceptorTestService.InvocationCount;
 
         InterceptorTestService.ResetInvocationCount();
-        Exception? serverFailure;
         await using (var serverHarness = await InterceptorHarness.CreateAsync(
-                         serverInterceptor: new DoubleNextServerInterceptor()))
+                         serverInterceptor: new ReturningServerInterceptor()))
         {
-            var service = serverHarness.Client.Get<IInterceptorTestService>();
-            serverFailure = await CaptureException(service.CountInvocationAsync().AsTask());
+            _ = await serverHarness.Client.Get<IInterceptorTestService>().CountInvocationAsync();
         }
         var serverInvocationCount = InterceptorTestService.InvocationCount;
 
         Ensure(clientInvocationCount == 1 && serverInvocationCount == 1,
-            $"continuations must execute one terminal each; client={clientInvocationCount}, server={serverInvocationCount}");
-        Ensure(clientFailure is InvalidOperationException,
-            "duplicate client continuation should fail locally");
-        Ensure(serverFailure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
-            "duplicate server continuation should return a structured internal failure");
+            $"correct continuations execute one terminal each; client={clientInvocationCount}, server={serverInvocationCount}");
     }
 
     [Test]
@@ -809,27 +803,12 @@ public class InterceptorIntegrationTests
         }
     }
 
-    private sealed class DoubleNextClientInterceptor : ISharpLinkClientInterceptor
-    {
-        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
-            SharpLinkClientInvocationContext context,
-            SharpLinkClientInvocationDelegate next)
-        {
-            var result = await next(context).ConfigureAwait(false);
-            _ = await next(context).ConfigureAwait(false);
-            return result;
-        }
-    }
-
-    private sealed class AbandoningClientInterceptor(int value) : ISharpLinkClientInterceptor
+    private sealed class ReturningClientInterceptor : ISharpLinkClientInterceptor
     {
         public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
             SharpLinkClientInvocationContext context,
             SharpLinkClientInvocationDelegate next)
-        {
-            _ = next(context);
-            return ValueTask.FromResult(new SharpLinkClientInvocationResult(value));
-        }
+            => next(context);
     }
 
     private sealed class RecordingServerInterceptor : ISharpLinkServerInterceptor
@@ -967,26 +946,12 @@ public class InterceptorIntegrationTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class DoubleNextServerInterceptor : ISharpLinkServerInterceptor
-    {
-        public async ValueTask InvokeAsync(
-            SharpLinkServerInvocationContext context,
-            SharpLinkServerInvocationDelegate next)
-        {
-            await next(context).ConfigureAwait(false);
-            await next(context).ConfigureAwait(false);
-        }
-    }
-
-    private sealed class AbandoningServerInterceptor : ISharpLinkServerInterceptor
+    private sealed class ReturningServerInterceptor : ISharpLinkServerInterceptor
     {
         public ValueTask InvokeAsync(
             SharpLinkServerInvocationContext context,
             SharpLinkServerInvocationDelegate next)
-        {
-            _ = next(context);
-            return ValueTask.CompletedTask;
-        }
+            => next(context);
     }
 
     private sealed class DelayedFirstServerInterceptor : ISharpLinkServerInterceptor

@@ -389,8 +389,8 @@ internal sealed partial class SharpLinkServer
                 SharpLinkErrorCode.AuthenticationExpired,
                 "Authentication token has expired."));
         }
-        var interceptors = (context as SharpLinkServerInvocationContext)?.Interceptors;
-        if (interceptors is null || interceptors.Length == 0)
+        var interceptors = (context as SharpLinkServerInvocationContext)?.InterceptorGeneration as ServerInterceptorGeneration;
+        if (interceptors is null || interceptors.Count == 0)
         {
             return output is null
                 ? stub.InvokeNoReturnCancellableAsync(
@@ -414,7 +414,7 @@ internal sealed partial class SharpLinkServer
     }
 
     private async ValueTask InvokeInterceptedWithOwnedArgumentsAsync(
-        ISharpLinkServerInterceptor[] interceptors,
+        ServerInterceptorGeneration interceptors,
         IRpcStub stub,
         object service,
         RpcSession session,
@@ -437,18 +437,17 @@ internal sealed partial class SharpLinkServer
 
         if (length == 0)
         {
-            await new ServerPipelineFacts(
+            await InvokeComposedServerInterceptorsAsync(
                 interceptors,
                 stub,
                 service,
-                session,
                 generatedBridge,
                 methodId,
                 requestId,
                 ReadOnlySequence<byte>.Empty,
                 output,
-                _runtimeContext.TimeProvider,
-                cancellationToken).InvokeAsync(context).ConfigureAwait(false);
+                cancellationToken,
+                context).ConfigureAwait(false);
             return;
         }
 
@@ -457,22 +456,72 @@ internal sealed partial class SharpLinkServer
         {
             arguments.CopyTo(rented);
             var ownedArguments = new ReadOnlySequence<byte>(rented.AsMemory(0, length));
-            await new ServerPipelineFacts(
+            await InvokeComposedServerInterceptorsAsync(
                 interceptors,
                 stub,
                 service,
-                session,
                 generatedBridge,
                 methodId,
                 requestId,
                 ownedArguments,
                 output,
-                _runtimeContext.TimeProvider,
-                cancellationToken).InvokeAsync(context).ConfigureAwait(false);
+                cancellationToken,
+                context).ConfigureAwait(false);
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+        }
+    }
+
+    private async ValueTask InvokeComposedServerInterceptorsAsync(
+        ServerInterceptorGeneration interceptors,
+        IRpcStub stub,
+        object service,
+        IRpcGeneratedServerBridge generatedBridge,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkServerInvocationContext context)
+    {
+        var timeProvider = _runtimeContext.TimeProvider;
+        context.InterceptorStub = stub;
+        context.InterceptorService = service;
+        context.InterceptorGeneratedBridge = generatedBridge;
+        context.InterceptorMethodId = methodId;
+        context.InterceptorArguments = arguments;
+        context.InterceptorOutput = output;
+        context.InterceptorTimeProvider = timeProvider;
+        context.InterceptorStarted = timeProvider.GetTimestamp();
+        context.InterceptorTerminalReached = false;
+
+        try
+        {
+            await interceptors.Entry(context).ConfigureAwait(false);
+            if (output is not null && !context.InterceptorTerminalReached)
+            {
+                throw new InvalidOperationException(
+                    "A Server interceptor must invoke its continuation for a response-bearing RPC.");
+            }
+            if (context.Status == SharpLinkInvocationStatus.Pending)
+                context.Status = SharpLinkInvocationStatus.Succeeded;
+        }
+        catch (Exception exception)
+        {
+            RecordInvocationFailure(context, exception);
+            throw;
+        }
+        finally
+        {
+            context.Elapsed = timeProvider.GetElapsedTime(context.InterceptorStarted);
+            context.InterceptorStub = null;
+            context.InterceptorService = null;
+            context.InterceptorGeneratedBridge = null;
+            context.InterceptorArguments = default;
+            context.InterceptorOutput = null;
+            context.InterceptorTimeProvider = null;
         }
     }
 
@@ -583,314 +632,6 @@ internal sealed partial class SharpLinkServer
             SharpLinkErrorCode.Internal,
             "Internal stream error.",
             exception);
-    }
-
-    private struct ServerPipelineFacts
-    {
-        private readonly ISharpLinkServerInterceptor[] _interceptors;
-        private readonly IRpcStub _stub;
-        private readonly object _service;
-        private readonly RpcSession _session;
-        private readonly IRpcGeneratedServerBridge _generatedBridge;
-        private readonly long _methodId;
-        private readonly long _requestId;
-        private readonly ReadOnlySequence<byte> _arguments;
-        private readonly IRpcByteBufferWriter? _output;
-        private readonly TimeProvider _timeProvider;
-        private readonly CancellationToken _cancellationToken;
-        private long _started;
-
-        public ServerPipelineFacts(
-            ISharpLinkServerInterceptor[] interceptors,
-            IRpcStub stub,
-            object service,
-            RpcSession session,
-            IRpcGeneratedServerBridge generatedBridge,
-            long methodId,
-            long requestId,
-            ReadOnlySequence<byte> arguments,
-            IRpcByteBufferWriter? output,
-            TimeProvider timeProvider,
-            CancellationToken cancellationToken)
-        {
-            _interceptors = interceptors;
-            _stub = stub;
-            _service = service;
-            _session = session;
-            _generatedBridge = generatedBridge;
-            _methodId = methodId;
-            _requestId = requestId;
-            _arguments = arguments;
-            _output = output;
-            _timeProvider = timeProvider;
-            _cancellationToken = cancellationToken;
-        }
-
-        public async ValueTask InvokeAsync(SharpLinkServerInvocationContext context)
-        {
-            _started = _timeProvider.GetTimestamp();
-            try
-            {
-                await InvokeNextAsync(0, context).ConfigureAwait(false);
-                if (context.Status == SharpLinkInvocationStatus.Pending)
-                    context.Status = SharpLinkInvocationStatus.Succeeded;
-            }
-            catch (Exception exception)
-            {
-                RecordInvocationFailure(context, exception);
-                throw;
-            }
-            finally
-            {
-                context.Elapsed = _timeProvider.GetElapsedTime(_started);
-            }
-        }
-
-        private ValueTask InvokeNextAsync(int index, SharpLinkServerInvocationContext context)
-        {
-            if (index >= _interceptors.Length)
-                return InvokeTerminalTrackedAsync(context);
-
-            // Every interceptor invocation is a user-code re-entry boundary. Route it through
-            // the same Server call-state/deadline claimant used by generated service methods
-            // and server-stream MoveNextAsync so no later interceptor can run after terminal.
-            _generatedBridge.EnsureUserCodeEntry(_requestId);
-
-            var continuation = new ServerInterceptorContinuation(
-                ServerContinuationState.Rent(this, index + 1));
-            ValueTask invocation;
-            try
-            {
-                invocation = _interceptors[index].InvokeAsync(context, continuation.InvokeAsync);
-            }
-            catch (Exception exception)
-            {
-                invocation = ValueTask.FromException(exception);
-            }
-            if (!invocation.IsCompletedSuccessfully)
-            {
-                if (continuation.IsSameInvocation(invocation))
-                    return invocation;
-                return AwaitInterceptorAsync(invocation, continuation);
-            }
-            EnsureResponseContinuationInvoked(continuation);
-            return continuation.JoinAsync();
-        }
-
-        private async ValueTask AwaitInterceptorAsync(
-            ValueTask invocation,
-            ServerInterceptorContinuation continuation)
-        {
-            Exception? invocationException = null;
-            try
-            {
-                await invocation.ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                invocationException = exception;
-            }
-
-            if (invocationException is null)
-                EnsureResponseContinuationInvoked(continuation);
-            try
-            {
-                await continuation.JoinAsync().ConfigureAwait(false);
-            }
-            catch (Exception continuationException) when (
-                ReferenceEquals(invocationException, continuationException))
-            {
-                // The interceptor awaited next and propagated the same failure.
-            }
-            catch (Exception continuationException) when (invocationException is not null)
-            {
-                throw new AggregateException(invocationException, continuationException);
-            }
-            if (invocationException is not null)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(invocationException).Throw();
-        }
-
-        private void EnsureResponseContinuationInvoked(ServerInterceptorContinuation continuation)
-        {
-            if (_output is not null && !continuation.WasInvoked)
-            {
-                throw new InvalidOperationException(
-                    "A Server interceptor must invoke its continuation for a response-bearing RPC.");
-            }
-        }
-
-        private sealed class ServerInterceptorContinuation(ServerContinuationState state)
-        {
-            private int _invoked;
-            private ServerContinuationState? _state = state;
-
-            public bool WasInvoked => Volatile.Read(ref _invoked) != 0;
-
-            public ValueTask InvokeAsync(SharpLinkServerInvocationContext context)
-            {
-                if (Interlocked.Exchange(ref _invoked, 1) != 0)
-                {
-                    return ValueTask.FromException(
-                        new InvalidOperationException("An interceptor continuation can only be invoked once."));
-                }
-                return (_state ?? throw new InvalidOperationException("The interceptor continuation has expired."))
-                    .InvokeAsync(context);
-            }
-
-            public ValueTask JoinAsync()
-            {
-                var state = Interlocked.Exchange(ref _state, null);
-                return state is null ? ValueTask.CompletedTask : state.JoinAndReturnAsync();
-            }
-
-            public bool IsSameInvocation(ValueTask invocation)
-            {
-                var state = _state;
-                if (state is null || !state.IsSameInvocation(invocation))
-                    return false;
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref _state, null, state), state))
-                    return false;
-                state.Return();
-                return true;
-            }
-        }
-
-        private sealed class ServerContinuationState
-        {
-            private const int MaxRetained = 4096;
-            private const int ShardCount = 32;
-            private static readonly Shard[] Shards = CreateShards();
-
-            private ServerPipelineFacts _owner;
-            private bool _hasOwner;
-            private int _nextIndex;
-            private ValueTask _completion;
-            private int _completionAvailable;
-
-            public static ServerContinuationState Rent(ServerPipelineFacts owner, int nextIndex)
-            {
-                var shard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
-                ServerContinuationState state;
-                lock (shard.Gate)
-                {
-                    if (shard.Stack.TryPop(out state!))
-                    {
-                        shard.Retained--;
-                    }
-                    else
-                    {
-                        state = new ServerContinuationState();
-                    }
-                }
-                state._owner = owner;
-                state._hasOwner = true;
-                state._nextIndex = nextIndex;
-                return state;
-            }
-
-            public ValueTask InvokeAsync(SharpLinkServerInvocationContext context)
-            {
-                var invocation = _hasOwner
-                    ? _owner.InvokeNextAsync(_nextIndex, context)
-                    : throw new InvalidOperationException("The interceptor continuation has expired.");
-                _completion = invocation;
-                Volatile.Write(ref _completionAvailable, 1);
-                return invocation;
-            }
-
-            public bool IsSameInvocation(ValueTask invocation)
-                => Volatile.Read(ref _completionAvailable) != 0 && _completion.Equals(invocation);
-
-            public ValueTask JoinAndReturnAsync()
-            {
-                if (Volatile.Read(ref _completionAvailable) == 0 || _completion.IsCompleted)
-                {
-                    Return();
-                    return ValueTask.CompletedTask;
-                }
-                return AwaitCompletionAndReturnAsync(this, _completion);
-            }
-
-            public void Return()
-            {
-                _owner = default;
-                _hasOwner = false;
-                _nextIndex = 0;
-                _completion = default;
-                Volatile.Write(ref _completionAvailable, 0);
-
-                var returnShard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
-                lock (returnShard.Gate)
-                {
-                    if (returnShard.Retained < returnShard.Max)
-                    {
-                        returnShard.Retained++;
-                        returnShard.Stack.Push(this);
-                    }
-                }
-            }
-
-            private static Shard[] CreateShards()
-            {
-                var shards = new Shard[ShardCount];
-                var perShard = MaxRetained / ShardCount;
-                for (var index = 0; index < ShardCount; index++)
-                    shards[index] = new Shard(perShard);
-                return shards;
-            }
-
-            private sealed class Shard(int max)
-            {
-                public readonly int Max = max;
-                public readonly Lock Gate = new();
-                public readonly Stack<ServerContinuationState> Stack = new(4);
-                public int Retained;
-            }
-
-            private static async ValueTask AwaitCompletionAndReturnAsync(
-                ServerContinuationState state,
-                ValueTask completion)
-            {
-                try
-                {
-                    await completion.ConfigureAwait(false);
-                }
-                finally
-                {
-                    state.Return();
-                }
-            }
-        }
-
-        private async ValueTask InvokeTerminalTrackedAsync(SharpLinkServerInvocationContext context)
-        {
-            try
-            {
-                if (_output is null)
-                {
-                    await _stub.InvokeNoReturnCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                else
-                {
-                    await _stub.InvokeCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _output, _cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                if (context.Status == SharpLinkInvocationStatus.Pending)
-                    context.Status = SharpLinkInvocationStatus.Succeeded;
-            }
-            catch (Exception exception)
-            {
-                RecordInvocationFailure(context, exception);
-                throw;
-            }
-            finally
-            {
-                context.Elapsed = _timeProvider.GetElapsedTime(_started);
-            }
-        }
     }
 
     private static bool IsCancellationException(Exception exception)

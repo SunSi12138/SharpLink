@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
@@ -16,7 +16,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             ValueTask<TResponse> invocation;
-            if (interceptors.Length != 0)
+            if (interceptors.Count != 0)
             {
                 invocation = InvokeUnaryInterceptedAsync(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
@@ -40,7 +40,7 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
@@ -50,7 +50,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             ValueTask invocation;
-            if (interceptors.Length != 0)
+            if (interceptors.Count != 0)
             {
                 invocation = InvokeOneWayInterceptedAsync(
                     method, request, requestCodec, streams, interceptors, control, cancellationToken);
@@ -76,7 +76,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
@@ -86,7 +86,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             ValueTask<TResponse> invocation;
-            if (interceptors.Length != 0)
+            if (interceptors.Count != 0)
             {
                 invocation = InvokeClientStreamingInterceptedAsync(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
@@ -110,11 +110,11 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        var stream = interceptors.Length != 0
+        var stream = interceptors.Count != 0
             ? InvokeServerStreamingIntercepted(
                 method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
             : InvokeServerStreamingCore(
@@ -128,12 +128,12 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
-        ISharpLinkClientInterceptor[] interceptors,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var stream = interceptors.Length != 0
+        var stream = interceptors.Count != 0
             ? InvokeDuplexStreamingIntercepted(
                 method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
             : InvokeDuplexStreamingCore(
