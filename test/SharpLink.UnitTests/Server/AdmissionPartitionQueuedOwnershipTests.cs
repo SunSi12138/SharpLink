@@ -27,7 +27,7 @@ public sealed class AdmissionPartitionQueuedOwnershipTests
         Ensure(!pending.IsCompleted, "second request should remain queued across an await");
 
         first.Lease!.Dispose();
-        var second = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = await pending;
         Ensure(second.IsAcquired, "queued request should acquire after the active lease releases");
         second.Lease!.Dispose();
 
@@ -92,7 +92,7 @@ public sealed class AdmissionPartitionQueuedOwnershipTests
         Ensure(!pending.IsCompleted, "second request should be queued before its deadline");
 
         time.Advance(QueueDelay / 2);
-        var expired = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        var expired = await pending;
         Ensure(!expired.IsAcquired &&
                expired.Reason == "deadline" &&
                expired.ErrorCode == SharpLinkErrorCode.DeadlineExceeded,
@@ -116,7 +116,7 @@ public sealed class AdmissionPartitionQueuedOwnershipTests
         Ensure(!pending.IsCompleted, "second request should be queued before draining starts");
 
         controller.StopAccepting();
-        var drained = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        var drained = await pending;
         Ensure(!drained.IsAcquired &&
                drained.Reason == "draining" &&
                drained.ErrorCode == SharpLinkErrorCode.Unavailable,
@@ -174,7 +174,7 @@ public sealed class AdmissionPartitionQueuedOwnershipTests
     {
         try
         {
-            _ = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+            _ = await pending;
             throw new InvalidOperationException("caller cancellation should propagate");
         }
         catch (OperationCanceledException)
