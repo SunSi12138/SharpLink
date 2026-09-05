@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout prototype branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -31,7 +33,7 @@ jobs:
         run: |
           mkdir -p artifacts/issue410-dynamic-fixed/environment
           git rev-parse HEAD > artifacts/issue410-dynamic-fixed/environment/head-sha.txt
-          git merge-base HEAD origin/dev > artifacts/issue410-dynamic-fixed/environment/base-sha.txt || true
+          git merge-base HEAD origin/dev > artifacts/issue410-dynamic-fixed/environment/base-sha.txt
           dotnet --info > artifacts/issue410-dynamic-fixed/environment/dotnet-info.txt
           lscpu > artifacts/issue410-dynamic-fixed/environment/cpu.txt
 
@@ -49,10 +51,7 @@ jobs:
       - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
-      - name: Dynamic FixedWindow deterministic tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build --filter "FullyQualifiedName~DynamicFixedWindowRateLimiterPrototypeTests"
-
-      - name: Full Unit regression
+      - name: Unit tests including Dynamic FixedWindow prototype
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
       - name: Direct FixedWindow hot-path benchmark
@@ -73,12 +72,13 @@ jobs:
         if: always()
         shell: bash
         run: |
-          git diff "$(git merge-base HEAD origin/dev || git rev-parse HEAD^)"...HEAD -- \
+          base="$(git merge-base HEAD origin/dev)"
+          git diff "$base"...HEAD -- \
             src/SharpLink.Server/Admission/DynamicFixedWindowRateLimiter.cs \
             test/SharpLink.UnitTests/Server/DynamicFixedWindowRateLimiterPrototypeTests.cs \
             test/SharpLink.Benchmarks/DynamicFixedWindowPrototypeBenchmarks.cs \
-            > artifacts/issue410-dynamic-fixed/prototype.patch || true
-          git diff --stat "$(git merge-base HEAD origin/dev || git rev-parse HEAD^)"...HEAD > artifacts/issue410-dynamic-fixed/prototype-stat.txt || true
+            > artifacts/issue410-dynamic-fixed/prototype.patch
+          git diff --stat "$base"...HEAD > artifacts/issue410-dynamic-fixed/prototype-stat.txt
 
       - name: Upload prototype evidence
         if: always()
