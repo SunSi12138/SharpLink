@@ -74,18 +74,16 @@ public partial class RpcGenerator
         if (TryGetCurrentCompilationSharpPackGenerateType(type, out var generateType) &&
             generateType == SharpPackGenerateTypeCollection)
         {
-            foreach (var iface in type.AllInterfaces)
-            {
-                if (!iface.IsGenericType)
-                    continue;
+            var collectionContract = SelectSharpPackCollectionContract(type);
+            if (collectionContract is null)
+                return builder.ToImmutable();
 
-                for (var index = 0; index < iface.TypeArguments.Length; index++)
-                {
-                    Add(
-                        iface.TypeArguments[index],
-                        $"SharpPack collection type argument {index + 1}",
-                        type.Locations.FirstOrDefault());
-                }
+            for (var index = 0; index < collectionContract.TypeArguments.Length; index++)
+            {
+                Add(
+                    collectionContract.TypeArguments[index],
+                    $"SharpPack collection type argument {index + 1}",
+                    type.Locations.FirstOrDefault());
             }
 
             return builder.ToImmutable();
@@ -107,6 +105,45 @@ public partial class RpcGenerator
         }
 
         return builder.ToImmutable();
+    }
+
+    private static INamedTypeSymbol? SelectSharpPackCollectionContract(
+        INamedTypeSymbol type)
+    {
+        INamedTypeSymbol? dictionary = null;
+        INamedTypeSymbol? set = null;
+        INamedTypeSymbol? collection = null;
+
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (!iface.IsGenericType)
+                continue;
+
+            var metadataName = GetSharpPackMetadataName(iface.OriginalDefinition);
+            if (string.Equals(
+                    metadataName,
+                    "System.Collections.Generic.IDictionary`2",
+                    StringComparison.Ordinal))
+            {
+                dictionary = iface;
+            }
+            else if (string.Equals(
+                         metadataName,
+                         "System.Collections.Generic.ISet`1",
+                         StringComparison.Ordinal))
+            {
+                set = iface;
+            }
+            else if (string.Equals(
+                         metadataName,
+                         "System.Collections.Generic.ICollection`1",
+                         StringComparison.Ordinal))
+            {
+                collection = iface;
+            }
+        }
+
+        return dictionary ?? set ?? collection;
     }
 
     private static bool TryGetCurrentCompilationSharpPackGenerateType(
