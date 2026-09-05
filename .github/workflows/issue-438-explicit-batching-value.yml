@@ -1,0 +1,120 @@
+name: Issue 438 Explicit Batching Value
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-explicit-batching-value
+
+permissions:
+  contents: read
+
+jobs:
+  explicit-vs-drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      CANDIDATE_SHA: f271c4ffaf679e01749ec1a29be234af542dfee2
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Prepare explicit and drain-only worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue438-explicit" "$CANDIDATE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue438-drain" "$CANDIDATE_SHA"
+
+          patch_load_factory() {
+            local dir="$1"
+            python3 - "$dir" <<'PY'
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          p = root / 'test/SharpLink.LoadTestBase/Transport/LoadTestTransportFactory.cs'
+          s = p.read_text()
+          server_anchor = '''            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));\n\n        return transport switch\n'''
+          server_repl = '''            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));\n\n        builder.UseRpcSessionFlush(64 * 1024, TimeSpan.FromMilliseconds(1));\n\n        return transport switch\n'''
+          client_anchor = '''            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));\n\n        if (disableRequestTimeout)\n'''
+          client_repl = '''            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));\n\n        builder.UseRpcSessionFlush(64 * 1024, TimeSpan.FromMilliseconds(1));\n\n        if (disableRequestTimeout)\n'''
+          if server_anchor not in s or client_anchor not in s:
+              raise SystemExit('load factory patch anchors not found')
+          s = s.replace(server_anchor, server_repl, 1).replace(client_anchor, client_repl, 1)
+          p.write_text(s)
+          PY
+          }
+
+          patch_load_factory "$RUNNER_TEMP/issue438-explicit"
+          patch_load_factory "$RUNNER_TEMP/issue438-drain"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('/home/runner/work/_temp/issue438-drain/src/SharpLink.Runtime/RpcSession.SendPump.cs')
+          s = p.read_text()
+          old = '''                _deadlineBatchingEnabled = true;\n'''
+          new = '''                // Issue #438 evidence-only local patch: preserve the explicit threshold but\n                // flush on queue drain instead of waiting for MaxLatency.\n                _deadlineBatchingEnabled = false;\n'''
+          if old not in s:
+              raise SystemExit('explicit deadline enable target not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+          for dir in "$RUNNER_TEMP/issue438-explicit" "$RUNNER_TEMP/issue438-drain"; do
+            (
+              cd "$dir"
+              dotnet restore test/SharpLink.LoadTest/SharpLink.LoadTest.csproj
+              dotnet build test/SharpLink.LoadTest/SharpLink.LoadTest.csproj -c Release --no-restore -v minimal
+            )
+          done
+
+      - name: Run same-runner ABBA macro comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/artifacts/issue-438-explicit-value"
+          mkdir -p "$OUT"
+          dotnet --info > "$OUT/dotnet-info.txt"
+          lscpu > "$OUT/lscpu.txt"
+          EXP="$RUNNER_TEMP/issue438-explicit"
+          DRAIN="$RUNNER_TEMP/issue438-drain"
+
+          run_case() {
+            local label="$1" dir="$2"
+            for transport in tcp sharedmemory; do
+              (
+                cd "$dir"
+                dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- \
+                  --mode local --transport "$transport" --operation empty --payload-size 0 \
+                  --concurrency 128 --warmup 1 --duration 5 --metrics-port 0 \
+                  --profile balanced --min-connections 1 --max-connections 1 \
+                  --max-send-queue-bytes 67108864 \
+                  --json-output "$OUT/$label-unary-$transport.json"
+                dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- \
+                  --mode local --transport "$transport" --operation oneway --payload-size 0 \
+                  --concurrency 128 --warmup 1 --duration 5 --metrics-port 0 \
+                  --profile balanced --min-connections 1 --max-connections 1 \
+                  --max-send-queue-bytes 67108864 \
+                  --json-output "$OUT/$label-oneway-$transport.json"
+              )
+            done
+          }
+
+          run_case explicit-a "$EXP"
+          run_case drain-a "$DRAIN"
+          run_case drain-b "$DRAIN"
+          run_case explicit-b "$EXP"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-explicit-batching-value
+          path: artifacts/issue-438-explicit-value
+          if-no-files-found: error
+          retention-days: 30
