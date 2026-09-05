@@ -1,23 +1,20 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using SharpLink.Serializer.SharpPack;
-using SharpLink.Sdk;
 using SharpPack;
 
 namespace SharpLink.Generator.Tests;
 
-public class SharpPackSidecarGeneratorTests
+public partial class RpcAnalyzerTests
 {
     [Test]
     public void SharpPackRouteShouldGenerateTypedSidecarsForExternalManagedGraph()
     {
-        var vendor = CreateVendorReference("""
+        var vendor = CreateSharpPackVendorReference("""
 using System.Collections.Generic;
 
 namespace Vendor;
@@ -62,8 +59,8 @@ public sealed class ExternalRequest
         global::System.Threading.CancellationToken cancellationToken);
 """);
 
-        var result = RunAndCompile("SharpPackExternalGraph", source, [vendor]);
-        EnsureNoErrors(result);
+        var result = RunSharpPackAndCompile("SharpPackExternalGraph", source, [vendor]);
+        EnsureNoSharpPackErrors(result);
         var generated = GetSharpPackGeneratedSource(result.DriverRunResult);
 
         Ensure(generated.Contains(
@@ -99,25 +96,28 @@ public sealed class ExternalRequest
     [Test]
     public void SharpPackRouteShouldReuseExistingSharpPackSupportWithoutSidecar()
     {
-        var vendor = CreateVendorReference("""
+        var vendor = CreateSharpPackVendorReference("""
+using System;
 using SharpPack;
 
 namespace Vendor;
 
-[SharpPackable]
-public partial class ExistingSharpPackPayload
+public sealed class ExistingSharpPackPayload : ISharpPackFormatterFactory<ExistingSharpPackPayload>
 {
     public int Id { get; set; }
+
+    public static SharpPackFormatter<ExistingSharpPackPayload> CreateFormatter()
+        => throw new NotSupportedException();
 }
-""", includeSharpPack: true);
+""");
         var source = BuildSharpPackContractSource("""
     global::System.Threading.Tasks.Task<Vendor.ExistingSharpPackPayload> EchoAsync(
         Vendor.ExistingSharpPackPayload request,
         global::System.Threading.CancellationToken cancellationToken);
 """);
 
-        var result = RunAndCompile("SharpPackExistingSupport", source, [vendor]);
-        EnsureNoErrors(result);
+        var result = RunSharpPackAndCompile("SharpPackExistingSupport", source, [vendor]);
+        EnsureNoSharpPackErrors(result);
         var generated = GetSharpPackGeneratedSource(result.DriverRunResult);
 
         Ensure(!generated.Contains(
@@ -129,7 +129,7 @@ public partial class ExistingSharpPackPayload
     [Test]
     public void ExplicitNonSharpPackAdapterShouldWinOverAssemblyRoute()
     {
-        var vendor = CreateVendorReference("""
+        var vendor = CreateSharpPackVendorReference("""
 namespace Vendor;
 
 public sealed class ExternalRequest
@@ -137,47 +137,32 @@ public sealed class ExternalRequest
     public int Id { get; set; }
 }
 """);
-        var source = """
-using System;
-using System.Buffers;
-using SharpLink.Abstractions;
-using SharpLink.Sdk;
-using SharpLink.Serializer.SharpPack;
-
-[assembly: RpcCodecAdapterRegistration(typeof(FakeAdapter), "tests/fake/v1", "tests/fake-wire/v1")]
-[assembly: RpcCodecRoute(RpcCodecScope.All, typeof(SharpPackRpcCodecAdapter))]
-[assembly: RpcCodecAdapter(typeof(Vendor.ExternalRequest), typeof(FakeAdapter))]
-
-[RpcContract]
-public interface IContract : IService
-{
+        var source = BuildSharpPackContractSource(
+            """
     global::System.Threading.Tasks.Task<Vendor.ExternalRequest> EchoAsync(
         Vendor.ExternalRequest request,
         global::System.Threading.CancellationToken cancellationToken);
-}
-
-[RpcCodecSemanticIdentity(1UL, 2UL)]
-public sealed class FakeAdapter : IRpcCodecAdapter
+""",
+            """
+[SharpLink.Sdk.RpcCodecSemanticIdentity(1UL, 2UL)]
+public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
     public string AdapterId => "tests/fake/v1";
-    public IRpcCodecAdapterScope CreateScope() => new Scope();
+    public string WireFormatId => "tests/fake-wire/v1";
+    public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => new Scope();
 
-    private sealed class Scope : IRpcCodecAdapterScope
+    private sealed class Scope : SharpLink.Abstractions.IRpcCodecAdapterScope
     {
-        public IRpcCodec<T> CreateCodec<T>() => new Codec<T>();
+        public SharpLink.Abstractions.IRpcCodec<T> CreateCodec<T>() => throw new NotSupportedException();
         public void Dispose() { }
     }
-
-    private sealed class Codec<T> : IRpcCodec<T>
-    {
-        public void Serialize(in T value, IBufferWriter<byte> writer) { }
-        public T? Deserialize(in ReadOnlySequence<byte> sequence) => default;
-    }
 }
-""";
+""",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(FakeAdapter), \"tests/fake/v1\", \"tests/fake-wire/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecAdapter(typeof(Vendor.ExternalRequest), typeof(FakeAdapter))]");
 
-        var result = RunAndCompile("SharpPackExplicitOverride", source, [vendor]);
-        EnsureNoErrors(result);
+        var result = RunSharpPackAndCompile("SharpPackExplicitOverride", source, [vendor]);
+        EnsureNoSharpPackErrors(result);
         Ensure(!result.DriverRunResult.Results
                 .SelectMany(static item => item.GeneratedSources)
                 .Any(static item => item.HintName == "SharpLink.SharpPackIntegration.g.cs"),
@@ -187,7 +172,7 @@ public sealed class FakeAdapter : IRpcCodecAdapter
     [Test]
     public void UnsupportedNestedConstructionShouldReportBuildTimePathDiagnostic()
     {
-        var vendor = CreateVendorReference("""
+        var vendor = CreateSharpPackVendorReference("""
 namespace Vendor;
 
 public sealed class BadChild
@@ -207,7 +192,7 @@ public sealed class ExternalRequest
         global::System.Threading.CancellationToken cancellationToken);
 """);
 
-        var result = RunAndCompile("SharpPackUnsupportedNested", source, [vendor]);
+        var result = RunSharpPackAndCompile("SharpPackUnsupportedNested", source, [vendor]);
         var diagnostic = result.DriverDiagnostics.FirstOrDefault(static item => item.Id == "SLSP0001");
 
         Ensure(diagnostic is not null, "unsupported SharpPack graph produces SLSP0001");
@@ -217,29 +202,78 @@ public sealed class ExternalRequest
             "diagnostic identifies construction as the unsupported capability");
     }
 
-    private static string BuildSharpPackContractSource(string members) => $$"""
-using SharpLink.Sdk;
-using SharpLink.Serializer.SharpPack;
+    private static string BuildSharpPackContractSource(
+        string members,
+        string extraTypes = "",
+        params string[] extraAssemblyAttributes)
+    {
+        var source = BuildSource($$"""
+namespace SharpLink.Sdk
+{
+    [Flags]
+    public enum RpcCodecScope
+    {
+        None = 0,
+        Managed = 1,
+        Unmanaged = 2,
+        All = Managed | Unmanaged
+    }
 
-[assembly: RpcCodecRoute(RpcCodecScope.All, typeof(SharpPackRpcCodecAdapter))]
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+    public sealed class RpcCodecRouteAttribute : Attribute
+    {
+        public RpcCodecRouteAttribute(RpcCodecScope scope, Type adapterType) { }
+    }
 
-[RpcContract]
-public interface IContract : IService
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
+    public sealed class RpcCodecSemanticIdentityAttribute : Attribute
+    {
+        public RpcCodecSemanticIdentityAttribute(ulong high, ulong low) { }
+    }
+}
+
+namespace SharpLink.Serializer.SharpPack
+{
+    public interface ISharpPackRpcCodecAdapterScopeConfiguration
+    {
+        void Configure(
+            string configurationId,
+            Action<global::SharpPack.SharpPackSerializerContextBuilder> configure);
+    }
+
+    [SharpLink.Sdk.RpcCodecSemanticIdentity(0x3fd7540d55dfa977UL, 0xbb67b4932c1a5249UL)]
+    public sealed class SharpPackRpcCodecAdapter : SharpLink.Abstractions.IRpcCodecAdapter
+    {
+        public string AdapterId => "sharplink.serializer.sharppack/v1";
+        public string WireFormatId => "sharppack/v1";
+        public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotSupportedException();
+    }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IContract : SharpLink.Sdk.IService
 {
 {{members}}
 }
-""";
 
-    private static MetadataReference CreateVendorReference(string source, bool includeSharpPack = false)
+{{extraTypes}}
+""");
+
+        var attributes = new List<string>
+        {
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter), \"sharplink.serializer.sharppack/v1\", \"sharppack/v1\")]",
+            "[assembly: SharpLink.Sdk.RpcCodecRoute(SharpLink.Sdk.RpcCodecScope.All, typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]"
+        };
+        attributes.AddRange(extraAssemblyAttributes);
+        return AddAssemblyAttributes(source, attributes.ToArray());
+    }
+
+    private static MetadataReference CreateSharpPackVendorReference(string source)
     {
-        var references = GeneratorTestHarness.GetPlatformReferences();
-        if (includeSharpPack)
-            references = references.Add(MetadataReference.CreateFromFile(typeof(SharpPackFormatter<>).Assembly.Location));
-
         var compilation = CSharpCompilation.Create(
             "Vendor.Models",
             [CSharpSyntaxTree.ParseText(source)],
-            references,
+            GeneratorTestHarness.GetPlatformReferences(),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         using var stream = new MemoryStream();
         var emit = compilation.Emit(stream);
@@ -252,21 +286,14 @@ public interface IContract : IService
         return MetadataReference.CreateFromImage(stream.ToArray());
     }
 
-    private static GeneratorExecution RunAndCompile(
+    private static GeneratorExecution RunSharpPackAndCompile(
         string assemblyName,
         string source,
         IEnumerable<MetadataReference> additionalReferences)
     {
-        var references = new List<MetadataReference>(additionalReferences)
-        {
-            MetadataReference.CreateFromFile(typeof(RpcContractAttribute).Assembly.Location),
-            MetadataReference.CreateFromFile(typeof(SharpPackRpcCodecAdapter).Assembly.Location),
-            MetadataReference.CreateFromFile(typeof(SharpPackFormatter<>).Assembly.Location)
-        };
-        var compilation = GeneratorTestHarness.CreateCompilation(assemblyName, source, references);
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(
-            new RpcGenerator().AsSourceGenerator(),
-            new SharpPackIntegrationGenerator().AsSourceGenerator());
+        var compilation = GeneratorTestHarness.CreateCompilation(assemblyName, source, additionalReferences);
+        IIncrementalGenerator generator = new RpcGenerator();
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
         driver = driver.RunGeneratorsAndUpdateCompilation(
             compilation,
             out var outputCompilation,
@@ -281,7 +308,7 @@ public interface IContract : IService
             .SourceText
             .ToString();
 
-    private static void EnsureNoErrors(GeneratorExecution result)
+    private static void EnsureNoSharpPackErrors(GeneratorExecution result)
     {
         var errors = result.DriverDiagnostics
             .Concat(result.OutputCompilation.GetDiagnostics())
@@ -289,12 +316,6 @@ public interface IContract : IService
             .ToArray();
         if (errors.Length != 0)
             throw new Exception(string.Join(Environment.NewLine, errors.Select(static item => item.ToString())));
-    }
-
-    private static void Ensure(bool condition, string message)
-    {
-        if (!condition)
-            throw new Exception(message);
     }
 
     private sealed record GeneratorExecution(
