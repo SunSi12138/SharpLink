@@ -41,6 +41,7 @@ public partial class RpcGenerator
                 FinalPrimitiveCodecPlan primitive => HashPrimitivePlan(primitive, graph, cache, stack),
                 FinalEnumCodecPlan enumPlan => HashEnumPlan(enumPlan, graph, cache, stack),
                 FinalGeneratedDtoCodecPlan dto => HashGeneratedDtoPlan(dto, graph, cache, stack),
+                FinalUnionCodecPlan union => HashUnionPlan(union, graph, cache, stack),
                 FinalCollectionCodecPlan collection => HashCollectionPlan(collection, graph, cache, stack),
                 FinalUnsafeBlitCodecPlan unsafeBlit => HashUnsafeBlitPlan(unsafeBlit),
                 FinalCustomCodecPlan custom => Hashing.GetSemanticHash(
@@ -136,6 +137,31 @@ public partial class RpcGenerator
                             stack).ToHex());
                         break;
                 }
+            }
+            return Hashing.GetSemanticHash(parts.ToArray());
+        }
+
+        private static RpcHashValue HashUnionPlan(
+            FinalUnionCodecPlan plan,
+            FinalCodecGraph graph,
+            Dictionary<string, RpcHashValue> cache,
+            HashSet<string> stack)
+        {
+            var parts = new List<string>
+            {
+                "codec/v1",
+                "union",
+                plan.WireSemantic,
+                plan.Cases.Length.ToString(InvariantCulture)
+            };
+            foreach (var unionCase in plan.Cases
+                         .OrderBy(static item => item.Discriminator)
+                         .ThenBy(static item => item.CaseLogicalIdentity.High)
+                         .ThenBy(static item => item.CaseLogicalIdentity.Low))
+            {
+                parts.Add(unionCase.Discriminator.ToString(InvariantCulture));
+                parts.Add(unionCase.CaseLogicalIdentity.ToHex());
+                parts.Add(HashRequiredChild(unionCase.CaseTypeName, graph, cache, stack).ToHex());
             }
             return Hashing.GetSemanticHash(parts.ToArray());
         }
