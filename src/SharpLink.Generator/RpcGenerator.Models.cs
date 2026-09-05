@@ -150,6 +150,7 @@ internal enum GeneratedCodecKind
 {
     Adapter,
     Dto,
+    Union,
     Array,
     List,
     Dictionary,
@@ -185,6 +186,11 @@ internal sealed record GeneratedMemberModel(
     string? EnumUnderlyingType,
     Location? Location);
 
+internal readonly record struct GeneratedUnionCaseModel(
+    int Discriminator,
+    string TypeName,
+    bool IsReferenceType);
+
 internal sealed record GeneratedCodecModel(
     string TypeName,
     string CodecName,
@@ -204,6 +210,7 @@ internal sealed record GeneratedCodecModel(
     Location? Location)
 {
     public bool ElementIsString { get; init; }
+    public ImmutableArray<GeneratedUnionCaseModel> UnionCases { get; init; } = ImmutableArray<GeneratedUnionCaseModel>.Empty;
     public ulong CodecHashHigh { get; init; }
     public ulong CodecHashLow { get; init; }
 }
