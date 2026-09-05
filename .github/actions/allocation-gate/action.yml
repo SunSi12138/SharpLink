@@ -55,12 +55,12 @@ runs:
         fi
         echo "Injected allocation was rejected as expected."
 
-    - name: Issue 399 focused BenchmarkDotNet A/B evidence
+    - name: Issue 399 final exact-head BenchmarkDotNet A/B evidence
       shell: bash
       env:
         ISSUE399_BASE: e42e80c5e87c2fa075d45bbae0f46c00dcd67821
-        ISSUE399_HEAD: d3fdfe424cbd3585c616f279416060e6aea842c5
-        ISSUE399_ARTIFACT_ROOT: ${{ runner.temp }}/issue399-bdn-focused
+        ISSUE399_HEAD: 8062a0f3ec9fb077113da12950f4bed52b746fbc
+        ISSUE399_ARTIFACT_ROOT: ${{ runner.temp }}/issue399-bdn-final
       run: |
         set -euo pipefail
 
@@ -79,12 +79,12 @@ runs:
 
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
           --filter '*SharpLink.Benchmarks.UnaryBenchmarks.Rpc_Add*' \
-          --launchCount 1 --warmupCount 5 --iterationCount 15 \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
           --artifacts "$ISSUE399_ARTIFACT_ROOT/baseline/unary"
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
-          --filter '*SharpLink.Benchmarks.StreamingBenchmarks.Rpc_ClientStreamUpload*' \
-          --launchCount 1 --warmupCount 5 --iterationCount 15 \
-          --artifacts "$ISSUE399_ARTIFACT_ROOT/baseline/client-stream"
+          --filter '*SharpLink.Benchmarks.StreamingBenchmarks*' \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
+          --artifacts "$ISSUE399_ARTIFACT_ROOT/baseline/streaming"
 
         git fetch --no-tags --depth=1 origin "$ISSUE399_HEAD"
         git checkout --detach --force "$ISSUE399_HEAD"
@@ -92,15 +92,15 @@ runs:
 
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
           --filter '*SharpLink.Benchmarks.UnaryBenchmarks.Rpc_Add*' \
-          --launchCount 1 --warmupCount 5 --iterationCount 15 \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
           --artifacts "$ISSUE399_ARTIFACT_ROOT/head/unary"
         dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -- \
-          --filter '*SharpLink.Benchmarks.StreamingBenchmarks.Rpc_ClientStreamUpload*' \
-          --launchCount 1 --warmupCount 5 --iterationCount 15 \
-          --artifacts "$ISSUE399_ARTIFACT_ROOT/head/client-stream"
+          --filter '*SharpLink.Benchmarks.StreamingBenchmarks*' \
+          --launchCount 1 --warmupCount 3 --iterationCount 5 \
+          --artifacts "$ISSUE399_ARTIFACT_ROOT/head/streaming"
 
-        mkdir -p "${{ inputs.artifact-directory }}/issue399-bdn-focused"
-        cp -R "$ISSUE399_ARTIFACT_ROOT/environment" "${{ inputs.artifact-directory }}/issue399-bdn-focused/"
-        cp -R "$ISSUE399_ARTIFACT_ROOT/baseline" "${{ inputs.artifact-directory }}/issue399-bdn-focused/"
-        cp -R "$ISSUE399_ARTIFACT_ROOT/head" "${{ inputs.artifact-directory }}/issue399-bdn-focused/"
+        mkdir -p "${{ inputs.artifact-directory }}/issue399-bdn-final"
+        cp -R "$ISSUE399_ARTIFACT_ROOT/environment" "${{ inputs.artifact-directory }}/issue399-bdn-final/"
+        cp -R "$ISSUE399_ARTIFACT_ROOT/baseline" "${{ inputs.artifact-directory }}/issue399-bdn-final/"
+        cp -R "$ISSUE399_ARTIFACT_ROOT/head" "${{ inputs.artifact-directory }}/issue399-bdn-final/"
         cp -R "$ISSUE399_ARTIFACT_ROOT/allocation-gate/." "${{ inputs.artifact-directory }}/"
