@@ -1,0 +1,37 @@
+name: Issue 438 Temporary Source Patch
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-source-patch
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 5f455b978a946931cc08aea48299cb2290b9a6a4
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Apply stop-crossing patch locally
+        run: >-
+          python3 -c "from pathlib import Path; p=Path('src/SharpLink.Runtime/RpcSession.SendPump.cs'); s=p.read_text(); old='                _wakeup.ConsumeLatched();\\n                if (HasProgressFrames() || HasNormalFrames())\\n                    return true;\\n'; new='                _wakeup.ConsumeLatched();\\n                if (Volatile.Read(ref _stopped) != 0)\\n                    return false;\\n                if (HasProgressFrames() || HasNormalFrames())\\n                    return true;\\n'; assert old in s; p.write_text(s.replace(old,new,1))"
+      - name: Restore
+        run: dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
+      - name: Upload patched source
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-patched-sendpump
+          path: src/SharpLink.Runtime/RpcSession.SendPump.cs
+          if-no-files-found: error
