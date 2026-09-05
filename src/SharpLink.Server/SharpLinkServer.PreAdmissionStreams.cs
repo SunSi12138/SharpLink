@@ -55,11 +55,8 @@ internal sealed partial class SharpLinkServer
             requestId,
             clientStreamCount,
             _runtimeContext.Buffers,
-            retainedBytes => resourceGovernor.TryAcquirePreAdmissionStreamBytes(
-                retainedBytes,
-                out var permit)
-                ? permit
-                : null,
+            retainedBytes => resourceGovernor.TryReservePreAdmissionStreamBytes(retainedBytes),
+            retainedBytes => resourceGovernor.ReleasePreAdmissionStreamBytes(retainedBytes),
             () => callState.TryCancel(
                 ServerCallCancellationReason.PreAdmissionStreamResourceExhausted),
             compressedPayload =>
@@ -106,9 +103,9 @@ internal sealed partial class SharpLinkServer
 
         if (session.HasStreamFlowControl)
         {
-            // Negotiated receive credit already bounds bytes retained while the interceptor is
-            // suspended. If admission already owns the route, this registration only promotes
-            // that wrapper out of queue-byte accounting and may add OneWay local retention.
+            // Negotiated receive credit is the byte bound. Reconfiguration changes only future
+            // external accounting/decoder state; already-buffered owners keep their original
+            // admission release callback until replay/discard releases them.
             streamManager.ReservePreAdmissionStreams(
                 requestId,
                 clientStreamCount,
@@ -121,25 +118,23 @@ internal sealed partial class SharpLinkServer
             return;
         }
 
-        // FlowControl is optional. Without negotiated receive credit, keep the temporary
-        // pre-invocation route independently byte-bounded instead of relying only on the 4096
-        // element cap. Allow at least one legal maximum-size frame so the local safety bound does
-        // not make a valid peer frame impossible solely because the configured stream window is
-        // smaller than the negotiated frame limit.
+        // Without negotiated receive credit, the stable mailbox itself owns the active byte cap.
+        // Existing admission-buffered bytes are already included in that mailbox count, so moving
+        // into invocation does not re-reserve/rewrite their resource owner. If they already exceed
+        // the active cap, reconfiguration marks the mailbox terminal and releases them exactly once.
         var maxRetainedBytes = Math.Max(
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             session.NegotiatedMaxFramePayloadBytes);
         for (var index = 1; index <= clientStreamCount; index++)
         {
             var streamId = checked((ushort)index);
-            var retention = new ActivePreInvocationStreamRetention(maxRetainedBytes);
             streamManager.Register(
                 requestId,
                 streamId,
                 new PreAdmissionStreamDispatcher(
                     _runtimeContext.Buffers,
-                    retention.TryReserve,
-                    retention.Release,
+                    static _ => true,
+                    static _ => { },
                     () => streamManager.CompleteStream(
                         requestId,
                         streamId,
@@ -147,7 +142,8 @@ internal sealed partial class SharpLinkServer
                             SharpLinkErrorCode.ResourceExhausted,
                             $"Deferred client-stream retention exceeded the {maxRetainedBytes}-byte limit without negotiated flow control.")),
                     decodeCompressed,
-                    retainUntilLocalCompletion));
+                    retainUntilLocalCompletion,
+                    maxRetainedBytes));
         }
     }
 
@@ -207,7 +203,6 @@ internal sealed partial class SharpLinkServer
 
         session.StreamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
     }
-
 }
 
 internal sealed class ServerRetainedAdmissionPayload : IDisposable
@@ -254,10 +249,6 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
         }
     }
 
-    /// <summary>
-    /// Pins the physical retained buffer across an asynchronous consumer. Dispose may be requested
-    /// while a use is active; the buffer is returned only after the final use releases it.
-    /// </summary>
     internal void AcquireUse()
     {
         lock (_lifetimeGate)
@@ -309,49 +300,11 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     {
         try
         {
-            // The physical retained buffer is returned before its accounting permit is
-            // released. If the permit was transferred to a decode owner, this Dispose is
-            // intentionally a no-op and CompleteDecode performs the accounting release.
             _pool.Return(_owner);
         }
         finally
         {
             _retainedPermit?.Dispose();
         }
-    }
-}
-
-internal sealed class ActivePreInvocationStreamRetention
-{
-    private readonly int _maxRetainedBytes;
-    private int _retainedBytes;
-
-    internal ActivePreInvocationStreamRetention(int maxRetainedBytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxRetainedBytes);
-        _maxRetainedBytes = maxRetainedBytes;
-    }
-
-    internal int RetainedBytes => Volatile.Read(ref _retainedBytes);
-
-    internal bool TryReserve(int bytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
-        while (true)
-        {
-            var current = Volatile.Read(ref _retainedBytes);
-            if (bytes > _maxRetainedBytes - current)
-                return false;
-            if (Interlocked.CompareExchange(ref _retainedBytes, current + bytes, current) == current)
-                return true;
-        }
-    }
-
-    internal void Release(int bytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
-        var remaining = Interlocked.Add(ref _retainedBytes, -bytes);
-        if (remaining < 0)
-            throw new InvalidOperationException("Deferred client-stream retention accounting became negative.");
     }
 }

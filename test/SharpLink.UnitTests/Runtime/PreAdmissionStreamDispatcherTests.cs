@@ -39,7 +39,7 @@ public class PreAdmissionStreamDispatcherTests
     }
 
     [Test]
-    public async Task RepeatedReservationShouldPromoteQueuedRetentionToActivePolicy()
+    public async Task RepeatedReservationShouldSwitchFutureRetentionWithoutMigratingBufferedOwnership()
     {
         const long requestId = 91;
         const ushort streamId = 1;
@@ -74,15 +74,19 @@ public class PreAdmissionStreamDispatcherTests
             static _ => { },
             static () => { });
 
-        await Assert.That(queuedBytes).IsEqualTo(0);
+        // Reconfiguration changes only future admission. Existing owners keep the release callback
+        // that admitted them instead of migrating permits to a replacement dispatcher/policy.
+        await Assert.That(queuedBytes).IsEqualTo(2);
         for (var index = 0; index < 8; index++)
             await manager.DispatchChunkAsync(requestId, streamId, tinyPayload);
+        await Assert.That(queuedBytes).IsEqualTo(2);
         await Assert.That(queueCapacityExceeded).IsEqualTo(0);
 
         var dispatcher = new RecordingDispatcher();
         manager.Register(requestId, streamId, dispatcher);
 
         await Assert.That(dispatcher.DispatchCount).IsEqualTo(10);
+        await Assert.That(queuedBytes).IsEqualTo(0);
         manager.CompleteStream(requestId, streamId, exception: null);
         await Assert.That(dispatcher.CompleteCount).IsEqualTo(1);
         await Assert.That(manager.ActiveStreamCount).IsEqualTo(0);
@@ -130,6 +134,37 @@ public class PreAdmissionStreamDispatcherTests
 
         manager.CompleteStream(requestId, streamId, exception: null);
         await Assert.That(manager.ActiveStreamCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task TypedChildShouldBindDirectlyToStableMailboxState()
+    {
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        var mailbox = new PreAdmissionStreamDispatcher(
+            buffers,
+            static _ => true,
+            static _ => { },
+            static () => { });
+        var dispatcher = new LeaseCapturingDispatcher();
+
+        await Assert.That(mailbox.TryBeginAttach(dispatcher, out var alreadyCompleted)).IsTrue();
+        mailbox.FinishAttach(dispatcher);
+
+        await Assert.That(alreadyCompleted).IsFalse();
+        await Assert.That(ReferenceEquals(dispatcher.DispatchState, mailbox)).IsTrue();
+
+        var state = (IStreamDispatchState)mailbox;
+        state.Close();
+        await Assert.That(state.HasActiveDispatches).IsFalse();
+        await Assert.That(state.IsDetached).IsFalse();
+        await state.WaitForDispatchesDrainedAsync();
+
+        var detached = state.WaitForDetachedAsync(CancellationToken.None);
+        await Assert.That(detached.IsCompletedSuccessfully).IsFalse();
+
+        mailbox.Abandon(out _);
+        await detached;
+        await Assert.That(state.IsDetached).IsTrue();
     }
 
     private class RecordingDispatcher : IStreamDispatcher
@@ -188,6 +223,26 @@ public class PreAdmissionStreamDispatcherTests
 
             _firstStarted.TrySetResult();
             return new ValueTask(_releaseFirst.Task);
+        }
+    }
+
+    private sealed class LeaseCapturingDispatcher : RecordingDispatcher, IStreamDispatchLease
+    {
+        internal IStreamDispatchState? DispatchState { get; private set; }
+
+        void IStreamDispatchLease.BindDispatchState(IStreamDispatchState state)
+            => DispatchState = state;
+
+        ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
+            ReadOnlySequence<byte> payload,
+            int encodedByteCount)
+        {
+            _ = encodedByteCount;
+            return DispatchAsync(payload);
+        }
+
+        void IStreamDispatchLease.OnDispatchesDrained()
+        {
         }
     }
 }

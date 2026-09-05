@@ -1,44 +1,54 @@
 namespace SharpLink.Runtime;
 
 /// <summary>
-/// Owns an inbound client-stream route from deferred buffering through typed attachment.
-/// Admission-queued calls use the admission byte budget; intercepted active calls promote that
-/// reservation to active-call retention. The route remains stable after typed attachment so a
-/// OneWay invocation can abandon its consumer without dropping peer frames before terminal.
+/// Owns one stable inbound client-stream mailbox from deferred buffering through typed consumption.
+/// The mailbox identity never changes: retention and typed-consumer state change in place while
+/// <see cref="StreamManager"/> keeps the same request/stream route until peer terminal/call release.
 /// </summary>
-internal sealed class PreAdmissionStreamDispatcher(
+internal sealed partial class PreAdmissionStreamDispatcher(
     SharpLinkBufferWriterPool buffers,
     Func<int, bool> reserveBytes,
     Action<int> releaseBytes,
     Action capacityExceeded,
     Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
-    bool retainUntilLocalCompletion = false)
-    : IStreamConsumptionAwareDispatcher, IStreamDispatchLease
+    bool retainUntilLocalCompletion = false,
+    int maxRetainedBytes = int.MaxValue)
+    : IStreamConsumptionAwareDispatcher, IStreamDispatchLease, IStreamDispatchState
 {
     private const int MaxBufferedElements = 4096;
-    private static readonly Action<int> NoopReleaseBytes = static _ => { };
     private static Action<long, ushort, bool>? s_bufferedItemObserverForTests;
 
     private readonly Lock _gate = new();
     private readonly Queue<BufferedItem> _items = [];
-    private RetentionPolicy _retentionPolicy = new(reserveBytes, releaseBytes, capacityExceeded);
+    private RetentionPolicy _retentionPolicy = CreateRetentionPolicy(
+        reserveBytes,
+        releaseBytes,
+        capacityExceeded,
+        maxRetainedBytes);
     private Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? _decodeCompressed = decodeCompressed;
     private IStreamDispatcher? _dispatcher;
-    private IStreamDispatcher? _attachingDispatcher;
-    private InboundStreamChildDispatchState? _dispatcherState;
-    private InboundStreamChildDispatchState? _attachingDispatchState;
+    private IStreamDispatchLease? _childLease;
     private Action<long, ushort, int>? _bytesConsumed;
     private long _requestId;
     private ushort _streamId;
     private Exception? _completion;
     private bool _completed;
-    private bool _abandoned;
+    private bool _completionForwarded;
+    private bool _discarding;
+    private bool _localAbandonRequested;
     private bool _retainUntilLocalCompletion = retainUntilLocalCompletion;
-    private TaskCompletionSource? _attachmentBarrier;
+    private bool _attachmentInProgress;
     private int _configurationVersion;
     private int _replayedDuringAttach;
-    private bool _drainRequested;
-    private bool _drainForwarded;
+    private int _retainedBytes;
+    private int _activeChildDispatches;
+    private bool _childClosed;
+    private bool _childDetachRequested;
+    private bool _disposeChildOnDetach;
+    private bool _childDetached;
+    private bool _childDetachFinalizing;
+    private TaskCompletionSource? _childDispatchesDrained;
+    private TaskCompletionSource? _childDetachedCompletion;
 
     internal static Action<long, ushort, bool>? BufferedItemObserverForTests
     {
@@ -46,21 +56,22 @@ internal sealed class PreAdmissionStreamDispatcher(
         set => Volatile.Write(ref s_bufferedItemObserverForTests, value);
     }
 
-    /// <summary>
-    /// Records peer terminal while deciding whether this stable route still has local ownership.
-    /// Ordinary deferred routes retain only before typed attachment. OneWay routes also retain
-    /// after attachment until local invocation completion can abandon/dispose the typed child.
-    /// </summary>
+    internal int RetainedBytesForTests
+    {
+        get
+        {
+            lock (_gate)
+                return _retainedBytes;
+        }
+    }
+
     internal bool TryCompleteAndRetain(Exception? exception)
     {
-        IStreamDispatcher? attached;
-        InboundStreamChildDispatchState? childState;
-        var childLeaseAcquired = false;
+        IStreamDispatcher? attached = null;
         lock (_gate)
         {
-            if (_abandoned ||
-                (!_retainUntilLocalCompletion &&
-                 (_dispatcher is not null || _attachingDispatcher is not null)))
+            if (_localAbandonRequested ||
+                (!_retainUntilLocalCompletion && (_dispatcher is not null || _attachmentInProgress)))
             {
                 return false;
             }
@@ -69,13 +80,11 @@ internal sealed class PreAdmissionStreamDispatcher(
 
             _completed = true;
             _completion = exception;
-            attached = _dispatcher;
-            childState = _dispatcherState;
-            if (attached is not null && childState is not null)
-                childLeaseAcquired = childState.TryAcquire();
+            if (!_attachmentInProgress)
+                _ = TryAcquireCompletionDispatchLocked(out attached);
         }
 
-        CompleteAttachedDispatcher(attached, childState, childLeaseAcquired, exception);
+        CompleteAttachedDispatcher(attached, exception);
         return true;
     }
 
@@ -89,26 +98,21 @@ internal sealed class PreAdmissionStreamDispatcher(
         while (true)
         {
             RetentionPolicy policy;
-            IStreamDispatcher? attached;
-            InboundStreamChildDispatchState? attachedState;
+            IStreamDispatcher? attached = null;
             bool completed;
-            bool abandoned;
+            bool discarding;
             lock (_gate)
             {
                 policy = _retentionPolicy;
-                attached = _dispatcher;
-                attachedState = _dispatcherState;
                 completed = _completed;
-                abandoned = _abandoned;
+                discarding = _discarding;
+                if (!completed && !discarding)
+                    _ = TryAcquireLiveChildDispatchLocked(out attached);
             }
-            if (abandoned)
-            {
-                NotifyBytesConsumed(encodedByteCount);
-                return ValueTask.CompletedTask;
-            }
+
             if (attached is not null)
-                return DispatchAttached(attached, attachedState, payload, encodedByteCount);
-            if (completed)
+                return DispatchAttachedAcquired(attached, payload, encodedByteCount);
+            if (completed || discarding)
             {
                 NotifyBytesConsumed(encodedByteCount);
                 return ValueTask.CompletedTask;
@@ -120,23 +124,19 @@ internal sealed class PreAdmissionStreamDispatcher(
                 lock (_gate)
                 {
                     retry = !ReferenceEquals(policy, _retentionPolicy);
-                    attached = _dispatcher;
-                    attachedState = _dispatcherState;
                     completed = _completed;
-                    abandoned = _abandoned;
+                    discarding = _discarding;
+                    attached = null;
+                    if (!retry && !completed && !discarding)
+                        _ = TryAcquireLiveChildDispatchLocked(out attached);
                 }
                 if (retry)
                     continue;
-                if (abandoned)
-                {
-                    NotifyBytesConsumed(encodedByteCount);
-                    return ValueTask.CompletedTask;
-                }
                 if (attached is not null)
-                    return DispatchAttached(attached, attachedState, payload, encodedByteCount);
+                    return DispatchAttachedAcquired(attached, payload, encodedByteCount);
 
                 NotifyBytesConsumed(encodedByteCount);
-                if (!completed)
+                if (!completed && !discarding)
                     policy.CapacityExceeded();
                 return ValueTask.CompletedTask;
             }
@@ -156,31 +156,38 @@ internal sealed class PreAdmissionStreamDispatcher(
 
             var retryPolicy = false;
             var buffered = false;
-            var elementCapacityExceeded = false;
+            var capacityExceeded = false;
+            attached = null;
             lock (_gate)
             {
                 retryPolicy = !ReferenceEquals(policy, _retentionPolicy);
-                abandoned = _abandoned;
-                if (!retryPolicy && !abandoned && _dispatcher is null && !_completed)
+                completed = _completed;
+                discarding = _discarding;
+                if (!retryPolicy && !completed && !discarding)
                 {
-                    if (_items.Count + _replayedDuringAttach >= MaxBufferedElements)
+                    if (!TryAcquireLiveChildDispatchLocked(out attached))
                     {
-                        elementCapacityExceeded = true;
-                        _completed = true;
-                        _completion = CreateElementCapacityException();
-                    }
-                    else
-                    {
-                        _items.Enqueue(new BufferedItem(
-                            owner,
-                            retainedBytes,
-                            encodedByteCount,
-                            policy.ReleaseBytes));
-                        buffered = true;
+                        if (_items.Count + _replayedDuringAttach >= MaxBufferedElements ||
+                            !CanRetainLocked(policy, retainedBytes))
+                        {
+                            capacityExceeded = true;
+                            _completed = true;
+                            _completion = _items.Count + _replayedDuringAttach >= MaxBufferedElements
+                                ? CreateElementCapacityException()
+                                : CreateRetentionCapacityException(policy.MaxRetainedBytes);
+                        }
+                        else
+                        {
+                            _items.Enqueue(new BufferedItem(
+                                owner,
+                                retainedBytes,
+                                encodedByteCount,
+                                policy.ReleaseBytes));
+                            _retainedBytes = checked(_retainedBytes + retainedBytes);
+                            buffered = true;
+                        }
                     }
                 }
-                attached = _dispatcher;
-                attachedState = _dispatcherState;
             }
 
             if (retryPolicy)
@@ -189,35 +196,21 @@ internal sealed class PreAdmissionStreamDispatcher(
                 policy.ReleaseBytes(retainedBytes);
                 continue;
             }
-
             if (buffered)
             {
-                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(
-                    _requestId,
-                    _streamId,
-                    false);
+                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(_requestId, _streamId, false);
                 return ValueTask.CompletedTask;
             }
 
             buffers.Return(owner);
             policy.ReleaseBytes(retainedBytes);
-            if (abandoned)
-            {
-                NotifyBytesConsumed(encodedByteCount);
-                return ValueTask.CompletedTask;
-            }
-            if (elementCapacityExceeded)
-            {
-                NotifyBytesConsumed(encodedByteCount);
+            if (attached is not null)
+                return DispatchAttachedAcquired(attached, payload, encodedByteCount);
+
+            NotifyBytesConsumed(encodedByteCount);
+            if (capacityExceeded)
                 policy.CapacityExceeded();
-                return ValueTask.CompletedTask;
-            }
-            if (attached is null)
-            {
-                NotifyBytesConsumed(encodedByteCount);
-                return ValueTask.CompletedTask;
-            }
-            return DispatchAttached(attached, attachedState, payload, encodedByteCount);
+            return ValueTask.CompletedTask;
         }
     }
 
@@ -231,33 +224,31 @@ internal sealed class PreAdmissionStreamDispatcher(
         {
             RetentionPolicy policy;
             Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decoder;
-            IStreamDispatcher? attached;
-            InboundStreamChildDispatchState? attachedState;
+            IStreamDispatcher? attached = null;
             bool completed;
-            bool abandoned;
+            bool discarding;
             lock (_gate)
             {
                 policy = _retentionPolicy;
                 decoder = _decodeCompressed;
-                attached = _dispatcher;
-                attachedState = _dispatcherState;
                 completed = _completed;
-                abandoned = _abandoned;
+                discarding = _discarding;
+                if (!completed && !discarding)
+                    _ = TryAcquireLiveChildDispatchLocked(out attached);
             }
-            if (abandoned)
+
+            if (attached is not null)
+            {
+                decoder = RequireCompressedDecoderAfterChildDispatchAcquired(decoder);
+                return DecodeAndDispatchAcquired(attached, wirePayload, originalByteCount, decoder);
+            }
+            if (completed || discarding)
             {
                 NotifyBytesConsumed(originalByteCount);
                 return ValueTask.CompletedTask;
             }
             decoder = decoder ?? throw new InvalidOperationException(
-                "The inbound stream route has no compressed-frame decoder.");
-            if (attached is not null)
-                return DecodeAndDispatch(attached, attachedState, wirePayload, originalByteCount, decoder);
-            if (completed)
-            {
-                NotifyBytesConsumed(originalByteCount);
-                return ValueTask.CompletedTask;
-            }
+                "The inbound stream mailbox has no compressed-frame decoder.");
 
             if (!policy.ReserveBytes(retainedBytes))
             {
@@ -266,32 +257,22 @@ internal sealed class PreAdmissionStreamDispatcher(
                 {
                     retry = !ReferenceEquals(policy, _retentionPolicy);
                     decoder = _decodeCompressed;
-                    attached = _dispatcher;
-                    attachedState = _dispatcherState;
                     completed = _completed;
-                    abandoned = _abandoned;
+                    discarding = _discarding;
+                    attached = null;
+                    if (!retry && !completed && !discarding)
+                        _ = TryAcquireLiveChildDispatchLocked(out attached);
                 }
                 if (retry)
                     continue;
-                if (abandoned)
-                {
-                    NotifyBytesConsumed(originalByteCount);
-                    return ValueTask.CompletedTask;
-                }
                 if (attached is not null)
                 {
-                    decoder = decoder ?? throw new InvalidOperationException(
-                        "The inbound stream route has no compressed-frame decoder.");
-                    return DecodeAndDispatch(
-                        attached,
-                        attachedState,
-                        wirePayload,
-                        originalByteCount,
-                        decoder);
+                    decoder = RequireCompressedDecoderAfterChildDispatchAcquired(decoder);
+                    return DecodeAndDispatchAcquired(attached, wirePayload, originalByteCount, decoder);
                 }
 
                 NotifyBytesConsumed(originalByteCount);
-                if (!completed)
+                if (!completed && !discarding)
                     policy.CapacityExceeded();
                 return ValueTask.CompletedTask;
             }
@@ -311,33 +292,40 @@ internal sealed class PreAdmissionStreamDispatcher(
 
             var retryPolicy = false;
             var buffered = false;
-            var elementCapacityExceeded = false;
+            var capacityExceeded = false;
+            attached = null;
             lock (_gate)
             {
                 retryPolicy = !ReferenceEquals(policy, _retentionPolicy);
-                abandoned = _abandoned;
-                if (!retryPolicy && !abandoned && _dispatcher is null && !_completed)
+                decoder = _decodeCompressed;
+                completed = _completed;
+                discarding = _discarding;
+                if (!retryPolicy && !completed && !discarding)
                 {
-                    if (_items.Count + _replayedDuringAttach >= MaxBufferedElements)
+                    if (!TryAcquireLiveChildDispatchLocked(out attached))
                     {
-                        elementCapacityExceeded = true;
-                        _completed = true;
-                        _completion = CreateElementCapacityException();
-                    }
-                    else
-                    {
-                        _items.Enqueue(new BufferedItem(
-                            owner,
-                            retainedBytes,
-                            originalByteCount,
-                            policy.ReleaseBytes,
-                            IsCompressed: true));
-                        buffered = true;
+                        if (_items.Count + _replayedDuringAttach >= MaxBufferedElements ||
+                            !CanRetainLocked(policy, retainedBytes))
+                        {
+                            capacityExceeded = true;
+                            _completed = true;
+                            _completion = _items.Count + _replayedDuringAttach >= MaxBufferedElements
+                                ? CreateElementCapacityException()
+                                : CreateRetentionCapacityException(policy.MaxRetainedBytes);
+                        }
+                        else
+                        {
+                            _items.Enqueue(new BufferedItem(
+                                owner,
+                                retainedBytes,
+                                originalByteCount,
+                                policy.ReleaseBytes,
+                                IsCompressed: true));
+                            _retainedBytes = checked(_retainedBytes + retainedBytes);
+                            buffered = true;
+                        }
                     }
                 }
-                attached = _dispatcher;
-                attachedState = _dispatcherState;
-                decoder = _decodeCompressed;
             }
 
             if (retryPolicy)
@@ -346,135 +334,106 @@ internal sealed class PreAdmissionStreamDispatcher(
                 policy.ReleaseBytes(retainedBytes);
                 continue;
             }
-
             if (buffered)
             {
-                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(
-                    _requestId,
-                    _streamId,
-                    true);
+                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(_requestId, _streamId, true);
                 return ValueTask.CompletedTask;
             }
 
-            if (abandoned)
+            if (attached is not null)
             {
-                buffers.Return(owner);
-                policy.ReleaseBytes(retainedBytes);
-                NotifyBytesConsumed(originalByteCount);
-                return ValueTask.CompletedTask;
-            }
-
-            if (elementCapacityExceeded)
-            {
-                buffers.Return(owner);
-                policy.ReleaseBytes(retainedBytes);
-                NotifyBytesConsumed(originalByteCount);
-                policy.CapacityExceeded();
-                return ValueTask.CompletedTask;
-            }
-
-            ValueTask dispatch;
-            try
-            {
-                if (attached is null)
+                try
                 {
-                    NotifyBytesConsumed(originalByteCount);
+                    decoder = RequireCompressedDecoderAfterChildDispatchAcquired(decoder);
+                    var dispatch = DecodeAndDispatchAcquired(
+                        attached,
+                        new ReadOnlySequence<byte>(owner.WrittenMemory),
+                        originalByteCount,
+                        decoder);
+                    if (dispatch.IsCompletedSuccessfully)
+                    {
+                        buffers.Return(owner);
+                        policy.ReleaseBytes(retainedBytes);
+                        return ValueTask.CompletedTask;
+                    }
+                    return AwaitRetainedCompressedDispatchAsync(
+                        dispatch,
+                        owner,
+                        retainedBytes,
+                        policy.ReleaseBytes);
+                }
+                catch
+                {
                     buffers.Return(owner);
                     policy.ReleaseBytes(retainedBytes);
-                    return ValueTask.CompletedTask;
+                    throw;
                 }
-                decoder = decoder ?? throw new InvalidOperationException(
-                    "The inbound stream route has no compressed-frame decoder.");
-                dispatch = DecodeAndDispatch(
-                    attached,
-                    attachedState,
-                    new ReadOnlySequence<byte>(owner.WrittenMemory),
-                    originalByteCount,
-                    decoder);
             }
-            catch
-            {
-                buffers.Return(owner);
-                policy.ReleaseBytes(retainedBytes);
-                throw;
-            }
-            if (dispatch.IsCompletedSuccessfully)
-            {
-                buffers.Return(owner);
-                policy.ReleaseBytes(retainedBytes);
-                return ValueTask.CompletedTask;
-            }
-            return AwaitRetainedCompressedDispatchAsync(
-                dispatch,
-                owner,
-                retainedBytes,
-                policy.ReleaseBytes);
+
+            buffers.Return(owner);
+            policy.ReleaseBytes(retainedBytes);
+            NotifyBytesConsumed(originalByteCount);
+            if (capacityExceeded)
+                policy.CapacityExceeded();
+            return ValueTask.CompletedTask;
         }
     }
 
-    /// <summary>
-    /// Atomically transitions this receive route to discard mode. Existing deferred owners are
-    /// released immediately. A fully attached typed child is detached and disposed; an attaching
-    /// child is handed back to its attachment owner so no pooled instance can be returned while
-    /// configuration or replay still holds a reference.
-    /// </summary>
     internal void Abandon(out bool alreadyCompleted)
     {
-        BufferedItem[] bufferedItems;
-        IStreamDispatcher? attached = null;
-        InboundStreamChildDispatchState? childState = null;
-        TaskCompletionSource? barrier = null;
+        BufferedItem[] discarded;
+        TaskCompletionSource? dispatchesDrained = null;
         lock (_gate)
         {
             alreadyCompleted = _completed;
-            if (_abandoned)
+            if (_localAbandonRequested)
                 return;
 
-            _abandoned = true;
-            bufferedItems = [.. _items];
-            _items.Clear();
-
-            if (_attachingDispatcher is null)
+            _localAbandonRequested = true;
+            _discarding = true;
+            _childClosed = true;
+            if (_dispatcher is not null || _attachmentInProgress)
             {
-                attached = _dispatcher;
-                childState = _dispatcherState;
-                _dispatcher = null;
-                _dispatcherState = null;
-                barrier = _attachmentBarrier;
-                _attachmentBarrier = null;
-                _replayedDuringAttach = 0;
+                _childDetachRequested = true;
+                _disposeChildOnDetach = true;
             }
+            discarded = TakeBufferedItemsLocked();
+            if (_activeChildDispatches == 0)
+                dispatchesDrained = TakeDispatchesDrainedCompletionLocked();
         }
 
-        ReleaseBufferedItems(bufferedItems);
-        childState?.Detach();
-        barrier?.TrySetResult();
-        if (attached is not null)
-            BeginAbandonedDispatcherDisposal(attached);
-        TryForwardDrain();
+        DiscardBufferedItems(discarded);
+        dispatchesDrained?.TrySetResult();
+        TryFinalizeChildDetach();
     }
 
     internal bool TryBeginAttach(IStreamDispatcher dispatcher, out bool alreadyCompleted)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
-        if (dispatcher is PreAdmissionStreamDispatcher promotion)
+        if (dispatcher is PreAdmissionStreamDispatcher reconfiguration)
         {
-            PromoteFrom(promotion);
+            ReconfigureFrom(reconfiguration);
             alreadyCompleted = false;
             return true;
         }
+
         lock (_gate)
         {
-            if (_abandoned || _dispatcher is not null || _attachingDispatcher is not null)
+            if (_localAbandonRequested || _dispatcher is not null || _attachmentInProgress)
             {
                 alreadyCompleted = false;
                 return false;
             }
-            _attachingDispatcher = dispatcher;
-            _attachingDispatchState = new InboundStreamChildDispatchState(
-                dispatcher as IStreamDispatchLease);
-            _attachmentBarrier = new TaskCompletionSource(
-                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            _dispatcher = dispatcher;
+            _childLease = dispatcher as IStreamDispatchLease;
+            _attachmentInProgress = true;
+            _childClosed = false;
+            _childDetached = false;
+            _childDetachRequested = false;
+            _disposeChildOnDetach = false;
+            _childDetachFinalizing = false;
+            _completionForwarded = false;
             _replayedDuringAttach = 0;
             alreadyCompleted = _completed && !_retainUntilLocalCompletion;
             return true;
@@ -483,44 +442,31 @@ internal sealed class PreAdmissionStreamDispatcher(
 
     internal void FinishAttach(IStreamDispatcher dispatcher)
     {
+        ArgumentNullException.ThrowIfNull(dispatcher);
         if (dispatcher is PreAdmissionStreamDispatcher)
             return;
 
-        TaskCompletionSource barrier;
-        bool abandoned;
         lock (_gate)
         {
-            if (!ReferenceEquals(_attachingDispatcher, dispatcher) || _attachmentBarrier is null)
+            if (!ReferenceEquals(_dispatcher, dispatcher) || !_attachmentInProgress)
                 throw new InvalidOperationException("The generated stream dispatcher was not claimed for attachment.");
-            barrier = _attachmentBarrier;
-            abandoned = _abandoned;
-        }
-
-        if (abandoned)
-        {
-            FinishAbandonedAttachment(dispatcher, barrier);
-            return;
         }
 
         try
         {
-            ConfigureAttachingDispatcher(dispatcher);
+            ConfigureAttachedDispatcher(dispatcher);
         }
         catch (Exception exception)
         {
-            FailAttachment(dispatcher, barrier, exception);
+            FailAttachment(dispatcher, exception);
             throw;
         }
 
-        var replay = ReplayBufferedItemsAsync(dispatcher, barrier);
+        var replay = ReplayBufferedItemsAsync(dispatcher);
         if (replay.IsCompleted)
             replay.GetAwaiter().GetResult();
         else
-            _ = replay.ContinueWith(
-                static task => _ = task.Exception,
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
+            _ = ObserveReplayFailureAsync(replay);
     }
 
     public void Complete(bool isError, string? errorMessage)
@@ -532,22 +478,18 @@ internal sealed class PreAdmissionStreamDispatcher(
 
     public void Complete(Exception? exception)
     {
-        IStreamDispatcher? attached;
-        InboundStreamChildDispatchState? childState;
-        var childLeaseAcquired = false;
+        IStreamDispatcher? attached = null;
         lock (_gate)
         {
             if (_completed)
                 return;
             _completed = true;
             _completion = exception;
-            attached = _abandoned ? null : _dispatcher;
-            childState = _abandoned ? null : _dispatcherState;
-            if (attached is not null && childState is not null)
-                childLeaseAcquired = childState.TryAcquire();
+            if (!_attachmentInProgress)
+                _ = TryAcquireCompletionDispatchLocked(out attached);
         }
 
-        CompleteAttachedDispatcher(attached, childState, childLeaseAcquired, exception);
+        CompleteAttachedDispatcher(attached, exception);
     }
 
     public void SetBytesConsumedCallback(
@@ -555,17 +497,34 @@ internal sealed class PreAdmissionStreamDispatcher(
         long requestId,
         ushort streamId)
     {
-        IStreamConsumptionAwareDispatcher? consumptionAware;
+        IStreamConsumptionAwareDispatcher? consumptionAware = null;
+        var childLeaseAcquired = false;
         lock (_gate)
         {
             _bytesConsumed = callback;
             _requestId = requestId;
             _streamId = streamId;
             _configurationVersion++;
-            consumptionAware = (_dispatcher ?? _attachingDispatcher) as
-                IStreamConsumptionAwareDispatcher;
+            if (!_attachmentInProgress && !_childClosed && !_childDetached &&
+                _dispatcher is IStreamConsumptionAwareDispatcher child &&
+                TryAcquireChildDispatchLocked(out _))
+            {
+                consumptionAware = child;
+                childLeaseAcquired = true;
+            }
         }
-        consumptionAware?.SetBytesConsumedCallback(callback, requestId, streamId);
+
+        if (consumptionAware is null)
+            return;
+        try
+        {
+            consumptionAware.SetBytesConsumedCallback(callback, requestId, streamId);
+        }
+        finally
+        {
+            if (childLeaseAcquired)
+                ReleaseChildDispatch();
+        }
     }
 
     ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
@@ -578,420 +537,261 @@ internal sealed class PreAdmissionStreamDispatcher(
 
     void IStreamDispatchLease.OnDispatchesDrained()
     {
+        BufferedItem[] discarded = [];
         lock (_gate)
-            _drainRequested = true;
-        TryForwardDrain();
+        {
+            if (_dispatcher is not null || _attachmentInProgress)
+                _childDetachRequested = true;
+            if (!_attachmentInProgress)
+            {
+                _discarding = true;
+                discarded = TakeBufferedItemsLocked();
+            }
+        }
+
+        DiscardBufferedItems(discarded);
+        TryFinalizeChildDetach();
     }
 
-    private void PromoteFrom(PreAdmissionStreamDispatcher replacement)
+    bool IStreamDispatchState.HasActiveDispatches
     {
-        while (true)
+        get
         {
-            RetentionPolicy currentPolicy;
-            RetentionPolicy replacementPolicy;
-            BufferedItem[] buffered;
             lock (_gate)
-            {
-                currentPolicy = _retentionPolicy;
-                replacementPolicy = replacement._retentionPolicy;
-                buffered = [.. _items];
-            }
-
-            if (currentPolicy == replacementPolicy)
-            {
-                lock (_gate)
-                {
-                    if (!ReferenceEquals(currentPolicy, _retentionPolicy))
-                        continue;
-                    _decodeCompressed = replacement._decodeCompressed;
-                    _retainUntilLocalCompletion |= replacement._retainUntilLocalCompletion;
-                }
-                return;
-            }
-
-            var reservedCount = 0;
-            for (; reservedCount < buffered.Length; reservedCount++)
-            {
-                if (!replacementPolicy.ReserveBytes(buffered[reservedCount].RetainedBytes))
-                    break;
-            }
-            var reservationSucceeded = reservedCount == buffered.Length;
-            if (!reservationSucceeded)
-            {
-                for (var index = 0; index < reservedCount; index++)
-                    replacementPolicy.ReleaseBytes(buffered[index].RetainedBytes);
-            }
-
-            var retry = false;
-            BufferedItem[] rejected = [];
-            lock (_gate)
-            {
-                if (!ReferenceEquals(currentPolicy, _retentionPolicy) ||
-                    _items.Count != buffered.Length)
-                {
-                    retry = true;
-                }
-                else if (!reservationSucceeded)
-                {
-                    _retentionPolicy = replacementPolicy;
-                    _decodeCompressed = replacement._decodeCompressed;
-                    _retainUntilLocalCompletion |= replacement._retainUntilLocalCompletion;
-                    rejected = [.. _items];
-                    _items.Clear();
-                    _completed = true;
-                    _completion = CreateRetentionPromotionCapacityException();
-                }
-                else
-                {
-                    _retentionPolicy = replacementPolicy;
-                    _decodeCompressed = replacement._decodeCompressed;
-                    _retainUntilLocalCompletion |= replacement._retainUntilLocalCompletion;
-                    if (buffered.Length != 0)
-                    {
-                        _items.Clear();
-                        for (var index = 0; index < buffered.Length; index++)
-                        {
-                            _items.Enqueue(buffered[index] with
-                            {
-                                ReleaseBytes = replacementPolicy.ReleaseBytes
-                            });
-                        }
-                    }
-                }
-            }
-
-            if (retry)
-            {
-                if (reservationSucceeded)
-                {
-                    for (var index = 0; index < buffered.Length; index++)
-                        replacementPolicy.ReleaseBytes(buffered[index].RetainedBytes);
-                }
-                continue;
-            }
-
-            if (!reservationSucceeded)
-            {
-                ReleaseBufferedItems(rejected);
-                return;
-            }
-
-            for (var index = 0; index < buffered.Length; index++)
-                buffered[index].ReleaseBytes(buffered[index].RetainedBytes);
-            return;
+                return _activeChildDispatches != 0;
         }
     }
 
-    private async Task ReplayBufferedItemsAsync(
-        IStreamDispatcher dispatcher,
-        TaskCompletionSource barrier)
+    bool IStreamDispatchState.IsDetached
     {
-        var completionStarted = false;
-        InboundStreamChildDispatchState? completionState = null;
-        var completionLeaseAcquired = false;
+        get
+        {
+            lock (_gate)
+                return _childDetached;
+        }
+    }
+
+    ValueTask IStreamDispatchState.WaitForDispatchesDrainedAsync()
+    {
+        lock (_gate)
+        {
+            if (_activeChildDispatches == 0)
+                return ValueTask.CompletedTask;
+            _childDispatchesDrained ??= new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            return new ValueTask(_childDispatchesDrained.Task);
+        }
+    }
+
+    ValueTask IStreamDispatchState.WaitForDetachedAsync(CancellationToken cancellationToken)
+    {
+        Task task;
+        lock (_gate)
+        {
+            if (_childDetached)
+                return ValueTask.CompletedTask;
+            _childDetachedCompletion ??= new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            task = _childDetachedCompletion.Task;
+        }
+        return cancellationToken.CanBeCanceled
+            ? new ValueTask(task.WaitAsync(cancellationToken))
+            : new ValueTask(task);
+    }
+
+    void IStreamDispatchState.Close()
+    {
+        BufferedItem[] discarded;
+        TaskCompletionSource? dispatchesDrained = null;
+        lock (_gate)
+        {
+            if (_childClosed)
+                return;
+            _childClosed = true;
+            _discarding = true;
+            discarded = TakeBufferedItemsLocked();
+            if (_activeChildDispatches == 0)
+                dispatchesDrained = TakeDispatchesDrainedCompletionLocked();
+        }
+
+        DiscardBufferedItems(discarded);
+        dispatchesDrained?.TrySetResult();
+        TryFinalizeChildDetach();
+    }
+
+    private void ReconfigureFrom(PreAdmissionStreamDispatcher replacement)
+    {
+        RetentionPolicy replacementPolicy;
+        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? replacementDecoder;
+        bool replacementRetainUntilLocalCompletion;
+        lock (replacement._gate)
+        {
+            replacementPolicy = replacement._retentionPolicy;
+            replacementDecoder = replacement._decodeCompressed;
+            replacementRetainUntilLocalCompletion = replacement._retainUntilLocalCompletion;
+        }
+
+        BufferedItem[] rejected = [];
+        lock (_gate)
+        {
+            _retentionPolicy = replacementPolicy;
+            _decodeCompressed = replacementDecoder;
+            _retainUntilLocalCompletion |= replacementRetainUntilLocalCompletion;
+            _configurationVersion++;
+            if (!_completed && _retainedBytes > replacementPolicy.MaxRetainedBytes)
+            {
+                _completed = true;
+                _completion = CreateRetentionReconfigurationCapacityException(
+                    replacementPolicy.MaxRetainedBytes);
+                rejected = TakeBufferedItemsLocked();
+            }
+        }
+
+        DiscardBufferedItems(rejected);
+    }
+
+    private async Task ReplayBufferedItemsAsync(IStreamDispatcher dispatcher)
+    {
         try
         {
             while (true)
             {
                 BufferedItem item;
-                InboundStreamChildDispatchState? childState;
-                bool completed;
-                bool abandoned;
-                bool ownsAbandonedChild;
+                Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decoder;
+                IStreamDispatcher? completionDispatcher = null;
+                Exception? completion = null;
+                bool stop;
                 lock (_gate)
                 {
-                    abandoned = _abandoned;
-                    ownsAbandonedChild = abandoned &&
-                        ReferenceEquals(_attachingDispatcher, dispatcher);
-                    if (abandoned)
+                    if (_localAbandonRequested || _discarding && _childClosed ||
+                        !ReferenceEquals(_dispatcher, dispatcher))
                     {
-                        childState = ownsAbandonedChild ? _attachingDispatchState : null;
-                        if (ownsAbandonedChild)
-                        {
-                            _attachingDispatcher = null;
-                            _attachingDispatchState = null;
-                            _replayedDuringAttach = 0;
-                            if (ReferenceEquals(_attachmentBarrier, barrier))
-                                _attachmentBarrier = null;
-                        }
-                        item = default;
-                        completed = false;
-                    }
-                    else if (!_items.TryDequeue(out item))
-                    {
-                        if (!ReferenceEquals(_attachingDispatcher, dispatcher))
-                            throw new InvalidOperationException(
-                                "The generated stream dispatcher lost its attachment claim during replay.");
-                        childState = _attachingDispatchState;
-                        _attachingDispatcher = null;
-                        _attachingDispatchState = null;
-                        _dispatcher = dispatcher;
-                        _dispatcherState = childState;
+                        _attachmentInProgress = false;
                         _replayedDuringAttach = 0;
-                        completed = _completed;
-                        if (!completed)
-                        {
-                            barrier.TrySetResult();
-                            return;
-                        }
-                        completionState = childState;
-                        completionLeaseAcquired = childState?.TryAcquire() == true;
+                        item = default;
+                        decoder = null;
+                        stop = true;
                     }
-                    else
+                    else if (_items.TryDequeue(out item))
                     {
-                        childState = _attachingDispatchState;
                         _replayedDuringAttach++;
-                        completed = false;
-                    }
-                }
-
-                if (abandoned)
-                {
-                    if (ownsAbandonedChild)
-                    {
-                        childState?.Detach();
-                        barrier.TrySetResult();
-                        BeginAbandonedDispatcherDisposal(dispatcher);
+                        if (!TryAcquireReplayChildDispatchLocked(dispatcher))
+                            throw new InvalidOperationException(
+                                "The inbound stream mailbox lost its typed child during replay.");
+                        decoder = _decodeCompressed;
+                        stop = false;
                     }
                     else
                     {
-                        barrier.TrySetResult();
+                        _attachmentInProgress = false;
+                        _replayedDuringAttach = 0;
+                        item = default;
+                        decoder = null;
+                        stop = true;
+                        if (_completed && TryAcquireCompletionDispatchLocked(out completionDispatcher))
+                            completion = _completion;
                     }
-                    return;
                 }
 
-                if (completed)
-                    break;
+                if (completionDispatcher is not null)
+                    CompleteAttachedDispatcher(completionDispatcher, completion);
+                if (stop)
+                    return;
 
                 try
                 {
                     var bufferedPayload = new ReadOnlySequence<byte>(item.Owner.WrittenMemory);
                     var dispatch = item.IsCompressed
-                        ? DecodeAndDispatch(
+                        ? DecodeAndDispatchAcquired(
                             dispatcher,
-                            childState,
                             bufferedPayload,
                             item.EncodedByteCount,
-                            _decodeCompressed ?? throw new InvalidOperationException(
-                                "The inbound stream route has no compressed-frame decoder."))
-                        : DispatchAttached(
+                            RequireCompressedDecoderAfterChildDispatchAcquired(decoder))
+                        : DispatchAttachedAcquired(
                             dispatcher,
-                            childState,
                             bufferedPayload,
                             item.EncodedByteCount);
                     await dispatch.ConfigureAwait(false);
                 }
                 finally
                 {
-                    buffers.Return(item.Owner);
-                    item.ReleaseBytes(item.RetainedBytes);
+                    ReleaseBufferedItem(item, notifyBytesConsumed: false);
                 }
             }
-
-            completionStarted = true;
-            var completionLeaseOwnedByHelper = completionLeaseAcquired;
-            completionLeaseAcquired = false;
-            CompleteAttachedDispatcher(
-                dispatcher,
-                completionState,
-                completionLeaseOwnedByHelper,
-                _completion);
-            barrier.TrySetResult();
         }
         catch (Exception exception)
         {
-            if (completionLeaseAcquired)
-            {
-                completionState!.Release();
-                completionLeaseAcquired = false;
-            }
-            FailAttachment(
-                dispatcher,
-                barrier,
-                exception,
-                completeDispatcher: !completionStarted);
+            FailAttachment(dispatcher, exception);
             throw;
         }
         finally
         {
-            if (completionLeaseAcquired)
-                completionState!.Release();
-            TryForwardDrain();
+            FinalizeAttachmentEnd();
         }
     }
 
-    private void FinishAbandonedAttachment(
-        IStreamDispatcher dispatcher,
-        TaskCompletionSource barrier)
+    private static async Task ObserveReplayFailureAsync(Task replay)
     {
-        InboundStreamChildDispatchState? childState;
+        try { await replay.ConfigureAwait(false); }
+        catch { }
+    }
+
+    private void FailAttachment(IStreamDispatcher dispatcher, Exception exception)
+    {
+        BufferedItem[] discarded;
+        IStreamDispatcher? completionDispatcher = null;
         lock (_gate)
         {
-            if (!ReferenceEquals(_attachingDispatcher, dispatcher))
-            {
-                barrier.TrySetResult();
+            if (!ReferenceEquals(_dispatcher, dispatcher))
                 return;
-            }
-            childState = _attachingDispatchState;
-            _attachingDispatcher = null;
-            _attachingDispatchState = null;
+
+            _attachmentInProgress = false;
             _replayedDuringAttach = 0;
-            if (ReferenceEquals(_attachmentBarrier, barrier))
-                _attachmentBarrier = null;
+            _discarding = true;
+            if (!_completed)
+            {
+                _completed = true;
+                _completion = exception;
+            }
+            if (!_completionForwarded && !_childClosed)
+            {
+                _completionForwarded = true;
+                _activeChildDispatches++;
+                completionDispatcher = dispatcher;
+            }
+            _childClosed = true;
+            _childDetachRequested = true;
+            discarded = TakeBufferedItemsLocked();
         }
 
-        childState?.Detach();
-        barrier.TrySetResult();
-        BeginAbandonedDispatcherDisposal(dispatcher);
-        TryForwardDrain();
+        DiscardBufferedItems(discarded);
+        if (completionDispatcher is not null)
+        {
+            try { CompleteAttachedDispatcher(completionDispatcher, exception); }
+            catch { }
+        }
+        TryFinalizeChildDetach();
     }
 
-    private void FailAttachment(
-        IStreamDispatcher dispatcher,
-        TaskCompletionSource barrier,
-        Exception exception,
-        bool completeDispatcher = true)
+    private void FinalizeAttachmentEnd()
     {
-        BufferedItem[] remaining;
-        InboundStreamChildDispatchState? childState;
-        bool abandoned;
+        BufferedItem[] discarded = [];
         lock (_gate)
         {
-            remaining = [.. _items];
-            _items.Clear();
-            _replayedDuringAttach = 0;
-            abandoned = _abandoned;
-            childState = ReferenceEquals(_attachingDispatcher, dispatcher)
-                ? _attachingDispatchState
-                : ReferenceEquals(_dispatcher, dispatcher)
-                    ? _dispatcherState
-                    : null;
-            if (ReferenceEquals(_attachingDispatcher, dispatcher))
-            {
-                _attachingDispatcher = null;
-                _attachingDispatchState = null;
-            }
-            if (ReferenceEquals(_dispatcher, dispatcher))
-            {
-                _dispatcher = null;
-                _dispatcherState = null;
-            }
-            if (ReferenceEquals(_attachmentBarrier, barrier))
-                _attachmentBarrier = null;
-        }
-
-        ReleaseBufferedItems(remaining);
-        childState?.Detach();
-        if (abandoned)
-        {
-            barrier.TrySetResult();
-            BeginAbandonedDispatcherDisposal(dispatcher);
-            return;
-        }
-        if (!completeDispatcher)
-        {
-            barrier.TrySetException(exception);
-            return;
-        }
-        try
-        {
-            dispatcher.Complete(exception);
-        }
-        finally
-        {
-            barrier.TrySetException(exception);
-        }
-    }
-
-    private static void CompleteAttachedDispatcher(
-        IStreamDispatcher? dispatcher,
-        InboundStreamChildDispatchState? childState,
-        bool childLeaseAcquired,
-        Exception? exception)
-    {
-        if (dispatcher is null)
-            return;
-        if (childState is not null && !childLeaseAcquired)
-            return;
-
-        try
-        {
-            dispatcher.Complete(exception);
-        }
-        finally
-        {
-            if (childLeaseAcquired)
-                childState!.Release();
-        }
-    }
-
-    private static void BeginAbandonedDispatcherDisposal(IStreamDispatcher dispatcher)
-    {
-        if (dispatcher is not IAsyncDisposable asyncDisposable)
-        {
-            try
-            {
-                dispatcher.Complete(new OperationCanceledException(
-                    "The inbound stream consumer completed before peer terminal."));
-            }
-            catch
-            {
-            }
-            return;
-        }
-
-        try
-        {
-            var disposal = asyncDisposable.DisposeAsync();
-            if (disposal.IsCompletedSuccessfully)
-            {
-                disposal.GetAwaiter().GetResult();
+            if (_attachmentInProgress)
                 return;
-            }
-            _ = ObserveAbandonedDispatcherDisposalAsync(disposal);
-        }
-        catch
-        {
-        }
-    }
-
-    private static async Task ObserveAbandonedDispatcherDisposalAsync(ValueTask disposal)
-    {
-        try
-        {
-            await disposal.ConfigureAwait(false);
-        }
-        catch
-        {
-        }
-    }
-
-    private void TryForwardDrain()
-    {
-        InboundStreamChildDispatchState? childState = null;
-        BufferedItem[] bufferedItems = [];
-        lock (_gate)
-        {
-            if (!_drainRequested || _drainForwarded ||
-                _attachmentBarrier?.Task.IsCompleted == false)
+            if (_childDetachRequested)
             {
-                return;
-            }
-            _drainForwarded = true;
-            childState = _dispatcherState ?? _attachingDispatchState;
-            if (childState is null)
-            {
-                bufferedItems = [.. _items];
-                _items.Clear();
-                _replayedDuringAttach = 0;
+                _discarding = true;
+                discarded = TakeBufferedItemsLocked();
             }
         }
 
-        childState?.Detach();
-        ReleaseBufferedItems(bufferedItems);
+        DiscardBufferedItems(discarded);
+        TryFinalizeChildDetach();
     }
 
-    private void ConfigureAttachingDispatcher(IStreamDispatcher dispatcher)
+    private void ConfigureAttachedDispatcher(IStreamDispatcher dispatcher)
     {
         var dispatchStateBound = false;
         while (true)
@@ -999,31 +799,32 @@ internal sealed class PreAdmissionStreamDispatcher(
             Action<long, ushort, int>? bytesConsumed;
             long requestId;
             ushort streamId;
-            InboundStreamChildDispatchState? childState;
             int version;
             lock (_gate)
             {
-                if (_abandoned || !ReferenceEquals(_attachingDispatcher, dispatcher))
+                if (_localAbandonRequested || !ReferenceEquals(_dispatcher, dispatcher) ||
+                    !_attachmentInProgress)
+                {
                     return;
+                }
                 bytesConsumed = _bytesConsumed;
                 requestId = _requestId;
                 streamId = _streamId;
-                childState = _attachingDispatchState;
                 version = _configurationVersion;
             }
 
             if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 consumptionAware.SetBytesConsumedCallback(bytesConsumed, requestId, streamId);
-            if (!dispatchStateBound && dispatcher is IStreamDispatchLease dispatchLease && childState is not null)
+            if (!dispatchStateBound && dispatcher is IStreamDispatchLease dispatchLease)
             {
-                dispatchLease.BindDispatchState(childState);
+                dispatchLease.BindDispatchState(this);
                 dispatchStateBound = true;
             }
 
             lock (_gate)
             {
-                if (_abandoned || !ReferenceEquals(_attachingDispatcher, dispatcher) ||
-                    version == _configurationVersion)
+                if (_localAbandonRequested || !ReferenceEquals(_dispatcher, dispatcher) ||
+                    !_attachmentInProgress || version == _configurationVersion)
                 {
                     return;
                 }
@@ -1031,93 +832,119 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
     }
 
-    private async ValueTask AwaitRetainedCompressedDispatchAsync(
-        ValueTask dispatch,
-        IRpcByteBufferWriter owner,
-        int retainedBytes,
-        Action<int> releaseRetainedBytes)
+    private bool TryAcquireLiveChildDispatchLocked(out IStreamDispatcher? dispatcher)
     {
-        try
+        dispatcher = null;
+        if (_attachmentInProgress || _discarding || _childClosed || _childDetachRequested ||
+            _childDetached || _childDetachFinalizing)
         {
-            await dispatch.ConfigureAwait(false);
+            return false;
         }
-        finally
-        {
-            buffers.Return(owner);
-            releaseRetainedBytes(retainedBytes);
-        }
+        return TryAcquireChildDispatchLocked(out dispatcher);
     }
 
-    private ValueTask DispatchAttached(
+    private bool TryAcquireReplayChildDispatchLocked(IStreamDispatcher dispatcher)
+    {
+        if (_localAbandonRequested || _childClosed || _childDetached ||
+            !ReferenceEquals(_dispatcher, dispatcher))
+        {
+            return false;
+        }
+        _activeChildDispatches++;
+        return true;
+    }
+
+    private bool TryAcquireCompletionDispatchLocked(out IStreamDispatcher? dispatcher)
+    {
+        dispatcher = null;
+        if (_completionForwarded || _childClosed || _childDetached || _childDetachFinalizing ||
+            _dispatcher is null)
+        {
+            return false;
+        }
+
+        _completionForwarded = true;
+        _activeChildDispatches++;
+        dispatcher = _dispatcher;
+        return true;
+    }
+
+    private bool TryAcquireChildDispatchLocked(out IStreamDispatcher? dispatcher)
+    {
+        dispatcher = _dispatcher;
+        if (dispatcher is null || _childClosed || _childDetached || _childDetachFinalizing)
+        {
+            dispatcher = null;
+            return false;
+        }
+        _activeChildDispatches++;
+        return true;
+    }
+
+    private ValueTask DispatchAttachedAcquired(
         IStreamDispatcher dispatcher,
-        InboundStreamChildDispatchState? childState,
         ReadOnlySequence<byte> payload,
         int encodedByteCount)
     {
-        if (childState is not null && !childState.TryAcquire())
-        {
-            NotifyBytesConsumed(encodedByteCount);
-            return ValueTask.CompletedTask;
-        }
-
         try
         {
-            var dispatch = dispatcher is IStreamDispatchLease lease
-                ? lease.DispatchAcquiredAsync(payload, encodedByteCount)
+            var dispatch = dispatcher is IStreamDispatchLease leased
+                ? leased.DispatchAcquiredAsync(payload, encodedByteCount)
                 : dispatcher is IStreamConsumptionAwareDispatcher consumptionAware
                     ? consumptionAware.DispatchAsync(payload, encodedByteCount)
                     : dispatcher.DispatchAsync(payload);
-            if (childState is null)
-                return dispatch;
             if (dispatch.IsCompletedSuccessfully)
             {
-                childState.Release();
+                ReleaseChildDispatch();
                 return ValueTask.CompletedTask;
             }
-            return AwaitChildDispatchAsync(dispatch, childState);
+            return AwaitChildDispatchAsync(dispatch);
         }
         catch
         {
-            childState?.Release();
+            ReleaseChildDispatch();
             throw;
         }
     }
 
-    private static async ValueTask AwaitChildDispatchAsync(
-        ValueTask dispatch,
-        InboundStreamChildDispatchState childState)
+    private async ValueTask AwaitChildDispatchAsync(ValueTask dispatch)
     {
-        try
-        {
-            await dispatch.ConfigureAwait(false);
-        }
-        finally
-        {
-            childState.Release();
-        }
+        try { await dispatch.ConfigureAwait(false); }
+        finally { ReleaseChildDispatch(); }
     }
 
-    private ValueTask DecodeAndDispatch(
+    private Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>
+        RequireCompressedDecoderAfterChildDispatchAcquired(
+            Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decoder)
+    {
+        if (decoder is not null)
+            return decoder;
+
+        ReleaseChildDispatch();
+        throw new InvalidOperationException(
+            "The inbound stream mailbox has no compressed-frame decoder.");
+    }
+
+    private ValueTask DecodeAndDispatchAcquired(
         IStreamDispatcher dispatcher,
-        InboundStreamChildDispatchState? childState,
         ReadOnlySequence<byte> payload,
         int encodedByteCount,
         Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload> decoder)
     {
-        if (childState is not null && childState.IsClosed)
-        {
-            NotifyBytesConsumed(encodedByteCount);
-            return ValueTask.CompletedTask;
-        }
-
-        var decoded = decoder(payload);
+        PreAdmissionDecodedPayload decoded;
         try
         {
-            var dispatch = DispatchAttached(
-                dispatcher,
-                childState,
-                decoded.Payload,
-                encodedByteCount);
+            decoded = decoder(payload);
+        }
+        catch
+        {
+            ReleaseChildDispatch();
+            throw;
+        }
+
+        try
+        {
+            var dispatch = DispatchAttachedAcquired(dispatcher, decoded.Payload, encodedByteCount);
             if (dispatch.IsCompletedSuccessfully)
             {
                 decoded.Dispose();
@@ -1136,14 +963,85 @@ internal sealed class PreAdmissionStreamDispatcher(
         ValueTask dispatch,
         PreAdmissionDecodedPayload decoded)
     {
-        try
-        {
-            await dispatch.ConfigureAwait(false);
-        }
+        try { await dispatch.ConfigureAwait(false); }
+        finally { decoded.Dispose(); }
+    }
+
+    private async ValueTask AwaitRetainedCompressedDispatchAsync(
+        ValueTask dispatch,
+        IRpcByteBufferWriter owner,
+        int retainedBytes,
+        Action<int> releaseRetainedBytes)
+    {
+        try { await dispatch.ConfigureAwait(false); }
         finally
         {
-            decoded.Dispose();
+            buffers.Return(owner);
+            releaseRetainedBytes(retainedBytes);
         }
+    }
+
+    private void CompleteAttachedDispatcher(IStreamDispatcher? dispatcher, Exception? exception)
+    {
+        if (dispatcher is null)
+            return;
+        try { dispatcher.Complete(exception); }
+        finally { ReleaseChildDispatch(); }
+    }
+
+    private bool CanRetainLocked(RetentionPolicy policy, int retainedBytes)
+        => retainedBytes <= policy.MaxRetainedBytes - _retainedBytes;
+
+    private BufferedItem[] TakeBufferedItemsLocked()
+    {
+        if (_items.Count == 0)
+            return [];
+        var items = _items.ToArray();
+        _items.Clear();
+        return items;
+    }
+
+    private TaskCompletionSource? TakeDispatchesDrainedCompletionLocked()
+    {
+        var completion = _childDispatchesDrained;
+        _childDispatchesDrained = null;
+        return completion;
+    }
+
+    private void ReleaseBufferedItem(BufferedItem item, bool notifyBytesConsumed)
+    {
+        buffers.Return(item.Owner);
+        lock (_gate)
+        {
+            _retainedBytes -= item.RetainedBytes;
+            if (_retainedBytes < 0)
+            {
+                _retainedBytes += item.RetainedBytes;
+                throw new InvalidOperationException("Inbound stream mailbox retained-byte count underflowed.");
+            }
+        }
+        item.ReleaseBytes(item.RetainedBytes);
+        if (notifyBytesConsumed)
+            NotifyBytesConsumed(item.EncodedByteCount);
+    }
+
+    private void DiscardBufferedItems(IEnumerable<BufferedItem> items)
+    {
+        foreach (var item in items)
+            ReleaseBufferedItem(item, notifyBytesConsumed: true);
+    }
+
+    private static RetentionPolicy CreateRetentionPolicy(
+        Func<int, bool> reserveBytes,
+        Action<int> releaseBytes,
+        Action capacityExceeded,
+        int maxRetainedBytes)
+    {
+        ArgumentNullException.ThrowIfNull(reserveBytes);
+        ArgumentNullException.ThrowIfNull(releaseBytes);
+        ArgumentNullException.ThrowIfNull(capacityExceeded);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxRetainedBytes);
+        return new RetentionPolicy(reserveBytes, releaseBytes, capacityExceeded, maxRetainedBytes);
     }
 
     private static SharpLinkException CreateElementCapacityException()
@@ -1151,20 +1049,15 @@ internal sealed class PreAdmissionStreamDispatcher(
             SharpLinkErrorCode.ResourceExhausted,
             $"Stream receive buffer exceeded {MaxBufferedElements} elements.");
 
-    private static SharpLinkException CreateRetentionPromotionCapacityException()
+    private static SharpLinkException CreateRetentionCapacityException(int maxRetainedBytes)
         => new(
             SharpLinkErrorCode.ResourceExhausted,
-            "Deferred stream retention exceeded the active byte budget during admission promotion.");
+            $"Deferred stream retention exceeded the stable {maxRetainedBytes}-byte mailbox budget.");
 
-    private void ReleaseBufferedItems(IEnumerable<BufferedItem> items)
-    {
-        foreach (var item in items)
-        {
-            buffers.Return(item.Owner);
-            item.ReleaseBytes(item.RetainedBytes);
-            NotifyBytesConsumed(item.EncodedByteCount);
-        }
-    }
+    private static SharpLinkException CreateRetentionReconfigurationCapacityException(int maxRetainedBytes)
+        => new(
+            SharpLinkErrorCode.ResourceExhausted,
+            $"Existing deferred stream retention exceeds the active {maxRetainedBytes}-byte mailbox budget.");
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NotifyBytesConsumed(int encodedByteCount)
@@ -1173,7 +1066,8 @@ internal sealed class PreAdmissionStreamDispatcher(
     private sealed record RetentionPolicy(
         Func<int, bool> ReserveBytes,
         Action<int> ReleaseBytes,
-        Action CapacityExceeded);
+        Action CapacityExceeded,
+        int MaxRetainedBytes);
 
     private readonly record struct BufferedItem(
         IRpcByteBufferWriter Owner,
@@ -1181,6 +1075,11 @@ internal sealed class PreAdmissionStreamDispatcher(
         int EncodedByteCount,
         Action<int> ReleaseBytes,
         bool IsCompressed = false);
+
+    private readonly record struct ChildDetachWork(
+        IStreamDispatcher Dispatcher,
+        IStreamDispatchLease? Lease,
+        bool DisposeChild);
 }
 
 internal readonly record struct PreAdmissionDecodedPayload(
