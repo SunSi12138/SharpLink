@@ -76,3 +76,28 @@ jobs:
             echo "- Previous PR Quick full active-duration median: 7m 03s (representative fresh-run range: 6m 47s to 7m 06s)"
             echo "- Compare the completed Actions job timestamps for an exact like-for-like full-duration comparison"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  allocation-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Deterministic managed-allocation gate
+        uses: ./.github/actions/allocation-gate
+        with:
+          artifact-directory: artifacts/perf/allocation-gate
+          negative-control: 'true'
+
+      - name: Upload allocation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-gate-${{ github.sha }}
+          path: artifacts/perf/allocation-gate
+          if-no-files-found: error
+          retention-days: 30

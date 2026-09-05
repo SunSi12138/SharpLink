@@ -14,6 +14,8 @@ public class BenchmarkRpcService : IBenchmarkRpc
     private static readonly byte[] SPayload4096 = CreatePayload(4096, 23, 47);
     private long _publishedCount;
 
+    internal long PublishedCount => Volatile.Read(ref _publishedCount);
+
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
 
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
@@ -28,10 +30,7 @@ public class BenchmarkRpcService : IBenchmarkRpc
     {
         var sum = 0;
         foreach (var value in values.Span)
-        {
             sum += value;
-        }
-
         return ValueTask.FromResult(sum);
     }
 
@@ -48,10 +47,7 @@ public class BenchmarkRpcService : IBenchmarkRpc
     {
         var sum = 0;
         await foreach (var number in numbers)
-        {
             sum += number;
-        }
-
         return sum;
     }
 
@@ -67,24 +63,16 @@ public class BenchmarkRpcService : IBenchmarkRpc
     public async IAsyncEnumerable<string> DuplexAsync(IAsyncEnumerable<string> values)
     {
         await foreach (var value in values)
-        {
             yield return value;
-        }
     }
 
     public async ValueTask<int> MergeStreamsAsync(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right)
     {
         var sum = 0;
         await foreach (var value in left)
-        {
             sum += value;
-        }
-
         await foreach (var value in right)
-        {
             sum += value;
-        }
-
         return sum;
     }
 
@@ -92,10 +80,7 @@ public class BenchmarkRpcService : IBenchmarkRpc
     {
         long score = 0;
         await foreach (var payload in payloads)
-        {
             score += GetPayloadScore(payload);
-        }
-
         return score;
     }
 
@@ -112,9 +97,7 @@ public class BenchmarkRpcService : IBenchmarkRpc
     public async IAsyncEnumerable<byte[]> DuplexPayloadsAsync(IAsyncEnumerable<byte[]> payloads)
     {
         await foreach (var payload in payloads)
-        {
             yield return payload;
-        }
     }
 
     internal static byte[] GetPayload(int payloadSize) => payloadSize switch
@@ -122,8 +105,7 @@ public class BenchmarkRpcService : IBenchmarkRpc
         16 => SPayload16,
         4096 => SPayload4096,
         _ => throw new ArgumentOutOfRangeException(
-            nameof(payloadSize),
-            payloadSize,
+            nameof(payloadSize), payloadSize,
             "The generated ABI baseline supports 16-byte and 4-KiB payloads.")
     };
 

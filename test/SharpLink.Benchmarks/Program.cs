@@ -9,6 +9,18 @@ public static class Program
     public static async Task Main(string[] args)
     {
         if (args.Length > 0 && string.Equals(
+            args[0], "--allocation-gate", StringComparison.Ordinal))
+        {
+            await AllocationGateRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--allocation-gate-self-test", StringComparison.Ordinal))
+        {
+            AllocationGateRunner.RunSelfTests(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--unsafe-blit-padding-evidence", StringComparison.Ordinal))
         {
             UnsafeBlitPaddingEvidenceRunner.Run(args[1..]);

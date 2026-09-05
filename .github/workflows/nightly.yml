@@ -153,6 +153,33 @@ jobs:
       - name: Load Test Smoke
         run: dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,8,32 --warmup 2 --duration 8 --metrics-port 0
 
+  allocation-trend:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Capture deterministic allocation trend
+        continue-on-error: true
+        uses: ./.github/actions/allocation-gate
+        with:
+          artifact-directory: artifacts/perf/allocation-trend
+          negative-control: 'false'
+
+      - name: Upload allocation trend evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-nightly-${{ github.sha }}
+          path: artifacts/perf/allocation-trend
+          if-no-files-found: warn
+          retention-days: 30
+
   chaos-soak:
     if: github.event_name != 'push'
     strategy:
