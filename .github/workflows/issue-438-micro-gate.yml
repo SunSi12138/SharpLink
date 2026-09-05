@@ -1,0 +1,70 @@
+name: Issue 438 Micro Gate
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-micro-gate
+
+permissions:
+  contents: read
+
+jobs:
+  micro-abba:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      BASE_SHA: 8e4cb3ce0b15e60ec1365781411e9b53e8cae742
+      CANDIDATE_SHA: f271c4ffaf679e01749ec1a29be234af542dfee2
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Prepare worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_SHA" "$CANDIDATE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/i438-base" "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/i438-candidate" "$CANDIDATE_SHA"
+          for dir in "$RUNNER_TEMP/i438-base" "$RUNNER_TEMP/i438-candidate"; do
+            (cd "$dir" && dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj && dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal)
+          done
+      - name: Run longer idle-wake ABBA
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/artifacts/issue-438-micro"
+          mkdir -p "$OUT"
+          dotnet --info > "$OUT/dotnet-info.txt"
+          lscpu > "$OUT/lscpu.txt"
+          BASE="$RUNNER_TEMP/i438-base"
+          CAND="$RUNNER_TEMP/i438-candidate"
+          run_one() {
+            local label="$1" dir="$2"
+            (
+              cd "$dir"
+              rm -rf BenchmarkDotNet.Artifacts
+              dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+                --filter '*SendPumpIdleWakeBenchmarks*' \
+                --iterationCount 12 --warmupCount 5 --launchCount 1 \
+                --exporters json
+              mkdir -p "$OUT/$label"
+              cp -a BenchmarkDotNet.Artifacts "$OUT/$label/"
+            )
+          }
+          run_one base-a "$BASE"
+          run_one candidate-a "$CAND"
+          run_one candidate-b "$CAND"
+          run_one base-b "$BASE"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-micro-gate
+          path: artifacts/issue-438-micro
+          if-no-files-found: error
+          retention-days: 30
