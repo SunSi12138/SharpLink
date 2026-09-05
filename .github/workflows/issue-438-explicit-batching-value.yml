@@ -91,15 +91,15 @@ jobs:
                 cd "$dir"
                 dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- \
                   --mode local --transport "$transport" --operation empty --payload-size 0 \
-                  --concurrency 128 --warmup 1 --duration 5 --metrics-port 0 \
+                  --concurrency 128 --warmup 1 --duration 3 --metrics-port 0 \
                   --profile balanced --min-connections 1 --max-connections 1 \
-                  --max-send-queue-bytes 67108864 \
+                  --max-send-queue-bytes 67108864 --maximum-recorded-operations 100000000 \
                   --json-output "$OUT/$label-unary-$transport.json"
                 dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- \
                   --mode local --transport "$transport" --operation oneway --payload-size 0 \
-                  --concurrency 128 --warmup 1 --duration 5 --metrics-port 0 \
+                  --concurrency 128 --warmup 1 --duration 3 --metrics-port 0 \
                   --profile balanced --min-connections 1 --max-connections 1 \
-                  --max-send-queue-bytes 67108864 \
+                  --max-send-queue-bytes 67108864 --maximum-recorded-operations 100000000 \
                   --json-output "$OUT/$label-oneway-$transport.json"
               )
             done
