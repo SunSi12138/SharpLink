@@ -4,11 +4,9 @@ public partial class RpcGenerator
 {
     private sealed partial class DtoAnalysisState
     {
-        private FinalUnionCodecPlan? ResolveGeneratedUnionPlan(
+        private FinalUnionCodecPlan CreateFinalUnionPlan(
             ITypeSymbol type,
-            GeneratedCodecModel model,
-            Dictionary<string, FinalCodecPlan> plans,
-            HashSet<string> resolving)
+            GeneratedCodecModel model)
         {
             if (!TryGetNativeUnionCases(type, reportDiagnostics: false, out var cases) || cases.IsDefaultOrEmpty)
             {
@@ -16,23 +14,18 @@ public partial class RpcGenerator
                     $"Final native union selection for '{model.TypeName}' has no validated union cases.");
             }
 
-            var finalCases = ImmutableArray.CreateBuilder<FinalUnionCasePlan>(cases.Length);
-            foreach (var unionCase in cases.OrderBy(static item => item.Discriminator))
-            {
-                var child = ResolveFinalCodecPlan(unionCase.Type, plans, resolving);
-                if (child is null)
-                    return null;
-
-                finalCases.Add(new FinalUnionCasePlan(
+            var finalCases = cases
+                .OrderBy(static item => item.Discriminator)
+                .Select(static unionCase => new FinalUnionCasePlan(
                     unionCase.Discriminator,
-                    child.TypeName,
-                    GetUnionCaseLogicalIdentity(unionCase.Type)));
-            }
+                    GetTypeName(unionCase.Type),
+                    GetUnionCaseLogicalIdentity(unionCase.Type)))
+                .ToImmutableArray();
 
             return new FinalUnionCodecPlan(
                 model.TypeName,
                 NativeUnionWireSemantic,
-                finalCases.ToImmutable());
+                finalCases);
         }
 
         private static RpcHashValue GetUnionCaseLogicalIdentity(ITypeSymbol caseType)
