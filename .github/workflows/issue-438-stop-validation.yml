@@ -1,0 +1,174 @@
+name: Issue 438 Temporary Stop Validation
+
+on:
+  push:
+    branches:
+      - tmp/issue-438-stop-validation
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 5f455b978a946931cc08aea48299cb2290b9a6a4
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Apply candidate stop-crossing fix locally
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/SharpLink.Runtime/RpcSession.SendPump.cs')
+          text = path.read_text()
+          old = """                _wakeup.ConsumeLatched();
+                if (HasProgressFrames() || HasNormalFrames())
+                    return true;
+"""
+          new = """                _wakeup.ConsumeLatched();
+                if (Volatile.Read(ref _stopped) != 0)
+                    return false;
+                if (HasProgressFrames() || HasNormalFrames())
+                    return true;
+"""
+          if old not in text:
+              raise SystemExit('stop-crossing target not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Add deterministic crossing test locally
+        shell: bash
+        run: |
+          cat > test/SharpLink.UnitTests/Runtime/SendPumpTimedWaitStopTests.cs <<'CS'
+          using System.IO.Pipelines;
+          using System.Threading;
+
+          namespace SharpLink.UnitTests.Runtime;
+
+          public class SendPumpTimedWaitStopTests
+          {
+              [Test]
+              public async Task StopLatchedBeforeTimedWaitMustNotBeConsumedAsObservedData()
+              {
+                  var input = new Pipe();
+                  var output = new Pipe();
+                  var blockingWriter = new BlockingFirstBufferPipeWriter(output.Writer);
+                  using var context = new SharpLinkRuntimeContextBuilder()
+                      .Build(includeGeneratedAssemblyCatalog: false);
+                  var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+                      "stop-before-timed-wait-arm",
+                      input.Reader,
+                      blockingWriter,
+                      RpcSessionTestFixture.ClientOptions(
+                          context,
+                          new RpcSessionFlushOptions(1024 * 1024, TimeSpan.MaxValue)));
+                  var frame = CreateFrame(session, 32, requestId: 1);
+
+                  try
+                  {
+                      session.SendPacket(frame);
+                      await blockingWriter.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+                      var dispose = session.DisposeAsync().AsTask();
+                      blockingWriter.Release();
+                      await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+                      EnsureReturned(frame, "shutdown must return the staged frame owner");
+                      Ensure(session.QueuedSendBytes == 0,
+                          "shutdown crossing the timed-wait arm must release all queued bytes");
+                  }
+                  finally
+                  {
+                      blockingWriter.Release();
+                      await output.Reader.CompleteAsync();
+                      await input.Writer.CompleteAsync();
+                  }
+              }
+
+              private static IRpcByteBufferWriter CreateFrame(RpcSession session, int payloadBytes, ulong requestId)
+              {
+                  var writer = session.RuntimeContext.Buffers.Rent();
+                  using (writer.BeginPacketScope(
+                             ProtocolV2FrameType.Response,
+                             ProtocolV2FrameFlags.None,
+                             requestId))
+                  {
+                      writer.Write(new byte[payloadBytes]);
+                  }
+                  return writer;
+              }
+
+              private static void Ensure(bool condition, string message)
+              {
+                  if (!condition)
+                      throw new Exception(message);
+              }
+
+              private static void EnsureReturned(IRpcByteBufferWriter writer, string message)
+              {
+                  try
+                  {
+                      _ = writer.WrittenCount;
+                  }
+                  catch (ObjectDisposedException)
+                  {
+                      return;
+                  }
+                  throw new Exception(message);
+              }
+
+              private sealed class BlockingFirstBufferPipeWriter(PipeWriter inner) : PipeWriter
+              {
+                  private readonly ManualResetEventSlim _release = new(initialState: false);
+                  private readonly TaskCompletionSource<bool> _entered =
+                      new(TaskCreationOptions.RunContinuationsAsynchronously);
+                  private int _blockNext = 1;
+
+                  internal Task Entered => _entered.Task;
+                  internal void Release() => _release.Set();
+
+                  public override void Advance(int bytes) => inner.Advance(bytes);
+                  public override void CancelPendingFlush() => inner.CancelPendingFlush();
+                  public override void Complete(Exception? exception = null) => inner.Complete(exception);
+                  public override ValueTask CompleteAsync(Exception? exception = null)
+                      => inner.CompleteAsync(exception);
+                  public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+                      => inner.FlushAsync(cancellationToken);
+                  public override Memory<byte> GetMemory(int sizeHint = 0)
+                  {
+                      BlockOnce();
+                      return inner.GetMemory(sizeHint);
+                  }
+                  public override Span<byte> GetSpan(int sizeHint = 0)
+                  {
+                      BlockOnce();
+                      return inner.GetSpan(sizeHint);
+                  }
+                  private void BlockOnce()
+                  {
+                      if (Interlocked.Exchange(ref _blockNext, 0) == 0)
+                          return;
+                      _entered.TrySetResult(true);
+                      if (!_release.Wait(TimeSpan.FromSeconds(5)))
+                          throw new TimeoutException("test writer was not released");
+                  }
+              }
+          }
+          CS
+      - name: Restore
+        run: dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
+      - name: Upload locally patched files
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-438-stop-validation-files
+          path: |
+            src/SharpLink.Runtime/RpcSession.SendPump.cs
+            test/SharpLink.UnitTests/Runtime/SendPumpTimedWaitStopTests.cs
+          if-no-files-found: error
