@@ -1,4 +1,4 @@
-# stage2 validation rerun after repairing staged patch chunk
+# stage2 validation rerun after exact Git-blob repair of staged patch chunks
 name: issue-430-worker
 
 on:
