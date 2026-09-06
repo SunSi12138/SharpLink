@@ -1,0 +1,1656 @@
+name: Temporary Issue 550 Validation
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - tmp/issue-550-validation-gpt
+
+concurrency:
+  group: tmp-issue-550-validation
+  cancel-in-progress: true
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout dev baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Apply issue 550 implementation
+        shell: bash
+        run: |
+          cat > /tmp/apply_issue_550.py <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual < count:
+                  raise RuntimeError(f"{path}: expected at least {count} occurrence(s), found {actual}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, count))
+
+          def write(path, content):
+              p = Path(path)
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(content)
+
+          write('src/SharpLink.Abstractions/SharpLinkCompressionSendPolicy.cs', '''namespace SharpLink.Abstractions;
+
+/// <summary>Defines one immutable local outbound compression policy snapshot.</summary>
+/// <remarks>
+/// The direction is selected by the API that consumes this value: client request compression or
+/// server response compression. It does not change provider advertisement or inbound decoding.
+/// </remarks>
+public sealed class SharpLinkCompressionSendPolicy
+{
+    /// <summary>Gets whether locally-sent business payloads may be adaptively compressed.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Gets the smallest business payload considered for compression.</summary>
+    public int MinimumPayloadBytes { get; init; } = 1024;
+
+    /// <summary>Gets the minimum absolute byte saving, including the original-length prefix.</summary>
+    public int MinimumSavingsBytes { get; init; } = 64;
+
+    /// <summary>Gets the minimum fractional saving in the inclusive range 0 through 1.</summary>
+    public double MinimumSavingsRatio { get; init; } = 0.05;
+}
+''')
+
+          replace('src/SharpLink.Abstractions/ProtocolV2.cs',
+          '''    /// <summary>Publishes the server's current contract-to-assembly wire identities.</summary>
+    ContractManifest = 13
+''',
+          '''    /// <summary>Publishes the server's current contract-to-assembly wire identities.</summary>
+    ContractManifest = 13,
+    /// <summary>Updates the client's desired server-to-client response compression preference.</summary>
+    ResponseCompressionPreferenceUpdate = 14,
+    /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
+    ResponseCompressionPreferenceAck = 15
+''')
+
+          replace('src/SharpLink.Abstractions/ProtocolV2.cs',
+          '''/// <param name="CompressionProfiles">Compression profiles supported by the client, in preference order.</param>
+public readonly record struct ProtocolV2HandshakeRequest(
+    ushort MinorVersion,
+    ProtocolV2Capabilities SupportedCapabilities,
+    ProtocolV2Capabilities RequiredCapabilities,
+    int MaxFramePayloadBytes,
+    int StreamReceiveWindowBytes,
+    int ConnectionReceiveWindowBytes,
+    ReadOnlyMemory<byte> AuthenticationPayload,
+    ReadOnlyMemory<string> CompressionProfiles = default);
+''',
+          '''/// <param name="CompressionProfiles">Compression profiles supported by the client, in preference order.</param>
+/// <param name="ResponseCompressionPreferenceGeneration">The client-instance desired response-compression state generation.</param>
+/// <param name="AllowResponseCompression">Whether the client currently allows the server to compress response-direction business payloads.</param>
+public readonly record struct ProtocolV2HandshakeRequest(
+    ushort MinorVersion,
+    ProtocolV2Capabilities SupportedCapabilities,
+    ProtocolV2Capabilities RequiredCapabilities,
+    int MaxFramePayloadBytes,
+    int StreamReceiveWindowBytes,
+    int ConnectionReceiveWindowBytes,
+    ReadOnlyMemory<byte> AuthenticationPayload,
+    ReadOnlyMemory<string> CompressionProfiles = default,
+    ulong ResponseCompressionPreferenceGeneration = 0,
+    bool AllowResponseCompression = true);
+''')
+
+          replace('src/SharpLink.Abstractions/ProtocolV2.cs',
+          '''/// <summary>Returns consumed byte credit for one request stream.</summary>
+''',
+          '''/// <summary>Updates the client preference governing future server response-compression decisions.</summary>
+/// <param name="Generation">The monotonic desired-state generation.</param>
+/// <param name="AllowResponseCompression">Whether response-direction compression is allowed.</param>
+public readonly record struct ProtocolV2ResponseCompressionPreferenceUpdate(
+    ulong Generation,
+    bool AllowResponseCompression);
+
+/// <summary>Acknowledges the cumulative response-compression preference generation applied by the server.</summary>
+/// <param name="AppliedGeneration">The greatest preference generation published by the server for this session.</param>
+public readonly record struct ProtocolV2ResponseCompressionPreferenceAck(
+    ulong AppliedGeneration);
+
+/// <summary>Returns consumed byte credit for one request stream.</summary>
+''')
+
+          write('src/SharpLink.Runtime/Compression/CompressionSendPolicyState.cs', '''namespace SharpLink.Runtime;
+
+internal sealed class CompressionSendPolicySnapshot
+{
+    private CompressionSendPolicySnapshot(
+        bool enabled,
+        int minimumPayloadBytes,
+        int minimumSavingsBytes,
+        double minimumSavingsRatio)
+    {
+        Enabled = enabled;
+        MinimumPayloadBytes = minimumPayloadBytes;
+        MinimumSavingsBytes = minimumSavingsBytes;
+        MinimumSavingsRatio = minimumSavingsRatio;
+    }
+
+    internal bool Enabled { get; }
+    internal int MinimumPayloadBytes { get; }
+    internal int MinimumSavingsBytes { get; }
+    internal double MinimumSavingsRatio { get; }
+
+    internal static CompressionSendPolicySnapshot CreateInitial(SharpLinkCompressionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return CreateValidated(
+            enabled: true,
+            options.MinimumPayloadBytes,
+            options.MinimumSavingsBytes,
+            options.MinimumSavingsRatio);
+    }
+
+    internal static CompressionSendPolicySnapshot CreateValidated(SharpLinkCompressionSendPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        return CreateValidated(
+            policy.Enabled,
+            policy.MinimumPayloadBytes,
+            policy.MinimumSavingsBytes,
+            policy.MinimumSavingsRatio);
+    }
+
+    private static CompressionSendPolicySnapshot CreateValidated(
+        bool enabled,
+        int minimumPayloadBytes,
+        int minimumSavingsBytes,
+        double minimumSavingsRatio)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(minimumPayloadBytes);
+        ArgumentOutOfRangeException.ThrowIfNegative(minimumSavingsBytes);
+        if (double.IsNaN(minimumSavingsRatio) || minimumSavingsRatio is < 0 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(minimumSavingsRatio));
+        return new CompressionSendPolicySnapshot(
+            enabled,
+            minimumPayloadBytes,
+            minimumSavingsBytes,
+            minimumSavingsRatio);
+    }
+
+    internal bool IsBeneficial(int originalBytes, int compressedBytes)
+    {
+        if (originalBytes < MinimumPayloadBytes || compressedBytes >= originalBytes)
+            return false;
+        var savings = originalBytes - compressedBytes;
+        return savings >= MinimumSavingsBytes && savings >= originalBytes * MinimumSavingsRatio;
+    }
+}
+
+internal sealed class CompressionSendPolicyState
+{
+    private CompressionSendPolicySnapshot _current;
+
+    private CompressionSendPolicyState(CompressionSendPolicySnapshot initial)
+        => _current = initial;
+
+    internal static CompressionSendPolicyState CreateInitial(SharpLinkCompressionOptions options)
+        => new(CompressionSendPolicySnapshot.CreateInitial(options));
+
+    internal CompressionSendPolicySnapshot Current => Volatile.Read(ref _current);
+
+    internal void Update(SharpLinkCompressionSendPolicy policy)
+    {
+        var candidate = CompressionSendPolicySnapshot.CreateValidated(policy);
+        Volatile.Write(ref _current, candidate);
+    }
+}
+
+internal sealed class ResponseCompressionPreferenceSnapshot
+{
+    internal static ResponseCompressionPreferenceSnapshot InitialAllowed { get; } = new(0, allowed: true);
+
+    internal ResponseCompressionPreferenceSnapshot(ulong generation, bool allowed)
+    {
+        Generation = generation;
+        Allowed = allowed;
+    }
+
+    internal ulong Generation { get; }
+    internal bool Allowed { get; }
+}
+''')
+
+          replace('src/SharpLink.Runtime/Compression/SharpLinkCompression.cs',
+          '''    internal bool IsBeneficial(int originalBytes, int compressedBytes)
+    {
+        if (originalBytes < MinimumPayloadBytes || compressedBytes >= originalBytes)
+            return false;
+        var savings = originalBytes - compressedBytes;
+        return savings >= MinimumSavingsBytes && savings >= originalBytes * MinimumSavingsRatio;
+    }
+
+''', '')
+
+          replace('src/SharpLink.Runtime/RpcSessionCreationOptions.cs',
+          '''        RpcSessionRole role,
+        SharpLinkRuntimeContext runtimeContext,
+        RpcSessionFlushOptions? flushOptions = null)
+''',
+          '''        RpcSessionRole role,
+        SharpLinkRuntimeContext runtimeContext,
+        RpcSessionFlushOptions? flushOptions = null,
+        CompressionSendPolicyState? compressionSendPolicyState = null)
+''')
+          replace('src/SharpLink.Runtime/RpcSessionCreationOptions.cs',
+          '''        RuntimeContext = runtimeContext;
+        FlushOptions = flushOptions;
+''',
+          '''        RuntimeContext = runtimeContext;
+        FlushOptions = flushOptions;
+        CompressionSendPolicyState = compressionSendPolicyState ??
+            SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(runtimeContext.Compression);
+''')
+          replace('src/SharpLink.Runtime/RpcSessionCreationOptions.cs',
+          '''    internal RpcSessionFlushOptions? FlushOptions { get; }
+
+    internal string TelemetrySide''',
+          '''    internal RpcSessionFlushOptions? FlushOptions { get; }
+
+    internal CompressionSendPolicyState CompressionSendPolicyState { get; }
+
+    internal string TelemetrySide''')
+
+          replace('src/SharpLink.Runtime/RpcSession.cs',
+          '''        Role = creationOptions.Role;
+        RuntimeContext = creationOptions.RuntimeContext;
+''',
+          '''        Role = creationOptions.Role;
+        RuntimeContext = creationOptions.RuntimeContext;
+        _compressionSendPolicyState = creationOptions.CompressionSendPolicyState;
+''')
+
+          replace('src/SharpLink.Runtime/RpcSession.Compression.cs',
+          '''        if (originalLength == 0 || originalLength < RuntimeContext.Compression.MinimumPayloadBytes)
+            return packet;
+
+        var candidate = RuntimeContext.Buffers.Rent(
+''',
+          '''        var policy = _compressionSendPolicyState.Current;
+        if (!policy.Enabled)
+            return packet;
+        if (Role == RpcSessionRole.Server &&
+            !Volatile.Read(ref _appliedResponseCompressionPreference).Allowed)
+        {
+            return packet;
+        }
+        if (originalLength == 0 || originalLength < policy.MinimumPayloadBytes)
+            return packet;
+
+        var candidate = RuntimeContext.Buffers.Rent(
+''')
+          replace('src/SharpLink.Runtime/RpcSession.Compression.cs',
+          '''            if (!RuntimeContext.Compression.IsBeneficial(
+                    originalLength,
+                    checked(actualWritten + sizeof(uint))))
+''',
+          '''            if (!policy.IsBeneficial(
+                    originalLength,
+                    checked(actualWritten + sizeof(uint))))
+''')
+
+          write('src/SharpLink.Runtime/RpcSession.ResponseCompressionPreference.cs', '''namespace SharpLink.Runtime;
+
+internal sealed partial class RpcSession
+{
+    private readonly CompressionSendPolicyState _compressionSendPolicyState;
+    private ResponseCompressionPreferenceSnapshot _appliedResponseCompressionPreference =
+        ResponseCompressionPreferenceSnapshot.InitialAllowed;
+
+    private readonly Lock _responseCompressionPreferenceControlGate = new();
+    private ResponseCompressionPreferenceSnapshot? _latestResponseCompressionPreference;
+    private ulong _remoteResponseCompressionAppliedGeneration;
+    private ulong _responseCompressionPreferenceInFlightGeneration;
+    private ulong _responseCompressionPreferenceMaximumSentGeneration;
+    private Exception? _responseCompressionPreferenceControlFailure;
+    private TaskCompletionSource _responseCompressionPreferenceProgress = CreateResponseCompressionPreferenceProgress();
+
+    internal bool HasNegotiatedCompression
+        => (NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0 &&
+           Volatile.Read(ref _protocolState).Options?.CompressionBinding is not null;
+
+    internal void InitializeServerResponseCompressionPreference(
+        ulong generation,
+        bool allowResponseCompression)
+    {
+        if (Role != RpcSessionRole.Server)
+            throw new InvalidOperationException("Only a server session can publish a client response-compression preference.");
+        Volatile.Write(
+            ref _appliedResponseCompressionPreference,
+            new ResponseCompressionPreferenceSnapshot(generation, allowResponseCompression));
+    }
+
+    internal ulong ApplyServerResponseCompressionPreferenceUpdate(
+        in ProtocolV2ResponseCompressionPreferenceUpdate update)
+    {
+        if (Role != RpcSessionRole.Server)
+            throw ProtocolV2FrameParser.Violation("A response-compression preference update is valid only at the server.");
+        if (!HasNegotiatedCompression)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
+                "A response-compression preference update requires negotiated compression.");
+        }
+
+        var current = Volatile.Read(ref _appliedResponseCompressionPreference);
+        if (update.Generation < current.Generation)
+            return current.Generation;
+        if (update.Generation == current.Generation)
+        {
+            if (update.AllowResponseCompression != current.Allowed)
+            {
+                throw ProtocolV2FrameParser.Violation(
+                    "A response-compression preference generation cannot identify two different desired states.");
+            }
+            return current.Generation;
+        }
+
+        var candidate = new ResponseCompressionPreferenceSnapshot(
+            update.Generation,
+            update.AllowResponseCompression);
+        Volatile.Write(ref _appliedResponseCompressionPreference, candidate);
+        return candidate.Generation;
+    }
+
+    internal void InitializeClientResponseCompressionPreference(
+        ResponseCompressionPreferenceSnapshot handshakePreference)
+    {
+        ArgumentNullException.ThrowIfNull(handshakePreference);
+        if (Role != RpcSessionRole.Client)
+            throw new InvalidOperationException("Only a client session tracks server response-compression convergence.");
+        lock (_responseCompressionPreferenceControlGate)
+        {
+            _remoteResponseCompressionAppliedGeneration = handshakePreference.Generation;
+            _responseCompressionPreferenceMaximumSentGeneration = handshakePreference.Generation;
+            _latestResponseCompressionPreference = handshakePreference;
+            _responseCompressionPreferenceControlFailure = null;
+        }
+    }
+
+    internal void ReconcileResponseCompressionPreference(ResponseCompressionPreferenceSnapshot desired)
+    {
+        ArgumentNullException.ThrowIfNull(desired);
+        if (Role != RpcSessionRole.Client)
+            throw new InvalidOperationException("Only a client session can reconcile a response-compression preference.");
+        if (!HasNegotiatedCompression || !IsConnected)
+            return;
+
+        ResponseCompressionPreferenceSnapshot? toSend = null;
+        lock (_responseCompressionPreferenceControlGate)
+        {
+            if (!IsConnected || desired.Generation <= _remoteResponseCompressionAppliedGeneration)
+                return;
+
+            if (_latestResponseCompressionPreference is null ||
+                desired.Generation > _latestResponseCompressionPreference.Generation)
+            {
+                _latestResponseCompressionPreference = desired;
+            }
+            else if (desired.Generation == _latestResponseCompressionPreference.Generation &&
+                     desired.Allowed != _latestResponseCompressionPreference.Allowed)
+            {
+                throw new InvalidOperationException(
+                    "A client response-compression preference generation cannot identify two desired states.");
+            }
+
+            _responseCompressionPreferenceControlFailure = null;
+            if (_responseCompressionPreferenceInFlightGeneration == 0 &&
+                _latestResponseCompressionPreference.Generation > _remoteResponseCompressionAppliedGeneration)
+            {
+                toSend = _latestResponseCompressionPreference;
+                _responseCompressionPreferenceInFlightGeneration = toSend.Generation;
+                _responseCompressionPreferenceMaximumSentGeneration = Math.Max(
+                    _responseCompressionPreferenceMaximumSentGeneration,
+                    toSend.Generation);
+            }
+        }
+
+        if (toSend is not null)
+            SendResponseCompressionPreferenceUpdateCore(toSend);
+    }
+
+    internal void ApplyResponseCompressionPreferenceAck(ulong appliedGeneration)
+    {
+        if (Role != RpcSessionRole.Client)
+            throw ProtocolV2FrameParser.Violation("A response-compression preference ACK is valid only at the client.");
+        if (!HasNegotiatedCompression)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
+                "A response-compression preference ACK requires negotiated compression.");
+        }
+
+        ResponseCompressionPreferenceSnapshot? toSend = null;
+        TaskCompletionSource? progress = null;
+        lock (_responseCompressionPreferenceControlGate)
+        {
+            if (appliedGeneration > _responseCompressionPreferenceMaximumSentGeneration)
+            {
+                throw ProtocolV2FrameParser.Violation(
+                    "A response-compression preference ACK exceeded every generation sent on this session.");
+            }
+
+            var changed = false;
+            if (appliedGeneration > _remoteResponseCompressionAppliedGeneration)
+            {
+                _remoteResponseCompressionAppliedGeneration = appliedGeneration;
+                _responseCompressionPreferenceControlFailure = null;
+                changed = true;
+            }
+            if (_responseCompressionPreferenceInFlightGeneration != 0 &&
+                appliedGeneration >= _responseCompressionPreferenceInFlightGeneration)
+            {
+                _responseCompressionPreferenceInFlightGeneration = 0;
+                changed = true;
+            }
+
+            if (_latestResponseCompressionPreference is not null &&
+                _latestResponseCompressionPreference.Generation > _remoteResponseCompressionAppliedGeneration &&
+                _responseCompressionPreferenceInFlightGeneration == 0)
+            {
+                toSend = _latestResponseCompressionPreference;
+                _responseCompressionPreferenceInFlightGeneration = toSend.Generation;
+                _responseCompressionPreferenceMaximumSentGeneration = Math.Max(
+                    _responseCompressionPreferenceMaximumSentGeneration,
+                    toSend.Generation);
+            }
+
+            if (changed)
+            {
+                progress = _responseCompressionPreferenceProgress;
+                _responseCompressionPreferenceProgress = CreateResponseCompressionPreferenceProgress();
+            }
+        }
+
+        progress?.TrySetResult();
+        if (toSend is null)
+            return;
+        try
+        {
+            SendResponseCompressionPreferenceUpdateCore(toSend);
+        }
+        catch (SharpLinkException exception) when (
+            exception.Code is SharpLinkErrorCode.ResourceExhausted or SharpLinkErrorCode.ConnectionClosed)
+        {
+            // The explicit convergence waiter observes the stored failure, or the session-close
+            // path removes this session from its fixed cohort. Do not turn control congestion into
+            // an unrelated receive-loop protocol failure.
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    internal async ValueTask WaitForResponseCompressionPreferenceAsync(
+        ulong requestedGeneration,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Task progress;
+            Exception? failure;
+            lock (_responseCompressionPreferenceControlGate)
+            {
+                if (_remoteResponseCompressionAppliedGeneration >= requestedGeneration || !IsConnected)
+                    return;
+                failure = _responseCompressionPreferenceControlFailure;
+                progress = _responseCompressionPreferenceProgress.Task;
+            }
+
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            if (!IsConnected)
+                return;
+
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                LifetimeToken);
+            try
+            {
+                await progress.WaitAsync(linked.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                LifetimeToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+    }
+
+    private void SendResponseCompressionPreferenceUpdateCore(ResponseCompressionPreferenceSnapshot desired)
+    {
+        try
+        {
+            this.SendResponseCompressionPreferenceUpdate(
+                new ProtocolV2ResponseCompressionPreferenceUpdate(
+                    desired.Generation,
+                    desired.Allowed));
+        }
+        catch (Exception exception)
+        {
+            TaskCompletionSource progress;
+            lock (_responseCompressionPreferenceControlGate)
+            {
+                if (_responseCompressionPreferenceInFlightGeneration == desired.Generation)
+                    _responseCompressionPreferenceInFlightGeneration = 0;
+                _responseCompressionPreferenceControlFailure = exception;
+                progress = _responseCompressionPreferenceProgress;
+                _responseCompressionPreferenceProgress = CreateResponseCompressionPreferenceProgress();
+            }
+            progress.TrySetResult();
+            throw;
+        }
+    }
+
+    private static TaskCompletionSource CreateResponseCompressionPreferenceProgress()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+''')
+
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs',
+          '''    private const int HandshakeRequestFixedBytes =
+        sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+''',
+          '''    private const int HandshakeRequestFixedBytes =
+        sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) +
+        sizeof(ulong) + sizeof(byte);
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs',
+          '''        WriteInt32(writer, request.ConnectionReceiveWindowBytes);
+        WriteCompressionProfiles(writer, request.CompressionProfiles.Span);
+''',
+          '''        WriteInt32(writer, request.ConnectionReceiveWindowBytes);
+        WriteUInt64(writer, request.ResponseCompressionPreferenceGeneration);
+        WriteByte(writer, request.AllowResponseCompression ? (byte)1 : (byte)0);
+        WriteCompressionProfiles(writer, request.CompressionProfiles.Span);
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs',
+          '''            !reader.TryReadLittleEndian(out int maxFrame) ||
+            !reader.TryReadLittleEndian(out int streamWindow) ||
+            !reader.TryReadLittleEndian(out int connectionWindow))
+''',
+          '''            !reader.TryReadLittleEndian(out int maxFrame) ||
+            !reader.TryReadLittleEndian(out int streamWindow) ||
+            !reader.TryReadLittleEndian(out int connectionWindow) ||
+            !reader.TryReadLittleEndian(out long responsePreferenceGenerationBits) ||
+            !reader.TryRead(out var allowResponseCompressionRaw))
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs',
+          '''        var compressionProfiles = ReadCompressionProfiles(ref reader);
+''',
+          '''        if (allowResponseCompressionRaw > 1)
+            throw ProtocolV2FrameParser.Violation("Handshake response-compression preference is invalid.");
+        var compressionProfiles = ReadCompressionProfiles(ref reader);
+''', 1)
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs',
+          '''            connectionWindow,
+            auth,
+            compressionProfiles);
+''',
+          '''            connectionWindow,
+            auth,
+            compressionProfiles,
+            unchecked((ulong)responsePreferenceGenerationBits),
+            allowResponseCompressionRaw != 0);
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs',
+          '''    /// <summary>Writes a non-zero stream credit update.</summary>
+''',
+          '''    /// <summary>Writes one fixed-size response-compression preference update.</summary>
+    public static void WriteResponseCompressionPreferenceUpdate(
+        IBufferWriter<byte> writer,
+        in ProtocolV2ResponseCompressionPreferenceUpdate update)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        WriteUInt64(writer, update.Generation);
+        WriteByte(writer, update.AllowResponseCompression ? (byte)1 : (byte)0);
+    }
+
+    /// <summary>Reads one complete fixed-size response-compression preference update.</summary>
+    public static ProtocolV2ResponseCompressionPreferenceUpdate ReadResponseCompressionPreferenceUpdate(
+        ReadOnlySequence<byte> payload)
+    {
+        if (payload.Length != sizeof(ulong) + sizeof(byte))
+            throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceUpdate payload must contain UInt64 generation and one preference byte.");
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out long generationBits) || !reader.TryRead(out var preference) || preference > 1)
+            throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceUpdate payload is invalid.");
+        return new ProtocolV2ResponseCompressionPreferenceUpdate(
+            unchecked((ulong)generationBits),
+            preference != 0);
+    }
+
+    /// <summary>Writes one cumulative response-compression preference acknowledgement.</summary>
+    public static void WriteResponseCompressionPreferenceAck(
+        IBufferWriter<byte> writer,
+        in ProtocolV2ResponseCompressionPreferenceAck ack)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        WriteUInt64(writer, ack.AppliedGeneration);
+    }
+
+    /// <summary>Reads one complete cumulative response-compression preference acknowledgement.</summary>
+    public static ProtocolV2ResponseCompressionPreferenceAck ReadResponseCompressionPreferenceAck(
+        ReadOnlySequence<byte> payload)
+    {
+        if (payload.Length != sizeof(ulong))
+            throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceAck payload must contain one UInt64 generation.");
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out long generationBits))
+            throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceAck payload is truncated.");
+        return new ProtocolV2ResponseCompressionPreferenceAck(unchecked((ulong)generationBits));
+    }
+
+    /// <summary>Writes a non-zero stream credit update.</summary>
+''')
+
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs',
+          '''        (byte)ProtocolV2FrameType.ContractManifest => ProtocolV2FrameType.ContractManifest,
+        _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
+''',
+          '''        (byte)ProtocolV2FrameType.ContractManifest => ProtocolV2FrameType.ContractManifest,
+        (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
+        (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
+        _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs',
+          '''            ProtocolV2FrameType.Pong or
+            ProtocolV2FrameType.GoAway or
+            ProtocolV2FrameType.ContractManifest;
+''',
+          '''            ProtocolV2FrameType.Pong or
+            ProtocolV2FrameType.GoAway or
+            ProtocolV2FrameType.ContractManifest or
+            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck;
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs',
+          '''            ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
+            _ => ProtocolV2FrameFlags.None
+''',
+          '''            ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameFlags.None,
+            _ => ProtocolV2FrameFlags.None
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs',
+          '''                if (payload.Length < 32 || payload.Length >
+                    36L + limits.MaxMetadataBytes +
+''',
+          '''                if (payload.Length < 41 || payload.Length >
+                    45L + limits.MaxMetadataBytes +
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs',
+          '''            case ProtocolV2FrameType.ContractManifest:
+                ProtocolV2ContractManifestCodec.ValidatePayloadShape(payload, limits);
+                break;
+''',
+          '''            case ProtocolV2FrameType.ContractManifest:
+                ProtocolV2ContractManifestCodec.ValidatePayloadShape(payload, limits);
+                break;
+            case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
+                _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
+                break;
+            case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
+                _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload);
+                break;
+''')
+
+          replace('src/SharpLink.Runtime/NegotiatedSessionOptions.cs',
+          '''                    ProtocolV2FrameType.HealthResponse or
+                    ProtocolV2FrameType.ContractManifest,
+''',
+          '''                    ProtocolV2FrameType.HealthResponse or
+                    ProtocolV2FrameType.ContractManifest or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceAck,
+''')
+          replace('src/SharpLink.Runtime/NegotiatedSessionOptions.cs',
+          '''                    ProtocolV2FrameType.GoAway or
+                    ProtocolV2FrameType.HealthResponse,
+''',
+          '''                    ProtocolV2FrameType.GoAway or
+                    ProtocolV2FrameType.HealthResponse or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceAck,
+''')
+
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs',
+          '''        ProtocolV2Capabilities requiredCapabilities,
+        ReadOnlyMemory<byte> authenticationPayload)
+''',
+          '''        ProtocolV2Capabilities requiredCapabilities,
+        ReadOnlyMemory<byte> authenticationPayload,
+        ulong responseCompressionPreferenceGeneration = 0,
+        bool allowResponseCompression = true)
+''')
+          replace('src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs',
+          '''            policy.ConnectionReceiveWindowBytes,
+            authenticationPayload,
+            compressionProfiles);
+''',
+          '''            policy.ConnectionReceiveWindowBytes,
+            authenticationPayload,
+            compressionProfiles,
+            responseCompressionPreferenceGeneration,
+            allowResponseCompression);
+''')
+
+          write('src/SharpLink.Runtime/RpcSessionExtensions.ResponseCompressionPreference.cs', '''namespace SharpLink.Runtime;
+
+internal static class RpcSessionResponseCompressionPreferenceExtensions
+{
+    extension(RpcSession session)
+    {
+        internal void SendResponseCompressionPreferenceUpdate(
+            in ProtocolV2ResponseCompressionPreferenceUpdate update)
+        {
+            var writer = session.RentFrameWriter();
+            var ownsWriter = true;
+            try
+            {
+                using (writer.BeginPacketScope(
+                           ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
+                           ProtocolV2FrameFlags.None,
+                           0))
+                {
+                    ProtocolV2PayloadCodec.WriteResponseCompressionPreferenceUpdate(writer, update);
+                }
+                ownsWriter = false;
+                session.SendPacket(writer);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
+        internal async ValueTask SendResponseCompressionPreferenceAckWithBackpressureAsync(
+            ulong appliedGeneration,
+            CancellationToken cancellationToken)
+        {
+            var writer = session.RentFrameWriter();
+            var ownsWriter = true;
+            try
+            {
+                using (writer.BeginPacketScope(
+                           ProtocolV2FrameType.ResponseCompressionPreferenceAck,
+                           ProtocolV2FrameFlags.None,
+                           0))
+                {
+                    ProtocolV2PayloadCodec.WriteResponseCompressionPreferenceAck(
+                        writer,
+                        new ProtocolV2ResponseCompressionPreferenceAck(appliedGeneration));
+                }
+                ownsWriter = false;
+                await session.SendPacketWithBackpressureAsync(writer, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+    }
+}
+''')
+
+          replace('src/SharpLink.Client/SharpLinkClient.cs',
+          '''        _runtimeContext = composition.RuntimeContext;
+        _staticManifests = composition.StaticManifests;
+''',
+          '''        _runtimeContext = composition.RuntimeContext;
+        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(_runtimeContext.Compression);
+        _staticManifests = composition.StaticManifests;
+''')
+          replace('src/SharpLink.Server/SharpLinkServer.cs',
+          '''        _runtimeContext = composition.RuntimeContext;
+        _authentication = composition.Authentication;
+''',
+          '''        _runtimeContext = composition.RuntimeContext;
+        _responseCompressionPolicy = CompressionSendPolicyState.CreateInitial(_runtimeContext.Compression);
+        _authentication = composition.Authentication;
+''')
+
+          replace('src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+          '''                    RpcSessionRole.Client,
+                    _runtimeContext,
+                    _rpcSessionFlushOptions));
+''',
+          '''                    RpcSessionRole.Client,
+                    _runtimeContext,
+                    _rpcSessionFlushOptions,
+                    _requestCompressionPolicy));
+''', 1)
+          replace('src/SharpLink.Client/SharpLinkClient.StaticCluster.cs',
+          '''                        RpcSessionRole.Client,
+                        _client._runtimeContext,
+                        _client._rpcSessionFlushOptions));
+''',
+          '''                        RpcSessionRole.Client,
+                        _client._runtimeContext,
+                        _client._rpcSessionFlushOptions,
+                        _client._requestCompressionPolicy));
+''', 1)
+          replace('src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs',
+          '''                        RpcSessionRole.Client,
+                        _client._runtimeContext,
+                        _client._rpcSessionFlushOptions));
+''',
+          '''                        RpcSessionRole.Client,
+                        _client._runtimeContext,
+                        _client._rpcSessionFlushOptions,
+                        _client._requestCompressionPolicy));
+''', 1)
+          replace('src/SharpLink.Server/SharpLinkServer.ConnectionLifecycle.cs',
+          '''                    RpcSessionRole.Server,
+                    _runtimeContext,
+                    _rpcSessionFlushOptions));
+''',
+          '''                    RpcSessionRole.Server,
+                    _runtimeContext,
+                    _rpcSessionFlushOptions,
+                    _responseCompressionPolicy));
+''', 1)
+
+          replace('src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+          '''        var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
+            negotiationPolicy,
+            ProtocolV2Capabilities.ContractManifest,
+            authPayload);
+''',
+          '''        var handshakePreference = CaptureResponseCompressionPreference();
+        var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
+            negotiationPolicy,
+            ProtocolV2Capabilities.ContractManifest,
+            authPayload,
+            handshakePreference.Generation,
+            handshakePreference.Allowed);
+''')
+          replace('src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+          '''                                if (!session.TryCompleteHandshake(negotiated))
+                                {
+                                    handshakeException = CreateProtocolViolationException(
+                                        "The handshake result was already completed or the session terminated.");
+                                }
+''',
+          '''                                if (!session.TryCompleteHandshake(negotiated))
+                                {
+                                    handshakeException = CreateProtocolViolationException(
+                                        "The handshake result was already completed or the session terminated.");
+                                }
+                                else
+                                {
+                                    session.InitializeClientResponseCompressionPreference(handshakePreference);
+                                }
+''')
+          replace('src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+          '''                if (handshakeException is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
+                    SharpLinkTelemetry.RecordProtocolFailure("client");
+                return handshakeException;
+''',
+          '''                if (handshakeException is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
+                    SharpLinkTelemetry.RecordProtocolFailure("client");
+                if (handshakeException is null)
+                {
+                    var currentPreference = CaptureResponseCompressionPreference();
+                    if (currentPreference.Generation > handshakePreference.Generation)
+                        session.ReconcileResponseCompressionPreference(currentPreference);
+                }
+                return handshakeException;
+''')
+
+          replace('src/SharpLink.Server/SharpLinkServer.Handshake.cs',
+          '''                        var acceptedNegotiation = negotiation ?? throw new InvalidOperationException(
+                            "Authentication succeeded without a protocol negotiation result.");
+                        await session.SendHandshakeResponseAndFlushAsync(
+''',
+          '''                        var acceptedNegotiation = negotiation ?? throw new InvalidOperationException(
+                            "Authentication succeeded without a protocol negotiation result.");
+                        runtimeSession.InitializeServerResponseCompressionPreference(
+                            request.ResponseCompressionPreferenceGeneration,
+                            request.AllowResponseCompression);
+                        await session.SendHandshakeResponseAndFlushAsync(
+''')
+
+          replace('src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+          '''                            case ProtocolV2FrameType.Pong:
+                                DebugLogServerHeartbeatReceived(_logger);
+                                break;
+                            case ProtocolV2FrameType.Cancel:
+''',
+          '''                            case ProtocolV2FrameType.Pong:
+                                DebugLogServerHeartbeatReceived(_logger);
+                                break;
+                            case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
+                                session.ApplyResponseCompressionPreferenceAck(
+                                    ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload).AppliedGeneration);
+                                break;
+                            case ProtocolV2FrameType.Cancel:
+''')
+          replace('src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+          '''                            case ProtocolV2FrameType.HandshakeRequest:
+                            case ProtocolV2FrameType.HandshakeResponse:
+                            case ProtocolV2FrameType.Request:
+''',
+          '''                            case ProtocolV2FrameType.HandshakeRequest:
+                            case ProtocolV2FrameType.HandshakeResponse:
+                            case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
+                            case ProtocolV2FrameType.Request:
+''')
+
+          replace('src/SharpLink.Server/SharpLinkServer.RequestLoop.cs',
+          '''                                case ProtocolV2FrameType.Pong:
+                                    DebugLogClientHeartbeatReceived(_logger);
+                                    break;
+                                case ProtocolV2FrameType.Request:
+''',
+          '''                                case ProtocolV2FrameType.Pong:
+                                    DebugLogClientHeartbeatReceived(_logger);
+                                    break;
+                                case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
+                                    var responseCompressionPreference =
+                                        ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
+                                    var appliedResponseCompressionGeneration =
+                                        session.ApplyServerResponseCompressionPreferenceUpdate(responseCompressionPreference);
+                                    await session.SendResponseCompressionPreferenceAckWithBackpressureAsync(
+                                        appliedResponseCompressionGeneration,
+                                        ct).ConfigureAwait(false);
+                                    break;
+                                case ProtocolV2FrameType.Request:
+''')
+          replace('src/SharpLink.Server/SharpLinkServer.RequestLoop.cs',
+          '''                                case ProtocolV2FrameType.HandshakeRequest:
+                                case ProtocolV2FrameType.HandshakeResponse:
+                                case ProtocolV2FrameType.Response:
+''',
+          '''                                case ProtocolV2FrameType.HandshakeRequest:
+                                case ProtocolV2FrameType.HandshakeResponse:
+                                case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
+                                case ProtocolV2FrameType.Response:
+''')
+
+          write('src/SharpLink.Client/SharpLinkClient.Compression.cs', '''namespace SharpLink.Client;
+
+internal sealed partial class SharpLinkClient
+{
+    private readonly CompressionSendPolicyState _requestCompressionPolicy;
+    private ResponseCompressionPreferenceSnapshot _responseCompressionPreference =
+        ResponseCompressionPreferenceSnapshot.InitialAllowed;
+
+    public void UpdateRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)
+    {
+        lock (_stateGate)
+        {
+            var state = State;
+            if (Volatile.Read(ref _stopStarted) != 0 ||
+                state is SharpLinkConnectionState.Draining or
+                    SharpLinkConnectionState.Stopped or
+                    SharpLinkConnectionState.Faulted)
+            {
+                throw new InvalidOperationException(
+                    $"Client state '{state}' does not accept request compression policy updates.");
+            }
+            _requestCompressionPolicy.Update(policy);
+        }
+    }
+
+    public async ValueTask SetResponseCompressionPreferenceAsync(
+        bool allowResponseCompression,
+        CancellationToken cancellationToken = default)
+    {
+        var desired = PublishResponseCompressionPreference(allowResponseCompression);
+        var cohort = CaptureResponseCompressionPreferenceCohort();
+
+        for (var index = 0; index < cohort.Length; index++)
+        {
+            try
+            {
+                cohort[index].Session.ReconcileResponseCompressionPreference(desired);
+            }
+            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        for (var index = 0; index < cohort.Length; index++)
+        {
+            await cohort[index].Session.WaitForResponseCompressionPreferenceAsync(
+                desired.Generation,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private ResponseCompressionPreferenceSnapshot CaptureResponseCompressionPreference()
+        => Volatile.Read(ref _responseCompressionPreference);
+
+    private ResponseCompressionPreferenceSnapshot PublishResponseCompressionPreference(bool allowed)
+    {
+        lock (_stateGate)
+        {
+            var state = State;
+            if (Volatile.Read(ref _stopStarted) != 0 ||
+                state is SharpLinkConnectionState.Draining or
+                    SharpLinkConnectionState.Stopped or
+                    SharpLinkConnectionState.Faulted)
+            {
+                throw new InvalidOperationException(
+                    $"Client state '{state}' does not accept response compression preference updates.");
+            }
+
+            var current = Volatile.Read(ref _responseCompressionPreference);
+            if (current.Allowed == allowed)
+                return current;
+            if (current.Generation == ulong.MaxValue)
+                throw new InvalidOperationException("The response compression preference generation is exhausted.");
+            var candidate = new ResponseCompressionPreferenceSnapshot(current.Generation + 1, allowed);
+            Volatile.Write(ref _responseCompressionPreference, candidate);
+            return candidate;
+        }
+    }
+
+    private ClientConnection[] CaptureResponseCompressionPreferenceCohort()
+    {
+        var ready = _cluster is null
+            ? Volatile.Read(ref _readyConnections)
+            : _cluster.CaptureReadyConnections();
+        if (ready.Length == 0)
+            return [];
+
+        var eligible = new List<ClientConnection>(ready.Length);
+        for (var index = 0; index < ready.Length; index++)
+        {
+            var connection = ready[index];
+            if (connection.CanAcceptCalls && connection.Session.HasNegotiatedCompression)
+                eligible.Add(connection);
+        }
+        return eligible.Count == 0 ? [] : eligible.ToArray();
+    }
+}
+''')
+
+          write('src/SharpLink.Server/SharpLinkServer.Compression.cs', '''namespace SharpLink.Server;
+
+internal sealed partial class SharpLinkServer
+{
+    private readonly CompressionSendPolicyState _responseCompressionPolicy;
+
+    public void UpdateResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)
+    {
+        lock (_stateGate)
+        {
+            if (_lifecycle.HasStopStarted ||
+                CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            {
+                throw new InvalidOperationException(
+                    $"Server state '{CurrentState}' does not accept response compression policy updates.");
+            }
+            _responseCompressionPolicy.Update(policy);
+        }
+    }
+}
+''')
+
+          replace('src/SharpLink.Abstractions/ISharpLinkClient.cs',
+          '''    /// <summary>
+    /// Starts the topology-specific connectivity lifecycle and completes according to its existing
+''',
+          '''    /// <summary>
+    /// Atomically replaces the client-local Request compression policy. The next Request or
+    /// client-to-server StreamData frame captures the new policy at its compression decision point.
+    /// </summary>
+    /// <param name="policy">The complete replacement policy.</param>
+    void UpdateRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime request compression policy updates.");
+    }
+
+    /// <summary>
+    /// Publishes the desired Server-to-Client response compression preference and waits for the
+    /// fixed cohort of currently eligible Ready sessions to converge to at least that generation.
+    /// </summary>
+    /// <param name="allowResponseCompression">Whether response-direction compression is allowed.</param>
+    /// <param name="cancellationToken">Cancels only this caller's convergence wait; the desired state remains published.</param>
+    ValueTask SetResponseCompressionPreferenceAsync(
+        bool allowResponseCompression,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException(new NotSupportedException(
+            "This ISharpLinkClient implementation does not support response compression preference updates."));
+
+    /// <summary>
+    /// Starts the topology-specific connectivity lifecycle and completes according to its existing
+''')
+
+          replace('src/SharpLink.Abstractions/ISharpLinkServer.cs',
+          '''    /// <summary>Runs the accept loop until stopped, canceled, or faulted.</summary>
+''',
+          '''    /// <summary>
+    /// Atomically replaces the server-local Response compression policy. The next Response or
+    /// server-to-client StreamData frame captures the new policy at its compression decision point.
+    /// </summary>
+    /// <param name="policy">The complete replacement policy.</param>
+    void UpdateResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkServer implementation does not support runtime response compression policy updates.");
+    }
+
+    /// <summary>Runs the accept loop until stopped, canceled, or faulted.</summary>
+''')
+
+          replace('src/SharpLink.Client/SharpLinkClient.EndpointCluster.cs',
+          '''        int ActiveStreamCount { get; }
+        ValueTask ConnectAsync(CancellationToken cancellationToken);
+''',
+          '''        int ActiveStreamCount { get; }
+        ClientConnection[] CaptureReadyConnections();
+        ValueTask ConnectAsync(CancellationToken cancellationToken);
+''')
+
+          replace('src/SharpLink.Client/SharpLinkClient.StaticCluster.cs',
+          '''        public int ActiveStreamCount => CountConnections(static connection =>
+            connection.Session.StreamManager.ActiveStreamCount);
+
+        public void BeginStop()
+''',
+          '''        public int ActiveStreamCount => CountConnections(static connection =>
+            connection.Session.StreamManager.ActiveStreamCount);
+
+        public ClientConnection[] CaptureReadyConnections()
+        {
+            lock (_gate)
+            {
+                var ready = new List<ClientConnection>();
+                for (var index = 0; index < _endpoints.Length; index++)
+                {
+                    foreach (var connection in _endpoints[index].Connections)
+                    {
+                        if (connection.CanAcceptCalls)
+                            ready.Add(connection);
+                    }
+                }
+                return ready.Count == 0 ? [] : ready.ToArray();
+            }
+        }
+
+        public void BeginStop()
+''')
+
+          replace('src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs',
+          '''        public int ActiveStreamCount => CountConnections(static connection =>
+            connection.Session.StreamManager.ActiveStreamCount);
+
+        public void BeginStop() => _lifecycle.BeginStop();
+''',
+          '''        public int ActiveStreamCount => CountConnections(static connection =>
+            connection.Session.StreamManager.ActiveStreamCount);
+
+        public ClientConnection[] CaptureReadyConnections()
+        {
+            lock (_gate)
+                return _connections.CaptureReadyConnections();
+        }
+
+        public void BeginStop() => _lifecycle.BeginStop();
+''')
+
+          replace('src/SharpLink.Client/DynamicClusterConnectionState.cs',
+          '''        public ClientConnection[] DetachAll()
+''',
+          '''        public ClientConnection[] CaptureReadyConnections()
+        {
+            var ready = new List<ClientConnection>();
+            foreach (var connections in _connectionsByEndpoint.Values)
+            {
+                foreach (var connection in connections)
+                {
+                    if (connection.CanAcceptCalls)
+                        ready.Add(connection);
+                }
+            }
+            return ready.Count == 0 ? [] : ready.ToArray();
+        }
+
+        public ClientConnection[] DetachAll()
+''')
+
+          write('test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs', '''using System.Buffers;
+
+namespace SharpLink.UnitTests.Protocol;
+
+public class ResponseCompressionPreferenceProtocolTests
+{
+    [Test]
+    public void HandshakeShouldRoundTripFixedPreferenceGeneration()
+    {
+        var limits = new SharpLinkProtocolOptions();
+        using var writer = new PooledByteBufferWriter();
+        var request = new ProtocolV2HandshakeRequest(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Capabilities.Compression,
+            ProtocolV2Capabilities.None,
+            SharpLinkProtocolOptions.MinMaxFramePayloadBytes,
+            1024,
+            4096,
+            ReadOnlyMemory<byte>.Empty,
+            new[] { "test-profile" },
+            ResponseCompressionPreferenceGeneration: 17,
+            AllowResponseCompression: false);
+
+        ProtocolV2PayloadCodec.WriteHandshakeRequest(writer, request, limits);
+        var decoded = ProtocolV2PayloadCodec.ReadHandshakeRequest(
+            new ReadOnlySequence<byte>(writer.WrittenMemory),
+            limits);
+
+        Ensure(decoded.ResponseCompressionPreferenceGeneration == 17, "handshake preference generation");
+        Ensure(!decoded.AllowResponseCompression, "handshake preference value");
+        Ensure(decoded.CompressionProfiles.Span.SequenceEqual(request.CompressionProfiles.Span), "handshake profiles");
+    }
+
+    [Test]
+    public void PreferenceControlFramesShouldBeFixedAndStrict()
+    {
+        var limits = new SharpLinkProtocolOptions();
+        using var writer = new PooledByteBufferWriter();
+        using (writer.BeginPacketScope(
+                   ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
+                   ProtocolV2FrameFlags.None,
+                   0))
+        {
+            ProtocolV2PayloadCodec.WriteResponseCompressionPreferenceUpdate(
+                writer,
+                new ProtocolV2ResponseCompressionPreferenceUpdate(23, false));
+        }
+
+        var buffer = new ReadOnlySequence<byte>(writer.WrittenMemory);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref buffer, limits, out var header, out var payload), "update frame parse");
+        Ensure(header.Type == ProtocolV2FrameType.ResponseCompressionPreferenceUpdate, "update frame type");
+        Ensure(header.RequestId == 0, "update request id");
+        var update = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
+        Ensure(update.Generation == 23 && !update.AllowResponseCompression, "update payload round trip");
+
+        using var malformed = new PooledByteBufferWriter();
+        using (malformed.BeginPacketScope(
+                   ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
+                   ProtocolV2FrameFlags.None,
+                   0))
+        {
+            var generation = malformed.GetSpan(sizeof(ulong));
+            BinaryPrimitives.WriteUInt64LittleEndian(generation, 24);
+            malformed.Advance(sizeof(ulong));
+            var preference = malformed.GetSpan(1);
+            preference[0] = 2;
+            malformed.Advance(1);
+        }
+        var malformedBuffer = new ReadOnlySequence<byte>(malformed.WrittenMemory);
+        var failed = false;
+        try
+        {
+            _ = ProtocolV2FrameParser.TryReadFrame(ref malformedBuffer, limits, out _, out _);
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            failed = true;
+        }
+        Ensure(failed, "invalid preference byte must be rejected");
+    }
+
+    private static void Ensure(bool condition, string description)
+    {
+        if (!condition)
+            throw new InvalidOperationException($"Assertion failed: {description}.");
+    }
+}
+''')
+
+          write('test/SharpLink.UnitTests/Runtime/CompressionRuntimePolicyTests.cs', '''using System.Buffers;
+using System.IO.Pipelines;
+using System.Linq;
+
+namespace SharpLink.UnitTests.Runtime;
+
+public class CompressionRuntimePolicyTests
+{
+    [Test]
+    public void InvalidLocalPolicyShouldNotPublishPartialState()
+    {
+        var options = new SharpLinkCompressionOptions
+        {
+            MinimumPayloadBytes = 1024,
+            MinimumSavingsBytes = 64,
+            MinimumSavingsRatio = 0.05
+        };
+        var state = CompressionSendPolicyState.CreateInitial(options);
+        var before = state.Current;
+        var failed = false;
+        try
+        {
+            state.Update(new SharpLinkCompressionSendPolicy
+            {
+                Enabled = false,
+                MinimumPayloadBytes = 1,
+                MinimumSavingsBytes = 1,
+                MinimumSavingsRatio = double.NaN
+            });
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            failed = true;
+        }
+
+        Ensure(failed, "invalid ratio rejected");
+        Ensure(ReferenceEquals(before, state.Current), "invalid candidate must not publish");
+    }
+
+    [Test]
+    public async Task LocalPolicyAndRemotePreferenceShouldApplyAtNextFrameDecision()
+    {
+        var provider = new TestCompressionProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.Compression.Providers.Add(provider))
+            .Build();
+        var policy = CompressionSendPolicyState.CreateInitial(context.Compression);
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "dynamic-compression-policy",
+            input.Reader,
+            output.Writer,
+            new RpcSessionCreationOptions(RpcSessionRole.Server, context, null, policy),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.Compression,
+            compressionBinding: context.Compression.ProviderBindings[0]);
+        session.InitializeServerResponseCompressionPreference(5, allowResponseCompression: true);
+
+        var payload = Enumerable.Repeat((byte)0x4c, 4096).ToArray();
+        var compressed = await SendResponseAndReadHeaderAsync(session, output.Reader, 1, payload);
+        Ensure((compressed.Flags & ProtocolV2FrameFlags.Compressed) != 0, "initial response should compress");
+
+        policy.Update(new SharpLinkCompressionSendPolicy
+        {
+            Enabled = false,
+            MinimumPayloadBytes = 1024,
+            MinimumSavingsBytes = 64,
+            MinimumSavingsRatio = 0.05
+        });
+        var locallyDisabled = await SendResponseAndReadHeaderAsync(session, output.Reader, 2, payload);
+        Ensure((locallyDisabled.Flags & ProtocolV2FrameFlags.Compressed) == 0, "disabled local response policy should be raw");
+
+        policy.Update(new SharpLinkCompressionSendPolicy
+        {
+            Enabled = true,
+            MinimumPayloadBytes = 1024,
+            MinimumSavingsBytes = 64,
+            MinimumSavingsRatio = 0.05
+        });
+        _ = session.ApplyServerResponseCompressionPreferenceUpdate(
+            new ProtocolV2ResponseCompressionPreferenceUpdate(6, false));
+        var remotelyDisabled = await SendResponseAndReadHeaderAsync(session, output.Reader, 3, payload);
+        Ensure((remotelyDisabled.Flags & ProtocolV2FrameFlags.Compressed) == 0, "disabled client response preference should be raw");
+
+        var applied = session.ApplyServerResponseCompressionPreferenceUpdate(
+            new ProtocolV2ResponseCompressionPreferenceUpdate(7, true));
+        Ensure(applied == 7, "new remote preference generation applied");
+        var enabledAgain = await SendResponseAndReadHeaderAsync(session, output.Reader, 4, payload);
+        Ensure((enabledAgain.Flags & ProtocolV2FrameFlags.Compressed) != 0, "re-enabled response preference should compress");
+
+        var stale = session.ApplyServerResponseCompressionPreferenceUpdate(
+            new ProtocolV2ResponseCompressionPreferenceUpdate(6, false));
+        Ensure(stale == 7, "stale generation must ACK current generation");
+        var afterStale = await SendResponseAndReadHeaderAsync(session, output.Reader, 5, payload);
+        Ensure((afterStale.Flags & ProtocolV2FrameFlags.Compressed) != 0, "stale update must not roll back state");
+
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+    }
+
+    [Test]
+    public async Task ClientControlShouldCoalesceToLatestGenerationAndUseCumulativeAck()
+    {
+        var provider = new TestCompressionProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.Compression.Providers.Add(provider))
+            .Build();
+        var policy = CompressionSendPolicyState.CreateInitial(context.Compression);
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "compression-preference-coalesce",
+            input.Reader,
+            output.Writer,
+            new RpcSessionCreationOptions(RpcSessionRole.Client, context, null, policy),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.Compression,
+            compressionBinding: context.Compression.ProviderBindings[0]);
+        session.InitializeClientResponseCompressionPreference(ResponseCompressionPreferenceSnapshot.InitialAllowed);
+
+        session.ReconcileResponseCompressionPreference(new ResponseCompressionPreferenceSnapshot(1, false));
+        session.ReconcileResponseCompressionPreference(new ResponseCompressionPreferenceSnapshot(2, true));
+        session.ReconcileResponseCompressionPreference(new ResponseCompressionPreferenceSnapshot(3, false));
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        var first = await ReadPreferenceUpdateAsync(output.Reader, context.Protocol);
+        Ensure(first.Generation == 1 && !first.AllowResponseCompression, "first generation in flight");
+
+        session.ApplyResponseCompressionPreferenceAck(1);
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var latest = await ReadPreferenceUpdateAsync(output.Reader, context.Protocol);
+        Ensure(latest.Generation == 3 && !latest.AllowResponseCompression, "intermediate generation should be coalesced");
+
+        var waiter = session.WaitForResponseCompressionPreferenceAsync(2, CancellationToken.None).AsTask();
+        Ensure(!waiter.IsCompleted, "generation 2 waiter should await cumulative progress");
+        session.ApplyResponseCompressionPreferenceAck(3);
+        await waiter.WaitAsync(TimeSpan.FromSeconds(2));
+        await session.WaitForResponseCompressionPreferenceAsync(3, CancellationToken.None);
+
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+    }
+
+    [Test]
+    public async Task SessionWithoutNegotiatedCompressionShouldNotEmitPreferenceUpdate()
+    {
+        var provider = new TestCompressionProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.Compression.Providers.Add(provider))
+            .Build();
+        var policy = CompressionSendPolicyState.CreateInitial(context.Compression);
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "compression-no-common-profile",
+            input.Reader,
+            output.Writer,
+            new RpcSessionCreationOptions(RpcSessionRole.Client, context, null, policy),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(session);
+        session.InitializeClientResponseCompressionPreference(ResponseCompressionPreferenceSnapshot.InitialAllowed);
+
+        session.ReconcileResponseCompressionPreference(new ResponseCompressionPreferenceSnapshot(1, false));
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        if (output.Reader.TryRead(out var read))
+        {
+            try
+            {
+                Ensure(read.Buffer.IsEmpty, "no-common-profile session must not emit preference control frame");
+            }
+            finally
+            {
+                output.Reader.AdvanceTo(read.Buffer.End);
+            }
+        }
+
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+    }
+
+    private static async Task<ProtocolV2FrameHeader> SendResponseAndReadHeaderAsync(
+        RpcSession session,
+        PipeReader reader,
+        ulong requestId,
+        byte[] payload)
+    {
+        var writer = session.RentFrameWriter();
+        using (writer.BeginPacketScope(
+                   ProtocolV2FrameType.Response,
+                   ProtocolV2FrameFlags.None,
+                   requestId))
+        {
+            writer.Write(payload);
+        }
+        session.SendPacket(writer);
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        var read = await reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var buffer = read.Buffer;
+        Ensure(ProtocolV2FrameParser.TryReadFrame(
+            ref buffer,
+            session.RuntimeContext.Protocol,
+            out var header,
+            out _), "response frame parse");
+        reader.AdvanceTo(buffer.Start, buffer.End);
+        return header;
+    }
+
+    private static async Task<ProtocolV2ResponseCompressionPreferenceUpdate> ReadPreferenceUpdateAsync(
+        PipeReader reader,
+        SharpLinkProtocolOptions limits)
+    {
+        var read = await reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var buffer = read.Buffer;
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref buffer, limits, out var header, out var payload), "preference update parse");
+        Ensure(header.Type == ProtocolV2FrameType.ResponseCompressionPreferenceUpdate, "preference update frame type");
+        var update = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
+        reader.AdvanceTo(buffer.Start, buffer.End);
+        return update;
+    }
+
+    private static void Ensure(bool condition, string description)
+    {
+        if (!condition)
+            throw new InvalidOperationException($"Assertion failed: {description}.");
+    }
+}
+''')
+
+          doc = Path('doc/protocol-v2.md')
+          doc.write_text(doc.read_text() + '''
+
+## Runtime response compression preference control
+
+The current Protocol v2 handshake has a fixed client preference tuple:
+`ResponseCompressionPreferenceGeneration` plus `AllowResponseCompression`. The fields are present even when the
+peers ultimately have no common compression profile. A successful handshake confirms that the server has published
+that initial tuple for the session.
+
+After a session negotiates `Compression`, later client preference changes use the connection-level, uncompressed,
+fixed-size `ResponseCompressionPreferenceUpdate` frame (`requestId = 0`). The server replies with
+`ResponseCompressionPreferenceAck`, whose `AppliedGeneration` is cumulative: ACK `N` completes every client waiter
+for generation `<= N`. A stale update never rolls server state backward. ACK is a convergence boundary for new
+response-compression decisions, not a wire barrier for responses already compressed or queued.
+
+Local Request/Response compression thresholds are not wire state. They are captured from an instance-scoped immutable
+runtime send-policy snapshot at each business-frame compression decision, while provider/profile negotiation remains
+build/handshake immutable.
+''')
+
+          # Guard the latest architecture constraint: the send hot path must no longer read frozen threshold authority.
+          hot = Path('src/SharpLink.Runtime/RpcSession.Compression.cs').read_text()
+          if 'RuntimeContext.Compression.Minimum' in hot or 'RuntimeContext.Compression.IsBeneficial' in hot:
+              raise RuntimeError('Frozen compression thresholds remain on the outbound hot path')
+          PY
+          python3 /tmp/apply_issue_550.py
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Format whitespace
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: NativeAOT smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Package smoke
+        uses: ./.github/actions/package-smoke
+
+      - name: Inspect diff
+        run: |
+          git status --short
+          git diff --check
+          git diff --stat
+
+      - name: Publish clean feature commit
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src test doc/protocol-v2.md
+          git commit -m "feat(compression): add dynamic runtime policy control"
+          git push origin HEAD:refs/heads/fix/issue-550-dynamic-compression-policy --force
