@@ -1,176 +1,29 @@
-name: Temporary Issue 550 Runner
+name: Temporary Issue 550 Review Inventory
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   push:
     branches:
       - tmp/issue-550-validation-gpt
 
-concurrency:
-  group: tmp-issue-550-runner
-  cancel-in-progress: true
-
 jobs:
-  validate-and-publish:
+  inventory:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
-      - name: Checkout temporary control branch
+      - name: Checkout control branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
-      - name: Extract implementation script and switch to dev baseline
+      - name: Inspect feature references
         shell: bash
         run: |
-          python3 - <<'PYTHON'
-          from pathlib import Path
-          text = Path('.github/workflows/tmp-issue-550-validation.yml').read_text()
-          start = "          cat > /tmp/apply_issue_550.py <<'PY'\n"
-          end = "\n          PY\n          python3 /tmp/apply_issue_550.py"
-          if start not in text or end not in text:
-              raise SystemExit('embedded issue 550 script markers not found')
-          body = text.split(start, 1)[1].split(end, 1)[0]
-          output = []
-          in_triple = False
-          for line in body.splitlines():
-              if not in_triple:
-                  if line.startswith('          '):
-                      line = line[10:]
-                  output.append(line)
-                  if line.count("'''") % 2 == 1:
-                      in_triple = True
-                  continue
-              if "'''" in line:
-                  if line.startswith('          '):
-                      line = line[10:]
-                  output.append(line)
-                  if line.count("'''") % 2 == 1:
-                      in_triple = False
-                  continue
-              output.append(line)
-          Path('/tmp/apply_issue_550.py').write_text('\n'.join(output) + '\n')
-          PYTHON
-          git fetch origin dev
-          git checkout --detach origin/dev
-          python3 /tmp/apply_issue_550.py
-          python3 - <<'PYTHON'
-          from pathlib import Path
-          path = Path('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs')
-          text = path.read_text()
-          declaration = 'public static class ProtocolV2PayloadCodec\n{'
-          if declaration not in text:
-              raise SystemExit('ProtocolV2PayloadCodec declaration not found')
-          text = text.replace(declaration, 'public static partial class ProtocolV2PayloadCodec\n{', 1)
-          start_marker = '    /// <summary>Writes one fixed-size response-compression preference update.</summary>\n'
-          end_marker = '    /// <summary>Writes a non-zero stream credit update.</summary>\n'
-          start = text.find(start_marker)
-          end = text.find(end_marker, start)
-          if start < 0 or end < 0:
-              raise SystemExit('response compression preference codec block not found')
-          block = text[start:end]
-          path.write_text(text[:start] + text[end:])
-          Path('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.ResponseCompressionPreference.cs').write_text(
-              'namespace SharpLink.Runtime;\n\n'
-              'public static partial class ProtocolV2PayloadCodec\n{\n'
-              + block +
-              '}\n')
-
-          test_path = Path('test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs')
-          test_text = test_path.read_text()
-          if 'using System.Buffers.Binary;' not in test_text:
-              test_text = test_text.replace(
-                  'using System.Buffers;\n',
-                  'using System.Buffers;\nusing System.Buffers.Binary;\n',
-                  1)
-          test_path.write_text(test_text)
-
-          matrix_path = Path('test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs')
-          matrix_text = matrix_path.read_text()
-          old = '''            ProtocolV2FrameType.WindowUpdate,\n            ProtocolV2FrameType.GoAway,\n            ProtocolV2FrameType.HealthResponse\n        };'''
-          new = '''            ProtocolV2FrameType.WindowUpdate,\n            ProtocolV2FrameType.GoAway,\n            ProtocolV2FrameType.HealthResponse,\n            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,\n            ProtocolV2FrameType.ResponseCompressionPreferenceAck\n        };'''
-          if old not in matrix_text:
-              raise SystemExit('draining frame matrix anchor not found')
-          matrix_path.write_text(matrix_text.replace(old, new, 1))
-          PYTHON
-
-      - name: Setup .NET CI environment
-        uses: ./.github/actions/setup-dotnet
-
-      - name: Restore
-        run: dotnet restore Sharplink.slnx
-
-      - name: Format whitespace
-        run: dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
-
-      - name: Production Project Reference Boundary Guard
-        run: python3 eng/check-project-reference-boundaries.py
-
-      - name: Maintainability Debt Gate Tests
-        run: python3 eng/test-verify-maintainability.py
-
-      - name: Maintainability Debt Gate
-        run: bash eng/check-maintainability.sh
-
-      - name: Build Release
-        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-
-      - name: Unit Tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-
-      - name: Generator Tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
-
-      - name: Load Test Tests
-        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
-
-      - name: Integration Tests
-        run: >-
-          dotnet run -c Release --no-build
-          --project test/SharpLink.IntegrationTests
-          --
-          --maximum-parallel-tests 1
-          --timeout 120s
-
-      - name: NativeAOT smoke
-        env:
-          SHARPLINK_AOT_RID: linux-x64
-        run: ./eng/run-shared-memory-aot-process-smoke.sh
-
-      - name: Create clean validation commit
-        shell: bash
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src test doc/protocol-v2.md
-          git diff --cached --check
-          git commit -m "feat(compression): add dynamic runtime policy control"
-          test -z "$(git status --short)"
-
-      - name: Pack
-        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
-
-      - name: Verify package contracts
-        uses: ./.github/actions/verify-packages
-
-      - name: Package smoke
-        uses: ./.github/actions/package-smoke
-
-      - name: Inspect clean feature commit
-        shell: bash
-        run: |
-          test -z "$(git status --short)"
-          git diff --check HEAD^ HEAD
-          git diff --stat HEAD^ HEAD
-          if git diff --name-only HEAD^ HEAD | grep -E '^\.github/'; then
-            echo "Temporary workflow content leaked into the feature commit." >&2
-            exit 1
-          fi
-
-      - name: Publish clean feature commit
-        shell: bash
-        run: git push origin HEAD:refs/heads/fix/issue-550-dynamic-compression-policy --force
+          git fetch origin fix/issue-550-dynamic-compression-policy dev
+          git checkout --detach origin/fix/issue-550-dynamic-compression-policy
+          echo '=== compression threshold references ==='
+          git grep -n -E 'Compression\.(MinimumPayloadBytes|MinimumSavingsBytes|MinimumSavingsRatio)|MinimumPayloadBytes|MinimumSavingsBytes|MinimumSavingsRatio' -- ':!artifacts' || true
+          echo '=== builder/compression references ==='
+          git grep -n -E 'UseRuntime\(.*Compression|Compression\.Providers|UpdateRequestCompressionPolicy|UpdateResponseCompressionPolicy|SetResponseCompressionPreferenceAsync' -- src test demo doc || true
+          echo '=== compression benchmark/evidence files ==='
+          find test eng -type f | grep -Ei 'compression|benchmark|evidence|hot.?path' | sort || true
