@@ -11,15 +11,18 @@ internal enum DynamicFixedWindowActivationMode
 /// <summary>Immutable FixedWindow policy view carried directly by one AdmissionProgram rate state.</summary>
 internal sealed partial class AdmissionRateState
 {
+    private const int FixedPrepared = 0;
+    private const int FixedCommitted = 1;
+    private const int FixedPublished = 2;
+    private const int FixedDisposed = -1;
+
     private readonly Counter? _fixedCounter;
     private readonly long _fixedSequence;
     private readonly long _fixedWindowTimestampTicks;
     private readonly DynamicFixedWindowActivationMode _fixedActivationMode;
     private int _fixedPreActivationLimit;
     private long _fixedActivationBoundary;
-    private int _fixedCommitted;
-    private int _fixedPublished;
-    private int _fixedDisposed;
+    private int _fixedLifecycleState;
 
     private AdmissionRateState(
         AdmissionRateStateDefinition definition,
@@ -32,8 +35,7 @@ internal sealed partial class AdmissionRateState
         _fixedWindowTimestampTicks = _fixedCounter.ToTimestampTicks(definition.PeriodTicks);
         _fixedActivationMode = DynamicFixedWindowActivationMode.Immediate;
         _fixedPreActivationLimit = definition.Limit;
-        _fixedCommitted = 1;
-        _fixedPublished = 1;
+        _fixedLifecycleState = FixedPublished;
     }
 
     private AdmissionRateState(
@@ -98,7 +100,7 @@ internal sealed partial class AdmissionRateState
     private RateLimitLease AttemptAcquireFixed(int permitCount)
     {
         ValidateFixedPermitCount(permitCount);
-        if (Volatile.Read(ref _fixedDisposed) != 0)
+        if (Volatile.Read(ref _fixedLifecycleState) == FixedDisposed)
             return AdmissionRateLeases.Failed;
         _fixedCounter!.Publish(this);
         return _fixedCounter.AttemptAcquire(this);
@@ -109,7 +111,7 @@ internal sealed partial class AdmissionRateState
         CancellationToken cancellationToken)
     {
         ValidateFixedPermitCount(permitCount);
-        if (Volatile.Read(ref _fixedDisposed) != 0)
+        if (Volatile.Read(ref _fixedLifecycleState) == FixedDisposed)
             return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Failed);
         _fixedCounter!.Publish(this);
         return _fixedCounter.AcquireAsync(cancellationToken);
@@ -117,7 +119,7 @@ internal sealed partial class AdmissionRateState
 
     private void DisposeFixed()
     {
-        if (Interlocked.Exchange(ref _fixedDisposed, 1) != 0)
+        if (Interlocked.Exchange(ref _fixedLifecycleState, FixedDisposed) == FixedDisposed)
             return;
         _fixedCounter!.ReleaseView();
     }
@@ -125,18 +127,31 @@ internal sealed partial class AdmissionRateState
     private void FinalizeFixedForCommit(int preActivationLimit, long activationBoundary)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(preActivationLimit);
-        if (Interlocked.Exchange(ref _fixedCommitted, 1) != 0)
+        if (Interlocked.CompareExchange(
+                ref _fixedLifecycleState,
+                FixedCommitted,
+                FixedPrepared) != FixedPrepared)
+        {
             throw new InvalidOperationException("FixedWindow policy view was committed more than once.");
+        }
         _fixedPreActivationLimit = preActivationLimit;
         _fixedActivationBoundary = activationBoundary;
     }
 
     private void MarkFixedPublishedLocked()
-        => Volatile.Write(ref _fixedPublished, 1);
+    {
+        if (Interlocked.CompareExchange(
+                ref _fixedLifecycleState,
+                FixedPublished,
+                FixedCommitted) != FixedCommitted)
+        {
+            throw new InvalidOperationException("FixedWindow policy view was published from an invalid state.");
+        }
+    }
 
     private void ThrowIfFixedDisposed()
     {
-        if (Volatile.Read(ref _fixedDisposed) != 0)
+        if (Volatile.Read(ref _fixedLifecycleState) == FixedDisposed)
             throw new ObjectDisposedException(nameof(AdmissionRateState));
     }
 
