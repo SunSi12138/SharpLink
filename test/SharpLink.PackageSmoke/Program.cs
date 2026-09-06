@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using SharpLink.Abstractions;
 using SharpLink.Client;
+using SharpLink.Compression.Zstd;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
@@ -73,13 +74,22 @@ public static class Program
         await RunReferencedAssemblyPackageSmokeAsync(timeout.Token);
     }
 
+    private static void ConfigureZstd(SharpLinkRuntimeOptions options)
+    {
+        options.Compression.MinimumPayloadBytes = 64;
+        options.Compression.MinimumSavingsBytes = 8;
+        options.Compression.MinimumSavingsRatio = 0;
+        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
+    }
+
     private static async Task RunTransportSmokeAsync(
         bool useSharedMemory,
         CancellationToken cancellationToken)
     {
         var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseAdmissionControl(options => options.Global.UseConcurrency(64));
+            .UseAdmissionControl(options => options.Global.UseConcurrency(64))
+            .UseRuntime(ConfigureZstd);
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -91,7 +101,8 @@ public static class Program
         var server = serverBuilder.Build();
         var serverTask = RunServerAsync(server, cancellationToken);
 
-        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
+        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseRuntime(ConfigureZstd);
         if (useSharedMemory)
             clientBuilder.UseSharedMemory(sharedMemoryName);
         else

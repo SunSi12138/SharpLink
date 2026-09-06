@@ -22,7 +22,8 @@ public interface ISharpLinkCompressionProvider
     /// <param name="maxOutputBytes">The maximum number of bytes the complete compressed representation may write.</param>
     /// <param name="cancellationToken">Cancels provider work before the frame is queued.</param>
     /// <returns>
-    /// <see langword="true"/> when a complete representation was written; <see langword="false"/> only when the
+    /// <see langword="true"/> when a complete representation was written. The representation may contain zero bytes;
+    /// profile semantics determine whether an empty representation is valid. <see langword="false"/> is reserved for when the
     /// provider cannot produce the complete representation within <paramref name="maxOutputBytes"/>. SharpLink
     /// discards the temporary output and sends the original payload in that case. A provider must not return
     /// <see langword="false"/> merely because it considers the compression ratio unprofitable; that policy belongs to Core.

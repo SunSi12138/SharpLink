@@ -212,8 +212,8 @@ internal sealed partial class RpcSession
         var prefixLength = GetBusinessPrefixLength(type, flags, payload);
         if (prefixLength < 0)
             throw ProtocolV2FrameParser.Violation($"Frame {type} cannot carry compressed payload data.");
-        if (payload.Length < prefixLength + sizeof(uint) + 1L)
-            throw ProtocolV2FrameParser.Violation("Compressed payload is missing its original length or body.");
+        if (payload.Length < prefixLength + sizeof(uint))
+            throw ProtocolV2FrameParser.Violation("Compressed payload is missing its original length.");
         var reader = new SequenceReader<byte>(payload.Slice(prefixLength));
         if (!reader.TryReadLittleEndian(out int originalLengthBits))
             throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");

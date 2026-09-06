@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.AotContracts;
 using SharpLink.Client;
+using SharpLink.Compression.Zstd;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
@@ -57,7 +58,8 @@ public static class Program
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseAdmissionControl(ConfigureAdmission);
+            .UseAdmissionControl(ConfigureAdmission)
+            .UseRuntime(ConfigureZstd);
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -85,12 +87,14 @@ public static class Program
         if (useSharedMemory)
         {
             client = SharpClientBuilder.Create().DisableRequestTimeout()
+                .UseRuntime(ConfigureZstd)
                 .UseSharedMemory(sharedMemoryName)
                 .Build();
         }
         else
         {
             client = SharpClientBuilder.Create().DisableRequestTimeout()
+                .UseRuntime(ConfigureZstd)
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
                         _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1,
@@ -138,6 +142,7 @@ public static class Program
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
             .UseAdmissionControl(ConfigureAdmission)
+            .UseRuntime(ConfigureZstd)
             .Build();
         VerifyRuntimeAssemblyBoundary(server);
         var runTask = server.RunAsync(timeout.Token).AsTask();
@@ -164,6 +169,7 @@ public static class Program
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseRuntime(ConfigureZstd)
             .UseSharedMemory(name)
             .Build();
         try
@@ -296,6 +302,7 @@ public static class Program
             }
         };
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseRuntime(ConfigureZstd)
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
             {
@@ -357,6 +364,7 @@ public static class Program
         string sharedMemoryName,
         int port)
     {
+        builder.UseRuntime(ConfigureZstd);
         if (useSharedMemory)
             builder.UseSharedMemory(sharedMemoryName);
         else
@@ -428,6 +436,14 @@ public static class Program
             .ToArray();
         if (services.Length != 1 || services[0].ImplementationType.IsPublic)
             throw new Exception("referenced internal service manifest was not rooted before server Build");
+    }
+
+    private static void ConfigureZstd(SharpLinkRuntimeOptions options)
+    {
+        options.Compression.MinimumPayloadBytes = 64;
+        options.Compression.MinimumSavingsBytes = 8;
+        options.Compression.MinimumSavingsRatio = 0;
+        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
     }
 
     private static void ConfigureAdmission(SharpLinkAdmissionControlOptions options)

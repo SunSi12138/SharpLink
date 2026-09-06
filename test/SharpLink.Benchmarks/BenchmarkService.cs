@@ -22,6 +22,8 @@ public class BenchmarkRpcService : IBenchmarkRpc
 
     public ValueTask<BenchmarkPayload> EchoPayloadAsync(BenchmarkPayload payload) => ValueTask.FromResult(payload);
 
+    public ValueTask<byte[]> EchoBytesAsync(byte[] value) => ValueTask.FromResult(value);
+
     public ValueTask<int> SumArrayAsync(int[] values) => ValueTask.FromResult(values.Sum());
 
     public ValueTask<int> SumListAsync(List<int> values) => ValueTask.FromResult(values.Sum());

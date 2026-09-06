@@ -8,6 +8,7 @@
 
 - Compression policy is now algorithm-neutral: `SharpLink.Runtime` ships no concrete compressor, algorithm-specific framing, or checksum machinery. Negotiation, adaptive raw/compressed selection, bounds, flow-control accounting, and call/stream failure isolation remain in Core.
 - `ISharpLinkCompressionProvider` now uses `TryCompress(...) -> bool` plus `void Decompress(...)`. Successful return means the complete input was consumed; Core measures output bytes from its bounded writer. `TryCompress=false` is the public bounded-candidate fallback and replaces the old internal output-limit exception path.
+- The compression SPI now explicitly permits zero-byte successful representations; the generic inbound envelope no longer imposes a one-byte algorithm-specific minimum, and an end-to-end length-only compressed-frame test locks the contract.
 
 - Client and Server interceptor generations are now composed once when published instead of interpreting an interceptor array through per-RPC continuation state. Correct `next` usage is an interceptor-author contract: invoke it at most once, await or directly return it, and do not retain it after the interceptor returns. SharpLink no longer allocates/verifies per-layer duplicate, retained, or fire-and-forget continuation misuse; generation capture, deadline/re-entry guards, legal short-circuit behavior, and the response-bearing Server terminal check remain enforced.
 
@@ -20,6 +21,7 @@
 
 ### Added
 
+- Added `SharpLink.Compression.Zstd` for .NET 10 with the official `zstd-rfc8878-w23-checksum/v1` profile. It uses `ZstdSharp.Port` 0.8.8, requires the standard frame checksum, forbids dictionaries/trailing/concatenated frames, caps the window at 8 MiB, and keeps compression level as encode-only tuning. Linux/Windows/macOS NativeAOT, .NET 11 Preview BCL interoperability, local/WAN-like compression evidence, and disabled-fast-path A/B are recorded in `doc/issue-430-zstd-evidence.md`.
 - Client readiness snapshots now expose lifecycle state, active/ready endpoint counts, ready connection count, and the current convergence target. Built-in fixed, static, and resolver topologies support caller-selected endpoint thresholds without raising configured convergence targets or changing `ConnectAsync` connectivity semantics.
 - Runtime sessions now receive one immutable creation snapshot containing their Client/Server role, real Runtime Context, and flush policy. Context-derived protocol limits and the sole StreamManager instance are established before the constructor returns.
 - `PendingRequestTable` now requires an explicit capacity, codec provider, pending-call owner, and time provider; Client connections supply the dependency set from their Runtime Context without transferring ownership.

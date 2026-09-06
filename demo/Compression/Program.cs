@@ -1,14 +1,14 @@
 using System.Buffers;
-using System.Buffers.Binary;
 using DemoBase;
 using SharpLink.Abstractions;
+using SharpLink.Compression.Zstd;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 var port = DemoStream.GetFreePort();
 using var app = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-var clientCompression = new CountingCompressionProvider(new DemoRleCompressionProvider(maxRunLength: 64));
-var serverCompression = new CountingCompressionProvider(new DemoRleCompressionProvider(maxRunLength: 128));
+var clientCompression = new CountingCompressionProvider(new SharpLinkZstdCompressionProvider(compressionLevel: 1));
+var serverCompression = new CountingCompressionProvider(new SharpLinkZstdCompressionProvider(compressionLevel: 5));
 
 var server = DemoTcp.CreateServer<ICompressionService, CompressionService>(port,
     builder => builder.UseRuntime(options => ConfigureCompression(options, serverCompression)));
@@ -87,82 +87,5 @@ public sealed class CountingCompressionProvider(ISharpLinkCompressionProvider in
     {
         Interlocked.Increment(ref _decompressCalls);
         inner.Decompress(input, output, maxOutputBytes, cancellationToken);
-    }
-}
-
-
-public sealed class DemoRleCompressionProvider(int maxRunLength = byte.MaxValue)
-    : ISharpLinkCompressionProvider
-{
-    private const uint Magic = 0x31454C52; // "RLE1" little endian.
-
-    public string WireProfile => "demo.rle/v1";
-
-    public bool TryCompress(
-        ReadOnlySequence<byte> input,
-        IBufferWriter<byte> output,
-        int maxOutputBytes,
-        CancellationToken cancellationToken = default)
-    {
-        if (maxRunLength is < 1 or > byte.MaxValue)
-            throw new ArgumentOutOfRangeException(nameof(maxRunLength));
-        var source = input.ToArray();
-        var runs = 0;
-        Span<byte> run = stackalloc byte[2];
-        for (var offset = 0; offset < source.Length;)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var count = 1;
-            while (offset + count < source.Length &&
-                   count < maxRunLength &&
-                   source[offset + count] == source[offset])
-                count++;
-            runs++;
-            offset += count;
-        }
-        var required = checked(sizeof(uint) + runs * 2);
-        if (required > maxOutputBytes)
-            return false;
-
-        Span<byte> magic = stackalloc byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32LittleEndian(magic, Magic);
-        output.Write(magic);
-        for (var offset = 0; offset < source.Length;)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var count = 1;
-            while (offset + count < source.Length &&
-                   count < maxRunLength &&
-                   source[offset + count] == source[offset])
-                count++;
-            run[0] = checked((byte)count);
-            run[1] = source[offset];
-            output.Write(run);
-            offset += count;
-        }
-        return true;
-    }
-
-    public void Decompress(
-        ReadOnlySequence<byte> input,
-        IBufferWriter<byte> output,
-        int maxOutputBytes,
-        CancellationToken cancellationToken = default)
-    {
-        var source = input.ToArray();
-        if (source.Length < sizeof(uint) || (source.Length - sizeof(uint)) % 2 != 0 ||
-            BinaryPrimitives.ReadUInt32LittleEndian(source) != Magic)
-            throw new InvalidDataException("The demo RLE payload is malformed.");
-        var written = 0;
-        for (var offset = sizeof(uint); offset < source.Length; offset += 2)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var count = source[offset];
-            if (count == 0 || count > maxOutputBytes - written)
-                throw new InvalidDataException("The demo RLE payload exceeds its output limit.");
-            output.GetSpan(count)[..count].Fill(source[offset + 1]);
-            output.Advance(count);
-            written += count;
-        }
     }
 }

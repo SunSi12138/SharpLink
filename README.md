@@ -31,6 +31,7 @@
 - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
 - `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成
 - `SharpLink.Serializer.SharpPack`：精确依赖 SharpPack `[1.1.0]` 的 Codec Adapter（`memorypack-binary/v1`）
+- `SharpLink.Compression.Zstd`：官方 Zstandard compression provider；当前稳定目标为 .NET 10，wire profile 为 `zstd-rfc8878-w23-checksum/v1`
 
 示例（`demo/`）：
 
@@ -227,14 +228,16 @@ Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自
 
 ## 协商压缩
 
-压缩默认完全关闭，Core 不再内置具体压缩算法。Client 与 Server 分别按本地偏好注册应用或可选包提供的 `ISharpLinkCompressionProvider`；握手有交集时 Server 选择自身列表中的第一个 wire profile，没有交集或只有一端启用时自动发送原始帧：
+压缩默认完全关闭，Core 不内置具体压缩算法。官方 `SharpLink.Compression.Zstd` 包当前面向稳定的 .NET 10，使用标准 Zstandard frame、标准 frame checksum、8 MiB 最大 window，并禁止 dictionary、trailing bytes 和拼接第二帧；Client 与 Server 仍可按本地偏好注册任意符合公开 SPI 的 Provider。握手有交集时 Server 选择自身列表中的第一个 wire profile，没有交集或只有一端启用时自动发送原始帧：
 
 ```csharp
+using SharpLink.Compression.Zstd;
+
 var server = SharpLinkServerBuilder.Create()
     .UseTcp(5000)
     .UseRuntime(options =>
     {
-        options.Compression.Providers.Add(myCompressionProvider);
+        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
         options.Compression.MinimumPayloadBytes = 2048;
         options.Compression.MinimumSavingsBytes = 96;
         options.Compression.MinimumSavingsRatio = 0.08;
@@ -242,7 +245,7 @@ var server = SharpLinkServerBuilder.Create()
     .Build();
 ```
 
-`WireProfile` 是完整的 decode-compatible wire identity。Provider 必须线程安全，不保留调用方 buffer；`TryCompress` 只有在完整 representation 无法放入给定上限时才返回 `false`，收益判断仍由 Core 负责。`Decompress` 正常返回表示完整消费输入并拒绝 trailing bytes；格式完整性属于 profile/provider，不由 Core 添加算法专属 framing 或 checksum。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)。
+`WireProfile` 是完整的 decode-compatible wire identity。Provider 必须线程安全，不保留调用方 buffer；`TryCompress` 只有在完整 representation 无法放入给定上限时才返回 `false`，收益判断仍由 Core 负责。`Decompress` 正常返回表示完整消费输入并拒绝 trailing bytes；格式完整性属于 profile/provider，不由 Core 添加算法专属 framing 或 checksum。官方 Zstd profile 为 `zstd-rfc8878-w23-checksum/v1`，compression level 只影响编码成本/压缩比，不改变 wire identity。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)，Zstd 平台、NativeAOT、.NET 11 BCL 互操作和性能证据见 [`doc/issue-430-zstd-evidence.md`](doc/issue-430-zstd-evidence.md)。
 
 压缩在连接握手后按每个方向自动应用，不存在 per-call 强制开关；需要控制是否尝试压缩时，应在对应 Client/Server Runtime Context 配置 Provider 或调整 payload/收益阈值。
 

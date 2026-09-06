@@ -46,6 +46,7 @@ mode_semantics:
 projects:
   abstractions: src/SharpLink.Abstractions/SharpLink.Abstractions.csproj
   runtime: src/SharpLink.Runtime/SharpLink.Runtime.csproj
+  compression_zstd: src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj
   client: src/SharpLink.Client/SharpLink.Client.csproj
   server: src/SharpLink.Server/SharpLink.Server.csproj
   hosting: src/SharpLink.Hosting/SharpLink.Hosting.csproj
@@ -54,6 +55,10 @@ projects:
   serializer_sharppack: src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj
 
 allowed_references:
+  - from: compression_zstd
+    to: runtime
+    mode: assembly
+
   - from: runtime
     to: abstractions
     mode: assembly

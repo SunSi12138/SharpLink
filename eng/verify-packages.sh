@@ -16,6 +16,7 @@ fi
 PACKAGES=(
   SharpLink.Abstractions
   SharpLink.Client
+  SharpLink.Compression.Zstd
   SharpLink.Hosting
   SharpLink.Runtime
   SharpLink.Sdk

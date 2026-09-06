@@ -62,6 +62,72 @@ public class CompressionFrameTests
         }
     }
 
+
+    [Test]
+    public async Task ZeroByteRepresentationShouldRoundTripThroughWireEnvelope()
+    {
+        var provider = new ZeroBodyCompressionProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.Compression.Providers.Add(provider))
+            .Build();
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "compression-zero-body",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(context),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.Compression,
+            compressionBinding: context.Compression.ProviderBindings[0]);
+
+        var original = new byte[2048];
+        var frame = context.Buffers.Rent(ProtocolV2Constants.HeaderBytes + original.Length);
+        var frameToken = ProtocolV2FrameWriter.BeginFrame(
+            frame,
+            ProtocolV2FrameType.Response,
+            ProtocolV2FrameFlags.None,
+            requestId: 1);
+        frame.Write(original);
+        ProtocolV2FrameWriter.EndFrame(frame, frameToken);
+
+        session.SendPacket(frame);
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var wire = read.Buffer;
+        Ensure(ProtocolV2FrameParser.TryReadFrame(
+            ref wire,
+            session.RuntimeContext.Protocol,
+            out var header,
+            out var payload), "compressed response frame should be published");
+        Ensure((header.Flags & ProtocolV2FrameFlags.Compressed) != 0,
+            "zero-byte representation should remain a compressed frame");
+        Ensure(payload.Length == sizeof(uint),
+            "zero-byte representation should contain only the original-length envelope");
+
+        var decoded = session.DecodeInboundPayload(
+            header.Type,
+            header.Flags,
+            payload,
+            CancellationToken.None,
+            out var owner);
+        try
+        {
+            Ensure(decoded.Length == original.Length, "zero-byte representation decoded length");
+            Ensure(decoded.ToArray().SequenceEqual(original), "zero-byte representation round-trip payload");
+        }
+        finally
+        {
+            session.ReturnDecodedPayload(owner);
+            output.Reader.AdvanceTo(read.Buffer.End);
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
     [Test]
     [Arguments("truncated")]
     [Arguments("corrupt")]
@@ -274,6 +340,43 @@ public class CompressionFrameTests
         {
             next.RunningIndex = RunningIndex + Memory.Length;
             Next = next;
+        }
+    }
+
+
+    private sealed class ZeroBodyCompressionProvider : ISharpLinkCompressionProvider
+    {
+        public string WireProfile => "test.zero-body/v1";
+
+        public bool TryCompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return true;
+        }
+
+        public void Decompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!input.IsEmpty)
+                throw new InvalidDataException("Zero-body test profile forbids representation bytes.");
+            var remaining = maxOutputBytes;
+            while (remaining != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var span = output.GetSpan(remaining);
+                var count = Math.Min(span.Length, remaining);
+                span[..count].Clear();
+                output.Advance(count);
+                remaining -= count;
+            }
         }
     }
 

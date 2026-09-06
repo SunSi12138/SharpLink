@@ -86,6 +86,8 @@ wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感�
 Request    = route/TimeBudget/metadata envelope + originalBodyLength:uint32 + compressedBody
 Response   = originalBodyLength:uint32 + compressedBody
 StreamData = streamId:uint16 + originalItemLength:uint32 + compressedBody
+
+`compressedBody` may be empty when the negotiated provider profile defines a valid zero-byte representation; Core validates the `originalLength` envelope and delegates representation validity to the provider.
 ```
 
 `original*Length` 必须非零，并且与未压缩固定前缀相加后不超过协商的 frame 上限；框架在租借有界 owner 之前完成该检查。Provider 成功返回即承诺完整消费输入；Core 直接从其有界 writer 核对实际写入长度与声明的原始长度。Stream flow-control 始终按原始 item 字节计费，防止高压缩比数据绕过接收窗口。
