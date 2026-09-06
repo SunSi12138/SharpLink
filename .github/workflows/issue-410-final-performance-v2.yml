@@ -1,0 +1,68 @@
+name: Issue 410 final FixedWindow performance v2
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-final-perf-v2-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Run same-runner comparison
+        shell: bash
+        env:
+          BASELINE_SHA: 51e3f2c66a24615abf738f76a2380f223d72f2ab
+          CANDIDATE_SHA: 723da9b5fa47f6ef77eaeaa1c5f941b9f4167baf
+        run: |
+          set -euo pipefail
+          benchmark_source="$RUNNER_TEMP/Issue410FinalFixedBenchmarks.cs"
+          cp test/SharpLink.Benchmarks/Issue410FinalFixedBenchmarks.cs "$benchmark_source"
+          evidence="$RUNNER_TEMP/issue410-final-perf-v2"
+          mkdir -p "$evidence"
+          dotnet --info > "$evidence/dotnet-info.txt"
+          uname -a > "$evidence/uname.txt"
+          lscpu > "$evidence/cpu.txt"
+
+          run_case() {
+            local label="$1"
+            local sha="$2"
+            git checkout --force "$sha"
+            cp "$benchmark_source" test/SharpLink.Benchmarks/Issue410FinalFixedBenchmarks.cs
+            dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+            rm -rf BenchmarkDotNet.Artifacts
+            dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+              --filter '*Issue410FinalFixedBenchmarks*'
+            mkdir -p "$evidence/$label"
+            cp -R BenchmarkDotNet.Artifacts/. "$evidence/$label/"
+            git clean -fdx
+          }
+
+          run_case baseline-forward "$BASELINE_SHA"
+          run_case candidate-forward "$CANDIDATE_SHA"
+          run_case candidate-reverse "$CANDIDATE_SHA"
+          run_case baseline-reverse "$BASELINE_SHA"
+
+          git checkout --force "$GITHUB_SHA"
+          mkdir -p artifacts/issue410-final-performance-v2
+          cp -R "$evidence/." artifacts/issue410-final-performance-v2/
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-final-performance-v2-${{ github.sha }}
+          path: artifacts/issue410-final-performance-v2
+          if-no-files-found: error
+          retention-days: 30
