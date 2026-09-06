@@ -114,24 +114,6 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/DynamicEndpointIntegrationTests.cs",
-      "maxLoc": 1401,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/StaticEndpointIntegrationTests.cs",
-      "maxLoc": 1360,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/SharedMemoryTransportConnectionIntegrationTests.cs",
-      "maxLoc": 1330,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.Benchmarks/SendPumpIsolationEvidenceRunner.cs",
       "maxLoc": 1318,
       "reason": "Existing dev debt captured by issue #350."
@@ -158,12 +140,6 @@
       "domain": "test",
       "path": "test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs",
       "maxLoc": 1095,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/RpcChannelCallShapeIntegrationTests.cs",
-      "maxLoc": 1056,
       "reason": "Existing dev debt captured by issue #350."
     },
     {
