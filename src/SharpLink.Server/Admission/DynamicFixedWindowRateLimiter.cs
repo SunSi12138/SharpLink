@@ -483,11 +483,8 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
                 throw new InvalidOperationException("Dynamic FixedWindow policy belongs to another counter.");
             if (policy._sequence <= _retiredThroughSequence)
                 return _activeLimit;
-            if (policy._activationMode == DynamicFixedWindowActivationMode.Immediate ||
-                policy._windowTimestampTicks == _activeWindowTimestampTicks)
-            {
+            if (policy._activationMode == DynamicFixedWindowActivationMode.Immediate)
                 return policy._permitLimit;
-            }
             if (Volatile.Read(ref policy._committed) == 0)
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
             return policy._preActivationLimit;
