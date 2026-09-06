@@ -33,16 +33,19 @@ jobs:
           python3 .github/issue410-waiter-dedup.py
           python3 - <<'PY'
           from pathlib import Path
+
+          for source in (
+              Path('src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs'),
+              Path('src/SharpLink.Server/Admission/DynamicFixedWindowRateLimiter.Counter.cs'),
+          ):
+              text = source.read_text()
+              bad = 'IAdmissionAdmissionRateWaiterOwner'
+              if text.count(bad) != 1:
+                  raise SystemExit(f'{source}: expected one mechanical interface duplication, found {text.count(bad)}')
+              source.write_text(text.replace(bad, 'IAdmissionRateWaiterOwner', 1))
+
           path = Path('eng/maintainability/baseline.json')
           text = path.read_text()
-          allowance = '''    {
-              "domain": "source",
-              "path": "src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs",
-              "maxLoc": 904,
-              "reason": "Existing dev debt captured by issue #350."
-            },
-          '''.replace('      ', '      ')
-          # Keep the literal here visually aligned with the baseline's six-space member indentation.
           allowance = (
               '    {\n'
               '      "domain": "source",\n'
