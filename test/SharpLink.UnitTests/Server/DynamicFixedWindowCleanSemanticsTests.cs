@@ -17,9 +17,10 @@ public sealed class DynamicFixedWindowCleanSemanticsTests
 
         using var target = CreateFixed(1, TimeSpan.FromSeconds(30), time, source);
         source.CommitTransitionTo(target);
+        target.FixedWindowForTests!.OnPublished();
 
         Ensure(source.FixedWindowForTests!.CounterIdentityForTests ==
-               target.FixedWindowForTests!.CounterIdentityForTests,
+               target.FixedWindowForTests.CounterIdentityForTests,
             "Fixed->Fixed successors must share one accounting counter");
         Ensure(target.FixedWindowForTests.ConsumedForTests == 2,
             "publication must not reset already consumed quota");
@@ -40,10 +41,11 @@ public sealed class DynamicFixedWindowCleanSemanticsTests
 
         using var target = CreateFixed(3, TimeSpan.FromSeconds(30), time, source);
         source.CommitTransitionTo(target);
+        target.FixedWindowForTests!.OnPublished();
 
         Ensure(Acquire(target), "limit two to three may expose exactly one additional permit");
         Ensure(!Acquire(target), "limit increase must not expose a fresh three-permit window");
-        Ensure(target.FixedWindowForTests!.ConsumedForTests == 3,
+        Ensure(target.FixedWindowForTests.ConsumedForTests == 3,
             "all three grants must be recorded by one counter");
     }
 
@@ -59,8 +61,9 @@ public sealed class DynamicFixedWindowCleanSemanticsTests
         time.Advance(TimeSpan.FromSeconds(3));
         using var target = CreateFixed(5, TimeSpan.FromSeconds(20), time, source);
         source.CommitTransitionTo(target);
+        target.FixedWindowForTests!.OnPublished();
 
-        Ensure(target.FixedWindowForTests!.HasPendingWindowForTests,
+        Ensure(target.FixedWindowForTests.HasPendingWindowForTests,
             "changed Window must be pending instead of re-anchoring the current window");
         Ensure(target.FixedWindowForTests.ActiveWindowForTests == TimeSpan.FromSeconds(10),
             "the old natural window must remain active until its boundary");
@@ -88,6 +91,7 @@ public sealed class DynamicFixedWindowCleanSemanticsTests
 
         using var target = CreateFixed(5, TimeSpan.FromSeconds(20), time, source);
         source.CommitTransitionTo(target);
+        target.FixedWindowForTests!.OnPublished();
         time.Advance(TimeSpan.FromSeconds(10));
 
         for (var index = 0; index < 5; index++)
@@ -105,11 +109,13 @@ public sealed class DynamicFixedWindowCleanSemanticsTests
 
         using var first = CreateFixed(2, TimeSpan.FromSeconds(20), time, source);
         source.CommitTransitionTo(first);
+        first.FixedWindowForTests!.OnPublished();
         using var second = CreateFixed(4, TimeSpan.FromSeconds(10), time, first);
         first.CommitTransitionTo(second);
+        second.FixedWindowForTests!.OnPublished();
 
         time.Advance(TimeSpan.FromSeconds(30));
-        Ensure(second.FixedWindowForTests!.ActiveWindowForTests == TimeSpan.FromSeconds(10),
+        Ensure(second.FixedWindowForTests.ActiveWindowForTests == TimeSpan.FromSeconds(10),
             "last winning pending Window must activate");
         Ensure(second.FixedWindowForTests.ActiveLimitForTests == 4,
             "last winning pending limit must activate with its Window");
@@ -137,7 +143,7 @@ public sealed class DynamicFixedWindowCleanSemanticsTests
     }
 
     [Test]
-    public async Task QueuedSourceViewRemainsSnapshotBoundAcrossLimitIncrease()
+    public async Task QueuedAttemptRebindsOnlyAfterWinningTargetIsPublished()
     {
         var time = new ManualTimeProvider();
         using var source = CreateFixed(1, TimeSpan.FromSeconds(20), time);
@@ -150,13 +156,16 @@ public sealed class DynamicFixedWindowCleanSemanticsTests
         using var target = CreateFixed(3, TimeSpan.FromSeconds(20), time, source);
         source.CommitTransitionTo(target);
         Ensure(!queued.IsCompleted,
-            "an already queued source RPC keeps its captured policy rather than being silently rebound");
+            "update-plan commit alone must not leak the winning limit into the live queue");
 
-        time.Advance(TimeSpan.FromSeconds(20));
+        target.FixedWindowForTests!.OnPublished();
         using var lease = await queued;
-        Ensure(lease.IsAcquired, "source waiter must complete at its natural boundary");
-        Ensure(target.FixedWindowForTests!.ConsumedForTests == 1,
-            "queued completion must charge the same shared counter exactly once");
+        Ensure(lease.IsAcquired,
+            "a queued admission attempt may rebind to the latest published current-window limit");
+        Ensure(target.FixedWindowForTests.QueuedLimitForTests == 3,
+            "published Immediate limit must become authoritative for queued attempts");
+        Ensure(target.FixedWindowForTests.ConsumedForTests == 2,
+            "queued completion must charge the shared counter exactly once");
     }
 
     private static AdmissionRateState CreateFixed(
