@@ -1,4 +1,4 @@
-# stage2 validation with formatting follow-up
+# stage2 validation with formatting and compile follow-ups
 name: issue-430-worker
 
 on:
@@ -31,6 +31,7 @@ jobs:
           echo '2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab  /tmp/issue430-stage2.patch.gz.b64' | sha256sum -c -
           base64 -d /tmp/issue430-stage2.patch.gz.b64 | gzip -d > /tmp/issue430-stage2.patch
           cp .tmp/issue430-stage2/format.patch /tmp/issue430-stage2-format.patch
+          cp .tmp/issue430-stage2/compile1.patch /tmp/issue430-stage2-compile1.patch
           git fetch origin fix/430-compression-provider-boundary
           git checkout -B issue430-stage2 origin/fix/430-compression-provider-boundary
           test "$(git rev-parse HEAD)" = "5a025579e2417e5b72a91ab4dd924d871c0cd02f"
@@ -38,6 +39,8 @@ jobs:
           git apply /tmp/issue430-stage2.patch
           git apply --check /tmp/issue430-stage2-format.patch
           git apply /tmp/issue430-stage2-format.patch
+          git apply --check /tmp/issue430-stage2-compile1.patch
+          git apply /tmp/issue430-stage2-compile1.patch
           git diff --check
           echo "STAGE2_DIFF $(git diff --shortstat)"
 
