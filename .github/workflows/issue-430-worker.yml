@@ -8,21 +8,19 @@ on:
       - .github/workflows/issue-430-worker.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  validate:
+  promote:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    timeout-minutes: 10
     steps:
       - name: Checkout helper branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Reconstruct exact candidate on latest dev
+      - name: Reconstruct validated candidate
         shell: bash
         run: |
           set -euo pipefail
@@ -47,9 +45,10 @@ jobs:
           cp .tmp/issue430/followup1.patch /tmp/issue430-followup1.patch
           cp .tmp/issue430/followup2.patch /tmp/issue430-followup2.patch
           cp .tmp/issue430/followup3.patch /tmp/issue430-followup3.patch
-          git fetch origin dev
-          git checkout -B issue430-latest-dev origin/dev
+          git fetch origin dev fix/430-compression-provider-boundary
+          git checkout -B issue430-promote origin/dev
           test "$(git rev-parse HEAD)" = "51e3f2c66a24615abf738f76a2380f223d72f2ab"
+          test "$(git rev-parse origin/fix/430-compression-provider-boundary)" = "e7177835114d34772087b059491fa0b4bd7607df"
           git apply --check /tmp/issue430.patch
           git apply /tmp/issue430.patch
           git apply --check /tmp/issue430-new-integration-provider.patch
@@ -63,75 +62,40 @@ jobs:
           git apply --check /tmp/issue430-followup3.patch
           git apply /tmp/issue430-followup3.patch
           git diff --check
-          echo "BASE $(git rev-parse HEAD)"
-          echo "PATCH_APPLIED $(git diff --shortstat)"
-          git config user.name 'issue-430-validator'
-          git config user.email 'issue-430-validator@users.noreply.github.com'
-          git add -A
-          git commit -m 'validation: materialize issue 430 candidate'
-          test -z "$(git status --porcelain)"
-          echo "CANDIDATE $(git rev-parse HEAD)"
-
-      - name: Verify concrete compression removal
-        shell: bash
-        run: |
-          set -euo pipefail
           if git grep -n -E 'SharpLinkCompressionProviders|SharpLinkCompressionResult|SharpLinkCompressionOutputLimitException|Crc32Accumulator|BrotliCompressionProvider|SCP1|Brotli|brotli' -- src demo doc README.md; then
             echo 'Concrete compression machinery remains in Core/demo/docs.' >&2
             exit 1
           fi
 
-      - name: Setup .NET CI environment
-        uses: ./.github/actions/setup-dotnet
+      - name: Create focused commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SunSi12138'
+          git config user.email '54728594+SunSi12138@users.noreply.github.com'
 
-      - name: Restore
-        run: dotnet restore Sharplink.slnx
+          git add \
+            src/SharpLink.Runtime/Compression/SharpLinkCompression.cs \
+            src/SharpLink.Runtime/RpcSession.Compression.cs \
+            src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs
+          git commit -m 'refactor(compression): define algorithm-free provider boundary'
 
-      - name: Production Project Reference Boundary Guard
-        run: python3 eng/check-project-reference-boundaries.py
+          git add demo/Compression/Program.cs eng/maintainability/baseline.json test
+          git commit -m 'test(compression): migrate callers off built-in algorithms'
 
-      - name: Verify Formatting
-        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          git add CHANGELOG.md README.md doc
+          git commit -m 'docs(compression): document algorithm-free Core boundary'
 
-      - name: Maintainability Debt Gate Tests
-        run: python3 eng/test-verify-maintainability.py
+          test -z "$(git status --porcelain)"
+          git log --oneline -4
+          echo "PROMOTE_HEAD=$(git rev-parse HEAD)"
 
-      - name: Maintainability Debt Gate
-        run: bash eng/check-maintainability.sh
-
-      - name: Build Release
-        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-
-      - name: Verify Generated Assemblies Do Not Reference Runtime
-        run: ./eng/verify-generated-assembly-dependencies.sh
-
-      - name: Unit Tests
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-
-      - name: Generator Tests
-        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
-
-      - name: Load Test Tests
-        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
-
-      - name: Integration Tests
-        run: >-
-          dotnet run -c Release --no-build
-          --project test/SharpLink.IntegrationTests
-          --
-          --maximum-parallel-tests 1
-          --timeout 120s
-
-      - name: NativeAOT Transport and Topology Smoke
-        env:
-          SHARPLINK_AOT_RID: linux-x64
-        run: ./eng/run-shared-memory-aot-process-smoke.sh
-
-      - name: Pack
-        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
-
-      - name: Verify NuGet package contracts
-        uses: ./.github/actions/verify-packages
-
-      - name: Run NuGet package smoke
-        uses: ./.github/actions/package-smoke
+      - name: Push implementation branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push \
+            --force-with-lease=refs/heads/fix/430-compression-provider-boundary:e7177835114d34772087b059491fa0b4bd7607df \
+            origin HEAD:refs/heads/fix/430-compression-provider-boundary
+          echo "PUSHED_HEAD=$(git rev-parse HEAD)"
+          test -z "$(git status --porcelain)"
