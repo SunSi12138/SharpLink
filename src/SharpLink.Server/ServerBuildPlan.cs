@@ -144,6 +144,7 @@ internal sealed class ServerBuildPlan
         ServerRuntimeResources resources,
         SharpLinkRuntimeContextBuildPlan runtimeContext,
         ServerServiceRegistrationPlanEntry[] services,
+        SharpLinkCompressionSendPolicy responseCompressionPolicy,
         TimeSpan heartbeatCheckInterval,
         TimeSpan heartbeatTimeout,
         RpcSessionFlushOptions? rpcSessionFlushOptions,
@@ -160,6 +161,8 @@ internal sealed class ServerBuildPlan
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
         ArgumentNullException.ThrowIfNull(services);
         _services = [.. services];
+        ResponseCompressionPolicy = responseCompressionPolicy ?? throw new ArgumentNullException(nameof(responseCompressionPolicy));
+        _ = CompressionSendPolicySnapshot.CreateValidated(ResponseCompressionPolicy);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatCheckInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
         if (heartbeatTimeout <= heartbeatCheckInterval)
@@ -180,6 +183,7 @@ internal sealed class ServerBuildPlan
     internal ServerRuntimeResources Resources { get; }
     internal SharpLinkRuntimeContextBuildPlan RuntimeContext { get; }
     internal int ServiceCount => _services.Length;
+    internal SharpLinkCompressionSendPolicy ResponseCompressionPolicy { get; }
     internal ServerServiceRegistrationPlanEntry GetService(int index) => _services[index];
     internal TimeSpan HeartbeatCheckInterval { get; }
     internal TimeSpan HeartbeatTimeout { get; }

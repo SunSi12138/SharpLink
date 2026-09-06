@@ -29,12 +29,14 @@ internal sealed partial class SharpLinkClient
     {
         var desired = PublishResponseCompressionPreference(allowResponseCompression);
         var cohort = CaptureResponseCompressionPreferenceCohort();
+        List<Exception>? failures = null;
+        var failed = cohort.Length == 0 ? Array.Empty<bool>() : new bool[cohort.Length];
 
         for (var index = 0; index < cohort.Length; index++)
         {
             try
             {
-                cohort[index].Session.ReconcileResponseCompressionPreference(desired);
+                cohort[index].ReconcileResponseCompressionPreference(desired);
             }
             catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)
             {
@@ -42,18 +44,56 @@ internal sealed partial class SharpLinkClient
             catch (ObjectDisposedException)
             {
             }
+            catch (Exception exception)
+            {
+                failed[index] = true;
+                (failures ??= []).Add(exception);
+            }
         }
 
         for (var index = 0; index < cohort.Length; index++)
         {
-            await cohort[index].Session.WaitForResponseCompressionPreferenceAsync(
-                desired.Generation,
-                cancellationToken).ConfigureAwait(false);
+            if (failed[index])
+                continue;
+            try
+            {
+                await cohort[index].WaitForResponseCompressionPreferenceAsync(
+                    desired.Generation,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
         }
+
+        ThrowResponseCompressionPreferenceFailures(failures);
     }
 
     private ResponseCompressionPreferenceSnapshot CaptureResponseCompressionPreference()
         => Volatile.Read(ref _responseCompressionPreference);
+
+    private void ReconcileResponseCompressionPreferenceAfterReadyPublication(RpcSession session)
+    {
+        if (!session.HasNegotiatedCompression)
+            return;
+        session.ReconcileResponseCompressionPreference(CaptureResponseCompressionPreference());
+    }
+
+    private static void ThrowResponseCompressionPreferenceFailures(List<Exception>? failures)
+    {
+        if (failures is null || failures.Count == 0)
+            return;
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException("One or more response-compression preference sessions failed to converge.", failures);
+    }
 
     private ResponseCompressionPreferenceSnapshot PublishResponseCompressionPreference(bool allowed)
     {
@@ -80,7 +120,7 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private ClientConnection[] CaptureResponseCompressionPreferenceCohort()
+    private RpcSession[] CaptureResponseCompressionPreferenceCohort()
     {
         var ready = _cluster is null
             ? Volatile.Read(ref _readyConnections)
@@ -88,12 +128,12 @@ internal sealed partial class SharpLinkClient
         if (ready.Length == 0)
             return [];
 
-        var eligible = new List<ClientConnection>(ready.Length);
+        var eligible = new List<RpcSession>(ready.Length);
         for (var index = 0; index < ready.Length; index++)
         {
             var connection = ready[index];
             if (connection.CanAcceptCalls && connection.Session.HasNegotiatedCompression)
-                eligible.Add(connection);
+                eligible.Add(connection.Session);
         }
         return eligible.Count == 0 ? [] : eligible.ToArray();
     }

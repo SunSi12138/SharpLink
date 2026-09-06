@@ -9,7 +9,7 @@ public class CompressionRuntimePolicyTests
     [Test]
     public void InvalidLocalPolicyShouldNotPublishPartialState()
     {
-        var options = new SharpLinkCompressionOptions
+        var options = new SharpLinkCompressionSendPolicy
         {
             MinimumPayloadBytes = 1024,
             MinimumSavingsBytes = 64,
@@ -44,7 +44,7 @@ public class CompressionRuntimePolicyTests
         using var context = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.Compression.Providers.Add(provider))
             .Build();
-        var policy = CompressionSendPolicyState.CreateInitial(context.Compression);
+        var policy = CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
         var input = new Pipe();
         var output = new Pipe();
         await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
@@ -108,7 +108,7 @@ public class CompressionRuntimePolicyTests
         using var context = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.Compression.Providers.Add(provider))
             .Build();
-        var policy = CompressionSendPolicyState.CreateInitial(context.Compression);
+        var policy = CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
         var input = new Pipe();
         var output = new Pipe();
         await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
@@ -153,7 +153,7 @@ public class CompressionRuntimePolicyTests
         using var context = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.Compression.Providers.Add(provider))
             .Build();
-        var policy = CompressionSendPolicyState.CreateInitial(context.Compression);
+        var policy = CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
         var input = new Pipe();
         var output = new Pipe();
         await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(

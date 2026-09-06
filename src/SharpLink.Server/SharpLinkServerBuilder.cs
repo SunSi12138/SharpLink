@@ -1,7 +1,7 @@
 namespace SharpLink.Server;
 
 /// <summary>Configures transports, services, security, limits, and runtime behavior for a SharpLink server.</summary>
-public class SharpLinkServerBuilder : ISharpLinkServerBuilder
+public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
 
@@ -456,6 +456,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             new ServerRuntimeResources(transport),
             runtimeContext,
             services,
+            _responseCompressionPolicy,
             _heartbeatCheckInterval,
             _heartbeatTimeout,
             _rpcSessionFlushOptions,
@@ -580,6 +581,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 plan.HeartbeatTimeout,
                 logger,
                 runtimeContext,
+                plan.ResponseCompressionPolicy,
                 plan.Authenticator,
                 plan.AuthenticationRequired,
                 runtimeContext.Protocol.CloneValidated(),

@@ -94,6 +94,8 @@ internal sealed partial class SharpLinkClient
             connection = null;
 
             await CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken).ConfigureAwait(false);
+            if (_beforeReadyPublicationTestHook is not null)
+                await _beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);
 
             var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
             var clientConnection = new ClientConnection(
@@ -123,6 +125,18 @@ internal sealed partial class SharpLinkClient
                 {
                     _connections.Add(clientConnection);
                     PublishReadySnapshotLocked();
+                    try
+                    {
+                        ReconcileResponseCompressionPreferenceAfterReadyPublication(readySession);
+                    }
+                    catch (Exception exception)
+                    {
+                        _connections.Remove(clientConnection);
+                        PublishReadySnapshotLocked();
+                        poolException = exception;
+                    }
+                    if (poolException is not null)
+                        goto PublicationFailed;
                     readySession.NotifyConnected();
                     TrackFrameworkTask(
                         RunHeartbeatSendLoopAsync(clientConnection, sessionCts.Token),
@@ -130,6 +144,7 @@ internal sealed partial class SharpLinkClient
                     TrackFrameworkTask(
                         RunProcessRequestLoopAsync(clientConnection, sessionCts.Token),
                         "ProcessRequestLoop");
+                PublicationFailed:;
                 }
             }
             if (poolException is not null)
@@ -473,12 +488,6 @@ internal sealed partial class SharpLinkClient
             {
                 if (handshakeException is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
                     SharpLinkTelemetry.RecordProtocolFailure("client");
-                if (handshakeException is null)
-                {
-                    var currentPreference = CaptureResponseCompressionPreference();
-                    if (currentPreference.Generation > handshakePreference.Generation)
-                        session.ReconcileResponseCompressionPreference(currentPreference);
-                }
                 return handshakeException;
             }
 

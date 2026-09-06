@@ -1,7 +1,7 @@
 namespace SharpLink.Client;
 
 /// <summary>Configures and creates an independently owned SharpLink RPC client.</summary>
-public class SharpClientBuilder
+public partial class SharpClientBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
     private static readonly TimeSpan RecommendedRequestTimeout = TimeSpan.FromSeconds(30);
@@ -79,17 +79,6 @@ public class SharpClientBuilder
         {
             ArgumentNullException.ThrowIfNull(interceptor);
             _interceptors.Add(interceptor);
-        });
-        return this;
-    }
-
-    /// <summary>Configures instance-scoped runtime behavior.</summary>
-    public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
-    {
-        Configure(() =>
-        {
-            ArgumentNullException.ThrowIfNull(configure);
-            _runtimeContextBuilder.Configure(configure);
         });
         return this;
     }
@@ -546,6 +535,8 @@ public class SharpClientBuilder
             topology,
             resources,
             runtimeContext,
+            _requestCompressionPolicy,
+            _beforeReadyPublicationTestHook,
             _heartbeatInterval,
             _heartbeatTimeout,
             requestTimeoutPolicy.TimeoutOrNull,
@@ -790,6 +781,8 @@ public class SharpClientBuilder
             topology,
             CreateReadinessConfiguration(plan),
             runtimeContext,
+            plan.RequestCompressionPolicy,
+            plan.BeforeReadyPublicationTestHook,
             staticManifests,
             SharpLinkClient.BuildStaticProxySnapshot(staticManifests, runtimeContext),
             plan.HeartbeatInterval,

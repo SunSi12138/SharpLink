@@ -19,15 +19,8 @@ internal sealed class CompressionSendPolicySnapshot
     internal int MinimumSavingsBytes { get; }
     internal double MinimumSavingsRatio { get; }
 
-    internal static CompressionSendPolicySnapshot CreateInitial(SharpLinkCompressionOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        return CreateValidated(
-            enabled: true,
-            options.MinimumPayloadBytes,
-            options.MinimumSavingsBytes,
-            options.MinimumSavingsRatio);
-    }
+    internal static CompressionSendPolicySnapshot CreateInitial(SharpLinkCompressionSendPolicy policy)
+        => CreateValidated(policy);
 
     internal static CompressionSendPolicySnapshot CreateValidated(SharpLinkCompressionSendPolicy policy)
     {
@@ -72,8 +65,8 @@ internal sealed class CompressionSendPolicyState
     private CompressionSendPolicyState(CompressionSendPolicySnapshot initial)
         => _current = initial;
 
-    internal static CompressionSendPolicyState CreateInitial(SharpLinkCompressionOptions options)
-        => new(CompressionSendPolicySnapshot.CreateInitial(options));
+    internal static CompressionSendPolicyState CreateInitial(SharpLinkCompressionSendPolicy policy)
+        => new(CompressionSendPolicySnapshot.CreateInitial(policy));
 
     internal CompressionSendPolicySnapshot Current => Volatile.Read(ref _current);
 
