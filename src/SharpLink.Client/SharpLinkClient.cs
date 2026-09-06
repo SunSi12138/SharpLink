@@ -70,6 +70,7 @@ internal sealed partial class SharpLinkClient :
             CreateReadinessSnapshotLocked());
         transportFactory = composition.TransportFactory;
         _runtimeContext = composition.RuntimeContext;
+        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(_runtimeContext.Compression);
         _proxies = new ClientProxyLookup(composition.StaticProxies);
         _heartbeatInterval = composition.HeartbeatInterval;
         _heartbeatTimeout = composition.HeartbeatTimeout;

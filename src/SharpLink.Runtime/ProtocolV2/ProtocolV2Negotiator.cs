@@ -153,7 +153,9 @@ internal static class ProtocolV2Negotiator
     internal static ProtocolV2HandshakeRequest CreateClientOffer(
         in ProtocolV2NegotiationPolicy policy,
         ProtocolV2Capabilities requiredCapabilities,
-        ReadOnlyMemory<byte> authenticationPayload)
+        ReadOnlyMemory<byte> authenticationPayload,
+        ulong responseCompressionPreferenceGeneration = 0,
+        bool allowResponseCompression = true)
     {
         if ((requiredCapabilities & ~policy.SupportedCapabilities) != 0)
         {
@@ -179,7 +181,9 @@ internal static class ProtocolV2Negotiator
             policy.StreamReceiveWindowBytes,
             policy.ConnectionReceiveWindowBytes,
             authenticationPayload,
-            compressionProfiles);
+            compressionProfiles,
+            responseCompressionPreferenceGeneration,
+            allowResponseCompression);
     }
 
     internal static ProtocolV2ServerNegotiation NegotiateServer(

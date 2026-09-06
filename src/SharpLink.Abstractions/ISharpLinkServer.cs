@@ -22,6 +22,18 @@ public interface ISharpLinkServer : ISharpLinkAssemblyRegistry, IAsyncDisposable
             "This ISharpLinkServer implementation does not support runtime interceptor replacement.");
     }
 
+    /// <summary>
+    /// Atomically replaces the server-local Response compression policy. The next Response or
+    /// server-to-client StreamData frame captures the new policy at its compression decision point.
+    /// </summary>
+    /// <param name="policy">The complete replacement policy.</param>
+    void UpdateResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkServer implementation does not support runtime response compression policy updates.");
+    }
+
     /// <summary>Runs the accept loop until stopped, canceled, or faulted.</summary>
     /// <param name="cancellationToken">Requests immediate shutdown when canceled.</param>
     ValueTask RunAsync(CancellationToken cancellationToken = default);

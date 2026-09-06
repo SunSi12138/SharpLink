@@ -3,13 +3,14 @@ using System.Text;
 namespace SharpLink.Runtime;
 
 /// <summary>Encodes and decodes Protocol v2 control and error payloads.</summary>
-public static class ProtocolV2PayloadCodec
+public static partial class ProtocolV2PayloadCodec
 {
     private const ProtocolV2Capabilities RecognizedCapabilities =
         RpcSessionProtocolRules.RecognizedCapabilities;
     private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int HandshakeRequestFixedBytes =
-        sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+        sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) +
+        sizeof(ulong) + sizeof(byte);
     private const int HandshakeResponseBytes =
         sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
 
@@ -43,6 +44,8 @@ public static class ProtocolV2PayloadCodec
         WriteInt32(writer, request.MaxFramePayloadBytes);
         WriteInt32(writer, request.StreamReceiveWindowBytes);
         WriteInt32(writer, request.ConnectionReceiveWindowBytes);
+        WriteUInt64(writer, request.ResponseCompressionPreferenceGeneration);
+        WriteByte(writer, request.AllowResponseCompression ? (byte)1 : (byte)0);
         WriteCompressionProfiles(writer, request.CompressionProfiles.Span);
         WriteVarUInt32(writer, checked((uint)request.AuthenticationPayload.Length));
         writer.Write(request.AuthenticationPayload.Span);
@@ -62,10 +65,14 @@ public static class ProtocolV2PayloadCodec
             !reader.TryReadLittleEndian(out long requiredBits) ||
             !reader.TryReadLittleEndian(out int maxFrame) ||
             !reader.TryReadLittleEndian(out int streamWindow) ||
-            !reader.TryReadLittleEndian(out int connectionWindow))
+            !reader.TryReadLittleEndian(out int connectionWindow) ||
+            !reader.TryReadLittleEndian(out long responsePreferenceGenerationBits) ||
+            !reader.TryRead(out var allowResponseCompressionRaw))
         {
             throw ProtocolV2FrameParser.Violation("HandshakeRequest payload is truncated.");
         }
+        if (allowResponseCompressionRaw > 1)
+            throw ProtocolV2FrameParser.Violation("Handshake response-compression preference is invalid.");
         var compressionProfiles = ReadCompressionProfiles(ref reader);
         if (!TryReadVarUInt32(ref reader, out var authLength))
             throw ProtocolV2FrameParser.Violation("Handshake authentication payload length is truncated.");
@@ -93,7 +100,9 @@ public static class ProtocolV2PayloadCodec
             streamWindow,
             connectionWindow,
             auth,
-            compressionProfiles);
+            compressionProfiles,
+            unchecked((ulong)responsePreferenceGenerationBits),
+            allowResponseCompressionRaw != 0);
     }
 
     /// <summary>Writes a negotiated handshake response payload.</summary>

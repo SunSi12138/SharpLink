@@ -61,6 +61,12 @@ internal sealed partial class SharpLinkClient
         public int ActiveStreamCount => CountConnections(static connection =>
             connection.Session.StreamManager.ActiveStreamCount);
 
+        public ClientConnection[] CaptureReadyConnections()
+        {
+            lock (_gate)
+                return _connections.CaptureReadyConnections();
+        }
+
         public void BeginStop() => _lifecycle.BeginStop();
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken)
@@ -648,7 +654,8 @@ internal sealed partial class SharpLinkClient
                     new RpcSessionCreationOptions(
                         RpcSessionRole.Client,
                         _client._runtimeContext,
-                        _client._rpcSessionFlushOptions));
+                        _client._rpcSessionFlushOptions,
+                        _client._requestCompressionPolicy));
                 transport = null;
 
                 await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
