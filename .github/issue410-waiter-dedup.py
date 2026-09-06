@@ -238,8 +238,8 @@ text = text.replace("var waiter = DequeueLocked();", "var waiter = _waiters.Dequ
 text = text.replace("if (_disposed != 0 || _waiterHead is null)", "if (_disposed != 0 || _waiters.IsEmpty)", 1)
 text = text.replace("removed = RemoveLocked(waiter);", "removed = _waiters.Remove(waiter);", 1)
 text = text.replace("failed = DetachAllLocked();", "failed = _waiters.DetachAll();", 1)
-text = text.replace("CompleteGranted(granted);", "AdmissionRateWaitQueue.CompleteGranted(granted)")
-text = text.replace("CompleteFailed(failed);", "AdmissionRateWaitQueue.CompleteFailed(failed)")
+text = text.replace("CompleteGranted(granted);", "AdmissionRateWaitQueue.CompleteGranted(granted);")
+text = text.replace("CompleteFailed(failed);", "AdmissionRateWaitQueue.CompleteFailed(failed);")
 insert = "    private void CancelWaiter(AdmissionRateWaiter waiter)\n"
 if text.count(insert) != 1:
     raise RuntimeError("legacy cancel method marker mismatch")
@@ -282,8 +282,8 @@ text = text.replace("while (_waiterHead is not null && _consumed < _queuedLimit)
 text = text.replace("var waiter = DequeueLocked();", "var waiter = _waiters.Dequeue();", 1)
 text = text.replace("if (_disposed != 0 || _waiterHead is null)", "if (_disposed != 0 || _waiters.IsEmpty)", 1)
 text = text.replace("removed = RemoveLocked(waiter);", "removed = _waiters.Remove(waiter);", 1)
-text = text.replace("CompleteGranted(granted);", "AdmissionRateWaitQueue.CompleteGranted(granted)")
-text = text.replace("CompleteFailed(failed);", "AdmissionRateWaitQueue.CompleteFailed(failed)")
+text = text.replace("CompleteGranted(granted);", "AdmissionRateWaitQueue.CompleteGranted(granted);")
+text = text.replace("CompleteFailed(failed);", "AdmissionRateWaitQueue.CompleteFailed(failed);")
 insert = "        private void CancelWaiter(AdmissionRateWaiter waiter)\n"
 if text.count(insert) != 1:
     raise RuntimeError("FixedWindow cancel method marker mismatch")
