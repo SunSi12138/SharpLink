@@ -541,25 +541,44 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 }
 
 /// <summary>
-/// One immutable rate-policy generation over a SharpLink-owned dynamic state. Changed policies get
-/// a new instance; unchanged policies keep sharing the exact same instance and waiter queue.
+/// Immutable rate-policy view. FixedWindow views share one stable counter while other algorithms keep
+/// the existing state-preserving transition model.
 /// </summary>
 internal sealed class AdmissionRateState : RateLimiter
 {
-    private readonly AdmissionDynamicRateState _state;
+    private readonly AdmissionDynamicRateState? _state;
+    private readonly DynamicFixedWindowRateLimiter? _fixedWindow;
+    private readonly AdmissionRateTransitionLineage _lineage;
+    private readonly AdmissionRateStateDefinition _definition;
 
     private AdmissionRateState(AdmissionDynamicRateState state)
-        => _state = state;
+    {
+        _state = state;
+        _lineage = state.Lineage;
+        _definition = state.Definition;
+    }
 
-    internal AdmissionRateStateDefinition Definition => _state.Definition;
+    private AdmissionRateState(
+        AdmissionRateStateDefinition definition,
+        DynamicFixedWindowRateLimiter fixedWindow,
+        AdmissionRateTransitionLineage lineage)
+    {
+        _definition = definition;
+        _fixedWindow = fixedWindow;
+        _lineage = lineage;
+    }
 
-    internal AdmissionRateTransitionLineage Lineage => _state.Lineage;
+    internal AdmissionRateStateDefinition Definition => _definition;
 
-    internal int WaitingCount => _state.WaitingCount;
+    internal AdmissionRateTransitionLineage Lineage => _lineage;
 
-    internal long TransitionDebtForDiagnostics => _state.TransitionDebtForDiagnostics;
+    internal int WaitingCount => _fixedWindow?.WaitingCount ?? _state!.WaitingCount;
 
-    internal long TransitionBarrierExpiryForDiagnostics => _state.TransitionBarrierExpiryForDiagnostics;
+    internal long TransitionDebtForDiagnostics => _state?.TransitionDebtForDiagnostics ?? 0;
+
+    internal long TransitionBarrierExpiryForDiagnostics => _state?.TransitionBarrierExpiryForDiagnostics ?? 0;
+
+    internal DynamicFixedWindowRateLimiter? FixedWindowForTests => _fixedWindow;
 
     internal static AdmissionRateState Create(
         SharpLinkAdmissionRuleOptions options,
@@ -567,31 +586,66 @@ internal sealed class AdmissionRateState : RateLimiter
         AdmissionRateState? transitionSource = null)
     {
         var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
+        if (definition.Kind == AdmissionRateStateKind.FixedWindow)
+        {
+            var window = TimeSpan.FromTicks(definition.PeriodTicks);
+            if (transitionSource?._fixedWindow is { } sourceFixed)
+            {
+                return new AdmissionRateState(
+                    definition,
+                    sourceFixed.CreateSuccessor(definition.Limit, window),
+                    transitionSource._lineage);
+            }
+
+            return new AdmissionRateState(
+                definition,
+                new DynamicFixedWindowRateLimiter(definition.Limit, window, timeProvider),
+                new AdmissionRateTransitionLineage());
+        }
+
+        // A transition from FixedWindow into another algorithm is deliberately a generation
+        // boundary. TokenBucket/SlidingWindow continue sharing their legacy lineage only when the
+        // source is another legacy state.
         var state = new AdmissionDynamicRateState(
             definition,
             timeProvider,
-            transitionSource?.Lineage);
+            transitionSource?._state?.Lineage);
         return new AdmissionRateState(state);
     }
 
     internal void CommitTransitionTo(AdmissionRateState? target)
-        => _state.CommitTransitionTo(target?._state);
+    {
+        if (_fixedWindow is not null)
+        {
+            if (target?._fixedWindow is not null && ReferenceEquals(_lineage, target._lineage))
+                _fixedWindow.CommitTransitionTo(target._fixedWindow);
+            return;
+        }
+
+        if (target?._state is not null && ReferenceEquals(_lineage, target._lineage))
+            _state!.CommitTransitionTo(target._state);
+        else
+            _state!.CommitTransitionTo(null);
+    }
 
     public override TimeSpan? IdleDuration => null;
 
     public override RateLimiterStatistics? GetStatistics() => null;
 
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
-        => _state.AttemptAcquire(permitCount);
+        => _fixedWindow?.AttemptAcquire(permitCount) ?? _state!.AttemptAcquire(permitCount);
 
     protected override ValueTask<RateLimitLease> AcquireAsyncCore(
         int permitCount,
         CancellationToken cancellationToken)
-        => _state.AcquireAsync(permitCount, cancellationToken);
+        => _fixedWindow?.AcquireAsync(permitCount, cancellationToken) ??
+           _state!.AcquireAsync(permitCount, cancellationToken);
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
-            _state.Dispose();
+        if (!disposing)
+            return;
+        _fixedWindow?.Dispose();
+        _state?.Dispose();
     }
 }
