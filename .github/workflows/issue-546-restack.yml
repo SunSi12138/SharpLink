@@ -28,7 +28,37 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin dev
+
+          set +e
           git merge --no-edit origin/dev
+          merge_status=$?
+          set -e
+
+          if [ "$merge_status" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            if [ "$conflicts" != 'eng/maintainability/baseline.json' ]; then
+              echo "Unexpected merge conflicts:"
+              printf '%s\n' "$conflicts"
+              exit 1
+            fi
+
+            # dev removed the resolved static-cluster allowance; the candidate removed the
+            # resolved AdmissionDynamicRateState allowance. Keep both deletions.
+            git checkout --theirs eng/maintainability/baseline.json
+            python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path('eng/maintainability/baseline.json')
+data = json.loads(path.read_text())
+target = 'src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs'
+data['allowances'] = [entry for entry in data['allowances'] if entry.get('path') != target]
+path.write_text(json.dumps(data, indent=2) + '\n')
+PY
+            git add eng/maintainability/baseline.json
+            git commit --no-edit
+          fi
+
           rm .github/workflows/issue-546-restack.yml
           git add -A
           git commit --amend --no-edit
