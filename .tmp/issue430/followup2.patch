@@ -1,0 +1,80 @@
+diff --git a/eng/maintainability/baseline.json b/eng/maintainability/baseline.json
+index ca73e15..85ffe34 100644
+--- a/eng/maintainability/baseline.json
++++ b/eng/maintainability/baseline.json
+@@ -166,12 +166,6 @@
+       "maxLoc": 1318,
+       "reason": "Existing dev debt captured by issue #350."
+     },
+-    {
+-      "domain": "test",
+-      "path": "test/SharpLink.Benchmarks/DecodeExecutionPhase0EvidenceRunner.cs",
+-      "maxLoc": 1312,
+-      "reason": "Existing dev debt captured by issue #350."
+-    },
+     {
+       "domain": "test",
+       "path": "test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs",
+diff --git a/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs b/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
+index ae7a9a1..57203d4 100644
+--- a/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
++++ b/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
+@@ -2228,28 +2228,6 @@ public class IntegrationBehaviorTests
+             => throw new InvalidOperationException("Identity candidates must never be selected.");
+     }
+ 
+-    private sealed class RejectingCompressionProvider : ISharpLinkCompressionProvider
+-    {
+-        public string WireProfile => "test.reject/v1";
+-
+-        public bool TryCompress(
+-            ReadOnlySequence<byte> input,
+-            IBufferWriter<byte> output,
+-            int maxOutputBytes,
+-            CancellationToken cancellationToken = default)
+-        {
+-            cancellationToken.ThrowIfCancellationRequested();
+-            return false;
+-        }
+-
+-        public void Decompress(
+-            ReadOnlySequence<byte> input,
+-            IBufferWriter<byte> output,
+-            int maxOutputBytes,
+-            CancellationToken cancellationToken = default)
+-            => throw new InvalidOperationException("Rejected candidates must never reach a decoder.");
+-    }
+-
+     private sealed class ThrowingCompressionProvider(
+         ISharpLinkCompressionProvider inner,
+         bool throwOnCompress,
+diff --git a/test/SharpLink.IntegrationTests/TestCompressionProvider.cs b/test/SharpLink.IntegrationTests/TestCompressionProvider.cs
+index 01936d2..6d3b3a3 100644
+--- a/test/SharpLink.IntegrationTests/TestCompressionProvider.cs
++++ b/test/SharpLink.IntegrationTests/TestCompressionProvider.cs
+@@ -110,3 +110,25 @@ internal sealed class TestCompressionProvider(
+     private static uint AppendChecksum(uint checksum, byte value)
+         => (checksum ^ value) * 16777619u;
+ }
++
++internal sealed class RejectingCompressionProvider : ISharpLinkCompressionProvider
++{
++    public string WireProfile => "test.reject/v1";
++
++    public bool TryCompress(
++        ReadOnlySequence<byte> input,
++        IBufferWriter<byte> output,
++        int maxOutputBytes,
++        CancellationToken cancellationToken = default)
++    {
++        cancellationToken.ThrowIfCancellationRequested();
++        return false;
++    }
++
++    public void Decompress(
++        ReadOnlySequence<byte> input,
++        IBufferWriter<byte> output,
++        int maxOutputBytes,
++        CancellationToken cancellationToken = default)
++        => throw new InvalidOperationException("Rejected candidates must never reach a decoder.");
++}
