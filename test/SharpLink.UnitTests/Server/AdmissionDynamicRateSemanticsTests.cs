@@ -179,8 +179,10 @@ public sealed class AdmissionDynamicRateSemanticsTests
             Ensure(kernel.QueuedCalls == 0 && kernel.QueuedBytes == 0 &&
                    source.Controller.GlobalRateStateForTests!.WaitingCount == 0,
                 "cancellation must release the outer reservation and source waiter exactly once");
+
+            await ConsumeAsync(replacement, 1);
             await EnsureRateRejectedAsync(replacement,
-                "cancelling an old waiter must not erase quota already consumed before the update");
+                "TokenBucket -> FixedWindow starts a fresh target generation while cancelled old work remains isolated");
         }
         finally
         {
