@@ -1,0 +1,82 @@
+name: Temporary Issue 550 Review Core
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - tmp/issue-550-validation-gpt
+
+concurrency:
+  group: tmp-issue-550-review-core
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Apply review follow-up on latest dev
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import textwrap
+          text = Path('.github/workflows/tmp-issue-550-runner.yml').read_text()
+          start = "          python3 - <<'PY'\n"
+          end = "\n          PY\n\n      - name: Setup .NET CI environment"
+          if start not in text or end not in text:
+              raise SystemExit('review follow-up script markers not found')
+          body = text.split(start, 1)[1].split(end, 1)[0]
+          Path('/tmp/apply_issue_550_review.py').write_text(textwrap.dedent(body) + '\n')
+          PYTHON
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin dev fix/issue-550-dynamic-compression-policy
+          git checkout -B issue-550-review origin/fix/issue-550-dynamic-compression-policy
+          git rebase origin/dev
+          python3 /tmp/apply_issue_550_review.py
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore and format
+        shell: bash
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+
+      - name: Quality gates
+        shell: bash
+        run: |
+          python3 eng/check-project-reference-boundaries.py
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Diff check
+        shell: bash
+        run: |
+          git diff --check
+          git status --short
