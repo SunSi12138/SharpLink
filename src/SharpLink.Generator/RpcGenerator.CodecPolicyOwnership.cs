@@ -261,6 +261,7 @@ public partial class RpcGenerator
 
     private static bool RequiresGeneratedFactory(FinalCodecPlan plan)
         => plan is FinalGeneratedDtoCodecPlan or
+            FinalUnionCodecPlan or
             FinalCustomCodecPlan or
             FinalAdapterCodecPlan or
             FinalCollectionCodecPlan { WireStrategy: FinalCollectionWireStrategy.ChildCodec };
@@ -269,6 +270,7 @@ public partial class RpcGenerator
         => plan switch
         {
             FinalGeneratedDtoCodecPlan => codec.Kind == GeneratedCodecKind.Dto,
+            FinalUnionCodecPlan => codec.Kind == GeneratedCodecKind.Union,
             FinalCustomCodecPlan custom =>
                 codec.Kind == GeneratedCodecKind.Custom &&
                 string.Equals(codec.CustomCodecType, custom.CodecTypeName, StringComparison.Ordinal),
@@ -684,6 +686,11 @@ public partial class RpcGenerator
                 if (plan is FinalCustomCodecPlan or FinalAdapterCodecPlan)
                 {
                     _models[plan.TypeName] = model with { AssemblyDependencies = ImmutableArray<string>.Empty };
+                    continue;
+                }
+                if (plan is FinalUnionCodecPlan)
+                {
+                    // Union analysis already owns exact declared case assembly dependencies.
                     continue;
                 }
 

@@ -41,6 +41,7 @@ public partial class RpcGenerator
                 FinalPrimitiveCodecPlan primitive => HashPrimitivePlan(primitive, graph, cache, stack),
                 FinalEnumCodecPlan enumPlan => HashEnumPlan(enumPlan, graph, cache, stack),
                 FinalGeneratedDtoCodecPlan dto => HashGeneratedDtoPlan(dto, graph, cache, stack),
+                FinalUnionCodecPlan union => HashUnionPlan(union, graph, cache, stack),
                 FinalCollectionCodecPlan collection => HashCollectionPlan(collection, graph, cache, stack),
                 FinalUnsafeBlitCodecPlan unsafeBlit => HashUnsafeBlitPlan(unsafeBlit),
                 FinalCustomCodecPlan custom => Hashing.GetSemanticHash(
