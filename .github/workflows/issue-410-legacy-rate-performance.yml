@@ -1,0 +1,76 @@
+name: Issue 410 legacy rate performance
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-legacy-rate-perf-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Run same-runner legacy-rate comparison
+        shell: bash
+        env:
+          BASELINE_SHA: 51e3f2c66a24615abf738f76a2380f223d72f2ab
+          CANDIDATE_SHA: 723da9b5fa47f6ef77eaeaa1c5f941b9f4167baf
+        run: |
+          set -euo pipefail
+          queue_source="$RUNNER_TEMP/Issue410LegacyRateQueueBenchmarks.cs"
+          cp test/SharpLink.Benchmarks/Issue410LegacyRateQueueBenchmarks.cs "$queue_source"
+          evidence="$RUNNER_TEMP/issue410-legacy-rate-perf"
+          mkdir -p "$evidence"
+          dotnet --info > "$evidence/dotnet-info.txt"
+          uname -a > "$evidence/uname.txt"
+          lscpu > "$evidence/cpu.txt"
+
+          run_benchmark() {
+            local destination="$1"
+            local filter="$2"
+            rm -rf BenchmarkDotNet.Artifacts
+            dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+              --filter "$filter"
+            mkdir -p "$destination"
+            cp -R BenchmarkDotNet.Artifacts/. "$destination/"
+          }
+
+          run_case() {
+            local label="$1"
+            local sha="$2"
+            git checkout --force "$sha"
+            cp "$queue_source" test/SharpLink.Benchmarks/Issue410LegacyRateQueueBenchmarks.cs
+            dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+            run_benchmark "$evidence/$label/controller" '*AdmissionRateControllerBenchmarks*'
+            run_benchmark "$evidence/$label/queue" '*Issue410LegacyRateQueueBenchmarks*'
+            run_benchmark "$evidence/$label/rpc" '*AdmissionFreshRateRpcBenchmarks*'
+            git clean -fdx
+          }
+
+          run_case baseline-forward "$BASELINE_SHA"
+          run_case candidate-forward "$CANDIDATE_SHA"
+          run_case candidate-reverse "$CANDIDATE_SHA"
+          run_case baseline-reverse "$BASELINE_SHA"
+
+          git checkout --force "$GITHUB_SHA"
+          mkdir -p artifacts/issue410-legacy-rate-performance
+          cp -R "$evidence/." artifacts/issue410-legacy-rate-performance/
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-legacy-rate-performance-${{ github.sha }}
+          path: artifacts/issue410-legacy-rate-performance
+          if-no-files-found: error
+          retention-days: 30
