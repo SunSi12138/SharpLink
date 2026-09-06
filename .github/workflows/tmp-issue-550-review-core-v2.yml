@@ -97,6 +97,11 @@ jobs:
 
           benchmark_path = Path('test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs')
           benchmark = benchmark_path.read_text()
+          if 'using SharpLink.Abstractions;' not in benchmark:
+              benchmark = benchmark.replace(
+                  'using SharpLink.Compression.Zstd;\n',
+                  'using SharpLink.Abstractions;\nusing SharpLink.Compression.Zstd;\n',
+                  1)
           old_wrapper = '''    private static Task<BenchmarkEnvironment> CreateEnvironmentAsync(\n        string transport,\n        Action<SharpLinkRuntimeOptions>? configureServerRuntime,\n        Action<SharpLinkRuntimeOptions>? configureClientRuntime)\n        => transport switch\n        {\n            "tcp" => BenchmarkEnvironment.CreateAsync(\n                configureServerRuntime: configureServerRuntime,\n                configureClientRuntime: configureClientRuntime),\n            "sharedmemory" => BenchmarkEnvironment.CreateSharedMemoryAsync(\n                configureServerRuntime,\n                configureClientRuntime),\n            _ => throw new ArgumentOutOfRangeException(nameof(transport), transport, null)\n        };'''
           new_wrapper = '''    private static Task<BenchmarkEnvironment> CreateEnvironmentAsync(\n        string transport,\n        Action<SharpLinkRuntimeOptions>? configureServerRuntime,\n        Action<SharpLinkRuntimeOptions>? configureClientRuntime,\n        Action<ISharpLinkServer>? configureBuiltServer = null,\n        Action<ISharpLinkClient>? configureBuiltClient = null)\n        => transport switch\n        {\n            "tcp" => BenchmarkEnvironment.CreateAsync(\n                configureServerRuntime: configureServerRuntime,\n                configureClientRuntime: configureClientRuntime,\n                configureBuiltServer: configureBuiltServer,\n                configureBuiltClient: configureBuiltClient),\n            "sharedmemory" => BenchmarkEnvironment.CreateSharedMemoryAsync(\n                configureServerRuntime,\n                configureClientRuntime,\n                configureBuiltServer,\n                configureBuiltClient),\n            _ => throw new ArgumentOutOfRangeException(nameof(transport), transport, null)\n        };'''
           if old_wrapper not in benchmark:
