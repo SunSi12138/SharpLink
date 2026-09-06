@@ -1,0 +1,95 @@
+name: Issue 410 clean final A-B
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-dynamic-fixed-window-20260906
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-410-clean-final-ab
+  cancel-in-progress: true
+
+env:
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+  BASE_SHA: '735e500016a8640258bb5270bc3c3878f67036f7'
+  CANDIDATE_SHA: '88ac66676327268298df011f470f0b7d4ff28986'
+
+jobs:
+  same-runner-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Preserve benchmark source
+        run: cp .github/issue410-clean-final-benchmarks.cs /tmp/Issue410CleanFinalBenchmarks.cs
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record environment
+        run: |
+          mkdir -p artifacts/issue410-clean-final/environment
+          dotnet --info > artifacts/issue410-clean-final/environment/dotnet-info.txt
+          lscpu > artifacts/issue410-clean-final/environment/cpu.txt
+          printf '%s\n' "$BASE_SHA" > artifacts/issue410-clean-final/environment/base-sha.txt
+          printf '%s\n' "$CANDIDATE_SHA" > artifacts/issue410-clean-final/environment/candidate-sha.txt
+          git diff --stat "$BASE_SHA" "$CANDIDATE_SHA" > artifacts/issue410-clean-final/environment/full-stat.txt
+          git diff --stat "$BASE_SHA" "$CANDIDATE_SHA" -- \
+            src/SharpLink.Server/Admission \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410-clean-final/environment/product-stat.txt
+
+      - name: Benchmark baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "$BASE_SHA"
+          cp /tmp/Issue410CleanFinalBenchmarks.cs test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+          git add -N test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410CleanFinal*' \
+            --launchCount 1 --warmupCount 3 --iterationCount 10 \
+            --artifacts artifacts/issue410-clean-final/baseline
+          rm -f test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+
+      - name: Benchmark clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "$CANDIDATE_SHA"
+          cp /tmp/Issue410CleanFinalBenchmarks.cs test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+          git add -N test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410CleanFinal*' \
+            --launchCount 1 --warmupCount 3 --iterationCount 10 \
+            --artifacts artifacts/issue410-clean-final/candidate
+
+      - name: Record candidate patch
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue410-clean-final/environment
+          git diff "$BASE_SHA" "$CANDIDATE_SHA" -- \
+            src/SharpLink.Server/Admission \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410-clean-final/environment/product.patch
+
+      - name: Upload clean final A-B evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-clean-final-${{ github.sha }}
+          path: artifacts/issue410-clean-final
+          if-no-files-found: warn
+          retention-days: 30
