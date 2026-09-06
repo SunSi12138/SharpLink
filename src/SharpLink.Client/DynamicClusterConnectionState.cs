@@ -199,6 +199,20 @@ internal sealed partial class SharpLinkClient
             }
         }
 
+        public ClientConnection[] CaptureReadyConnections()
+        {
+            var ready = new List<ClientConnection>();
+            foreach (var connections in _connectionsByEndpoint.Values)
+            {
+                foreach (var connection in connections)
+                {
+                    if (connection.CanAcceptCalls)
+                        ready.Add(connection);
+                }
+            }
+            return ready.Count == 0 ? [] : ready.ToArray();
+        }
+
         public ClientConnection[] DetachAll()
         {
             var connections = new List<ClientConnection>();

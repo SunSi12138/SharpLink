@@ -140,14 +140,6 @@ public sealed class SharpLinkCompressionOptions
         destination._providerBindings = ProviderBindings;
     }
 
-    internal bool IsBeneficial(int originalBytes, int compressedBytes)
-    {
-        if (originalBytes < MinimumPayloadBytes || compressedBytes >= originalBytes)
-            return false;
-        var savings = originalBytes - compressedBytes;
-        return savings >= MinimumSavingsBytes && savings >= originalBytes * MinimumSavingsRatio;
-    }
-
     internal SharpLinkCompressionProviderBinding? FindProviderBinding(string wireProfile)
     {
         foreach (var binding in ProviderBindings)

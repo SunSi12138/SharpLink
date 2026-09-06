@@ -141,3 +141,21 @@ errorCode:uint16 + messageLength:varuint32 + UTF8 message
 - metadata 默认上限 16 KiB，错误消息默认上限 64 KiB。
 - 所有网络长度在 `Slice`、复制或分配前验证。
 - `HandshakeRequest/Response`、`Ping/Pong`、`Cancel`、`StreamComplete`、`WindowUpdate`、`GoAway` 和 health 帧都有类型级最小/最大载荷校验。
+
+
+## Runtime response compression preference control
+
+The current Protocol v2 handshake has a fixed client preference tuple:
+`ResponseCompressionPreferenceGeneration` plus `AllowResponseCompression`. The fields are present even when the
+peers ultimately have no common compression profile. A successful handshake confirms that the server has published
+that initial tuple for the session.
+
+After a session negotiates `Compression`, later client preference changes use the connection-level, uncompressed,
+fixed-size `ResponseCompressionPreferenceUpdate` frame (`requestId = 0`). The server replies with
+`ResponseCompressionPreferenceAck`, whose `AppliedGeneration` is cumulative: ACK `N` completes every client waiter
+for generation `<= N`. A stale update never rolls server state backward. ACK is a convergence boundary for new
+response-compression decisions, not a wire barrier for responses already compressed or queued.
+
+Local Request/Response compression thresholds are not wire state. They are captured from an instance-scoped immutable
+runtime send-policy snapshot at each business-frame compression decision, while provider/profile negotiation remains
+build/handshake immutable.

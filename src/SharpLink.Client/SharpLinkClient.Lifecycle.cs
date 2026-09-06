@@ -89,7 +89,8 @@ internal sealed partial class SharpLinkClient
                 new RpcSessionCreationOptions(
                     RpcSessionRole.Client,
                     _runtimeContext,
-                    _rpcSessionFlushOptions));
+                    _rpcSessionFlushOptions,
+                    _requestCompressionPolicy));
             connection = null;
 
             await CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken).ConfigureAwait(false);
@@ -361,10 +362,13 @@ internal sealed partial class SharpLinkClient
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders);
+        var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,
             ProtocolV2Capabilities.ContractManifest,
-            authPayload);
+            authPayload,
+            handshakePreference.Generation,
+            handshakePreference.Allowed);
         await session.SendHandshakeRequestAndFlushAsync(handshakeRequest, _protocolOptions, ct).ConfigureAwait(false);
 
         var reader = session.Input;
@@ -405,6 +409,10 @@ internal sealed partial class SharpLinkClient
                                 {
                                     handshakeException = CreateProtocolViolationException(
                                         "The handshake result was already completed or the session terminated.");
+                                }
+                                else
+                                {
+                                    session.InitializeClientResponseCompressionPreference(handshakePreference);
                                 }
                             }
                             else
@@ -465,6 +473,12 @@ internal sealed partial class SharpLinkClient
             {
                 if (handshakeException is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
                     SharpLinkTelemetry.RecordProtocolFailure("client");
+                if (handshakeException is null)
+                {
+                    var currentPreference = CaptureResponseCompressionPreference();
+                    if (currentPreference.Generation > handshakePreference.Generation)
+                        session.ReconcileResponseCompressionPreference(currentPreference);
+                }
                 return handshakeException;
             }
 
@@ -539,6 +553,10 @@ internal sealed partial class SharpLinkClient
                             case ProtocolV2FrameType.Pong:
                                 DebugLogServerHeartbeatReceived(_logger);
                                 break;
+                            case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
+                                session.ApplyResponseCompressionPreferenceAck(
+                                    ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload).AppliedGeneration);
+                                break;
                             case ProtocolV2FrameType.Cancel:
                                 _ = session.ReadNegotiatedCancelReason(payload);
                                 DebugLogServerCancelIgnored(_logger);
@@ -590,6 +608,7 @@ internal sealed partial class SharpLinkClient
                                 break;
                             case ProtocolV2FrameType.HandshakeRequest:
                             case ProtocolV2FrameType.HandshakeResponse:
+                            case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
                             case ProtocolV2FrameType.Request:
                             case ProtocolV2FrameType.HealthCheck:
                             default:
