@@ -92,10 +92,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         ThrowIfDisposed();
 
         var windowTimestampTicks = _counter.ToTimestampTicks(window.Ticks);
-        var resolvedActivation = activationMode ??
-            (windowTimestampTicks == _windowTimestampTicks
-                ? DynamicFixedWindowActivationMode.Immediate
-                : DynamicFixedWindowActivationMode.NextWindowBoundary);
+        var resolvedActivation = _counter.ResolveActivation(windowTimestampTicks, activationMode);
         return _counter.CreateSuccessor(
             permitLimit,
             window,
@@ -282,6 +279,37 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         internal bool HasPendingTarget
         {
             get { lock (_gate) return _pendingSequence != 0; }
+        }
+
+        internal DynamicFixedWindowActivationMode ResolveActivation(
+            long requestedWindowTimestampTicks,
+            DynamicFixedWindowActivationMode? requestedActivation)
+        {
+            lock (_gate)
+            {
+                ThrowIfDisposedLocked();
+                AdvanceLocked(_timeProvider.GetTimestamp());
+
+                var requestedWindowIsActive =
+                    requestedWindowTimestampTicks == _activeWindowTimestampTicks;
+                var hasPendingTarget = _pendingSequence != 0;
+                if (requestedActivation == DynamicFixedWindowActivationMode.Immediate)
+                {
+                    if (!requestedWindowIsActive || hasPendingTarget)
+                    {
+                        throw new InvalidOperationException(
+                            "Immediate FixedWindow updates require the requested Window to be the active Window with no pending Window activation.");
+                    }
+                    return DynamicFixedWindowActivationMode.Immediate;
+                }
+
+                if (requestedActivation == DynamicFixedWindowActivationMode.NextWindowBoundary)
+                    return DynamicFixedWindowActivationMode.NextWindowBoundary;
+
+                return requestedWindowIsActive && !hasPendingTarget
+                    ? DynamicFixedWindowActivationMode.Immediate
+                    : DynamicFixedWindowActivationMode.NextWindowBoundary;
+            }
         }
 
         internal DynamicFixedWindowRateLimiter CreateSuccessor(
