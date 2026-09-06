@@ -7,7 +7,7 @@ namespace SharpLink.UnitTests.Server;
 public sealed class AdmissionDynamicRateLegacyWaiterRegressionTests
 {
     [Test]
-    public async Task OldFixedWindowWaiterGrantShouldRemainDebtOnFastTokenBucketTarget()
+    public async Task OldFixedWindowWaiterShouldDrainIndependentlyOfFreshTokenBucketTarget()
     {
         var time = new ManualTimeProvider();
         await using var kernel = new AdmissionStateKernel(time);
@@ -34,6 +34,10 @@ public sealed class AdmissionDynamicRateLegacyWaiterRegressionTests
             plan.Commit();
             source.Retire();
 
+            await ConsumeAsync(replacement);
+            await EnsureRateRejectedAsync(replacement,
+                "the fresh TokenBucket generation must enforce its own one-token budget immediately");
+
             time.Advance(TimeSpan.FromSeconds(40));
             var oldDecision = await oldQueued;
             Ensure(oldDecision.IsAcquired,
@@ -42,16 +46,9 @@ public sealed class AdmissionDynamicRateLegacyWaiterRegressionTests
             Ensure(kernel.QueuedCalls == 0 && source.Controller.GlobalRateStateForTests!.WaitingCount == 0,
                 "old waiter completion must release its outer queue reservation exactly once");
 
-            await EnsureRateRejectedAsync(replacement,
-                "the target must account for the old-generation grant at the handoff timestamp");
-            time.Advance(TimeSpan.FromSeconds(1));
-            await EnsureRateRejectedAsync(replacement,
-                "a one-second target replenishment must not erase a grant that belongs to the old forty-second fixed window");
-            time.Advance(TimeSpan.FromSeconds(39).Subtract(TimeSpan.FromTicks(1)));
-            await EnsureRateRejectedAsync(replacement,
-                "legacy waiter debt must remain effective one tick before the old grant's conservative expiry");
-            time.Advance(TimeSpan.FromTicks(1));
             await ConsumeAsync(replacement);
+            await EnsureRateRejectedAsync(replacement,
+                "an old FixedWindow late grant must not be translated into debt on the independent TokenBucket generation");
         }
         finally
         {
