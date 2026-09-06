@@ -163,7 +163,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             }
 
             if (immediateLease is not null)
-                return ValueTask.FromResult(immediateLease);
+                return ValueTask.FromResult<RateLimitLease>(immediateLease);
             if (waiter is null)
                 continue;
 
@@ -541,8 +541,8 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 }
 
 /// <summary>
-/// Immutable rate-policy view. FixedWindow views share one stable counter while other algorithms keep
-/// the existing state-preserving transition model.
+/// Immutable rate-policy view. Pure non-partition FixedWindow lineages use one stable counter while
+/// partition state and rate lineages entered through another algorithm keep the #333 transition path.
 /// </summary>
 internal sealed class AdmissionRateState : RateLimiter
 {
@@ -586,7 +586,11 @@ internal sealed class AdmissionRateState : RateLimiter
         AdmissionRateState? transitionSource = null)
     {
         var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
-        if (definition.Kind == AdmissionRateStateKind.FixedWindow)
+        var canUseStableFixedWindow =
+            definition.Kind == AdmissionRateStateKind.FixedWindow &&
+            options is not SharpLinkPartitionAdmissionOptions &&
+            (transitionSource is null || transitionSource._fixedWindow is not null);
+        if (canUseStableFixedWindow)
         {
             var window = TimeSpan.FromTicks(definition.PeriodTicks);
             if (transitionSource?._fixedWindow is { } sourceFixed)
@@ -603,9 +607,9 @@ internal sealed class AdmissionRateState : RateLimiter
                 new AdmissionRateTransitionLineage());
         }
 
-        // A transition from FixedWindow into another algorithm is deliberately a generation
-        // boundary. TokenBucket/SlidingWindow continue sharing their legacy lineage only when the
-        // source is another legacy state.
+        // TokenBucket/SlidingWindow, partitions, and a FixedWindow entered through another
+        // algorithm keep the existing #333 lineage so their established handoff semantics remain.
+        // Exiting a stable FixedWindow lineage is a deliberate generation boundary in this candidate.
         var state = new AdmissionDynamicRateState(
             definition,
             timeProvider,
