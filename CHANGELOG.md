@@ -6,6 +6,9 @@
 
 ### Changed
 
+- Compression policy is now algorithm-neutral: `SharpLink.Runtime` ships no concrete compressor, algorithm-specific framing, or checksum machinery. Negotiation, adaptive raw/compressed selection, bounds, flow-control accounting, and call/stream failure isolation remain in Core.
+- `ISharpLinkCompressionProvider` now uses `TryCompress(...) -> bool` plus `void Decompress(...)`. Successful return means the complete input was consumed; Core measures output bytes from its bounded writer. `TryCompress=false` is the public bounded-candidate fallback and replaces the old internal output-limit exception path.
+
 - Client and Server interceptor generations are now composed once when published instead of interpreting an interceptor array through per-RPC continuation state. Correct `next` usage is an interceptor-author contract: invoke it at most once, await or directly return it, and do not retain it after the interceptor returns. SharpLink no longer allocates/verifies per-layer duplicate, retained, or fire-and-forget continuation misuse; generation capture, deadline/re-entry guards, legal short-circuit behavior, and the response-bearing Server terminal check remain enforced.
 
 - Server connection admission now defaults to an independent 64-concurrent pre-auth handshake bound (TLS → Protocol v2 → application authentication), clamped by a lower `MaxConcurrentConnections`. Explicit `MaxConcurrentHandshakes = 0` remains the opt-out that restores the previous follow-the-connection-bound behavior; the live-connection default remains 1,024 and Protocol v2/wire behavior is unchanged.
@@ -49,6 +52,7 @@
 
 ### Breaking
 
+- Removed the built-in Brotli provider/factory, `SharpLinkCompressionResult`, and the `SCP1 + CRC32` profile. Applications that want compression must register an external/application-defined provider and adopt the strict complete-payload `TryCompress`/`Decompress` contract. The removed `brotli` representation must not be reused under the same wire-profile identity by an incompatible implementation.
 - Client builders no longer receive an implicit 30-second request-timeout fallback. Every `SharpClientBuilder` and `SharpLinkMultiClusterClientBuilder` must explicitly select `UseRequestTimeout()`, `UseRequestTimeout(timeout)`, or `DisableRequestTimeout()` before `Build()`; applications that omit the choice now fail during Build/host startup. MultiCluster children inherit the coordinator's frozen policy unless they explicitly override it. See [`doc/migration.md`](doc/migration.md#client-request-timeout-policy).
 - `SharpLinkCallOptions` is removed from generated/service business signatures and from the generated `IRpcChannel` ABI. Per-call timeout now comes from method `[Timeout]` or the Client timeout policy, caller cancellation remains the method `CancellationToken`, and caller-selected metadata uses the narrow `GetWithMetadata<TContract>(SharpLinkMetadata)` proxy capability. No generic compatibility options bag is retained; regenerate all contracts/proxies/stubs and see [`doc/migration.md`](doc/migration.md).
 - Protocol v2 minor 4 is the SharpLink 2.0 wire baseline for RPC lifetime propagation. Request frames carry remaining `TimeBudget` instead of an absolute Unix-millisecond deadline, and 2.0 rejects peers below minor 4 during handshake so legacy bytes cannot be misinterpreted. Pre-2.0 process interoperability is not a 2.0 compatibility requirement.
