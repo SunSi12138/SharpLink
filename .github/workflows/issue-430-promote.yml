@@ -1,0 +1,76 @@
+name: issue-430-promote
+
+on:
+  push:
+    branches:
+      - tmp/issue-430-worker
+    paths:
+      - .github/workflows/issue-430-promote.yml
+
+permissions:
+  contents: write
+
+env:
+  STAGE2_SHA: 2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab
+  EXPECTED_HEAD: 5a025579e2417e5b72a91ab4dd924d871c0cd02f
+  TARGET_BRANCH: fix/430-compression-provider-boundary
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct and promote validated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
+          echo "$STAGE2_SHA  $RUNNER_TEMP/stage2.b64" | sha256sum -c -
+          base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
+          cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
+          cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
+          cp .tmp/issue430-stage2/evidence1.patch "$RUNNER_TEMP/evidence1.patch"
+          cp .tmp/issue430-final/docs.patch "$RUNNER_TEMP/docs.patch"
+
+          git fetch origin "$TARGET_BRANCH"
+          actual_head="$(git rev-parse "origin/$TARGET_BRANCH")"
+          test "$actual_head" = "$EXPECTED_HEAD"
+          git checkout -B issue430-promote "origin/$TARGET_BRANCH"
+
+          git apply --check "$RUNNER_TEMP/stage2.patch"
+          git apply "$RUNNER_TEMP/stage2.patch"
+          git apply --check "$RUNNER_TEMP/format.patch"
+          git apply "$RUNNER_TEMP/format.patch"
+          git apply --check "$RUNNER_TEMP/compile1.patch"
+          git apply "$RUNNER_TEMP/compile1.patch"
+          git apply --check "$RUNNER_TEMP/evidence1.patch"
+          git apply "$RUNNER_TEMP/evidence1.patch"
+          git apply --check "$RUNNER_TEMP/docs.patch"
+          git apply "$RUNNER_TEMP/docs.patch"
+
+          git diff --check
+          test "$(grep -c 'Added `SharpLink.Compression.Zstd`' CHANGELOG.md)" -eq 1
+          grep -q 'zstd-rfc8878-w23-checksum/v1' src/SharpLink.Compression.Zstd/SharpLinkZstdCompressionProvider.cs
+          grep -q 'ZeroByteRepresentationShouldRoundTripThroughWireEnvelope' test/SharpLink.UnitTests/Runtime/CompressionFrameTests.cs
+          grep -q 'Issue #430 Zstandard feasibility and performance evidence' doc/issue-430-zstd-evidence.md
+          if grep -R -n -E 'BrotliCompressionProvider|SCP1|Crc32Accumulator' src/SharpLink.Runtime; then
+            echo 'Concrete compression machinery returned to Core.' >&2
+            exit 1
+          fi
+          if git status --short | grep -E '^.. (\.tmp/|\.github/workflows/issue-430-)'; then
+            echo 'Helper validation files leaked into the production candidate.' >&2
+            exit 1
+          fi
+
+          git config user.name 'SharpLink issue 430'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat(compression): add official Zstd provider'
+          promoted_sha="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          echo "PROMOTED_SHA=$promoted_sha" >> "$GITHUB_STEP_SUMMARY"
