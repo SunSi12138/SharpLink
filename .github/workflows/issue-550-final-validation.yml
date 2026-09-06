@@ -1,0 +1,158 @@
+name: Issue 550 Final Validation
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [tmp/issue-550-final-runner]
+    paths:
+      - .github/workflows/issue-550-final-validation.yml
+
+concurrency:
+  group: issue-550-final-validation
+  cancel-in-progress: true
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout review candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: tmp/issue-550-review-candidate
+          fetch-depth: 0
+
+      - name: Rebase and squash onto current dev
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin dev fix/issue-550-dynamic-compression-policy
+          BASE_SHA="$(git rev-parse origin/dev)"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+          git checkout -B issue-550-final tmp/issue-550-review-candidate
+          git rebase origin/dev
+          git reset --soft origin/dev
+          git commit -m "feat(compression): add dynamic runtime policy control"
+
+          FINAL_SHA="$(git rev-parse HEAD)"
+          echo "final_sha=$FINAL_SHA" >> "$GITHUB_OUTPUT"
+          test "$(git rev-list --count origin/dev..HEAD)" -eq 1
+          if [[ -n "$(git diff --name-only origin/dev...HEAD -- .github/workflows)" ]]; then
+            echo "Temporary or unrelated workflow changes leaked into the final candidate." >&2
+            git diff --name-status origin/dev...HEAD -- .github/workflows >&2
+            exit 1
+          fi
+          git diff --check origin/dev...HEAD
+          git status --short
+          test -z "$(git status --porcelain)"
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Verify formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Project-reference boundary gate
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Maintainability gates
+        run: |
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load-test tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration tests serial
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: NativeAOT transport and topology smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
+
+      - name: Dynamic compression policy hot-path evidence
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-550
+          SHARPLINK_BENCHMARK_SHA="$(git rev-parse HEAD)" \
+            dotnet run -c Release --no-build \
+            --project test/SharpLink.Benchmarks \
+            -- \
+            --dynamic-compression-policy-evidence \
+            artifacts/issue-550/dynamic-compression-policy.json
+          cat artifacts/issue-550/dynamic-compression-policy.json
+
+      - name: Final lineage and worktree checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check origin/dev...HEAD
+          test "$(git rev-list --count origin/dev..HEAD)" -eq 1
+          if [[ -n "$(git diff --name-only origin/dev...HEAD -- .github/workflows)" ]]; then
+            echo "Workflow leakage detected." >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+            echo "Final worktree is not clean:" >&2
+            git status --short >&2
+            exit 1
+          fi
+          git log -1 --oneline
+          git diff --stat origin/dev...HEAD
+
+      - name: Verify dev did not move
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ steps.candidate.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin dev
+          ACTUAL_BASE="$(git rev-parse origin/dev)"
+          if [[ "$ACTUAL_BASE" != "$EXPECTED_BASE" ]]; then
+            echo "dev moved during validation: expected $EXPECTED_BASE, now $ACTUAL_BASE" >&2
+            exit 1
+          fi
+
+      - name: Publish exact validated commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          FINAL_SHA="$(git rev-parse HEAD)"
+          git push --force origin "$FINAL_SHA":refs/heads/tmp/issue-550-final-candidate
+          git push --force origin "$FINAL_SHA":refs/heads/fix/issue-550-dynamic-compression-policy
+          echo "Published validated issue #550 commit: $FINAL_SHA"
