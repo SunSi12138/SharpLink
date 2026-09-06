@@ -1,0 +1,77 @@
+name: issue-430-zstd-performance
+
+on:
+  push:
+    branches:
+      - tmp/issue-430-worker
+    paths:
+      - .github/workflows/issue-430-zstd-performance.yml
+
+permissions:
+  contents: read
+
+env:
+  STAGE2_SHA: 2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  evidence:
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [full, wan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reconstruct validated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
+          actual="$(openssl dgst -sha256 "$RUNNER_TEMP/stage2.b64" | awk '{print $NF}')"
+          test "$actual" = "$STAGE2_SHA"
+          base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
+          cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
+          cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
+          git fetch origin fix/430-compression-provider-boundary
+          git checkout -B issue430-stage2 origin/fix/430-compression-provider-boundary
+          test "$(git rev-parse HEAD)" = '5a025579e2417e5b72a91ab4dd924d871c0cd02f'
+          git apply "$RUNNER_TEMP/stage2.patch"
+          git apply "$RUNNER_TEMP/format.patch"
+          git apply "$RUNNER_TEMP/compile1.patch"
+          git diff --check
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build evidence runner
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+      - name: Apply WAN-like loopback shaping
+        if: matrix.profile == 'wan'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo tc qdisc add dev lo root netem delay 20ms rate 50mbit
+          tc qdisc show dev lo
+      - name: Run Zstd evidence matrix
+        shell: bash
+        env:
+          SHARPLINK_BENCHMARK_SHA: issue430-stage2-on-5a025579
+          SHARPLINK_EVIDENCE_NETWORK: ${{ matrix.profile == 'wan' && 'loopback:20ms,50mbit' || 'local' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/zstd-evidence
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- --zstd-evidence "artifacts/zstd-evidence/${{ matrix.profile }}.json" "${{ matrix.profile }}" > "artifacts/zstd-evidence/${{ matrix.profile }}.stdout"
+          test -s "artifacts/zstd-evidence/${{ matrix.profile }}.json"
+      - name: Remove WAN shaping
+        if: always() && matrix.profile == 'wan'
+        shell: bash
+        run: sudo tc qdisc del dev lo root || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zstd-performance-${{ matrix.profile }}
+          path: artifacts/zstd-evidence
+          retention-days: 7
