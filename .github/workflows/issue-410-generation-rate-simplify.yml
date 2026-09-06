@@ -20,7 +20,9 @@ jobs:
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
       - name: Apply simplification
-        run: python3 .github/issue410-generation-rate-simplify.py
+        run: |
+          python3 .github/issue410-fixed-lineage-cleanup.py
+          python3 .github/issue410-generation-rate-simplify.py
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Format
