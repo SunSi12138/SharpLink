@@ -1,3 +1,4 @@
+# stage1/stage2 same-runner comparison using the common pre-stage2 string RPC
 name: issue-430-disabled-ab
 
 on:
@@ -92,7 +93,7 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import json, math, statistics
+          import json, statistics
           from pathlib import Path
           root=Path('artifacts/disabled-ab')
           docs={p.stem:json.loads(p.read_text()) for p in root.glob('*.json') if '-r' in p.stem}
