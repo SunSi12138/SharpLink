@@ -68,6 +68,7 @@ jobs:
               '    {\n'
               '        lock (_gate)\n'
               '        {\n'
+              '            _publishedPolicy = _currentPolicy;\n'
               '            foreach (var entry in _entries.Values)\n'
               '                entry.Current.Rate?.OnPublished();\n'
               '        }\n'
@@ -95,6 +96,82 @@ jobs:
               f'publication.write_text({support_source!r})\n\n'
           )
           text = text[:start] + replacement + text[end:]
+
+          insert_marker = '# Server-level partition integration: shared accounting snapshots and post-pointer queue activation.'
+          published_state = '''# Partition entries created after publication must know which policy may publish its queued target.
+          replace_once(
+              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+              """    private SharpLinkPartitionAdmissionOptions _options;\\n    private AdmissionPartitionPolicyGeneration _currentPolicy;\\n    private List<AdmissionPartitionPolicyGeneration> _policies;\\n""",
+              """    private SharpLinkPartitionAdmissionOptions _options;\\n    private AdmissionPartitionPolicyGeneration _currentPolicy;\\n    private AdmissionPartitionPolicyGeneration _publishedPolicy;\\n    private List<AdmissionPartitionPolicyGeneration> _policies;\\n""",
+          )
+          replace_once(
+              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+              """        _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);\\n        _policies = [_currentPolicy];\\n""",
+              """        _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);\\n        _publishedPolicy = _currentPolicy;\\n        _policies = [_currentPolicy];\\n""",
+          )
+          replace_once(
+              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+              """            if (!ReferenceEquals(entry.Current.Policy, _currentPolicy))\\n            {\\n                throw new InvalidOperationException(\\n                    \"New admission partition entry did not converge to the current policy generation.\");\\n            }\\n            return entry;\\n""",
+              """            if (!ReferenceEquals(entry.Current.Policy, _currentPolicy))\\n            {\\n                throw new InvalidOperationException(\\n                    \"New admission partition entry did not converge to the current policy generation.\");\\n            }\\n            if (ReferenceEquals(entry.Current.Policy, _publishedPolicy))\\n                entry.Current.Rate?.OnPublished();\\n            return entry;\\n""",
+          )
+
+          '''
+          if text.count(insert_marker) != 1:
+              raise SystemExit(f'expected one partition-test insertion marker, found {text.count(insert_marker)}')
+          text = text.replace(insert_marker, published_state + insert_marker, 1)
+
+          extra_test_marker = '    [Test]\n    [NotInParallel]\n    public async Task PartitionImmediateIncreaseMustNotWakeQueuedWorkBeforeProgramPublication()'
+          extra_test = '''    [Test]
+              public async Task OldSnapshotCreatingEntryAfterPublicationShouldSeePublishedQueuedTarget()
+              {
+                  await using var server = CreateServer();
+                  var publicServer = (ISharpLinkServer)server;
+                  publicServer.EnableAdmissionControl(options =>
+                  {
+                      Configure(options, 1);
+                      ConfigureQueue(options);
+                  });
+                  var source = Current(server);
+                  Ensure(source.TryAcquireUse(), "test must pin source before the partition entry exists");
+
+                  try
+                  {
+                      publicServer.UpdateAdmissionControl(options =>
+                      {
+                          Configure(options, 3);
+                          ConfigureQueue(options);
+                      });
+
+                      await ConsumeAsync(source, allowQueue: true);
+                      var rebound = await source.Controller.AcquireAsync(
+                          Context(), 1, allowQueue: true, CancellationToken.None);
+                      Ensure(rebound.IsAcquired,
+                          "old snapshot retry on an entry created after publication must use the published queued target");
+                      rebound.Lease!.Dispose();
+                  }
+                  finally
+                  {
+                      source.ReleaseUse();
+                  }
+              }
+
+          '''
+          # Insert the generated test into the raw source emitted by the staging script.
+          raw_test_marker = "    [Test]\\n    [NotInParallel]\\n    public async Task PartitionImmediateIncreaseMustNotWakeQueuedWorkBeforeProgramPublication()"
+          generated_test_insert = extra_test.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+          test_patch = (
+              "partition_text = partition_tests.read_text()\n"
+              f"marker = {raw_test_marker!r}\n"
+              f"insert = {extra_test!r}\n"
+              "if partition_text.count(marker) != 1:\n"
+              "    raise RuntimeError(f'expected one late-entry test marker, found {partition_text.count(marker)}')\n"
+              "partition_tests.write_text(partition_text.replace(marker, insert + marker, 1))\n\n"
+          )
+          final_marker = 'print("issue #410 partition FixedWindow refactor staged")'
+          if text.count(final_marker) != 1:
+              raise SystemExit(f'expected one staging final marker, found {text.count(final_marker)}')
+          text = text.replace(final_marker, test_patch + final_marker, 1)
+
           path.write_text(text)
           PY
           python3 .github/issue410-partition-promote.py
@@ -127,6 +204,6 @@ jobs:
             exit 0
           fi
           git config user.name 'github-actions[bot]'
-          git config user.email '41898282+SunSi12138@users.noreply.github.com'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'refactor(admission): unify fixed-window partition state'
           git push origin HEAD:issue-410-dynamic-fixed-window-clean
