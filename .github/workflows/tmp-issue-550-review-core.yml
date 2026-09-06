@@ -44,6 +44,32 @@ jobs:
           git checkout -B issue-550-review origin/fix/issue-550-dynamic-compression-policy
           git rebase origin/dev
           python3 /tmp/apply_issue_550_review.py
+          python3 - <<'PYTHON'
+          from pathlib import Path
+
+          client_path = Path('src/SharpLink.Client/SharpClientBuilder.cs')
+          client = client_path.read_text()
+          client = client.replace('public class SharpClientBuilder\n{', 'public partial class SharpClientBuilder\n{', 1)
+          client = client.replace(
+              '    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n'
+              '    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n',
+              '', 1)
+          client_block = '''    /// <summary>Configures the initial Client Request compression send policy.</summary>\n    public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _requestCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n    internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)\n    {\n        Configure(() => _beforeReadyPublicationTestHook = hook ?? throw new ArgumentNullException(nameof(hook)));\n        return this;\n    }\n\n'''
+          if client_block not in client:
+              raise SystemExit('client compression builder block missing')
+          client_path.write_text(client.replace(client_block, '', 1))
+          Path('src/SharpLink.Client/SharpClientBuilder.Compression.cs').write_text('''namespace SharpLink.Client;\n\npublic partial class SharpClientBuilder\n{\n    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n\n    /// <summary>Configures the initial Client Request compression send policy.</summary>\n    public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _requestCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n    internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)\n    {\n        Configure(() => _beforeReadyPublicationTestHook = hook ?? throw new ArgumentNullException(nameof(hook)));\n        return this;\n    }\n}\n''')
+
+          server_path = Path('src/SharpLink.Server/SharpLinkServerBuilder.cs')
+          server = server_path.read_text()
+          server = server.replace('public class SharpLinkServerBuilder : ISharpLinkServerBuilder\n{', 'public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder\n{', 1)
+          server = server.replace('    private SharpLinkCompressionSendPolicy _responseCompressionPolicy = new();\n', '', 1)
+          server_block = '''    /// <summary>Configures the initial Server Response compression send policy.</summary>\n    public SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _responseCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n'''
+          if server_block not in server:
+              raise SystemExit('server compression builder block missing')
+          server_path.write_text(server.replace(server_block, '', 1))
+          Path('src/SharpLink.Server/SharpLinkServerBuilder.Compression.cs').write_text('''namespace SharpLink.Server;\n\npublic partial class SharpLinkServerBuilder\n{\n    private SharpLinkCompressionSendPolicy _responseCompressionPolicy = new();\n\n    /// <summary>Configures the initial Server Response compression send policy.</summary>\n    public SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _responseCompressionPolicy = policy;\n        });\n        return this;\n    }\n}\n''')
+          PYTHON
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
