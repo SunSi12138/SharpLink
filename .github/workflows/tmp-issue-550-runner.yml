@@ -58,6 +58,28 @@ jobs:
           git fetch origin dev
           git checkout --detach origin/dev
           python3 /tmp/apply_issue_550.py
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          path = Path('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs')
+          text = path.read_text()
+          declaration = 'public static class ProtocolV2PayloadCodec\n{'
+          if declaration not in text:
+              raise SystemExit('ProtocolV2PayloadCodec declaration not found')
+          text = text.replace(declaration, 'public static partial class ProtocolV2PayloadCodec\n{', 1)
+          start_marker = '    /// <summary>Writes one fixed-size response-compression preference update.</summary>\n'
+          end_marker = '    /// <summary>Writes a non-zero stream credit update.</summary>\n'
+          start = text.find(start_marker)
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('response compression preference codec block not found')
+          block = text[start:end]
+          path.write_text(text[:start] + text[end:])
+          Path('src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.ResponseCompressionPreference.cs').write_text(
+              'namespace SharpLink.Runtime;\n\n'
+              'public static partial class ProtocolV2PayloadCodec\n{\n'
+              + block +
+              '}\n')
+          PYTHON
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
