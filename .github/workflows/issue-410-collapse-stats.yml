@@ -1,0 +1,28 @@
+name: Issue 410 FixedWindow collapse stats
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-wrapper-collapse-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Apply collapse and report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/issue410-collapse-fixed-policy.py
+          git add -N src test
+          git diff --stat
+          echo '--- generated partial LOC ---'
+          wc -l \
+            src/SharpLink.Server/Admission/AdmissionRateState.FixedWindow.cs \
+            src/SharpLink.Server/Admission/AdmissionRateState.FixedWindowCounter.cs
