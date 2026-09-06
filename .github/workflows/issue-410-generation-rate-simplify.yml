@@ -19,10 +19,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
-      - name: Apply simplification
+      - name: Apply simplification and contract rewrite
         run: |
           python3 .github/issue410-fixed-lineage-cleanup.py
           python3 .github/issue410-generation-rate-simplify.py
+          python3 .github/issue410-generation-rate-tests.py
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Format
@@ -31,12 +32,11 @@ jobs:
         run: bash eng/check-maintainability.sh
       - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
-      - name: Unit Tests (expected semantic-delta audit)
-        continue-on-error: true
+      - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-      - name: Report product diff
+      - name: Report product and test diff
         if: always()
         shell: bash
         run: |
-          git add -N src
-          git diff --stat -- src/SharpLink.Server eng/maintainability/baseline.json
+          git add -N src test
+          git diff --stat -- src/SharpLink.Server eng/maintainability/baseline.json test/SharpLink.UnitTests/Server
