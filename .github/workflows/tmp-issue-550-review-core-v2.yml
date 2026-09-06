@@ -71,6 +71,14 @@ jobs:
                   end += 1
               return text[:start] + text[end:]
 
+          options_path = Path('src/SharpLink.Runtime/RpcSessionCreationOptions.cs')
+          options = options_path.read_text()
+          old_fallback = '''        CompressionSendPolicyState = compressionSendPolicyState ??\n            SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(runtimeContext.Compression);'''
+          new_fallback = '''        CompressionSendPolicyState = compressionSendPolicyState ??\n            SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());'''
+          if old_fallback not in options:
+              raise SystemExit('RpcSessionCreationOptions compression fallback anchor missing')
+          options_path.write_text(options.replace(old_fallback, new_fallback, 1))
+
           client_path = Path('src/SharpLink.Client/SharpClientBuilder.cs')
           client = client_path.read_text()
           client = client.replace('public class SharpClientBuilder\n{', 'public partial class SharpClientBuilder\n{', 1)
