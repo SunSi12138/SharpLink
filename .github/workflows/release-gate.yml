@@ -277,6 +277,7 @@ jobs:
             SharpLink.Runtime
             SharpLink.Serializer.SharpPack
             SharpLink.Client
+            SharpLink.Compression.Zstd
             SharpLink.Server
             SharpLink.Hosting
           )
