@@ -1,0 +1,123 @@
+name: issue-430-zstd-matrix
+
+on:
+  push:
+    branches:
+      - tmp/issue-430-worker
+    paths:
+      - .github/workflows/issue-430-zstd-matrix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  bcl-interop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reconstruct candidate and evidence source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
+          echo '2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab  '"$RUNNER_TEMP/stage2.b64" | sha256sum -c -
+          base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
+          cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
+          cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
+          cp .tmp/issue430-stage2/bcl/Program.cs "$RUNNER_TEMP/BclProgram.cs"
+          cp .tmp/issue430-stage2/bcl/ZstdBclEvidence.csproj "$RUNNER_TEMP/Bcl.csproj"
+          git fetch origin fix/430-compression-provider-boundary
+          git checkout -B issue430-stage2 origin/fix/430-compression-provider-boundary
+          test "$(git rev-parse HEAD)" = '5a025579e2417e5b72a91ab4dd924d871c0cd02f'
+          git apply "$RUNNER_TEMP/stage2.patch"
+          git apply "$RUNNER_TEMP/format.patch"
+          git apply "$RUNNER_TEMP/compile1.patch"
+          mkdir -p .validation/ZstdBclEvidence artifacts/zstd-bcl
+          cp "$RUNNER_TEMP/BclProgram.cs" .validation/ZstdBclEvidence/Program.cs
+          sed 's#SHARPLINK_ZSTD_PROJECT#../../src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj#' "$RUNNER_TEMP/Bcl.csproj" > .validation/ZstdBclEvidence/ZstdBclEvidence.csproj
+          mv global.json "$RUNNER_TEMP/global.json.issue430"
+      - name: Setup .NET 10 and .NET 11 Preview 7
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.100-preview.7.26381.103
+      - name: Run BCL interoperability matrix
+        shell: bash
+        env:
+          SHARPLINK_ZSTD_BCL_EVIDENCE: artifacts/zstd-bcl/${{ runner.os }}.json
+        run: |
+          set -euo pipefail
+          dotnet --list-sdks
+          test "$(dotnet --version)" = '11.0.100-preview.7.26381.103'
+          dotnet run -c Release --project .validation/ZstdBclEvidence/ZstdBclEvidence.csproj 2> artifacts/zstd-bcl/${{ runner.os }}.stderr
+          grep -q ZSTD_BCL_INTEROP_PASS artifacts/zstd-bcl/${{ runner.os }}.stderr
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zstd-bcl-${{ runner.os }}
+          path: artifacts/zstd-bcl
+          retention-days: 7
+
+  native-aot:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reconstruct candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
+          echo '2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab  '"$RUNNER_TEMP/stage2.b64" | sha256sum -c -
+          base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
+          cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
+          cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
+          git fetch origin fix/430-compression-provider-boundary
+          git checkout -B issue430-stage2 origin/fix/430-compression-provider-boundary
+          test "$(git rev-parse HEAD)" = '5a025579e2417e5b72a91ab4dd924d871c0cd02f'
+          git apply "$RUNNER_TEMP/stage2.patch"
+          git apply "$RUNNER_TEMP/format.patch"
+          git apply "$RUNNER_TEMP/compile1.patch"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish and run NativeAOT smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Linux) rid=linux-x64 ;;
+            Windows) rid=win-x64 ;;
+            macOS) if [[ "$(uname -m)" == arm64 ]]; then rid=osx-arm64; else rid=osx-x64; fi ;;
+            *) exit 2 ;;
+          esac
+          out="artifacts/zstd-aot-$RUNNER_OS"
+          mkdir -p "$out"
+          dotnet publish test/SharpLink.ZstdAotSmoke/SharpLink.ZstdAotSmoke.csproj -c Release -r "$rid" -o "$out" -v minimal
+          if [[ "$RUNNER_OS" == Windows ]]; then exe="$out/SharpLink.ZstdAotSmoke.exe"; else exe="$out/SharpLink.ZstdAotSmoke"; fi
+          "$exe" | tee "$out/run.stdout"
+          grep -q ZSTD_AOT_PASS "$out/run.stdout"
+          find "$out" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort > "$out/files.txt" || ls -1 "$out" | sort > "$out/files.txt"
+          if grep -Ei '(^|[^A-Za-z])lib?zstd|zstd\.(dll|so|dylib)$' "$out/files.txt"; then
+            echo 'Unexpected separately deployed native zstd library.' >&2
+            exit 1
+          fi
+          printf '{"runner":"%s","rid":"%s","nativeAot":"pass","separateNativeZstd":"absent"}\n' "$RUNNER_OS" "$rid" > "$out/result.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zstd-aot-${{ runner.os }}
+          path: artifacts/zstd-aot-${{ runner.os }}
+          retention-days: 7
