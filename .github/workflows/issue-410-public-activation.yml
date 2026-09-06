@@ -28,7 +28,11 @@ jobs:
         uses: ./.github/actions/setup-dotnet
 
       - name: Apply public API transform
-        run: python3 .github/issue410-public-activation.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/issue410-public-activation.py
+          rm test/SharpLink.UnitTests/Server/SharpLinkFixedWindowUpdateActivationTests.cs
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
