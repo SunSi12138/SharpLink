@@ -89,6 +89,7 @@ internal sealed partial class RpcSession
         Id = connection.Id;
         Role = creationOptions.Role;
         RuntimeContext = creationOptions.RuntimeContext;
+        _compressionSendPolicyState = creationOptions.CompressionSendPolicyState;
         _lastActiveTimestamp = RuntimeContext.TimeProvider.GetTimestamp();
         _lastActiveUtcTicks = RuntimeContext.TimeProvider.GetUtcNow().UtcDateTime.Ticks;
         StreamManager = new StreamManager(

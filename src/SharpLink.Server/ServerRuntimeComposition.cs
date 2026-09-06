@@ -17,6 +17,7 @@ internal sealed class ServerRuntimeComposition
         TimeSpan heartbeatTimeout,
         ILogger logger,
         SharpLinkRuntimeContext runtimeContext,
+        SharpLinkCompressionSendPolicy responseCompressionPolicy,
         ISharpLinkServerAuthenticator? authenticator,
         bool authenticationRequired,
         SharpLinkProtocolOptions protocolOptions,
@@ -39,6 +40,8 @@ internal sealed class ServerRuntimeComposition
             throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
         Logger = logger ?? throw new ArgumentNullException(nameof(logger));
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
+        ResponseCompressionPolicy = responseCompressionPolicy ?? throw new ArgumentNullException(nameof(responseCompressionPolicy));
+        _ = CompressionSendPolicySnapshot.CreateValidated(ResponseCompressionPolicy);
         ProtocolOptions = protocolOptions ?? throw new ArgumentNullException(nameof(protocolOptions));
         ArgumentNullException.ThrowIfNull(interceptors);
         ExceptionMapper = exceptionMapper ?? throw new ArgumentNullException(nameof(exceptionMapper));
@@ -76,6 +79,8 @@ internal sealed class ServerRuntimeComposition
     internal ILogger Logger { get; }
 
     internal SharpLinkRuntimeContext RuntimeContext { get; }
+
+    internal SharpLinkCompressionSendPolicy ResponseCompressionPolicy { get; }
 
     internal ServerAuthenticationCoordinator Authentication { get; }
 

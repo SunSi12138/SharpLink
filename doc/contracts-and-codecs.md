@@ -79,8 +79,7 @@ Client 与 Server 在各自 `UseRuntime` 中按偏好顺序注册 provider：
 builder.UseRuntime(options =>
 {
     options.Compression.Providers.Add(myCompressionProvider);
-    options.Compression.MinimumPayloadBytes = 2048;
-});
+})
 ```
 
 只有双方 wire profile 完全匹配才启用压缩；单边配置或无交集会安全退回原始帧。压缩只覆盖业务 payload，协议路由前缀保持可解析。只有同时达到最小 payload、绝对节省和比例节省阈值才发送压缩结果。解压输出仍受协商后的最大 frame payload 限制。

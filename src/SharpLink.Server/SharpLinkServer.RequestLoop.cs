@@ -221,6 +221,15 @@ internal sealed partial class SharpLinkServer
                                 case ProtocolV2FrameType.Pong:
                                     DebugLogClientHeartbeatReceived(_logger);
                                     break;
+                                case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
+                                    var responseCompressionPreference =
+                                        ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
+                                    var appliedResponseCompressionGeneration =
+                                        session.ApplyServerResponseCompressionPreferenceUpdate(responseCompressionPreference);
+                                    await session.SendResponseCompressionPreferenceAckWithBackpressureAsync(
+                                        appliedResponseCompressionGeneration,
+                                        ct).ConfigureAwait(false);
+                                    break;
                                 case ProtocolV2FrameType.Request:
                                     {
                                         var requestId = unchecked((long)header.RequestId);
@@ -286,6 +295,7 @@ internal sealed partial class SharpLinkServer
                                     break;
                                 case ProtocolV2FrameType.HandshakeRequest:
                                 case ProtocolV2FrameType.HandshakeResponse:
+                                case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                                 case ProtocolV2FrameType.Response:
                                 case ProtocolV2FrameType.HealthResponse:
                                 default:

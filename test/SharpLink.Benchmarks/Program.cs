@@ -15,6 +15,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--dynamic-compression-policy-evidence", StringComparison.Ordinal))
+        {
+            await CompressionDynamicPolicyEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--allocation-gate", StringComparison.Ordinal))
         {
             await AllocationGateRunner.RunAsync(args[1..]);

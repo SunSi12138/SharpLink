@@ -440,9 +440,6 @@ public static class Program
 
     private static void ConfigureZstd(SharpLinkRuntimeOptions options)
     {
-        options.Compression.MinimumPayloadBytes = 64;
-        options.Compression.MinimumSavingsBytes = 8;
-        options.Compression.MinimumSavingsRatio = 0;
         options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
     }
 
