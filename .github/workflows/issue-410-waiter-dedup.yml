@@ -41,7 +41,16 @@ jobs:
               "maxLoc": 904,
               "reason": "Existing dev debt captured by issue #350."
             },
-          '''
+          '''.replace('      ', '      ')
+          # Keep the literal here visually aligned with the baseline's six-space member indentation.
+          allowance = (
+              '    {\n'
+              '      "domain": "source",\n'
+              '      "path": "src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs",\n'
+              '      "maxLoc": 904,\n'
+              '      "reason": "Existing dev debt captured by issue #350."\n'
+              '    },\n'
+          )
           if text.count(allowance) != 1:
               raise SystemExit(f'expected one resolved rate-state allowance, found {text.count(allowance)}')
           path.write_text(text.replace(allowance, '', 1))
