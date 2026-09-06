@@ -471,8 +471,15 @@ public sealed class AdmissionDynamicUpdateTests
         var replaced = Current(server);
         var replacementAttempt = await replaced.Controller.AcquireAsync(
             context, 1, false, CancellationToken.None);
-        Ensure(!replacementAttempt.IsAcquired && replacementAttempt.Reason == "rate",
-            "algorithm replacement must carry a conservative debt barrier into the target algorithm");
+        Ensure(replacementAttempt.IsAcquired,
+            "TokenBucket -> FixedWindow must publish a fresh target generation while preserving concurrency continuity");
+        replacementAttempt.Lease!.Dispose();
+        var replacementExhausted = await replaced.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(!replacementExhausted.IsAcquired && replacementExhausted.Reason == "rate",
+            "fresh FixedWindow generation must still enforce its own one-permit budget");
+        Ensure(ReferenceEquals(state, replaced.Controller.GlobalConcurrencyStateForTests) && state.PermitLimit == 5,
+            "algorithm generation boundary must not replace the stable concurrency state");
 
         publicServer.UpdateAdmissionControl(options => options.Global.UseConcurrency(5));
         var removed = Current(server);

@@ -25,7 +25,7 @@ public sealed class AdmissionDynamicRateUpdateTests
     }
 
     [Test]
-    public async Task FixedWindowDurationUpdateShouldPreserveTheActiveWindowEpochAndConsumption()
+    public async Task FixedWindowDurationUpdateShouldActivateAtTheNextNaturalBoundary()
     {
         var time = new ManualTimeProvider();
         await using var kernel = new AdmissionStateKernel(time);
@@ -38,15 +38,18 @@ public sealed class AdmissionDynamicRateUpdateTests
             source,
             options => ConfigureFixedWindow(options, 5, TimeSpan.FromSeconds(20)));
 
-        await ConsumeAsync(replacement, 2);
-        await EnsureRateRejectedAsync(replacement,
-            "changing the fixed-window duration must not start a fresh window at publication");
-
-        time.Advance(TimeSpan.FromSeconds(17).Subtract(TimeSpan.FromTicks(1)));
-        await EnsureRateRejectedAsync(replacement,
-            "the preserved fixed-window epoch must remain exhausted one tick before its deterministic rollover");
-        time.Advance(TimeSpan.FromTicks(1));
         await ConsumeAsync(replacement, 1);
+        await EnsureRateRejectedAsync(replacement,
+            "a Window change must keep the current ten-second window on its old four-permit policy");
+
+        time.Advance(TimeSpan.FromSeconds(7).Subtract(TimeSpan.FromTicks(1)));
+        await EnsureRateRejectedAsync(replacement,
+            "the target Window must remain pending one tick before the old natural boundary");
+        time.Advance(TimeSpan.FromTicks(1));
+
+        await ConsumeAsync(replacement, 5);
+        await EnsureRateRejectedAsync(replacement,
+            "the new twenty-second window must start with exactly its five-permit target at the old boundary");
     }
 
     [Test]
@@ -74,7 +77,7 @@ public sealed class AdmissionDynamicRateUpdateTests
     }
 
     [Test]
-    public async Task AlgorithmReplacementShouldCarryAConservativeConsumedQuotaBarrier()
+    public async Task TokenBucketToFixedWindowShouldStartAFreshGeneration()
     {
         var time = new ManualTimeProvider();
         await using var kernel = new AdmissionStateKernel(time);
@@ -86,9 +89,11 @@ public sealed class AdmissionDynamicRateUpdateTests
             source,
             options => ConfigureFixedWindow(options, 4, TimeSpan.FromSeconds(10)));
 
-        await ConsumeAsync(replacement, 1);
+        await ConsumeAsync(replacement, 4);
         await EnsureRateRejectedAsync(replacement,
-            "TokenBucket -> FixedWindow replacement must not layer a fresh four-permit target on top of three source permits");
+            "TokenBucket -> FixedWindow must enforce a fresh four-permit FixedWindow generation without source-history translation");
+        Ensure(kernel.RateStateCount == 1,
+            "the drained TokenBucket source must not remain as a cross-algorithm history bridge");
     }
 
     private static AdmissionProgram CreateProgram(

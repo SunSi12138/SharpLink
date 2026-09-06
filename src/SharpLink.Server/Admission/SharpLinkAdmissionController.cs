@@ -6,7 +6,7 @@ namespace SharpLink.Server;
 /// Immutable admission policy/binding for one program generation. Mutable limiter, queue, permit,
 /// and partition state is owned by the stable server-scoped <see cref="AdmissionStateKernel"/>.
 /// </summary>
-internal sealed class SharpLinkAdmissionController : IAsyncDisposable
+internal sealed partial class SharpLinkAdmissionController : IAsyncDisposable
 {
     private readonly AdmissionStateKernel _kernel;
     private AdmissionRuleRuntime? _global;
@@ -1030,7 +1030,7 @@ internal sealed class AdmissionRuleRuntime : IDisposable
 /// Kernel-owned selector namespace. Mutable policy targets and per-entry limiter generations change
 /// transactionally while the entry dictionary remains authoritative for selector-compatible updates.
 /// </summary>
-internal sealed class AdmissionPartitionPool : IDisposable
+internal sealed partial class AdmissionPartitionPool : IDisposable
 {
     private readonly Func<SharpLinkAdmissionContext, string?> _selector;
     private readonly TimeProvider _timeProvider;
@@ -1594,7 +1594,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 throw new InvalidOperationException(
                     "New admission partition entry did not converge to the current policy generation.");
             }
-            return entry;
+            return FinalizeNewEntryLocked(entry);
         }
         catch
         {

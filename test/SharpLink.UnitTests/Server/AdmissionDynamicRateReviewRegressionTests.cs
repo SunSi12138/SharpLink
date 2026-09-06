@@ -115,7 +115,7 @@ public sealed class AdmissionDynamicRateReviewRegressionTests
     }
 
     [Test]
-    public async Task TokenReplacementMustNotSpendOneReplenishmentOnBothCarriedAndTargetDebt()
+    public async Task FixedWindowToTokenBucketShouldStartAFreshTargetGeneration()
     {
         var time = new ManualTimeProvider();
         await using var kernel = new AdmissionStateKernel(time);
@@ -130,23 +130,18 @@ public sealed class AdmissionDynamicRateReviewRegressionTests
         source.Retire();
 
         await ConsumeAsync(replacement);
+        await ConsumeAsync(replacement);
+        await ConsumeAsync(replacement);
+        await ConsumeAsync(replacement);
         await EnsureRateRejectedAsync(replacement,
-            "three carried permits plus the target t=0 grant must exhaust the four-permit target");
+            "FixedWindow -> TokenBucket starts a fresh four-token generation instead of carrying FixedWindow debt");
 
         time.Advance(TimeSpan.FromSeconds(10));
         await ConsumeAsync(replacement);
         await EnsureRateRejectedAsync(replacement,
-            "the t=10 replenishment may be consumed only once while carried debt remains");
-
-        time.Advance(TimeSpan.FromSeconds(10));
-        await ConsumeAsync(replacement);
-        await EnsureRateRejectedAsync(replacement,
-            "the t=20 replenishment may be consumed only once while carried debt remains");
-
-        time.Advance(TimeSpan.FromSeconds(10));
-        await ConsumeAsync(replacement);
-        await EnsureRateRejectedAsync(replacement,
-            "at the t=30 carry horizon, the same replenishment cannot both repay carried debt and erase target-owned debt");
+            "the fresh TokenBucket target must replenish on its own cadence exactly once at t=10");
+        Ensure(kernel.RateStateCount == 1,
+            "the drained FixedWindow source must not remain as a cross-algorithm debt bridge");
     }
 
     private static AdmissionProgram CreateProgram(

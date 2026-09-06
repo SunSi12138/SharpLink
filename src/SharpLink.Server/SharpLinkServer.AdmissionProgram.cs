@@ -248,6 +248,10 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
 
             if (replacement.IsEnabled)
             {
+                // Dynamic FixedWindow target state is deliberately published after the immutable
+                // program pointer. Candidate preparation and update-plan commit can therefore never
+                // make a queued/new target visible to requests still bound to the old publication.
+                replacement.Controller.PublishRateTargets();
                 lifecycle.Kernel.RecordPublishedConcurrencyLineage(replacement.Controller);
                 lifecycle.Kernel.RecordPublishedRateLineage(replacement.Controller);
                 lifecycle.Kernel.RecordPublishedPartitionLineage(replacement.Controller);

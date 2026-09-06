@@ -29,6 +29,17 @@ public sealed class SharpLinkTokenBucketLimitOptions
     }
 }
 
+/// <summary>Controls when a runtime FixedWindow update becomes active.</summary>
+public enum SharpLinkFixedWindowUpdateActivation
+{
+    /// <summary>Applies a same-active-Window limit change immediately; otherwise defers the complete target to the next window.</summary>
+    Automatic,
+    /// <summary>Applies the new PermitLimit when the update is published. The Window must already be active and no Window change may be pending.</summary>
+    Immediate,
+    /// <summary>Applies the complete PermitLimit and Window target at the next natural active-window boundary.</summary>
+    NextWindow
+}
+
 /// <summary>Configures a fixed-window request-rate limit.</summary>
 public sealed class SharpLinkFixedWindowLimitOptions
 {
@@ -37,11 +48,21 @@ public sealed class SharpLinkFixedWindowLimitOptions
     /// <summary>Gets or sets the fixed window duration, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromSeconds(1);
 
+    /// <summary>Gets or sets when this target becomes active during a runtime FixedWindow update.</summary>
+    /// <remarks>
+    /// <see cref="SharpLinkFixedWindowUpdateActivation.Automatic"/> applies a limit-only update immediately
+    /// when the configured <see cref="Window"/> is already active and no Window activation is pending;
+    /// otherwise the complete target activates at the next natural window boundary.
+    /// </remarks>
+    public SharpLinkFixedWindowUpdateActivation UpdateActivation { get; set; }
+
     internal void Validate()
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(PermitLimit);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(Window, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(Window, SharpLinkTimer.MaximumDelay);
+        if (!Enum.IsDefined(UpdateActivation))
+            throw new ArgumentOutOfRangeException(nameof(UpdateActivation));
     }
 }
 
@@ -125,7 +146,8 @@ public class SharpLinkAdmissionRuleOptions
             SharpLinkFixedWindowLimitOptions source => new SharpLinkFixedWindowLimitOptions
             {
                 PermitLimit = source.PermitLimit,
-                Window = source.Window
+                Window = source.Window,
+                UpdateActivation = source.UpdateActivation
             },
             SharpLinkSlidingWindowLimitOptions source => new SharpLinkSlidingWindowLimitOptions
             {

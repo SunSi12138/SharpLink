@@ -163,7 +163,7 @@ internal sealed class ResizableConcurrencyState : RateLimiter
             }
 
             if (immediateLease is not null)
-                return ValueTask.FromResult(immediateLease);
+                return ValueTask.FromResult<RateLimitLease>(immediateLease);
             if (waiter is null)
                 continue;
 
@@ -541,25 +541,37 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 }
 
 /// <summary>
-/// One immutable rate-policy generation over a SharpLink-owned dynamic state. Changed policies get
-/// a new instance; unchanged policies keep sharing the exact same instance and waiter queue.
+/// Immutable rate-policy view. Every FixedWindow uses a stable shared counter; TokenBucket and
+/// SlidingWindow keep the existing #333 implementation. Algorithm identity changes are generation
+/// boundaries rather than history translations.
 /// </summary>
-internal sealed class AdmissionRateState : RateLimiter
+internal sealed partial class AdmissionRateState : RateLimiter
 {
-    private readonly AdmissionDynamicRateState _state;
+    private readonly AdmissionDynamicRateState? _state;
+    private readonly AdmissionRateStateDefinition _definition;
 
     private AdmissionRateState(AdmissionDynamicRateState state)
-        => _state = state;
+    {
+        _state = state;
+        _definition = state.Definition;
+    }
 
-    internal AdmissionRateStateDefinition Definition => _state.Definition;
+    internal AdmissionRateStateDefinition Definition => _definition;
 
-    internal AdmissionRateTransitionLineage Lineage => _state.Lineage;
+    internal object LineageIdentity => _fixedCounter ?? (object)_state!.Lineage;
 
-    internal int WaitingCount => _state.WaitingCount;
+    internal int WaitingCount => _fixedCounter?.WaitingCount ?? _state!.WaitingCount;
 
-    internal long TransitionDebtForDiagnostics => _state.TransitionDebtForDiagnostics;
+    internal long TransitionDebtForDiagnostics => _state?.TransitionDebtForDiagnostics ?? 0;
 
-    internal long TransitionBarrierExpiryForDiagnostics => _state.TransitionBarrierExpiryForDiagnostics;
+    internal long TransitionBarrierExpiryForDiagnostics => _state?.TransitionBarrierExpiryForDiagnostics ?? 0;
+
+
+    internal void OnPublished()
+    {
+        if (_fixedCounter is not null)
+            OnFixedPublished();
+    }
 
     internal static AdmissionRateState Create(
         SharpLinkAdmissionRuleOptions options,
@@ -567,31 +579,61 @@ internal sealed class AdmissionRateState : RateLimiter
         AdmissionRateState? transitionSource = null)
     {
         var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
+        var canUseStableFixedWindow = definition.Kind == AdmissionRateStateKind.FixedWindow;
+        if (canUseStableFixedWindow)
+        {
+            var fixedOptions = (SharpLinkFixedWindowLimitOptions)options.RateLimit!;
+            if (transitionSource?._fixedCounter is not null)
+                return transitionSource.CreateFixedSuccessor(definition, fixedOptions.UpdateActivation);
+            return new AdmissionRateState(definition, timeProvider);
+        }
+
+        // TokenBucket/SlidingWindow keep the existing #333 implementation. A source from the
+        // specialized FixedWindow model deliberately starts a fresh algorithm generation.
         var state = new AdmissionDynamicRateState(
             definition,
             timeProvider,
-            transitionSource?.Lineage);
+            transitionSource?._state?.Lineage);
         return new AdmissionRateState(state);
     }
 
     internal void CommitTransitionTo(AdmissionRateState? target)
-        => _state.CommitTransitionTo(target?._state);
+    {
+        if (_fixedCounter is not null)
+        {
+            if (target?._fixedCounter is not null && ReferenceEquals(_fixedCounter, target._fixedCounter))
+                CommitFixedTransitionTo(target);
+            return;
+        }
+
+        if (target?._state is not null && ReferenceEquals(_state!.Lineage, target._state.Lineage))
+            _state.CommitTransitionTo(target._state);
+        else
+            _state!.CommitTransitionTo(null);
+    }
 
     public override TimeSpan? IdleDuration => null;
 
     public override RateLimiterStatistics? GetStatistics() => null;
 
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
-        => _state.AttemptAcquire(permitCount);
+        => _fixedCounter is not null
+            ? AttemptAcquireFixed(permitCount)
+            : _state!.AttemptAcquire(permitCount);
 
     protected override ValueTask<RateLimitLease> AcquireAsyncCore(
         int permitCount,
         CancellationToken cancellationToken)
-        => _state.AcquireAsync(permitCount, cancellationToken);
+        => _fixedCounter is not null
+            ? AcquireFixedAsync(permitCount, cancellationToken)
+            : _state!.AcquireAsync(permitCount, cancellationToken);
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
-            _state.Dispose();
+        if (!disposing)
+            return;
+        if (_fixedCounter is not null)
+            DisposeFixed();
+        _state?.Dispose();
     }
 }

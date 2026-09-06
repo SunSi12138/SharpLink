@@ -7,13 +7,9 @@ namespace SharpLink.UnitTests.Server;
 public sealed class AdmissionDynamicRateReplacementRegressionTests
 {
     [Test]
-    [Arguments(RateAlgorithm.TokenBucket, RateAlgorithm.FixedWindow)]
     [Arguments(RateAlgorithm.TokenBucket, RateAlgorithm.SlidingWindow)]
-    [Arguments(RateAlgorithm.FixedWindow, RateAlgorithm.TokenBucket)]
-    [Arguments(RateAlgorithm.FixedWindow, RateAlgorithm.SlidingWindow)]
     [Arguments(RateAlgorithm.SlidingWindow, RateAlgorithm.TokenBucket)]
-    [Arguments(RateAlgorithm.SlidingWindow, RateAlgorithm.FixedWindow)]
-    public async Task AlgorithmReplacementShouldRetainSourceDebtUntilItsConservativeExpiry(
+    public async Task LegacyAlgorithmReplacementShouldRetainSourceDebtUntilItsConservativeExpiry(
         RateAlgorithm sourceAlgorithm,
         RateAlgorithm targetAlgorithm)
     {
@@ -28,7 +24,7 @@ public sealed class AdmissionDynamicRateReplacementRegressionTests
             options => ConfigureFastTarget(options, targetAlgorithm));
 
         await EnsureRateRejectedAsync(replacement,
-            $"{sourceAlgorithm} -> {targetAlgorithm}: replacement must begin behind the consumed source quota");
+            $"{sourceAlgorithm} -> {targetAlgorithm}: legacy replacement must begin behind the consumed source quota");
         time.Advance(TimeSpan.FromSeconds(1));
         await EnsureRateRejectedAsync(replacement,
             $"{sourceAlgorithm} -> {targetAlgorithm}: a one-second target cadence/window must not erase forty seconds of source debt");
@@ -38,6 +34,32 @@ public sealed class AdmissionDynamicRateReplacementRegressionTests
             $"{sourceAlgorithm} -> {targetAlgorithm}: source debt must remain effective one tick before its conservative expiry");
         time.Advance(TimeSpan.FromTicks(1));
         await ConsumeAsync(replacement, 1);
+    }
+
+    [Test]
+    [Arguments(RateAlgorithm.TokenBucket, RateAlgorithm.FixedWindow)]
+    [Arguments(RateAlgorithm.FixedWindow, RateAlgorithm.TokenBucket)]
+    [Arguments(RateAlgorithm.FixedWindow, RateAlgorithm.SlidingWindow)]
+    [Arguments(RateAlgorithm.SlidingWindow, RateAlgorithm.FixedWindow)]
+    public async Task FixedWindowAlgorithmReplacementShouldStartAFreshGeneration(
+        RateAlgorithm sourceAlgorithm,
+        RateAlgorithm targetAlgorithm)
+    {
+        var time = new ManualTimeProvider();
+        await using var kernel = new AdmissionStateKernel(time);
+        var source = CreateProgram(kernel, options => ConfigureSource(options, sourceAlgorithm));
+
+        await ConsumeAsync(source, 4);
+        var replacement = CommitUpdate(
+            kernel,
+            source,
+            options => ConfigureFastTarget(options, targetAlgorithm));
+
+        await ConsumeAsync(replacement, 4);
+        await EnsureRateRejectedAsync(replacement,
+            $"{sourceAlgorithm} -> {targetAlgorithm}: the fresh target generation must enforce only its own four-permit budget");
+        Ensure(kernel.RateStateCount == 1,
+            "a drained source algorithm generation must not remain as a history bridge");
     }
 
     private static AdmissionProgram CreateProgram(
