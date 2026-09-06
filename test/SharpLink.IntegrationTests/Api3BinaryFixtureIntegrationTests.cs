@@ -32,8 +32,8 @@ public sealed class Api3BinaryFixtureIntegrationTests
     private static async Task<WeakReference> RejectFixtureAsync()
     {
         await using var harness = await FixtureHarness.CreateAsync();
-        var clientModulesBefore = GetSnapshotCount(harness.Client, "_dynamicModules");
-        var clientProxiesBefore = GetSnapshotCount(harness.Client, "_proxies");
+        var clientModulesBefore = GetClientDynamicModuleCount(harness.Client);
+        var clientProxiesBefore = GetClientProxyCount(harness.Client);
         var clientCodecsBefore = GetGeneratedCodecCount(harness.Client);
         var serverModulesBefore = ServerRegistryTestAccessor.DynamicModuleCount(harness.Server);
         var serverServicesBefore = ServerRegistryTestAccessor.ServiceCount((SharpLinkServer)harness.Server);
@@ -72,8 +72,8 @@ public sealed class Api3BinaryFixtureIntegrationTests
         AssertApi3Rejection(clientReplacement.Error, assembly, "Client replacement");
         AssertApi3Rejection(serverReplacement.Error, assembly, "Server replacement");
         AssertApi3Rejection(multiReplacement.Error, assembly, "multi-cluster replacement");
-        Ensure(GetSnapshotCount(harness.Client, "_dynamicModules") == clientModulesBefore &&
-               GetSnapshotCount(harness.Client, "_proxies") == clientProxiesBefore &&
+        Ensure(GetClientDynamicModuleCount(harness.Client) == clientModulesBefore &&
+               GetClientProxyCount(harness.Client) == clientProxiesBefore &&
                GetGeneratedCodecCount(harness.Client) == clientCodecsBefore,
             "client rejection must publish no module, proxy, or Codec");
         Ensure(ServerRegistryTestAccessor.DynamicModuleCount(harness.Server) == serverModulesBefore &&
@@ -118,6 +118,18 @@ public sealed class Api3BinaryFixtureIntegrationTests
         return directory?.FullName ??
                throw new DirectoryNotFoundException("SharpLink workspace root was not found.");
     }
+
+    private static ClientAssemblyRegistry GetClientAssemblyRegistry(ISharpLinkClient client)
+        => (ClientAssemblyRegistry)(typeof(SharpLinkClient).GetField(
+                "_assemblyRegistry",
+                BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client)
+            ?? throw new MissingFieldException(typeof(SharpLinkClient).FullName, "_assemblyRegistry"));
+
+    private static int GetClientDynamicModuleCount(ISharpLinkClient client)
+        => GetClientAssemblyRegistry(client).DynamicModules.Count;
+
+    private static int GetClientProxyCount(ISharpLinkClient client)
+        => GetClientAssemblyRegistry(client).CaptureProxySnapshot().Count;
 
     private static int GetSnapshotCount(object owner, string fieldName)
     {
