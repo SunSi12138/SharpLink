@@ -38,16 +38,16 @@ public partial class RpcGenerator
         ImmutableArray<GeneratedCodecModel> codecs)
         => codecs
             .Where(static codec => codec.Kind == GeneratedCodecKind.Dto)
-            .Select(static codec => new DtoCodecAnalysisModel(
+            .Select(codec => new DtoCodecAnalysisModel(
                 codec.TypeName,
                 codec.CodecName,
                 codec.IsReferenceType,
                 codec.CodecHashHigh,
                 codec.CodecHashLow,
-                codec.Members.Select(static member => new DtoMemberAnalysisModel(
+                codec.Members.Select(member => new DtoMemberAnalysisModel(
                     member.Name,
                     member.Identifier,
-                    member.TypeName,
+                    GetEmissionMemberTypeName(member),
                     member.FieldId,
                     member.Kind,
                     member.FixedTypeName,
@@ -57,4 +57,9 @@ public partial class RpcGenerator
                     member.InitializerBound)).ToImmutableArray(),
                 codec.ConstructorMembers))
             .ToImmutableArray();
+
+    private static string GetEmissionMemberTypeName(GeneratedMemberModel member)
+        => member.Nullable && member.RequiresNullableCodecType
+            ? member.TypeName + "?"
+            : member.TypeName;
 }

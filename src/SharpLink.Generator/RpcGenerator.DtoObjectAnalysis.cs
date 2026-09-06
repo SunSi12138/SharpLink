@@ -110,7 +110,12 @@ public partial class RpcGenerator
                     member.Assignable && (!constructorSet.Contains(member.Symbol.Name) || member.Required),
                     member.HasExplicitId,
                     member.EnumUnderlyingType,
-                    member.Symbol.Locations.FirstOrDefault()))
+                    member.Symbol.Locations.FirstOrDefault())
+                {
+                    RequiresNullableCodecType = member.Type.IsReferenceType &&
+                        member.Type.GetAttributes().Any(static attribute =>
+                            IsAttribute(attribute, "SharpLink.Sdk", "RpcUnionCaseAttribute"))
+                })
                 .ToImmutableArray();
 
             var schema = new StringBuilder(typeName);
