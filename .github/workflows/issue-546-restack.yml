@@ -1,0 +1,35 @@
+name: Issue 546 restack
+
+on:
+  push:
+    branches:
+      - issue-410-dynamic-fixed-window-clean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-546-restack
+  cancel-in-progress: true
+
+jobs:
+  restack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Merge current dev and clean staging workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin dev
+          git merge --no-edit origin/dev
+          rm .github/workflows/issue-546-restack.yml
+          git add -A
+          git commit --amend --no-edit
+          git push origin HEAD:issue-410-dynamic-fixed-window-clean
