@@ -12,6 +12,7 @@ permissions:
 
 env:
   STAGE2_SHA: 2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab
+  DOCS_SHA: 52180fc41bd8219711c3df3efcba0d79b46e8c99076635cc62b1774392822390
   EXPECTED_HEAD: 5a025579e2417e5b72a91ab4dd924d871c0cd02f
   TARGET_BRANCH: fix/430-compression-provider-boundary
 
@@ -35,7 +36,9 @@ jobs:
           cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
           cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
           cp .tmp/issue430-stage2/evidence1.patch "$RUNNER_TEMP/evidence1.patch"
-          cp .tmp/issue430-final/docs.patch "$RUNNER_TEMP/docs.patch"
+          cp .tmp/issue430-final/docs.patch.gz.b64 "$RUNNER_TEMP/docs.b64"
+          echo "$DOCS_SHA  $RUNNER_TEMP/docs.b64" | sha256sum -c -
+          base64 -d "$RUNNER_TEMP/docs.b64" | gzip -d > "$RUNNER_TEMP/docs.patch"
 
           git fetch origin "$TARGET_BRANCH"
           actual_head="$(git rev-parse "origin/$TARGET_BRANCH")"
