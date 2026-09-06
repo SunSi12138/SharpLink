@@ -79,6 +79,7 @@ jobs:
               'public static partial class ProtocolV2PayloadCodec\n{\n'
               + block +
               '}\n')
+
           test_path = Path('test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs')
           test_text = test_path.read_text()
           if 'using System.Buffers.Binary;' not in test_text:
@@ -87,6 +88,14 @@ jobs:
                   'using System.Buffers;\nusing System.Buffers.Binary;\n',
                   1)
           test_path.write_text(test_text)
+
+          matrix_path = Path('test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs')
+          matrix_text = matrix_path.read_text()
+          old = '''            ProtocolV2FrameType.WindowUpdate,\n            ProtocolV2FrameType.GoAway,\n            ProtocolV2FrameType.HealthResponse\n        };'''
+          new = '''            ProtocolV2FrameType.WindowUpdate,\n            ProtocolV2FrameType.GoAway,\n            ProtocolV2FrameType.HealthResponse,\n            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,\n            ProtocolV2FrameType.ResponseCompressionPreferenceAck\n        };'''
+          if old not in matrix_text:
+              raise SystemExit('draining frame matrix anchor not found')
+          matrix_path.write_text(matrix_text.replace(old, new, 1))
           PYTHON
 
       - name: Setup .NET CI environment
