@@ -1,0 +1,122 @@
+name: Temporary Issue 550 Review Core V2
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - tmp/issue-550-validation-gpt
+
+concurrency:
+  group: tmp-issue-550-review-core-v2
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Apply follow-up
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import textwrap
+          text = Path('.github/workflows/tmp-issue-550-runner.yml').read_text()
+          start = "          python3 - <<'PY'\n"
+          end = "\n          PY\n\n      - name: Setup .NET CI environment"
+          body = text.split(start, 1)[1].split(end, 1)[0]
+          Path('/tmp/apply.py').write_text(textwrap.dedent(body) + '\n')
+          PYTHON
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin dev fix/issue-550-dynamic-compression-policy
+          git checkout -B issue-550-review origin/fix/issue-550-dynamic-compression-policy
+          git rebase origin/dev
+          python3 /tmp/apply.py
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import re
+
+          def remove_method(text, signature):
+              pos = text.find(signature)
+              if pos < 0:
+                  raise SystemExit(f'method signature missing: {signature}')
+              start = text.rfind('    /// <summary>', 0, pos)
+              if start < 0:
+                  start = pos
+              brace = text.find('{', pos)
+              depth = 0
+              end = brace
+              while end < len(text):
+                  if text[end] == '{': depth += 1
+                  elif text[end] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          end += 1
+                          break
+                  end += 1
+              while end < len(text) and text[end] == '\n':
+                  end += 1
+              return text[:start] + text[end:]
+
+          client_path = Path('src/SharpLink.Client/SharpClientBuilder.cs')
+          client = client_path.read_text()
+          client = client.replace('public class SharpClientBuilder\n{', 'public partial class SharpClientBuilder\n{', 1)
+          client = client.replace('    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n', '', 1)
+          client = client.replace('    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n', '', 1)
+          client = remove_method(client, 'public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)')
+          client = remove_method(client, 'internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)')
+          client = remove_method(client, 'public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)')
+          client_path.write_text(client)
+          Path('src/SharpLink.Client/SharpClientBuilder.Compression.cs').write_text('''namespace SharpLink.Client;\n\npublic partial class SharpClientBuilder\n{\n    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n\n    /// <summary>Configures instance-scoped runtime capability and behavior.</summary>\n    public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)\n    {\n        _runtimeContextBuilder.Configure(configure);\n        return this;\n    }\n\n    /// <summary>Configures the initial Client Request compression send policy.</summary>\n    public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _requestCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n    internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)\n    {\n        Configure(() => _beforeReadyPublicationTestHook = hook ?? throw new ArgumentNullException(nameof(hook)));\n        return this;\n    }\n}\n''')
+
+          server_path = Path('src/SharpLink.Server/SharpLinkServerBuilder.cs')
+          server = server_path.read_text()
+          server = server.replace('public class SharpLinkServerBuilder : ISharpLinkServerBuilder\n{', 'public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder\n{', 1)
+          server = server.replace('    private SharpLinkCompressionSendPolicy _responseCompressionPolicy = new();\n', '', 1)
+          server = remove_method(server, 'public SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)')
+          server_path.write_text(server)
+          Path('src/SharpLink.Server/SharpLinkServerBuilder.Compression.cs').write_text('''namespace SharpLink.Server;\n\npublic partial class SharpLinkServerBuilder\n{\n    private SharpLinkCompressionSendPolicy _responseCompressionPolicy = new();\n\n    /// <summary>Configures the initial Server Response compression send policy.</summary>\n    public SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _responseCompressionPolicy = policy;\n        });\n        return this;\n    }\n}\n''')
+          PYTHON
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore and format
+        shell: bash
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+
+      - name: Quality gates
+        shell: bash
+        run: |
+          python3 eng/check-project-reference-boundaries.py
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests --
+          --maximum-parallel-tests 1 --timeout 120s
+
+      - name: Diff check
+        shell: bash
+        run: |
+          git diff --check
+          git status --short
