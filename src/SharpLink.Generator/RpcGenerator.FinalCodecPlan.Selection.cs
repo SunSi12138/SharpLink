@@ -28,6 +28,15 @@ public partial class RpcGenerator
                 return policyPlan;
             }
 
+            if (HasNativeUnionDeclaration(type))
+            {
+                var unionPlan = ResolveNativeUnionCodecPlan(type, plans, resolving);
+                resolving.Remove(typeName);
+                if (unionPlan is not null)
+                    plans[typeName] = unionPlan;
+                return unionPlan;
+            }
+
             _models.TryGetValue(typeName, out var generatedModel);
             FinalCodecPlan? plan;
             if (TryGetReferencedGeneratedCodecHash(
@@ -220,7 +229,6 @@ public partial class RpcGenerator
         }
 
         private GeneratedCodecModel CreateCustomCodecModel(
-
             ITypeSymbol type,
             string typeName,
             CustomCodecRegistration customCodec)
@@ -271,6 +279,9 @@ public partial class RpcGenerator
 
         private bool HasCodecPolicyCandidate(ITypeSymbol type)
         {
+            if (HasNativeUnionDeclaration(type))
+                return true;
+
             var normalized = NormalizeAdapterTarget(type);
             if (type.GetAttributes().Any(static attribute =>
                     IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute")) ||
@@ -706,7 +717,8 @@ public partial class RpcGenerator
         }
 
         private bool TryResolveReachableType(
-string typeName, out ITypeSymbol type)
+            string typeName,
+            out ITypeSymbol type)
         {
             var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             CollectCurrentAssemblyRoots(
@@ -751,6 +763,10 @@ string typeName, out ITypeSymbol type)
                         if (member.ChildType is not null)
                             yield return member.ChildType;
                     }
+                    break;
+                case FinalUnionCodecPlan union:
+                    foreach (var item in union.Cases)
+                        yield return item.CaseType;
                     break;
                 case FinalCollectionCodecPlan { WireStrategy: FinalCollectionWireStrategy.ChildCodec } collection:
                     if (collection.ElementType is not null) yield return collection.ElementType;

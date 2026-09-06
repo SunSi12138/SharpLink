@@ -150,6 +150,7 @@ internal enum GeneratedCodecKind
 {
     Adapter,
     Dto,
+    Union,
     Array,
     List,
     Dictionary,
@@ -183,7 +184,10 @@ internal sealed record GeneratedMemberModel(
     bool InitializerBound,
     bool HasExplicitId,
     string? EnumUnderlyingType,
-    Location? Location);
+    Location? Location)
+{
+    public bool RequiresNullableCodecType { get; init; }
+}
 
 internal sealed record GeneratedCodecModel(
     string TypeName,
