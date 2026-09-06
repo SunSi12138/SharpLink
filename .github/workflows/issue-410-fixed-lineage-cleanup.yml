@@ -1,4 +1,4 @@
-name: Issue 410 FixedWindow lineage cleanup
+name: Issue 410 FixedWindow state cleanup
 
 on:
   push:
@@ -20,7 +20,9 @@ jobs:
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
       - name: Apply cleanup
-        run: python3 .github/issue410-fixed-lineage-cleanup.py
+        run: |
+          python3 .github/issue410-fixed-lineage-cleanup.py
+          python3 .github/issue410-fixed-sequence-cleanup.py
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Format
