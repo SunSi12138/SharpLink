@@ -153,6 +153,5 @@ public class Issue410FinalFixedBenchmarks
         {
             rate.PermitLimit = permitLimit;
             rate.Window = window;
-            rate.UpdateActivation = SharpLinkFixedWindowUpdateActivation.Automatic;
         });
 }
