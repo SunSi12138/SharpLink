@@ -8,10 +8,10 @@ public class ResponseCompressionPreferenceCohortTests
     [Test]
     public async Task FailedSessionShouldNotPreventLaterCohortSessionFromReconciling()
     {
-        using var failedContext = CreateContext(maxSendQueueBytes: 1);
+        using var failedContext = CreateContext(maxSendQueueBytes: 32);
         using var healthyContext = CreateContext(maxSendQueueBytes: 1024);
         var failedInput = new Pipe();
-        var failedOutput = new Pipe();
+        var failedOutput = CreateBackpressuredPipe();
         var healthyInput = new Pipe();
         var healthyOutput = new Pipe();
         var policy = CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
@@ -28,6 +28,13 @@ public class ResponseCompressionPreferenceCohortTests
             healthyInput,
             healthyOutput,
             policy);
+
+        failedSession.SendPacket(CreateBlockingFrame(failedSession));
+        await WaitUntilAsync(
+            () => failedSession.QueuedSendBytes > 0,
+            TimeSpan.FromSeconds(2));
+        Ensure(failedSession.QueuedSendBytes > 0,
+            "the failed cohort session must retain a backpressured frame before preference propagation");
 
         var desired = new ResponseCompressionPreferenceSnapshot(1, false);
         var convergence = SharpLinkClient.ApplyResponseCompressionPreferenceToCohortAsync(
@@ -78,6 +85,29 @@ public class ResponseCompressionPreferenceCohortTests
             compressionBinding: context.Compression.ProviderBindings[0]);
         session.InitializeClientResponseCompressionPreference(ResponseCompressionPreferenceSnapshot.InitialAllowed);
         return session;
+    }
+
+    private static Pipe CreateBackpressuredPipe()
+        => new(new PipeOptions(pauseWriterThreshold: 1, resumeWriterThreshold: 0));
+
+    private static IRpcByteBufferWriter CreateBlockingFrame(RpcSession session)
+    {
+        var writer = session.RuntimeContext.Buffers.Rent();
+        using (writer.BeginPacketScope(
+                   ProtocolV2FrameType.Response,
+                   ProtocolV2FrameFlags.None,
+                   requestId: 77))
+        {
+            writer.Write(new byte[64]);
+        }
+        return writer;
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        while (!condition() && Stopwatch.GetTimestamp() < deadline)
+            await Task.Delay(10);
     }
 
     private static async Task<ProtocolV2ResponseCompressionPreferenceUpdate> ReadPreferenceUpdateAsync(
