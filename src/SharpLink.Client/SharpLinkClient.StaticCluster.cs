@@ -35,7 +35,8 @@ internal sealed partial class SharpLinkClient
             _endpoints = topology.EndpointStates;
             _topology = new StaticClusterTopologyState(
                 topology.LoadBalancingStrategy,
-                topology.EndpointSelector);
+                topology.EndpointSelector,
+                _client._logger);
             SharpLinkTelemetry.AddClientActiveEndpoints(_endpoints.Length);
         }
 
@@ -105,19 +106,7 @@ internal sealed partial class SharpLinkClient
             var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
             for (var attempt = 0; attempt < endpoints.Length; attempt++)
             {
-                int selectedIndex;
-                try
-                {
-                    selectedIndex = _topology.SelectEndpoint(snapshot, excluded);
-                }
-                catch (Exception exception) when (_topology.HasCustomSelector)
-                {
-                    _client._logger.LogError(exception, "SharpLink endpoint selector failed.");
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.FailedPrecondition,
-                        "The endpoint selector failed.",
-                        exception);
-                }
+                var selectedIndex = _topology.SelectEndpoint(snapshot, excluded);
                 if ((uint)selectedIndex >= (uint)endpoints.Length || (excluded & (1UL << selectedIndex)) != 0)
                 {
                     throw new SharpLinkException(
