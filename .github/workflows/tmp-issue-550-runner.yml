@@ -35,9 +35,25 @@ jobs:
           if start not in text or end not in text:
               raise SystemExit('embedded issue 550 script markers not found')
           body = text.split(start, 1)[1].split(end, 1)[0]
-          lines = body.splitlines()
-          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
-          Path('/tmp/apply_issue_550.py').write_text(body)
+          output = []
+          in_triple = False
+          for line in body.splitlines():
+              if not in_triple:
+                  if line.startswith('          '):
+                      line = line[10:]
+                  output.append(line)
+                  if line.count("'''") % 2 == 1:
+                      in_triple = True
+                  continue
+              if "'''" in line:
+                  if line.startswith('          '):
+                      line = line[10:]
+                  output.append(line)
+                  if line.count("'''") % 2 == 1:
+                      in_triple = False
+                  continue
+              output.append(line)
+          Path('/tmp/apply_issue_550.py').write_text('\n'.join(output) + '\n')
           PYTHON
           git fetch origin dev
           git checkout --detach origin/dev
