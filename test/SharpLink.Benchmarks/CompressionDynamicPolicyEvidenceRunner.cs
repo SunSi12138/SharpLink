@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
+using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
 
