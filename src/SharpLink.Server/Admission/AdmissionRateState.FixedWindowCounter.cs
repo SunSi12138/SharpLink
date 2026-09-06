@@ -169,7 +169,7 @@ internal sealed partial class AdmissionRateState
 
         internal void Publish(AdmissionRateState policy)
         {
-            if (Volatile.Read(ref policy._fixedPublished) != 0)
+            if (Volatile.Read(ref policy._fixedLifecycleState) == FixedPublished)
                 return;
 
             AdmissionRateWaiter? granted;
@@ -266,9 +266,10 @@ internal sealed partial class AdmissionRateState
 
         private AdmissionRateWaiter? PublishLocked(AdmissionRateState policy, long now)
         {
-            if (Volatile.Read(ref policy._fixedPublished) != 0)
+            var lifecycleState = Volatile.Read(ref policy._fixedLifecycleState);
+            if (lifecycleState == FixedPublished)
                 return null;
-            if (Volatile.Read(ref policy._fixedCommitted) == 0)
+            if (lifecycleState != FixedCommitted)
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
 
             AdvanceLocked(now);
@@ -321,7 +322,7 @@ internal sealed partial class AdmissionRateState
                 return _activeLimit;
             if (policy._fixedActivationMode == DynamicFixedWindowActivationMode.Immediate)
                 return policy._definition.Limit;
-            if (Volatile.Read(ref policy._fixedCommitted) == 0)
+            if (Volatile.Read(ref policy._fixedLifecycleState) < FixedCommitted)
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
             return policy._fixedPreActivationLimit;
         }
