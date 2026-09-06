@@ -11,26 +11,109 @@ permissions:
   contents: read
 
 jobs:
-  export:
+  validate-stage2:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout helper branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Export current issue 430 implementation branch
+
+      - name: Reconstruct stage 2 candidate
         shell: bash
         run: |
           set -euo pipefail
+          cat .tmp/issue430-stage2/part.* > /tmp/issue430-stage2.patch.gz.b64
+          echo '2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab  /tmp/issue430-stage2.patch.gz.b64' | sha256sum -c -
+          base64 -d /tmp/issue430-stage2.patch.gz.b64 | gzip -d > /tmp/issue430-stage2.patch
           git fetch origin fix/430-compression-provider-boundary
-          git checkout -B issue430-export origin/fix/430-compression-provider-boundary
+          git checkout -B issue430-stage2 origin/fix/430-compression-provider-boundary
           test "$(git rev-parse HEAD)" = "5a025579e2417e5b72a91ab4dd924d871c0cd02f"
-          rm -rf .git
-      - name: Upload worktree
-        uses: actions/upload-artifact@v4
-        with:
-          name: issue430-stage2-worktree
-          path: .
-          include-hidden-files: true
-          retention-days: 1
+          git apply --check /tmp/issue430-stage2.patch
+          git apply /tmp/issue430-stage2.patch
+          git diff --check
+          echo "STAGE2_DIFF $(git diff --shortstat)"
+
+      - name: Verify zero-body and Zstd boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'payload.Length < prefixLength + sizeof(uint)' src/SharpLink.Runtime/RpcSession.Compression.cs
+          grep -q 'may contain zero bytes' src/SharpLink.Runtime/Compression/SharpLinkCompression.cs
+          grep -q 'zstd-rfc8878-w23-checksum/v1' src/SharpLink.Compression.Zstd/SharpLinkZstdCompressionProvider.cs
+          if grep -R -n -E 'BrotliCompressionProvider|SCP1|Crc32Accumulator' src/SharpLink.Runtime; then
+            echo 'Concrete compression machinery returned to Core.' >&2
+            exit 1
+          fi
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Direct Zstd NativeAOT smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet publish test/SharpLink.ZstdAotSmoke/SharpLink.ZstdAotSmoke.csproj -c Release -r linux-x64 -o artifacts/zstd-aot-linux -v minimal
+          ./artifacts/zstd-aot-linux/SharpLink.ZstdAotSmoke | tee artifacts/zstd-aot-linux.stdout
+          grep -q ZSTD_AOT_PASS artifacts/zstd-aot-linux.stdout
+
+      - name: Full SharpLink NativeAOT transport smoke with Zstd
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Materialize candidate commit for package identity
+        shell: bash
+        run: |
+          git config user.name 'SharpLink issue 430 validation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'validation: materialize issue 430 stage 2 candidate'
+          test -z "$(git status --short)"
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
