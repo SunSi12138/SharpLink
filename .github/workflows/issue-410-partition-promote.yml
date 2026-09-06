@@ -34,6 +34,7 @@ jobs:
           from pathlib import Path
           path = Path('.github/issue410-partition-promote.py')
           text = path.read_text()
+
           old = 'replace_once(path, "        _fixedWindowStart = now;\\n", "")'
           new = '''replace_once(
               path,
@@ -41,8 +42,82 @@ jobs:
               """        _tokenAnchor = now;\\n        _slidingSegmentStart = now;\\n""",
           )'''
           if text.count(old) != 1:
-              raise SystemExit(f'expected one staging transform marker, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
+              raise SystemExit(f'expected one constructor marker, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''replace_once(
+              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        foreach (var binding in _ruleStateBindings)\\n            binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();\\n        _partitions?.GrantConcurrencyWaitersAfterTargetCommit();\\n    }\\n\\n""",
+              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        foreach (var binding in _ruleStateBindings)\\n            binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();\\n        _partitions?.GrantConcurrencyWaitersAfterTargetCommit();\\n    }\\n\\n    internal void PublishRateTargets()\\n    {\\n        foreach (var binding in _ruleStateBindings)\\n            binding.RateState?.OnPublished();\\n        _partitions?.PublishRateTargets();\\n    }\\n\\n""",
+          )'''
+          new = '''replace_once(
+              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+              "internal sealed class SharpLinkAdmissionController : IAsyncDisposable",
+              "internal sealed partial class SharpLinkAdmissionController : IAsyncDisposable",
+          )'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one controller publication transform, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''replace_once(
+              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        lock (_gate)\\n        {\\n            foreach (var entry in _entries.Values)\\n            {\\n                foreach (var generation in entry.Generations)\\n                    generation.Concurrency?.GrantWaitersAfterTargetCommit();\\n            }\\n        }\\n    }\\n\\n""",
+              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        lock (_gate)\\n        {\\n            foreach (var entry in _entries.Values)\\n            {\\n                foreach (var generation in entry.Generations)\\n                    generation.Concurrency?.GrantWaitersAfterTargetCommit();\\n            }\\n        }\\n    }\\n\\n    internal void PublishRateTargets()\\n    {\\n        lock (_gate)\\n        {\\n            foreach (var entry in _entries.Values)\\n                entry.Current.Rate?.OnPublished();\\n        }\\n    }\\n\\n""",
+          )'''
+          new = '''replace_once(
+              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+              "internal sealed class AdmissionPartitionPool : IDisposable",
+              "internal sealed partial class AdmissionPartitionPool : IDisposable",
+          )'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one partition publication transform, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''replace_once(
+              "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",
+              "AdmissionRatePublication.PublishTargets(replacement.Controller);",
+              "replacement.Controller.PublishRateTargets();",
+          )
+          publication = ROOT / "src/SharpLink.Server/Admission/AdmissionRatePublication.cs"
+          if not publication.exists():
+              raise RuntimeError("AdmissionRatePublication.cs unexpectedly missing")
+          publication.unlink()'''
+          new = '''replace_once(
+              "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",
+              "AdmissionRatePublication.PublishTargets(replacement.Controller);",
+              "replacement.Controller.PublishRateTargets();",
+          )
+          publication = ROOT / "src/SharpLink.Server/Admission/AdmissionRatePublication.cs"
+          publication.write_text("""namespace SharpLink.Server;
+
+/// <summary>Post-pointer publication for stable FixedWindow targets.</summary>
+internal sealed partial class SharpLinkAdmissionController
+{
+    internal void PublishRateTargets()
+    {
+        foreach (var binding in _ruleStateBindings)
+            binding.RateState?.OnPublished();
+        _partitions?.PublishRateTargets();
+    }
+}
+
+internal sealed partial class AdmissionPartitionPool
+{
+    internal void PublishRateTargets()
+    {
+        lock (_gate)
+        {
+            foreach (var entry in _entries.Values)
+                entry.Current.Rate?.OnPublished();
+        }
+    }
+}
+""")'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one publication-file transform, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
           PY
           python3 .github/issue410-partition-promote.py
 
