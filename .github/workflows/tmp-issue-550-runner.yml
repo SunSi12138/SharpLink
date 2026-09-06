@@ -79,6 +79,14 @@ jobs:
               'public static partial class ProtocolV2PayloadCodec\n{\n'
               + block +
               '}\n')
+          test_path = Path('test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs')
+          test_text = test_path.read_text()
+          if 'using System.Buffers.Binary;' not in test_text:
+              test_text = test_text.replace(
+                  'using System.Buffers;\n',
+                  'using System.Buffers;\nusing System.Buffers.Binary;\n',
+                  1)
+          test_path.write_text(test_text)
           PYTHON
 
       - name: Setup .NET CI environment
