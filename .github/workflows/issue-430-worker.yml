@@ -1,0 +1,24 @@
+name: issue-430-worker
+
+on:
+  push:
+    branches:
+      - tmp/issue-430-worker
+
+permissions:
+  contents: write
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify target branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/430-compression-provider-boundary
+          git checkout -B fix/430-compression-provider-boundary origin/fix/430-compression-provider-boundary
+          echo "WORKER_READY $(git rev-parse HEAD)"
