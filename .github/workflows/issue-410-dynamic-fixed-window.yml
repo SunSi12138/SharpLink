@@ -1,4 +1,4 @@
-name: Issue 410 dynamic fixed controller diagnostic
+name: Issue 410 clean dynamic fixed A-B
 
 on:
   push:
@@ -9,84 +9,83 @@ permissions:
   contents: read
 
 concurrency:
-  group: issue-410-dynamic-fixed-window
+  group: issue-410-clean-dynamic-fixed
   cancel-in-progress: true
 
 env:
   TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+  BASE_SHA: '735e500016a8640258bb5270bc3c3878f67036f7'
+  CANDIDATE_SHA: '8d0e3919e4b6d8f53c0929ea066ac0c42e9fecdf'
 
 jobs:
-  controller-diagnostic:
+  same-runner-ab:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
-      - name: Checkout prototype branch
+      - name: Checkout evidence branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
+      - name: Preserve benchmark source
+        run: cp .github/issue410-clean-candidate-benchmarks.cs /tmp/Issue410CleanFixedWindowBenchmarks.cs
+
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
 
-      - name: Apply previously validated Global FixedWindow integration
+      - name: Record environment
+        run: |
+          mkdir -p artifacts/issue410-clean-ab/environment
+          dotnet --info > artifacts/issue410-clean-ab/environment/dotnet-info.txt
+          lscpu > artifacts/issue410-clean-ab/environment/cpu.txt
+          printf '%s\n' "$BASE_SHA" > artifacts/issue410-clean-ab/environment/base-sha.txt
+          printf '%s\n' "$CANDIDATE_SHA" > artifacts/issue410-clean-ab/environment/candidate-sha.txt
+          git diff --stat "$BASE_SHA" "$CANDIDATE_SHA" > artifacts/issue410-clean-ab/environment/product-and-tests-stat.txt
+
+      - name: Benchmark baseline
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/issue410-dynamic-fixed-integration.py
-          python3 .github/issue410-dynamic-fixed-compile-fix.py
-          python3 .github/issue410-dynamic-fixed-integration-split.py
-          cp .github/issue410-dynamic-fixed-controller-benchmarks.cs \
-            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedControllerBenchmarks.cs
-          git add -N \
-            src/SharpLink.Server/Admission/AdmissionStateKernel.Types.cs \
-            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedControllerBenchmarks.cs
-
-      - name: Restore
-        run: dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
-
-      - name: Verify formatting
-        run: dotnet format whitespace test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore --verify-no-changes --verbosity minimal
-
-      - name: Maintainability gate
-        run: |
-          python3 eng/test-verify-maintainability.py
-          bash eng/check-maintainability.sh
-
-      - name: Build benchmark and integrated server
-        run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
-
-      - name: Run integrated Controller FixedWindow matrix
-        run: |
-          mkdir -p artifacts/issue410-dynamic-fixed-controller/environment
-          git rev-parse HEAD > artifacts/issue410-dynamic-fixed-controller/environment/head-sha.txt
-          git merge-base HEAD origin/dev > artifacts/issue410-dynamic-fixed-controller/environment/base-sha.txt
-          dotnet --info > artifacts/issue410-dynamic-fixed-controller/environment/dotnet-info.txt
-          lscpu > artifacts/issue410-dynamic-fixed-controller/environment/cpu.txt
+          git checkout --force "$BASE_SHA"
+          cp /tmp/Issue410CleanFixedWindowBenchmarks.cs test/SharpLink.Benchmarks/Issue410CleanFixedWindowBenchmarks.cs
+          git add -N test/SharpLink.Benchmarks/Issue410CleanFixedWindowBenchmarks.cs
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
           dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
-            --filter '*DynamicFixedWindowIntegratedControllerBenchmarks*' \
+            --filter '*Issue410CleanFixedWindow*' \
             --launchCount 1 --warmupCount 3 --iterationCount 10 \
-            --artifacts artifacts/issue410-dynamic-fixed-controller/controller
+            --artifacts artifacts/issue410-clean-ab/baseline
+          rm -f test/SharpLink.Benchmarks/Issue410CleanFixedWindowBenchmarks.cs
 
-      - name: Record integrated hot-path candidate
+      - name: Benchmark clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "$CANDIDATE_SHA"
+          cp /tmp/Issue410CleanFixedWindowBenchmarks.cs test/SharpLink.Benchmarks/Issue410CleanFixedWindowBenchmarks.cs
+          git add -N test/SharpLink.Benchmarks/Issue410CleanFixedWindowBenchmarks.cs
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410CleanFixedWindow*' \
+            --launchCount 1 --warmupCount 3 --iterationCount 10 \
+            --artifacts artifacts/issue410-clean-ab/candidate
+
+      - name: Record candidate diff
         if: always()
         shell: bash
         run: |
-          mkdir -p artifacts/issue410-dynamic-fixed-controller
-          git diff -- \
-            src/SharpLink.Server/Admission/AdmissionLimiterState.cs \
-            src/SharpLink.Server/Admission/AdmissionStateKernel.cs \
-            src/SharpLink.Server/Admission/AdmissionStateKernel.Types.cs \
-            src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs \
-            src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs \
-            test/SharpLink.Benchmarks/DynamicFixedWindowIntegratedControllerBenchmarks.cs \
-            > artifacts/issue410-dynamic-fixed-controller/integration.patch
-          git diff --stat > artifacts/issue410-dynamic-fixed-controller/integration-stat.txt
+          mkdir -p artifacts/issue410-clean-ab/environment
+          git diff "$BASE_SHA" "$CANDIDATE_SHA" -- \
+            src/SharpLink.Server/Admission \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410-clean-ab/environment/product.patch
 
-      - name: Upload Controller diagnostic evidence
+      - name: Upload clean A-B evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-410-dynamic-fixed-controller-${{ github.sha }}
-          path: artifacts/issue410-dynamic-fixed-controller
+          name: issue-410-clean-dynamic-fixed-${{ github.sha }}
+          path: artifacts/issue410-clean-ab
           if-no-files-found: warn
           retention-days: 30
