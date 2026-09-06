@@ -6,9 +6,13 @@ namespace SharpLink.UnitTests.Runtime;
 
 public partial class PendingRequestTableTests
 {
+    private static readonly AsyncLocal<long?> PendingMetricProbeMeasurement = new();
+
     [Test]
+    [NotInParallel]
     public async Task DeadlineScanCanCompleteAReusedPendingCallGeneration()
     {
+        DrainPendingCallPool();
         using var timeProvider = new DeadlineReuseRaceTimeProvider();
         using var manager = CreateTable(1, owner: NoopPendingCallOwner.Instance, timeProvider: timeProvider);
         var oldOperation = manager.Rent(
@@ -37,38 +41,25 @@ public partial class PendingRequestTableTests
             Ensure(oldFailure is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed },
                 "old generation should leave through the non-deadline completion path");
 
-            // PendingCall retains at most 4096 instances. Completing each non-matching candidate
-            // rotates it to the queue tail, so the captured instance must be rented within one
-            // full pool rotation.
-            for (var attempt = 0; attempt <= 4096; attempt++)
-            {
-                var candidate = manager.Rent(
-                    new Int32Codec(),
-                    PendingCallKind.Unary,
-                    RpcDeadline.FromTimestamp(10_000),
-                    CancellationToken.None,
-                    out var candidateId);
-                if (ReferenceEquals(GetOnlyPendingCall(manager), oldCall))
-                {
-                    reusedOperation = candidate;
-                    reusedRequestId = candidateId;
-                    break;
-                }
+            // This test owns the process-wide PendingCall pool while NotInParallel. Starting from an
+            // empty pool makes A the sole returned instance, so the next Rent must create B by
+            // reusing the exact same pooled object rather than relying on a probabilistic rotation.
+            reusedOperation = manager.Rent(
+                new Int32Codec(),
+                PendingCallKind.Unary,
+                RpcDeadline.FromTimestamp(10_000),
+                CancellationToken.None,
+                out reusedRequestId);
 
-                var payload = SInt32Payload;
-                Ensure(manager.Dispatch(candidateId, ref payload), "pool rotation candidate should complete");
-                _ = await candidate.AsValueTask();
-            }
-
-            Ensure(reusedOperation is not null,
-                "the exact PendingCall instance should be observed again within one pool rotation");
+            Ensure(ReferenceEquals(GetOnlyPendingCall(manager), oldCall),
+                "request B should reuse the exact PendingCall instance captured by the stale scan");
             Ensure(reusedRequestId != oldRequestId, "reused object must represent a new request generation");
             Ensure(manager.Count == 1, "new generation should still be pending before the stale scan resumes");
 
             timeProvider.ReleaseExpiredRead.Set();
             await LongRunningTestWorker.JoinAsync(scan, RaceCoordinationTimeout);
 
-            var reusedFailure = await CaptureExceptionAsync(reusedOperation!.AsValueTask().AsTask());
+            var reusedFailure = await CaptureExceptionAsync(reusedOperation.AsValueTask().AsTask());
             Ensure(reusedFailure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
                 "current scan should demonstrate the ABA bug by timing out the reused, non-expired generation");
             Ensure(manager.Count == 0, "the stale scan currently removes the reused generation");
@@ -86,12 +77,13 @@ public partial class PendingRequestTableTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task ThrowingPendingMetricOnRegistrationLeavesPublishedCallUnregistered()
     {
-        using var listener = CreateThrowingPendingMetricListener(throwOnMeasurement: 1);
+        using var listener = CreateThrowingPendingMetricListener();
         using var manager = CreateTable(1, owner: NoopPendingCallOwner.Instance);
 
-        var failure = CaptureException(() =>
+        var failure = CapturePendingMetricException(1, () =>
         {
             _ = manager.Rent<int>(out _);
         });
@@ -119,13 +111,14 @@ public partial class PendingRequestTableTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task ThrowingPendingMetricOnReleaseLeaksCapacityAfterSlotRemoval()
     {
-        using var listener = CreateThrowingPendingMetricListener(throwOnMeasurement: -1);
+        using var listener = CreateThrowingPendingMetricListener();
         using var manager = CreateTable(1, owner: NoopPendingCallOwner.Instance);
         var operation = manager.Rent<int>(out var requestId);
 
-        var failure = CaptureException(() => manager.TryComplete(
+        var failure = CapturePendingMetricException(-1, () => manager.TryComplete(
             requestId,
             PendingCallCompletionReason.ConnectionClosed,
             new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "release probe")));
@@ -146,7 +139,21 @@ public partial class PendingRequestTableTests
         Ensure(manager.ActiveCount == 0, "test cleanup should repair leaked capacity");
     }
 
-    private static MeterListener CreateThrowingPendingMetricListener(long throwOnMeasurement)
+    private static Exception? CapturePendingMetricException(long measurement, Action action)
+    {
+        var prior = PendingMetricProbeMeasurement.Value;
+        PendingMetricProbeMeasurement.Value = measurement;
+        try
+        {
+            return CaptureException(action);
+        }
+        finally
+        {
+            PendingMetricProbeMeasurement.Value = prior;
+        }
+    }
+
+    private static MeterListener CreateThrowingPendingMetricListener()
     {
         var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, currentListener) =>
@@ -154,17 +161,37 @@ public partial class PendingRequestTableTests
             if (instrument.Meter.Name == "SharpLink" && instrument.Name == "sharplink.requests.pending")
                 currentListener.EnableMeasurementEvents(instrument);
         };
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        listener.SetMeasurementEventCallback<long>(static (instrument, measurement, _, _) =>
         {
             if (instrument.Meter.Name == "SharpLink" &&
                 instrument.Name == "sharplink.requests.pending" &&
-                measurement == throwOnMeasurement)
+                PendingMetricProbeMeasurement.Value == measurement)
             {
                 throw new PendingMetricProbeException(measurement);
             }
         });
         listener.Start();
         return listener;
+    }
+
+    private static void DrainPendingCallPool()
+    {
+        var pendingCallType = typeof(PendingRequestTable).GetNestedType("PendingCall", BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find PendingCall nested type");
+        var pool = pendingCallType.GetField("Pool", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null)
+            ?? throw new Exception("cannot find PendingCall.Pool");
+        var tryDequeue = pool.GetType().GetMethod("TryDequeue", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new Exception("cannot find PendingCall pool TryDequeue");
+        var retainedCount = pendingCallType.GetField("s_retainedCount", BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find PendingCall.s_retainedCount");
+
+        while (true)
+        {
+            object?[] arguments = [null];
+            if (!(bool)tryDequeue.Invoke(pool, arguments)!)
+                break;
+        }
+        retainedCount.SetValue(null, 0);
     }
 
     private static object GetOnlyPendingCall(PendingRequestTable manager)
