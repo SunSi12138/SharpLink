@@ -8,15 +8,94 @@ on:
       - .github/workflows/issue-430-worker.yml
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  worker:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout helper branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: fix/430-compression-provider-boundary
           fetch-depth: 0
-      - name: Await staged patch
-        run: echo PATCH_STAGING
+
+      - name: Reconstruct patch and switch to clean implementation branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .tmp/issue430/patch.* > /tmp/issue430.patch.b64
+          base64 -d /tmp/issue430.patch.b64 | gzip -d > /tmp/issue430.patch
+          git fetch origin fix/430-compression-provider-boundary
+          git checkout -B fix/430-compression-provider-boundary origin/fix/430-compression-provider-boundary
+          test "$(git rev-parse HEAD)" = "e7177835114d34772087b059491fa0b4bd7607df"
+          git apply --check /tmp/issue430.patch
+          git apply /tmp/issue430.patch
+          git diff --check
+          echo "PATCH_APPLIED $(git diff --shortstat)"
+
+      - name: Verify concrete compression removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rg -n 'SharpLinkCompressionProviders|SharpLinkCompressionResult|SharpLinkCompressionOutputLimitException|Crc32Accumulator|BrotliCompressionProvider|SCP1|Brotli|brotli' src demo doc README.md; then
+            echo 'Concrete compression machinery remains outside historical changelog/tests.' >&2
+            exit 1
+          fi
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: NativeAOT Transport and Topology Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
