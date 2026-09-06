@@ -1,0 +1,44 @@
+name: Issue 410 FixedWindow policy collapse
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-wrapper-collapse-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Apply collapse
+        run: python3 .github/issue410-collapse-fixed-policy.py
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Format
+        run: dotnet format whitespace Sharplink.slnx --no-restore
+
+      - name: Maintainability
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Show diff stat
+        if: always()
+        run: git diff --stat
