@@ -1,0 +1,137 @@
+name: issue-430-disabled-ab
+
+on:
+  push:
+    branches:
+      - tmp/issue-430-worker
+    paths:
+      - .github/workflows/issue-430-disabled-ab.yml
+
+permissions:
+  contents: read
+
+env:
+  STAGE2_SHA: 2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Prepare baseline and Stage 2 worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
+          actual="$(openssl dgst -sha256 "$RUNNER_TEMP/stage2.b64" | awk '{print $NF}')"
+          test "$actual" = "$STAGE2_SHA"
+          base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
+          cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
+          cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
+          cp .tmp/issue430-stage2/evidence1.patch "$RUNNER_TEMP/evidence1.patch"
+          cp .tmp/issue430-stage2/DisabledCompressionComparisonRunner.cs "$RUNNER_TEMP/DisabledCompressionComparisonRunner.cs"
+          git fetch origin fix/430-compression-provider-boundary
+          test "$(git rev-parse origin/fix/430-compression-provider-boundary)" = '5a025579e2417e5b72a91ab4dd924d871c0cd02f'
+          git worktree add --detach "$RUNNER_TEMP/stage1" origin/fix/430-compression-provider-boundary
+          git worktree add --detach "$RUNNER_TEMP/stage2" origin/fix/430-compression-provider-boundary
+          (
+            cd "$RUNNER_TEMP/stage2"
+            git apply "$RUNNER_TEMP/stage2.patch"
+            git apply "$RUNNER_TEMP/format.patch"
+            git apply "$RUNNER_TEMP/compile1.patch"
+            git apply "$RUNNER_TEMP/evidence1.patch"
+            git diff --check
+          )
+          for tree in "$RUNNER_TEMP/stage1" "$RUNNER_TEMP/stage2"; do
+            cp "$RUNNER_TEMP/DisabledCompressionComparisonRunner.cs" "$tree/test/SharpLink.Benchmarks/DisabledCompressionComparisonRunner.cs"
+            python3 - "$tree/test/SharpLink.Benchmarks/Program.cs" <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path(sys.argv[1])
+          s = p.read_text()
+          needle = "    public static async Task Main(string[] args)\n    {\n"
+          addition = """    public static async Task Main(string[] args)\n    {\n        if (args.Length > 0 && string.Equals(\n            args[0], \"--disabled-compression-evidence\", StringComparison.Ordinal))\n        {\n            await DisabledCompressionComparisonRunner.RunAsync(args[1..]);\n            return;\n        }\n"""
+          if needle not in s:
+              raise SystemExit("Program Main marker not found")
+          p.write_text(s.replace(needle, addition, 1))
+          PY
+          done
+
+      - uses: ./.github/actions/setup-dotnet
+
+      - name: Build both revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tree in "$RUNNER_TEMP/stage1" "$RUNNER_TEMP/stage2"; do
+            dotnet restore "$tree/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            dotnet build "$tree/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" --no-restore -c Release -v minimal
+          done
+
+      - name: Run same-runner A/B rounds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/disabled-ab
+          run_one() {
+            tree="$1"; output="$2"; label="$3"
+            dotnet run -c Release --no-build --project "$tree/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -- \
+              --disabled-compression-evidence "$output" "$label" > "$output.stdout"
+          }
+          run_one "$RUNNER_TEMP/stage1" artifacts/disabled-ab/stage1-r1.json stage1-r1
+          run_one "$RUNNER_TEMP/stage2" artifacts/disabled-ab/stage2-r1.json stage2-r1
+          run_one "$RUNNER_TEMP/stage2" artifacts/disabled-ab/stage2-r2.json stage2-r2
+          run_one "$RUNNER_TEMP/stage1" artifacts/disabled-ab/stage1-r2.json stage1-r2
+
+      - name: Summarize A/B evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, math, statistics
+          from pathlib import Path
+          root=Path('artifacts/disabled-ab')
+          docs={p.stem:json.loads(p.read_text()) for p in root.glob('*.json') if '-r' in p.stem}
+          def keyed(doc):
+              return {(r['transport'],r['payloadBytes'],r['concurrency']):r for r in doc['rows']}
+          s1=[keyed(docs['stage1-r1']),keyed(docs['stage1-r2'])]
+          s2=[keyed(docs['stage2-r1']),keyed(docs['stage2-r2'])]
+          keys=sorted(s1[0])
+          rows=[]
+          for k in keys:
+              a={m:statistics.median([x[k][m] for x in s1]) for m in ['qps','p50Ms','p99Ms','p999Ms','cpuUsPerOp','allocatedBytesPerOp']}
+              b={m:statistics.median([x[k][m] for x in s2]) for m in a}
+              rows.append({
+                  'transport':k[0], 'payloadBytes':k[1], 'concurrency':k[2],
+                  'effectiveConcurrency':s2[0][k]['effectiveConcurrency'],
+                  'stage1':a, 'stage2':b,
+                  'qpsRatio':b['qps']/a['qps'],
+                  'p99Ratio':b['p99Ms']/a['p99Ms'],
+                  'cpuRatio':b['cpuUsPerOp']/a['cpuUsPerOp'] if a['cpuUsPerOp'] else 0,
+                  'allocationRatio':b['allocatedBytesPerOp']/a['allocatedBytesPerOp'] if a['allocatedBytesPerOp'] else 0,
+              })
+          def median(name): return statistics.median(r[name] for r in rows)
+          summary={
+              'baseline':'PR Stage 1 head 5a025579',
+              'candidate':'Stage 2 exact candidate + evidence runner fix',
+              'roundsPerRevision':2,
+              'scenarioCount':len(rows),
+              'medianQpsRatio':median('qpsRatio'),
+              'medianP99Ratio':median('p99Ratio'),
+              'medianCpuRatio':median('cpuRatio'),
+              'medianAllocationRatio':median('allocationRatio'),
+              'rows':rows,
+          }
+          (root/'summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps({k:v for k,v in summary.items() if k!='rows'},indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue430-disabled-ab
+          path: artifacts/disabled-ab
+          retention-days: 7
