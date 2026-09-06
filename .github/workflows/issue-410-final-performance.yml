@@ -1,0 +1,88 @@
+name: Issue 410 final FixedWindow performance
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-final-perf-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Run current-dev vs merged-candidate comparison
+        shell: bash
+        env:
+          BASE_SHA: 51e3f2c66a24615abf738f76a2380f223d72f2ab
+          PR_HEAD: 45ea9ff2143f5b5896f99349197f28d8489d9b32
+        run: |
+          set -euo pipefail
+          benchmark_source="$RUNNER_TEMP/Issue410FinalFixedBenchmarks.cs"
+          cp test/SharpLink.Benchmarks/Issue410FinalFixedBenchmarks.cs "$benchmark_source"
+          evidence="$RUNNER_TEMP/issue410-final-performance"
+          mkdir -p "$evidence"
+          dotnet --info > "$evidence/dotnet-info.txt"
+          uname -a > "$evidence/uname.txt"
+          lscpu > "$evidence/cpu.txt"
+          printf 'base=%s\npr_head=%s\n' "$BASE_SHA" "$PR_HEAD" > "$evidence/refs.txt"
+
+          build_and_run() {
+            local label="$1"
+            cp "$benchmark_source" test/SharpLink.Benchmarks/Issue410FinalFixedBenchmarks.cs
+            dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+            rm -rf BenchmarkDotNet.Artifacts
+            dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+              --filter '*Issue410FinalFixedBenchmarks*'
+            mkdir -p "$evidence/$label"
+            cp -R BenchmarkDotNet.Artifacts/. "$evidence/$label/"
+          }
+
+          run_baseline() {
+            local label="$1"
+            git reset --hard
+            git clean -fdx
+            git checkout --force "$BASE_SHA"
+            build_and_run "$label"
+          }
+
+          run_candidate() {
+            local label="$1"
+            git reset --hard
+            git clean -fdx
+            git checkout --force "$BASE_SHA"
+            git config user.name 'issue-410-evidence'
+            git config user.email 'issue410@local.invalid'
+            git merge --no-commit --no-ff "$PR_HEAD"
+            git diff --check
+            git status --short > "$evidence/$label-merge-status.txt"
+            build_and_run "$label"
+            git merge --abort || true
+          }
+
+          run_baseline baseline-forward
+          run_candidate candidate-forward
+          run_candidate candidate-reverse
+          run_baseline baseline-reverse
+
+          git checkout --force "$GITHUB_SHA"
+          mkdir -p artifacts/issue410-final-performance
+          cp -R "$evidence/." artifacts/issue410-final-performance/
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-final-performance-${{ github.sha }}
+          path: artifacts/issue410-final-performance
+          if-no-files-found: error
+          retention-days: 30
