@@ -1,0 +1,57 @@
+name: Issue 410 apply clean NextWindow fix
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-dynamic-fixed-window-20260906
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-410-clean-nextwindow-fix
+  cancel-in-progress: true
+
+jobs:
+  patch-clean-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout clean candidate branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-410-dynamic-fixed-window-clean
+          fetch-depth: 0
+
+      - name: Fix deferred direct-view semantics
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/SharpLink.Server/Admission/DynamicFixedWindowRateLimiter.cs')
+          text = path.read_text()
+          old = '''            if (policy._activationMode == DynamicFixedWindowActivationMode.Immediate ||
+                          policy._windowTimestampTicks == _activeWindowTimestampTicks)
+                      {
+                          return policy._permitLimit;
+                      }
+                      if (Volatile.Read(ref policy._committed) == 0)
+                          throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
+                      return policy._preActivationLimit;'''
+          new = '''            if (policy._activationMode == DynamicFixedWindowActivationMode.Immediate)
+                          return policy._permitLimit;
+                      if (Volatile.Read(ref policy._committed) == 0)
+                          throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
+                      return policy._preActivationLimit;'''
+          if old not in text:
+              raise SystemExit('Expected NextWindow direct-view block was not found; refusing to patch.')
+          path.write_text(text.replace(old, new))
+
+      - name: Commit clean semantic fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/SharpLink.Server/Admission/DynamicFixedWindowRateLimiter.cs
+          git commit -m 'fix(admission): defer next-window direct target'
+          git push origin HEAD:issue-410-dynamic-fixed-window-clean
