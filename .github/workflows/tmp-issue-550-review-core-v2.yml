@@ -87,6 +87,22 @@ jobs:
               'CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy())')
           policy_tests_path.write_text(policy_tests)
 
+          provider_tests_path = Path('test/SharpLink.UnitTests/Runtime/CompressionProviderTests.cs')
+          provider_tests = provider_tests_path.read_text()
+          provider_tests = provider_tests.replace(
+              'EnsureThrows<ArgumentOutOfRangeException>(ratio.Validate, "invalid savings ratio");',
+              'EnsureThrows<ArgumentOutOfRangeException>(() => { _ = CompressionSendPolicyState.CreateInitial(ratio); }, "invalid savings ratio");',
+              1)
+          provider_tests_path.write_text(provider_tests)
+
+          benchmark_path = Path('test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs')
+          benchmark = benchmark_path.read_text()
+          old_wrapper = '''    private static Task<BenchmarkEnvironment> CreateEnvironmentAsync(\n        string transport,\n        Action<SharpLinkRuntimeOptions>? configureServerRuntime,\n        Action<SharpLinkRuntimeOptions>? configureClientRuntime)\n        => transport switch\n        {\n            "tcp" => BenchmarkEnvironment.CreateAsync(\n                configureServerRuntime: configureServerRuntime,\n                configureClientRuntime: configureClientRuntime),\n            "sharedmemory" => BenchmarkEnvironment.CreateSharedMemoryAsync(\n                configureServerRuntime,\n                configureClientRuntime),\n            _ => throw new ArgumentOutOfRangeException(nameof(transport), transport, null)\n        };'''
+          new_wrapper = '''    private static Task<BenchmarkEnvironment> CreateEnvironmentAsync(\n        string transport,\n        Action<SharpLinkRuntimeOptions>? configureServerRuntime,\n        Action<SharpLinkRuntimeOptions>? configureClientRuntime,\n        Action<ISharpLinkServer>? configureBuiltServer = null,\n        Action<ISharpLinkClient>? configureBuiltClient = null)\n        => transport switch\n        {\n            "tcp" => BenchmarkEnvironment.CreateAsync(\n                configureServerRuntime: configureServerRuntime,\n                configureClientRuntime: configureClientRuntime,\n                configureBuiltServer: configureBuiltServer,\n                configureBuiltClient: configureBuiltClient),\n            "sharedmemory" => BenchmarkEnvironment.CreateSharedMemoryAsync(\n                configureServerRuntime,\n                configureClientRuntime,\n                configureBuiltServer,\n                configureBuiltClient),\n            _ => throw new ArgumentOutOfRangeException(nameof(transport), transport, null)\n        };'''
+          if old_wrapper not in benchmark:
+              raise SystemExit('compression evidence environment wrapper anchor missing')
+          benchmark_path.write_text(benchmark.replace(old_wrapper, new_wrapper, 1))
+
           client_path = Path('src/SharpLink.Client/SharpClientBuilder.cs')
           client = client_path.read_text()
           client = client.replace('public class SharpClientBuilder\n{', 'public partial class SharpClientBuilder\n{', 1)
