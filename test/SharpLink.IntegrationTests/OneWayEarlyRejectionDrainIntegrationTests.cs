@@ -134,7 +134,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
         public string WireProfile => "corrupt-oneway-request";
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -148,10 +148,10 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             var span = output.GetSpan(1);
             span[0] = 0x7f;
             output.Advance(1);
-            return new SharpLinkCompressionResult(checked((int)input.Length), 1);
+            return true;
         }
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,

@@ -79,7 +79,6 @@ public static class Program
     {
         var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression)
             .UseAdmissionControl(options => options.Global.UseConcurrency(64));
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
@@ -92,8 +91,7 @@ public static class Program
         var server = serverBuilder.Build();
         var serverTask = RunServerAsync(server, cancellationToken);
 
-        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
-            .UseRuntime(ConfigureCompression);
+        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
         if (useSharedMemory)
             clientBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -180,11 +178,9 @@ public static class Program
     private static async Task RunStaticEndpointSmokeAsync(CancellationToken cancellationToken)
     {
         var firstBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression)
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
             .UseTcp(0, IPAddress.Loopback.ToString());
         var secondBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression)
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
             .UseTcp(0, IPAddress.Loopback.ToString());
         var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
@@ -209,7 +205,6 @@ public static class Program
             }
         };
         var client = SharpClientBuilder.Create().DisableRequestTimeout()
-            .UseRuntime(ConfigureCompression)
             .UseEndpoints(
                 endpoints,
                 SharpLinkTransportFactories.Sockets())
@@ -238,7 +233,6 @@ public static class Program
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
             await using var dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseRuntime(ConfigureCompression)
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
                         _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1, endpoints))),
@@ -372,9 +366,6 @@ public static class Program
             throw new FileNotFoundException("The reference-rooting package smoke assembly was not built.", path);
         return path;
     }
-
-    private static void ConfigureCompression(SharpLinkRuntimeOptions options)
-        => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
 
     private static void AssertEnginePublicApiBoundary()
     {

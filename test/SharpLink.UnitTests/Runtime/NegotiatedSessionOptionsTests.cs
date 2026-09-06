@@ -17,7 +17,7 @@ public class NegotiatedSessionOptionsTests
                 options.Protocol.MaxFramePayloadBytes = 8192;
                 options.FlowControl.StreamReceiveWindowBytes = 4096;
                 options.FlowControl.ConnectionReceiveWindowBytes = 8192;
-                options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+                options.Compression.Providers.Add(new TestCompressionProvider());
             })
             .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
@@ -221,13 +221,13 @@ public class NegotiatedSessionOptionsTests
     [Test]
     public async Task ForeignCompressionBindingShouldFaultWithoutPublishingReady()
     {
-        var provider = SharpLinkCompressionProviders.CreateBrotli();
+        var provider = new TestCompressionProvider();
         using var ownerContext = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.Compression.Providers.Add(provider))
             .Build(includeGeneratedAssemblyCatalog: false);
         using var foreignContext = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()))
+                new TestCompressionProvider()))
             .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
         var output = new Pipe();
@@ -267,7 +267,7 @@ public class NegotiatedSessionOptionsTests
             ownerContext.Protocol.MaxFramePayloadBytes,
             ownerContext.FlowControl.StreamReceiveWindowBytes,
             ownerContext.FlowControl.ConnectionReceiveWindowBytes,
-            new SharpLinkCompressionProviderBinding("not-brotli", provider));
+            new SharpLinkCompressionProviderBinding("test.mismatch/v1", provider));
 
         var mismatchFailure = CaptureSharpLinkException(() =>
             mismatchSession.TryCompleteHandshake(mismatch));

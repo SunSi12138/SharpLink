@@ -11,7 +11,7 @@ public class CompressionCallCapacityAdmissionTests
     {
         TestService.ResetBlockingAdd();
         var serverProvider = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
             useAdvancedAdmission);
@@ -59,7 +59,7 @@ public class CompressionCallCapacityAdmissionTests
         TestService.ResetBlockingAdd();
         CompressionService.ResetOneWay();
         var serverProvider = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
             useAdvancedAdmission);
@@ -114,7 +114,7 @@ public class CompressionCallCapacityAdmissionTests
         bool useAdvancedAdmission)
     {
         var serverProvider = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
             useAdvancedAdmission,
@@ -140,7 +140,7 @@ public class CompressionCallCapacityAdmissionTests
     {
         TestService.ResetBlockingAdd();
         var serverProvider = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
             useAdvancedAdmission: true,
@@ -181,7 +181,7 @@ public class CompressionCallCapacityAdmissionTests
     {
         DeadlineCompressionProbeService.Reset();
         var serverProvider = new BlockingDecompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         var requestTimeout = TimeSpan.FromMilliseconds(100);
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
@@ -214,7 +214,7 @@ public class CompressionCallCapacityAdmissionTests
     {
         DeadlineCompressionProbeService.Reset();
         var serverProvider = new BlockingDecompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         var requestTimeout = TimeSpan.FromMilliseconds(100);
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
@@ -306,21 +306,22 @@ public class CompressionCallCapacityAdmissionTests
         public string WireProfile => inner.WireProfile;
         public int DecompressCount => Volatile.Read(ref _decompressCount);
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _decompressCount);
-            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            return;
         }
     }
 
@@ -337,14 +338,14 @@ public class CompressionCallCapacityAdmissionTests
 
         public void ReleaseDecompression() => _release.Set();
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -352,7 +353,8 @@ public class CompressionCallCapacityAdmissionTests
         {
             _decompressionStarted.TrySetResult();
             _release.Wait();
-            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            return;
         }
     }
 
@@ -441,7 +443,7 @@ public class CompressionCallCapacityAdmissionTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()));
+                    new TestCompressionProvider()));
             if (requestTimeout is { } timeout)
                 clientBuilder.UseRequestTimeout(timeout);
             var client = clientBuilder.Build();

@@ -10,7 +10,7 @@ public class CompressionPersistentDecodeFairLifecycleTests
     {
         PersistentDecodeReviewService.Reset();
         var provider = new BlockingLifecycleCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await LifecycleHarness.CreateAsync(provider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
@@ -53,7 +53,7 @@ public class CompressionPersistentDecodeFairLifecycleTests
     {
         PersistentDecodeReviewService.Reset();
         var provider = new BlockingLifecycleCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await LifecycleHarness.CreateAsync(provider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
@@ -236,7 +236,7 @@ public class CompressionPersistentDecodeFairLifecycleTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()))
+                    new TestCompressionProvider()))
                 .Build();
 
         private static async Task StopClientAsync(ISharpLinkClient client)
@@ -282,14 +282,14 @@ public class CompressionPersistentDecodeFairLifecycleTests
         internal Task WaitForCancellationCountAsync(int expected)
             => WaitForCounterAsync(() => CancellationCount, expected, "lifecycle provider cancellations");
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -299,7 +299,7 @@ public class CompressionPersistentDecodeFairLifecycleTests
             try
             {
                 _release.Wait(cancellationToken);
-                return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+                inner.Decompress(input, output, maxOutputBytes, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

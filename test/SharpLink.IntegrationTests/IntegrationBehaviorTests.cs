@@ -189,10 +189,10 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task NegotiatedBrotliShouldCompressUnaryRequestAndResponse()
+    public async Task NegotiatedCustomProviderShouldCompressUnaryRequestAndResponse()
     {
-        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
-        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        var clientProvider = new CountingCompressionProvider(new TestCompressionProvider());
+        var serverProvider = new CountingCompressionProvider(new TestCompressionProvider());
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
@@ -213,12 +213,10 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task EncodingLevelsMayDifferAcrossOneNegotiatedWireProfile()
+    public async Task EncodeOnlyTuningMayDifferAcrossOneNegotiatedWireProfile()
     {
-        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli(
-            System.IO.Compression.CompressionLevel.Optimal));
-        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli(
-            System.IO.Compression.CompressionLevel.SmallestSize));
+        var clientProvider = new CountingCompressionProvider(new TestCompressionProvider(maxRunLength: 64));
+        var serverProvider = new CountingCompressionProvider(new TestCompressionProvider(maxRunLength: 128));
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
@@ -226,7 +224,7 @@ public class IntegrationBehaviorTests
         var payload = Enumerable.Repeat((byte)0x2a, 16 * 1024).ToArray();
         var response = await harness.Client.Get<ICompressionService>().EchoBytesAsync(payload);
 
-        Ensure(response.SequenceEqual(payload), "different local encoding levels");
+        Ensure(response.SequenceEqual(payload), "different local encode-only tuning");
         Ensure(clientProvider.CompressCount > 0 && clientProvider.DecompressCount > 0,
             "client should encode and decode with its local provider configuration");
         Ensure(serverProvider.CompressCount > 0 && serverProvider.DecompressCount > 0,
@@ -237,27 +235,27 @@ public class IntegrationBehaviorTests
     public async Task ServerProviderOrderShouldSelectFirstMutualWireProfile()
     {
         var clientAlternate = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), "test.brotli/alternate");
-        var clientBrotli = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
-        var serverBrotli = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider(), "test.rle/alternate");
+        var clientPreferred = new CountingCompressionProvider(new TestCompressionProvider());
+        var serverPreferred = new CountingCompressionProvider(new TestCompressionProvider());
         var serverAlternate = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), "test.brotli/alternate");
+            new TestCompressionProvider(), "test.rle/alternate");
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options =>
             {
                 options.Compression.Providers.Add(clientAlternate);
-                options.Compression.Providers.Add(clientBrotli);
+                options.Compression.Providers.Add(clientPreferred);
             },
             serverRuntimeConfigure: options =>
             {
-                options.Compression.Providers.Add(serverBrotli);
+                options.Compression.Providers.Add(serverPreferred);
                 options.Compression.Providers.Add(serverAlternate);
             });
 
         var result = await harness.Client.Get<ICompressionService>()
             .EchoBytesAsync(Enumerable.Repeat((byte)3, 4096).ToArray());
         Ensure(result.Length == 4096, "provider preference call");
-        Ensure(clientBrotli.CompressCount > 0 && serverBrotli.DecompressCount > 0,
+        Ensure(clientPreferred.CompressCount > 0 && serverPreferred.DecompressCount > 0,
             "server-first mutual provider should be selected");
         Ensure(clientAlternate.CompressCount == 0 && serverAlternate.DecompressCount == 0,
             "lower-priority provider should remain idle");
@@ -269,8 +267,8 @@ public class IntegrationBehaviorTests
     public async Task OneSidedOrDisjointCompressionShouldFallBackToRawFrames(bool oneSided)
     {
         var clientProvider = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), "test.brotli/client-only");
-        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider(), "test.rle/client-only");
+        var serverProvider = new CountingCompressionProvider(new TestCompressionProvider());
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: oneSided
@@ -295,8 +293,8 @@ public class IntegrationBehaviorTests
     public async Task NegotiatedCompressionShouldCoverOneWayAndEveryStreamingShape()
     {
         CompressionService.ResetOneWay();
-        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
-        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        var clientProvider = new CountingCompressionProvider(new TestCompressionProvider());
+        var serverProvider = new CountingCompressionProvider(new TestCompressionProvider());
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
@@ -331,6 +329,25 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task ProviderCanRejectBoundedCandidateThroughPublicTryContract()
+    {
+        var clientProvider = new CountingCompressionProvider(new RejectingCompressionProvider());
+        var serverProvider = new CountingCompressionProvider(new RejectingCompressionProvider());
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var payload = Enumerable.Repeat((byte)0x4a, 4096).ToArray();
+
+        var response = await harness.Client.Get<ICompressionService>().EchoBytesAsync(payload);
+
+        Ensure(response.SequenceEqual(payload), "public TryCompress=false raw fallback");
+        Ensure(clientProvider.CompressCount > 0 && serverProvider.CompressCount > 0,
+            "both peers should evaluate the bounded candidate");
+        Ensure(clientProvider.DecompressCount == 0 && serverProvider.DecompressCount == 0,
+            "a rejected candidate must never be sent as compressed data");
+    }
+
+    [Test]
     public async Task SmallOrUnprofitablePayloadShouldRemainUncompressed()
     {
         var clientProvider = new CountingCompressionProvider(new NoBenefitCompressionProvider());
@@ -357,11 +374,11 @@ public class IntegrationBehaviorTests
     public async Task CompressionProviderFailureShouldFailOneCallAndKeepConnectionHealthy()
     {
         var clientProvider = new ThrowingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: true, throwOnDecompress: false);
+            new TestCompressionProvider(), throwOnCompress: true, throwOnDecompress: false);
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()));
+                new TestCompressionProvider()));
         var service = harness.Client.Get<ICompressionService>();
 
         await EnsureThrowsSharpLinkFast(
@@ -376,10 +393,10 @@ public class IntegrationBehaviorTests
     public async Task DecompressionProviderFailureShouldReturnInternalAndKeepConnectionHealthy()
     {
         var serverProvider = new ThrowingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+            new TestCompressionProvider(), throwOnCompress: false, throwOnDecompress: true);
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()),
+                new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
         var service = harness.Client.Get<ICompressionService>();
 
@@ -395,10 +412,10 @@ public class IntegrationBehaviorTests
     public async Task ServerCompressionProviderFailureShouldFailUnaryAndKeepConnectionHealthy()
     {
         var serverProvider = new ThrowingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: true, throwOnDecompress: false);
+            new TestCompressionProvider(), throwOnCompress: true, throwOnDecompress: false);
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()),
+                new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
         var service = harness.Client.Get<ICompressionService>();
 
@@ -414,11 +431,11 @@ public class IntegrationBehaviorTests
     public async Task CompressedServerStreamDecodeFailureShouldReleasePendingCall()
     {
         var clientProvider = new ThrowingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+            new TestCompressionProvider(), throwOnCompress: false, throwOnDecompress: true);
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()));
+                new TestCompressionProvider()));
         var service = harness.Client.Get<ICompressionService>();
 
         await EnsureThrowsSharpLinkFast(
@@ -1107,9 +1124,9 @@ public class IntegrationBehaviorTests
     {
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()),
+                new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()),
+                new TestCompressionProvider()),
             serverConfigure: builder => builder.UseAdmissionControl(options =>
             {
                 options.Global.UseConcurrency(1);
@@ -1530,7 +1547,7 @@ public class IntegrationBehaviorTests
         CompressionService.ResetOneWay();
         TestService.ResetBlockingAdd();
         var serverProvider = new ThrowingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+            new TestCompressionProvider(), throwOnCompress: false, throwOnDecompress: true);
         await using var harness = await TestHarness.CreateAsync(
             runtimeConfigure: options =>
             {
@@ -1538,7 +1555,7 @@ public class IntegrationBehaviorTests
                 options.FlowControl.ConnectionReceiveWindowBytes = 64;
             },
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()),
+                new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider),
             serverConfigure: builder => builder.UseAdmissionControl(options =>
             {
@@ -1589,7 +1606,7 @@ public class IntegrationBehaviorTests
     {
         CompressionService.ResetOneWay();
         var serverProvider = new ThrowingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+            new TestCompressionProvider(), throwOnCompress: false, throwOnDecompress: true);
         await using var harness = await TestHarness.CreateAsync(
             runtimeConfigure: options =>
             {
@@ -1597,7 +1614,7 @@ public class IntegrationBehaviorTests
                 options.FlowControl.ConnectionReceiveWindowBytes = 64;
             },
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()),
+                new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
         var payloads = Enumerable.Range(0, 256)
             .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
@@ -2166,24 +2183,25 @@ public class IntegrationBehaviorTests
         public int CompressCount => Volatile.Read(ref _compressCount);
         public int DecompressCount => Volatile.Read(ref _decompressCount);
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _compressCount);
-            return inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            return inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
         }
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _decompressCount);
-            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            return;
         }
     }
 
@@ -2191,7 +2209,7 @@ public class IntegrationBehaviorTests
     {
         public string WireProfile => "test.identity/v1";
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -2199,11 +2217,10 @@ public class IntegrationBehaviorTests
         {
             foreach (var segment in input)
                 output.Write(segment.Span);
-            return new SharpLinkCompressionResult(
-                checked((int)input.Length), checked((int)input.Length));
+            return true;
         }
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -2218,23 +2235,25 @@ public class IntegrationBehaviorTests
     {
         public string WireProfile => inner.WireProfile;
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
             => throwOnCompress
                 ? throw new InvalidOperationException("Injected compression failure.")
-                : inner.Compress(input, output, maxOutputBytes, cancellationToken);
+                : inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => throwOnDecompress
-                ? throw new InvalidOperationException("Injected decompression failure.")
-                : inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+        {
+            if (throwOnDecompress)
+                throw new InvalidOperationException("Injected decompression failure.");
+            inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+        }
     }
 }
 

@@ -16,7 +16,7 @@ public class ServerDecodeExecutorLifecycleTests
             .UseRuntime(options =>
             {
                 options.FlowControl.MaxConcurrentDecodesPerServer = 2;
-                options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+                options.Compression.Providers.Add(new TestCompressionProvider());
             })
             .UseTransport(listener)
             .Build();

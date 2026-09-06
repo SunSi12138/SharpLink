@@ -57,7 +57,6 @@ public static class Program
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression)
             .UseAdmissionControl(ConfigureAdmission);
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
@@ -86,14 +85,12 @@ public static class Program
         if (useSharedMemory)
         {
             client = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseRuntime(ConfigureCompression)
                 .UseSharedMemory(sharedMemoryName)
                 .Build();
         }
         else
         {
             client = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseRuntime(ConfigureCompression)
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
                         _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1,
@@ -140,7 +137,6 @@ public static class Program
         VerifyReferencedServiceManifestIsRootedBeforeBuild();
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
-            .UseRuntime(ConfigureCompression)
             .UseAdmissionControl(ConfigureAdmission)
             .Build();
         VerifyRuntimeAssemblyBoundary(server);
@@ -169,7 +165,6 @@ public static class Program
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseSharedMemory(name)
-            .UseRuntime(ConfigureCompression)
             .Build();
         try
         {
@@ -301,7 +296,6 @@ public static class Program
             }
         };
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
-            .UseRuntime(ConfigureCompression)
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
             {
@@ -363,7 +357,6 @@ public static class Program
         string sharedMemoryName,
         int port)
     {
-        builder.UseRuntime(ConfigureCompression);
         if (useSharedMemory)
             builder.UseSharedMemory(sharedMemoryName);
         else
@@ -436,9 +429,6 @@ public static class Program
         if (services.Length != 1 || services[0].ImplementationType.IsPublic)
             throw new Exception("referenced internal service manifest was not rooted before server Build");
     }
-
-    private static void ConfigureCompression(SharpLinkRuntimeOptions options)
-        => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
 
     private static void ConfigureAdmission(SharpLinkAdmissionControlOptions options)
         => options.Global.UseConcurrency(64);

@@ -10,7 +10,7 @@ public class CompressionFrameTests
     [Test]
     public async Task RequestAndStreamPayloadPrefixesShouldRemainUncompressed()
     {
-        var provider = SharpLinkCompressionProviders.CreateBrotli();
+        var provider = new TestCompressionProvider();
         await using var session = CreateSession(provider);
         var source = Enumerable.Repeat((byte)0x4c, 4096).ToArray();
         var compressed = Compress(provider, source);
@@ -68,7 +68,7 @@ public class CompressionFrameTests
     [Arguments("trailing")]
     public async Task InvalidCompressedBodyShouldMapToDataLoss(string mutation)
     {
-        var provider = SharpLinkCompressionProviders.CreateBrotli();
+        var provider = new TestCompressionProvider();
         await using var session = CreateSession(provider);
         var source = Enumerable.Repeat((byte)0x6d, 4096).ToArray();
         var compressed = Compress(provider, source).ToList();
@@ -100,7 +100,7 @@ public class CompressionFrameTests
     [Test]
     public async Task OriginalLengthShouldBeValidatedBeforeRentingOutput()
     {
-        var provider = SharpLinkCompressionProviders.CreateBrotli();
+        var provider = new TestCompressionProvider();
         await using var session = CreateSession(provider);
         using var wire = new PooledByteBufferWriter();
         var length = wire.GetSpan(sizeof(uint));
@@ -120,7 +120,7 @@ public class CompressionFrameTests
     [Test]
     public async Task UnnegotiatedCompressedFrameShouldBeProtocolViolation()
     {
-        var provider = SharpLinkCompressionProviders.CreateBrotli();
+        var provider = new TestCompressionProvider();
         await using var session = CreateSession(provider, enableCompression: false);
         var exception = CaptureSharpLinkException(() => session.DecodeInboundPayload(
             ProtocolV2FrameType.Response,
@@ -208,7 +208,7 @@ public class CompressionFrameTests
         byte[] source)
     {
         using var writer = new PooledByteBufferWriter(source.Length);
-        provider.Compress(new ReadOnlySequence<byte>(source), writer, source.Length);
+        provider.TryCompress(new ReadOnlySequence<byte>(source), writer, source.Length);
         return writer.WrittenMemory.ToArray();
     }
 
@@ -282,7 +282,7 @@ public class CompressionFrameTests
         internal int CompressCount { get; private set; }
         public string WireProfile => "test-oversized";
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -292,7 +292,7 @@ public class CompressionFrameTests
             throw new InvalidOperationException("Oversized payload reached the provider.");
         }
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,

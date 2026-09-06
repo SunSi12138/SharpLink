@@ -11,7 +11,7 @@ public class CompressionDecodeDeadlineAdmissionIndependenceTests
     {
         DeadlineCompressionProbeService.Reset();
         var serverProvider = new DeadlineBlockingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await DeadlineHarness.CreateAsync(
             serverProvider,
             useAdvancedAdmission,
@@ -87,14 +87,14 @@ public class CompressionDecodeDeadlineAdmissionIndependenceTests
 
         public Task WaitForCancellationAsync() => _cancellationObserved.Task;
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -189,7 +189,7 @@ public class CompressionDecodeDeadlineAdmissionIndependenceTests
                 .UseRequestTimeout(requestTimeout)
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()))
+                    new TestCompressionProvider()))
                 .Build();
             await client.ConnectAsync();
             return new DeadlineHarness(serverCts, serverTask, server, client);

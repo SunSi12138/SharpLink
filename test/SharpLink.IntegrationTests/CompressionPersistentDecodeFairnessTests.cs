@@ -194,12 +194,12 @@ public class CompressionPersistentDecodeFairnessTests
             var serverProviderA = new TaggedCompressionProvider(
                 "review-fair-a",
                 "A",
-                SharpLinkCompressionProviders.CreateBrotli(),
+                new TestCompressionProvider(),
                 coordinator);
             var serverProviderB = new TaggedCompressionProvider(
                 "review-fair-b",
                 "B",
-                SharpLinkCompressionProviders.CreateBrotli(),
+                new TestCompressionProvider(),
                 coordinator);
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
@@ -252,7 +252,7 @@ public class CompressionPersistentDecodeFairnessTests
                     new TaggedCompressionProvider(
                         wireProfile,
                         tag,
-                        SharpLinkCompressionProviders.CreateBrotli(),
+                        new TestCompressionProvider(),
                         coordinator: null)))
                 .Build();
 
@@ -317,14 +317,14 @@ public class CompressionPersistentDecodeFairnessTests
     {
         public string WireProfile => wireProfile;
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -332,7 +332,7 @@ public class CompressionPersistentDecodeFairnessTests
         {
             var effectiveCancellation = coordinator?.RecordStartAndBlockFirst(tag, cancellationToken)
                 ?? cancellationToken;
-            return inner.Decompress(input, output, maxOutputBytes, effectiveCancellation);
+            inner.Decompress(input, output, maxOutputBytes, effectiveCancellation);
         }
     }
 

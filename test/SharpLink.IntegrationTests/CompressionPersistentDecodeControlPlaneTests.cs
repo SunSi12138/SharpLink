@@ -11,7 +11,7 @@ public class CompressionPersistentDecodeControlPlaneTests
     {
         PersistentDecodeControlPlaneService.Reset();
         var serverProvider = new BlockingServerCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(), initiallyReleased: true);
+            new TestCompressionProvider(), initiallyReleased: true);
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         var service = harness.Client.Get<IPersistentDecodeControlPlaneService>();
@@ -40,7 +40,7 @@ public class CompressionPersistentDecodeControlPlaneTests
     {
         PersistentDecodeControlPlaneService.Reset();
         var serverProvider = new BlockingServerCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         using var cancellation = new CancellationTokenSource();
@@ -70,7 +70,7 @@ public class CompressionPersistentDecodeControlPlaneTests
     {
         PersistentDecodeControlPlaneService.Reset();
         var serverProvider = new BlockingServerCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         var workerCount = harness.DecodeWorkerCount;
@@ -138,7 +138,7 @@ public class CompressionPersistentDecodeControlPlaneTests
     {
         PersistentDecodeControlPlaneService.Reset();
         var serverProvider = new BlockingServerCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         using var cancellation = new CancellationTokenSource();
@@ -168,7 +168,7 @@ public class CompressionPersistentDecodeControlPlaneTests
     {
         PersistentDecodeControlPlaneService.Reset();
         var serverProvider = new BlockingServerCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         using var cancellation = new CancellationTokenSource();
@@ -293,14 +293,14 @@ public class CompressionPersistentDecodeControlPlaneTests
                 count,
                 "provider cancellations");
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -310,7 +310,7 @@ public class CompressionPersistentDecodeControlPlaneTests
             try
             {
                 _release.Wait(cancellationToken);
-                return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+                inner.Decompress(input, output, maxOutputBytes, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -416,7 +416,7 @@ public class CompressionPersistentDecodeControlPlaneTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()))
+                    new TestCompressionProvider()))
                 .Build();
             await client.ConnectAsync();
             return new PersistentDecodeHarness(serverCts, serverTask, server, client);

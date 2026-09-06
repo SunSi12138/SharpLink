@@ -385,7 +385,7 @@ public class ClientStreamingResultStressTests
             options.Compression.MinimumPayloadBytes = 1;
             options.Compression.MinimumSavingsBytes = 1;
             options.Compression.MinimumSavingsRatio = 0;
-            options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+            options.Compression.Providers.Add(new TestCompressionProvider());
         }
 
         public async ValueTask DisposeAsync()

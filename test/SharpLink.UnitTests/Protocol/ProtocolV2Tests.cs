@@ -170,7 +170,7 @@ public class ProtocolV2Tests
             1024 * 1024,
             16 * 1024 * 1024,
             new byte[] { 1, 2, 3, 4 },
-            new[] { "brotli", "zstd-dict/0123abcd" });
+            new[] { "test.rle/v1", "test.other/v1" });
         ProtocolV2PayloadCodec.WriteHandshakeRequest(requestPayload, request, Limits);
         var decodedRequest = ProtocolV2PayloadCodec.ReadHandshakeRequest(
             CreateSegmented(requestPayload.WrittenMemory.ToArray(), 2), Limits);
@@ -191,7 +191,7 @@ public class ProtocolV2Tests
             1024 * 1024,
             512 * 1024,
             8 * 1024 * 1024,
-            "brotli");
+            "test.rle/v1");
         ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, response);
         var decodedResponse = ProtocolV2PayloadCodec.ReadHandshakeResponse(
             new ReadOnlySequence<byte>(responsePayload.WrittenMemory), Limits);
@@ -207,7 +207,7 @@ public class ProtocolV2Tests
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
-            "brotli");
+            "test.rle/v1");
         var withoutProfile = withoutCapability with
         {
             NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression,

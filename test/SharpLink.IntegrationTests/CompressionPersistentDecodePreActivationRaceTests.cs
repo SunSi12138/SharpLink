@@ -10,7 +10,7 @@ public class CompressionPersistentDecodePreActivationRaceTests
     {
         PersistentDecodeReviewService.Reset();
         var provider = new SuccessfulAfterCancelCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await RaceHarness.CreateAsync(provider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "persistent decode worker started");
 
@@ -130,14 +130,14 @@ public class CompressionPersistentDecodePreActivationRaceTests
                 count,
                 "race provider server cancellation observations");
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -153,9 +153,8 @@ public class CompressionPersistentDecodePreActivationRaceTests
             // This proves the framework's pre-activation terminal check rather than relying on a
             // cooperative provider to throw OperationCanceledException.
             _release.Wait();
-            var result = inner.Decompress(input, output, maxOutputBytes, CancellationToken.None);
+            inner.Decompress(input, output, maxOutputBytes, CancellationToken.None);
             Interlocked.Increment(ref _completedCount);
-            return result;
         }
     }
 
@@ -233,7 +232,7 @@ public class CompressionPersistentDecodePreActivationRaceTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()))
+                    new TestCompressionProvider()))
                 .Build();
             await client.ConnectAsync();
             return new RaceHarness(serverCts, serverTask, server, client);

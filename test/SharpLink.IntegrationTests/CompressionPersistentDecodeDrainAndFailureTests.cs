@@ -10,7 +10,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
     {
         PersistentDecodeControlPlaneService.Reset();
         var serverProvider = new BlockingServerCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         Ensure(harness.DecodeAccepting, "persistent decode executor must accept work after server start");
@@ -103,7 +103,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
     {
         PersistentDecodeControlPlaneService.Reset();
         var serverProvider = new ThrowingServerCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli(),
+            new TestCompressionProvider(),
             failureFactory);
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
@@ -201,14 +201,14 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         internal Task WaitForStartedCountAsync(int count)
             => WaitForCounterAsync(() => StartedCount, count, "provider starts");
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -218,7 +218,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
             try
             {
                 _release.Wait(cancellationToken);
-                return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+                inner.Decompress(input, output, maxOutputBytes, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -238,14 +238,14 @@ public class CompressionPersistentDecodeDrainAndFailureTests
 
         internal int StartedCount => Volatile.Read(ref _startedCount);
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -334,7 +334,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()))
+                    new TestCompressionProvider()))
                 .Build();
             await client.ConnectAsync();
             return new PersistentDecodeHarness(serverCts, serverTask, server, client);
