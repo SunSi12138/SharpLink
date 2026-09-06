@@ -23,12 +23,21 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public async ValueTask SetResponseCompressionPreferenceAsync(
+    public ValueTask SetResponseCompressionPreferenceAsync(
         bool allowResponseCompression,
         CancellationToken cancellationToken = default)
     {
         var desired = PublishResponseCompressionPreference(allowResponseCompression);
         var cohort = CaptureResponseCompressionPreferenceCohort();
+        return ApplyResponseCompressionPreferenceToCohortAsync(cohort, desired, cancellationToken);
+    }
+
+    internal static async ValueTask ApplyResponseCompressionPreferenceToCohortAsync(
+        RpcSession[] cohort,
+        ResponseCompressionPreferenceSnapshot desired,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(cohort);
         List<Exception>? failures = null;
         var failed = cohort.Length == 0 ? Array.Empty<bool>() : new bool[cohort.Length];
 
