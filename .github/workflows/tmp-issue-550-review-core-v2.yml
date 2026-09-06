@@ -79,6 +79,14 @@ jobs:
               raise SystemExit('RpcSessionCreationOptions compression fallback anchor missing')
           options_path.write_text(options.replace(old_fallback, new_fallback, 1))
 
+          policy_tests_path = Path('test/SharpLink.UnitTests/Runtime/CompressionRuntimePolicyTests.cs')
+          policy_tests = policy_tests_path.read_text()
+          policy_tests = policy_tests.replace('var options = new SharpLinkCompressionOptions', 'var options = new SharpLinkCompressionSendPolicy', 1)
+          policy_tests = policy_tests.replace(
+              'CompressionSendPolicyState.CreateInitial(context.Compression)',
+              'CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy())')
+          policy_tests_path.write_text(policy_tests)
+
           client_path = Path('src/SharpLink.Client/SharpClientBuilder.cs')
           client = client_path.read_text()
           client = client.replace('public class SharpClientBuilder\n{', 'public partial class SharpClientBuilder\n{', 1)
