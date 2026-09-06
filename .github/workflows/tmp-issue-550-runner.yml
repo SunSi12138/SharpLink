@@ -141,6 +141,16 @@ jobs:
           SHARPLINK_AOT_RID: linux-x64
         run: ./eng/run-shared-memory-aot-process-smoke.sh
 
+      - name: Create clean validation commit
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src test doc/protocol-v2.md
+          git diff --cached --check
+          git commit -m "feat(compression): add dynamic runtime policy control"
+          test -z "$(git status --short)"
+
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
 
@@ -150,17 +160,17 @@ jobs:
       - name: Package smoke
         uses: ./.github/actions/package-smoke
 
-      - name: Inspect diff
+      - name: Inspect clean feature commit
+        shell: bash
         run: |
-          git status --short
-          git diff --check
-          git diff --stat
+          test -z "$(git status --short)"
+          git diff --check HEAD^ HEAD
+          git diff --stat HEAD^ HEAD
+          if git diff --name-only HEAD^ HEAD | grep -E '^\.github/'; then
+            echo "Temporary workflow content leaked into the feature commit." >&2
+            exit 1
+          fi
 
       - name: Publish clean feature commit
         shell: bash
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src test doc/protocol-v2.md
-          git commit -m "feat(compression): add dynamic runtime policy control"
-          git push origin HEAD:refs/heads/fix/issue-550-dynamic-compression-policy --force
+        run: git push origin HEAD:refs/heads/fix/issue-550-dynamic-compression-policy --force
