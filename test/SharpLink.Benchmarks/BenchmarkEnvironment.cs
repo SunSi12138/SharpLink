@@ -91,13 +91,17 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             rpc, localService, shutdown, serverTask, server, builtClient);
     }
 
-    public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync()
+    public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync(
+        Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)
     {
         var name = $"sharplink-allocation-{Guid.NewGuid():N}";
         var localService = new BenchmarkRpcService();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
+        if (configureServerRuntime is not null)
+            serverBuilder.UseRuntime(configureServerRuntime);
         serverBuilder.ReplaceService<IBenchmarkRpc>(localService);
         var server = serverBuilder.Build();
         var shutdown = new CancellationTokenSource();
@@ -116,6 +120,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             .UseSharedMemory(name)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
         clientBuilder.DisableRequestTimeout();
+        if (configureClientRuntime is not null)
+            clientBuilder.UseRuntime(configureClientRuntime);
         var client = clientBuilder.Build();
         try
         {

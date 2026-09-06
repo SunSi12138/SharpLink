@@ -17,6 +17,8 @@ public interface IBenchmarkRpc : IService
     [NonCancellable]
     ValueTask<BenchmarkPayload> EchoPayloadAsync(BenchmarkPayload payload);
     [NonCancellable]
+    ValueTask<byte[]> EchoBytesAsync(byte[] value);
+    [NonCancellable]
     ValueTask<int> SumArrayAsync(int[] values);
     [NonCancellable]
     ValueTask<int> SumListAsync(List<int> values);

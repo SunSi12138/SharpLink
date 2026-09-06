@@ -74,7 +74,7 @@ authenticationLength:varuint32 + authentication bytes
 
 wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在固定字段后编码 `selectedProfileLength:uint8 + selectedProfile`。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 profile。协商 capability 与 profile 缺失/多余或选择未被 Client 提供的 profile 都是连接级 `ProtocolViolation`。
 
-`ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端 CPU/压缩比而不影响解码的配置（例如内置 Provider 的 `CompressionLevel`）可以在两端不同；dictionary identity、必须支持的 window/profile 或其他影响解码兼容性的配置必须编码进唯一 profile，例如 `zstd/v1` 与 `zstd-dict/0123abcd`，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置不兼容解码参数属于 Provider 配置错误。
+`ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端成本/压缩比而不影响解码的 tuning 可以在两端不同；dictionary identity、必须支持的 window/profile、integrity mode 或其他影响解码兼容性的配置必须编码进唯一 profile，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置不兼容解码参数属于 Provider 配置错误。
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
 
@@ -86,13 +86,15 @@ wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感�
 Request    = route/TimeBudget/metadata envelope + originalBodyLength:uint32 + compressedBody
 Response   = originalBodyLength:uint32 + compressedBody
 StreamData = streamId:uint16 + originalItemLength:uint32 + compressedBody
+
+`compressedBody` may be empty when the negotiated provider profile defines a valid zero-byte representation; Core validates the `originalLength` envelope and delegates representation validity to the provider.
 ```
 
-`original*Length` 必须非零，并且与未压缩固定前缀相加后不超过协商的 frame 上限；框架在租借有界 owner 之前完成该检查。Provider 必须报告 consumed/written，框架同时核对实际 writer 长度、完整输入消费和声明的原始长度。Stream flow-control 始终按原始 item 字节计费，防止高压缩比数据绕过接收窗口。
+`original*Length` 必须非零，并且与未压缩固定前缀相加后不超过协商的 frame 上限；框架在租借有界 owner 之前完成该检查。Provider 成功返回即承诺完整消费输入；Core 直接从其有界 writer 核对实际写入长度与声明的原始长度。Stream flow-control 始终按原始 item 字节计费，防止高压缩比数据绕过接收窗口。
 
 发送端仅在业务 payload 至少 1024 B、至少节省 64 B 且节省比例不低于 5% 时选用候选压缩帧；三个阈值均可配置。候选无收益时立即归还候选 owner，原始 owner 原样交给现有 SendPump。SendPump 不识别压缩，也不会同时持有两个候选。
 
-唯一内置的 `brotli` Provider 使用 `BrotliStream` 编码、`BrotliDecoder` 解码，默认 `CompressionLevel.Fastest`，也可在工厂方法中选择其他 level。level 是本地编码策略，不进入握手；请求和响应方向可以使用不同 level。其不透明 `compressedBody` 在标准 Brotli 流后附加 8 字节 `SCP1 magic:uint32 + compressedBytesCrc32:uint32` 完整性尾部；解码器自身提供精确消费位置，用于确定性拒绝截断、损坏和尾部垃圾，无需维护压缩格式解析器。自定义 Provider 可定义自己的不透明格式，但必须遵守 consumed/written 契约。
+Core 不内置具体压缩算法，也不为算法增加私有 framing/checksum。`TryCompress` 返回 `true` 表示完整 representation 已写入，返回 `false` 只表示它无法在 Core 给定的 `maxOutputBytes` 内完成，Core 会丢弃候选并发送 raw。`Decompress` 正常返回表示完整消费 `compressedBody` 且没有忽略 trailing bytes；malformed、truncated、profile integrity failure 或超过输出上限必须确定性失败。具体 profile 的 silent-corruption 检测能力由该 profile/provider 自身定义；未来官方 profile 若要求强完整性，应使用该 wire format 自带的完整性机制，而不是把算法补偿逻辑放回 Core。
 
 未协商却设置 `Compressed`、非法固定前缀或原始长度属于连接级 `ProtocolViolation`。已协商载荷的截断、损坏、尾部数据或输出长度不符映射为当前调用/流的 `DataLoss`；自定义 Provider 的未预期异常映射为该调用/流的安全 `Internal`。这两类调用级错误不关闭健康连接。
 

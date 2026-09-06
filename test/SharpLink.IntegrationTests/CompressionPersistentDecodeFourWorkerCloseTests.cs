@@ -309,18 +309,18 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         : ISharpLinkCompressionProvider
     {
         private readonly ISharpLinkCompressionProvider _inner =
-            SharpLinkCompressionProviders.CreateBrotli();
+            new TestCompressionProvider();
 
         public string WireProfile => profile;
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => _inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => _inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,

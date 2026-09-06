@@ -1150,7 +1150,7 @@ public class RpcSessionLifecycleTests
         internal IRpcByteBufferWriter? Candidate { get; private set; }
         public string WireProfile => "test-terminal-send-race";
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -1163,10 +1163,10 @@ public class RpcSessionLifecycleTests
             var span = output.GetSpan(1);
             span[0] = 0;
             output.Advance(1);
-            return new SharpLinkCompressionResult(checked((int)input.Length), 1);
+            return true;
         }
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,

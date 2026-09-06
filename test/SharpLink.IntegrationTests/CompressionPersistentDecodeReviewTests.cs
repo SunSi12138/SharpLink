@@ -11,7 +11,7 @@ public class CompressionPersistentDecodeReviewTests
     {
         PersistentDecodeReviewService.Reset();
         var serverProvider = new BlockingReviewCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await ReviewHarness.CreateAsync(
             serverProvider,
             maxConcurrentCalls: 64,
@@ -69,7 +69,7 @@ public class CompressionPersistentDecodeReviewTests
     {
         PersistentDecodeReviewService.Reset();
         var serverProvider = new BlockingReviewCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await ReviewHarness.CreateAsync(
             serverProvider,
             maxConcurrentCalls: 8,
@@ -330,7 +330,7 @@ public class CompressionPersistentDecodeReviewTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseRuntime(options => options.Compression.Providers.Add(
-                    SharpLinkCompressionProviders.CreateBrotli()));
+                    new TestCompressionProvider()));
             if (clientRequestTimeout is { } timeout)
                 clientBuilder.UseRequestTimeout(timeout);
             var client = clientBuilder.Build();
@@ -464,14 +464,14 @@ public class CompressionPersistentDecodeReviewTests
                 count,
                 "review provider cancellations");
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -481,7 +481,7 @@ public class CompressionPersistentDecodeReviewTests
             try
             {
                 _release.Wait(cancellationToken);
-                return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+                inner.Decompress(input, output, maxOutputBytes, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -508,14 +508,14 @@ public class CompressionPersistentDecodeReviewTests
                 count,
                 "raw-input provider cancellations");
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,

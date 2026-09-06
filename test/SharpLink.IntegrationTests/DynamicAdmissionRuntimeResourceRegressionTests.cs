@@ -63,7 +63,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
     {
         TestService.ResetBlockingAdd();
         var serverProvider = new CountingCompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await RunningHarness.CreateAsync(
             serverRuntimeConfigure: options =>
             {
@@ -72,7 +72,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             },
             admissionConfigure: options => options.Global.UseConcurrency(2),
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
-                SharpLinkCompressionProviders.CreateBrotli()));
+                new TestCompressionProvider()));
         var publicServer = (ISharpLinkServer)harness.Server;
         var blocker = harness.ClientA.Get<ITestService>()
             .BlockingAddAsync(1, 2, CancellationToken.None).AsTask();
@@ -269,21 +269,22 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
         public string WireProfile => inner.WireProfile;
         internal int DecompressCount => Volatile.Read(ref _decompressCount);
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _decompressCount);
-            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            return;
         }
     }
 

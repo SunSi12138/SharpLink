@@ -1,16 +1,14 @@
 using System.Buffers;
-using System.IO.Compression;
 using DemoBase;
 using SharpLink.Abstractions;
+using SharpLink.Compression.Zstd;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 var port = DemoStream.GetFreePort();
 using var app = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-var clientCompression = new CountingCompressionProvider(
-    SharpLinkCompressionProviders.CreateBrotli(CompressionLevel.Fastest));
-var serverCompression = new CountingCompressionProvider(
-    SharpLinkCompressionProviders.CreateBrotli(CompressionLevel.Optimal));
+var clientCompression = new CountingCompressionProvider(new SharpLinkZstdCompressionProvider(compressionLevel: 1));
+var serverCompression = new CountingCompressionProvider(new SharpLinkZstdCompressionProvider(compressionLevel: 5));
 
 var server = DemoTcp.CreateServer<ICompressionService, CompressionService>(port,
     builder => builder.UseRuntime(options => ConfigureCompression(options, serverCompression)));
@@ -71,23 +69,23 @@ public sealed class CountingCompressionProvider(ISharpLinkCompressionProvider in
     public int CompressCalls => Volatile.Read(ref _compressCalls);
     public int DecompressCalls => Volatile.Read(ref _decompressCalls);
 
-    public SharpLinkCompressionResult Compress(
+    public bool TryCompress(
         ReadOnlySequence<byte> input,
         IBufferWriter<byte> output,
         int maxOutputBytes,
         CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _compressCalls);
-        return inner.Compress(input, output, maxOutputBytes, cancellationToken);
+        return inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
     }
 
-    public SharpLinkCompressionResult Decompress(
+    public void Decompress(
         ReadOnlySequence<byte> input,
         IBufferWriter<byte> output,
         int maxOutputBytes,
         CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _decompressCalls);
-        return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+        inner.Decompress(input, output, maxOutputBytes, cancellationToken);
     }
 }

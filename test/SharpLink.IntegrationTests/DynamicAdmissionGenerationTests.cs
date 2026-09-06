@@ -321,10 +321,10 @@ public class DynamicAdmissionGenerationTests
             serverRuntimeConfigure: options =>
             {
                 options.FlowControl.MaxRetainedCompressedBytesPerServer = 1;
-                options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+                options.Compression.Providers.Add(new TestCompressionProvider());
             },
             clientRuntimeConfigure: options =>
-                options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli()),
+                options.Compression.Providers.Add(new TestCompressionProvider()),
             admissionConfigure: options =>
             {
                 options.Global.UseConcurrency(1);
@@ -451,12 +451,12 @@ public class DynamicAdmissionGenerationTests
     public async Task DecodeFailureShouldReleaseGenerationAndKeepConnectionReusable()
     {
         var throwingProvider = new ThrowingDecompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            new TestCompressionProvider());
         await using var harness = await Harness.CreateAsync(
             serverRuntimeConfigure: options =>
                 options.Compression.Providers.Add(throwingProvider),
             clientRuntimeConfigure: options =>
-                options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli()),
+                options.Compression.Providers.Add(new TestCompressionProvider()),
             admissionConfigure: options => options.Global.UseConcurrency(2));
         var program = harness.OwnedProgram!;
         var payload = Enumerable.Repeat((byte)0x35, 16 * 1024).ToArray();
@@ -571,14 +571,14 @@ public class DynamicAdmissionGenerationTests
     {
         public string WireProfile => inner.WireProfile;
 
-        public SharpLinkCompressionResult Compress(
+        public bool TryCompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
-            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+            => inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
 
-        public SharpLinkCompressionResult Decompress(
+        public void Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,

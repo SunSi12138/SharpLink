@@ -2,6 +2,7 @@
     <Project Path="demo\DemoBase\DemoBase.csproj" />
     <Project Path="src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
     <Project Path="src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Project Path="src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj" />
     <Project Path="src/SharpLink.Generator/SharpLink.Generator.csproj" />
     <Project Path="demo/HelloWorld/HelloWorld.csproj" />
     <Project Path="demo/HostApplication/HostApplication.csproj" />
@@ -52,5 +53,6 @@
     <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />
     <Project Path="test/SharpLink.SharpPackAotSmoke/SharpLink.SharpPackAotSmoke.csproj" />
     <Project Path="test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj" />
+    <Project Path="test/SharpLink.ZstdAotSmoke/SharpLink.ZstdAotSmoke.csproj" />
     <Project Path="test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj" />
 </Solution>

@@ -63,8 +63,7 @@ public static class Program
             $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections} " +
             $"staticEndpoints={options.StaticEndpointCount} dynamicEndpoints={options.DynamicEndpointCount} dynamicResolver={options.UseDynamicResolver} lb={options.StaticLoadBalancingStrategy} " +
             $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode} " +
-            $"admission={options.AdmissionMode} compression={options.CompressionAlgorithm}/{options.CompressionLevel} " +
-            $"thresholds={options.CompressionMinimumPayloadBytes}B/{options.CompressionMinimumSavingsBytes}B/{options.CompressionMinimumSavingsRatio:P0} " +
+            $"admission={options.AdmissionMode} " +
             $"sendQueue={options.MaxSendQueueBytes?.ToString(CultureInfo.InvariantCulture) ?? "profile-default"}B " +
             $"pattern={options.PayloadPattern} recording={options.RecordingMode} " +
             $"sampleCapacity={options.MaximumRecordedOperations} drainTimeout={options.DrainTimeoutSeconds}s " +
@@ -104,8 +103,6 @@ public static class Program
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
         Console.WriteLine("  --admission disabled|immediate|queue|reject");
-        Console.WriteLine("  --compression none|brotli --compression-level fastest|optimal|smallest|nocompression");
-        Console.WriteLine("  --compression-min-payload 1024 --compression-min-savings-bytes 64 --compression-min-savings-ratio 0.05");
         Console.WriteLine("  --max-send-queue-bytes 33554432 (optional bounded throughput-test override)");
         Console.WriteLine("  --payload-pattern compressible|random");
         Console.WriteLine("  --shm-name sharplink-loadtest --shm-capacity 8388608 --shm-spin-count 8");
@@ -835,20 +832,6 @@ public static class Program
         runtime.FlowControl.MaxConcurrentCallsPerConnection = options.MaxConcurrentCallsPerConnection;
         runtime.FlowControl.MaxConcurrentCallsPerServer = options.MaxConcurrentCallsPerServer;
         runtime.Protocol.MaxPendingRequestsPerConnection = options.MaxPendingRequestsPerConnection;
-        runtime.Compression.MinimumPayloadBytes = options.CompressionMinimumPayloadBytes;
-        runtime.Compression.MinimumSavingsBytes = options.CompressionMinimumSavingsBytes;
-        runtime.Compression.MinimumSavingsRatio = options.CompressionMinimumSavingsRatio;
-        if (options.CompressionAlgorithm == "none")
-            return;
-        var level = options.CompressionLevel switch
-        {
-            "fastest" => CompressionLevel.Fastest,
-            "optimal" => CompressionLevel.Optimal,
-            "smallest" => CompressionLevel.SmallestSize,
-            "nocompression" => CompressionLevel.NoCompression,
-            _ => throw new ArgumentOutOfRangeException(nameof(options.CompressionLevel))
-        };
-        runtime.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli(level));
     }
 
     private static string CreateEchoPayload(int payloadSize, string pattern, int worker)
@@ -904,11 +887,6 @@ public sealed class LoadTestOptions
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
     public string RequestTimeoutMode { get; private init; } = "default";
     public string AdmissionMode { get; private init; } = "disabled";
-    public string CompressionAlgorithm { get; private init; } = "none";
-    public string CompressionLevel { get; private init; } = "fastest";
-    public int CompressionMinimumPayloadBytes { get; private init; } = 1024;
-    public int CompressionMinimumSavingsBytes { get; private init; } = 64;
-    public double CompressionMinimumSavingsRatio { get; private init; } = 0.05;
     public int? MaxSendQueueBytes { get; private init; }
     public string PayloadPattern { get; private init; } = "compressible";
     public string? JsonOutputPath { get; private init; }
@@ -1000,28 +978,6 @@ public sealed class LoadTestOptions
         var admissionMode = map.GetValueOrDefault("admission", "disabled").ToLowerInvariant();
         if (admissionMode is not ("disabled" or "immediate" or "queue" or "reject"))
             throw new ArgumentException($"Unsupported admission mode: {admissionMode}.");
-        var compressionAlgorithm = map.GetValueOrDefault("compression", "none").ToLowerInvariant();
-        if (compressionAlgorithm is not ("none" or "brotli"))
-            throw new ArgumentException($"Unsupported compression algorithm: {compressionAlgorithm}.");
-        var compressionLevel = map.GetValueOrDefault("compression-level", "fastest").ToLowerInvariant();
-        if (compressionLevel is not ("fastest" or "optimal" or "smallest" or "nocompression"))
-            throw new ArgumentException($"Unsupported compression level: {compressionLevel}.");
-        var compressionMinimumPayloadBytes = int.Parse(
-            map.GetValueOrDefault("compression-min-payload", "1024"),
-            CultureInfo.InvariantCulture);
-        var compressionMinimumSavingsBytes = int.Parse(
-            map.GetValueOrDefault("compression-min-savings-bytes", "64"),
-            CultureInfo.InvariantCulture);
-        var compressionMinimumSavingsRatio = double.Parse(
-            map.GetValueOrDefault("compression-min-savings-ratio", "0.05"),
-            CultureInfo.InvariantCulture);
-        var compressionValidation = new SharpLinkCompressionOptions
-        {
-            MinimumPayloadBytes = compressionMinimumPayloadBytes,
-            MinimumSavingsBytes = compressionMinimumSavingsBytes,
-            MinimumSavingsRatio = compressionMinimumSavingsRatio
-        };
-        compressionValidation.Validate();
         var maxSendQueueBytes = ParseOptionalInt(map, "max-send-queue-bytes");
         if (maxSendQueueBytes is <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxSendQueueBytes));
@@ -1172,11 +1128,6 @@ public sealed class LoadTestOptions
             PerformanceProfile = profile,
             RequestTimeoutMode = requestTimeoutMode,
             AdmissionMode = admissionMode,
-            CompressionAlgorithm = compressionAlgorithm,
-            CompressionLevel = compressionLevel,
-            CompressionMinimumPayloadBytes = compressionMinimumPayloadBytes,
-            CompressionMinimumSavingsBytes = compressionMinimumSavingsBytes,
-            CompressionMinimumSavingsRatio = compressionMinimumSavingsRatio,
             MaxSendQueueBytes = maxSendQueueBytes,
             PayloadPattern = payloadPattern,
             JsonOutputPath = map.GetValueOrDefault("json-output"),
