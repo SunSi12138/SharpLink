@@ -1,0 +1,49 @@
+name: issue-430-stage2-export
+
+on:
+  push:
+    branches:
+      - tmp/issue-430-worker
+    paths:
+      - .github/workflows/issue-430-stage2-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct exact validated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
+          echo '2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab  '"$RUNNER_TEMP"'/stage2.b64' | sha256sum -c -
+          base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
+          cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
+          cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
+          git fetch origin fix/430-compression-provider-boundary
+          git checkout -B issue430-stage2 origin/fix/430-compression-provider-boundary
+          test "$(git rev-parse HEAD)" = '5a025579e2417e5b72a91ab4dd924d871c0cd02f'
+          git apply "$RUNNER_TEMP/stage2.patch"
+          git apply "$RUNNER_TEMP/format.patch"
+          git apply "$RUNNER_TEMP/compile1.patch"
+          git diff --check
+          git diff --binary > "$RUNNER_TEMP/stage2-final.patch"
+          sha256sum "$RUNNER_TEMP/stage2-final.patch" > "$RUNNER_TEMP/stage2-final.patch.sha256"
+          tar --exclude=.git --exclude=artifacts -czf "$RUNNER_TEMP/issue430-stage2-candidate.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue430-stage2-candidate
+          path: |
+            ${{ runner.temp }}/issue430-stage2-candidate.tar.gz
+            ${{ runner.temp }}/stage2-final.patch
+            ${{ runner.temp }}/stage2-final.patch.sha256
+          retention-days: 2
