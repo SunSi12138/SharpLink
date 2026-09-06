@@ -129,7 +129,6 @@ internal sealed partial class AdmissionRateState
 
         internal AdmissionRateState CreateSuccessor(
             AdmissionRateStateDefinition definition,
-            AdmissionRateTransitionLineage lineage,
             long windowTimestampTicks,
             DynamicFixedWindowActivationMode activationMode)
         {
@@ -143,8 +142,7 @@ internal sealed partial class AdmissionRateState
                     this,
                     sequence,
                     windowTimestampTicks,
-                    activationMode,
-                    lineage);
+                    activationMode);
             }
         }
 

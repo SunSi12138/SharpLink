@@ -548,19 +548,17 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 internal sealed partial class AdmissionRateState : RateLimiter
 {
     private readonly AdmissionDynamicRateState? _state;
-    private readonly AdmissionRateTransitionLineage _lineage;
     private readonly AdmissionRateStateDefinition _definition;
 
     private AdmissionRateState(AdmissionDynamicRateState state)
     {
         _state = state;
-        _lineage = state.Lineage;
         _definition = state.Definition;
     }
 
     internal AdmissionRateStateDefinition Definition => _definition;
 
-    internal AdmissionRateTransitionLineage Lineage => _lineage;
+    internal object LineageIdentity => _fixedCounter ?? (object)_state!.Lineage;
 
     internal int WaitingCount => _fixedCounter?.WaitingCount ?? _state!.WaitingCount;
 
@@ -603,13 +601,13 @@ internal sealed partial class AdmissionRateState : RateLimiter
     {
         if (_fixedCounter is not null)
         {
-            if (target?._fixedCounter is not null && ReferenceEquals(_lineage, target._lineage))
+            if (target?._fixedCounter is not null && ReferenceEquals(_fixedCounter, target._fixedCounter))
                 CommitFixedTransitionTo(target);
             return;
         }
 
-        if (target?._state is not null && ReferenceEquals(_lineage, target._lineage))
-            _state!.CommitTransitionTo(target._state);
+        if (target?._state is not null && ReferenceEquals(_state!.Lineage, target._state.Lineage))
+            _state.CommitTransitionTo(target._state);
         else
             _state!.CommitTransitionTo(null);
     }

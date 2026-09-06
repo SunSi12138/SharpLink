@@ -26,7 +26,6 @@ internal sealed partial class AdmissionRateState
         TimeProvider timeProvider)
     {
         _definition = definition;
-        _lineage = new AdmissionRateTransitionLineage();
         var window = TimeSpan.FromTicks(definition.PeriodTicks);
         _fixedCounter = new Counter(definition.Limit, window, timeProvider);
         _fixedSequence = 1;
@@ -42,11 +41,9 @@ internal sealed partial class AdmissionRateState
         Counter counter,
         long sequence,
         long windowTimestampTicks,
-        DynamicFixedWindowActivationMode activationMode,
-        AdmissionRateTransitionLineage lineage)
+        DynamicFixedWindowActivationMode activationMode)
     {
         _definition = definition;
-        _lineage = lineage;
         _fixedCounter = counter;
         _fixedSequence = sequence;
         _fixedWindowTimestampTicks = windowTimestampTicks;
@@ -75,7 +72,6 @@ internal sealed partial class AdmissionRateState
         var resolvedActivation = counter.ResolveActivation(windowTimestampTicks, activationMode);
         return counter.CreateSuccessor(
             definition,
-            _lineage,
             windowTimestampTicks,
             resolvedActivation);
     }

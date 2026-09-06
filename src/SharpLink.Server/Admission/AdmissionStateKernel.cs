@@ -824,7 +824,7 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         {
             if (ReferenceEquals(pair.Value.State, state))
                 continue;
-            if (ReferenceEquals(pair.Value.State.Lineage, state.Lineage))
+            if (ReferenceEquals(pair.Value.State.LineageIdentity, state.LineageIdentity))
                 return true;
         }
         return false;
