@@ -195,7 +195,7 @@ public sealed class DynamicFixedWindowMultiScopeTests
         => server.CurrentAdmissionProgramForTests ??
            throw new Exception("assert failed: expected enabled admission publication");
 
-    private static DynamicFixedWindowRateLimiter Fixed(AdmissionRateState? state)
+    private static AdmissionRateState Fixed(AdmissionRateState? state)
         => state?.FixedWindowForTests ??
            throw new Exception("assert failed: expected specialized DynamicFixedWindow rate state");
 

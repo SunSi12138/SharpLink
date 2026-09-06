@@ -1,0 +1,156 @@
+using System.Threading.RateLimiting;
+
+namespace SharpLink.Server;
+
+internal enum DynamicFixedWindowActivationMode
+{
+    Immediate,
+    NextWindowBoundary
+}
+
+/// <summary>Immutable FixedWindow policy view carried directly by one AdmissionProgram rate state.</summary>
+internal sealed partial class AdmissionRateState
+{
+    private readonly Counter? _fixedCounter;
+    private readonly long _fixedSequence;
+    private readonly long _fixedWindowTimestampTicks;
+    private readonly DynamicFixedWindowActivationMode _fixedActivationMode;
+    private int _fixedPreActivationLimit;
+    private long _fixedActivationBoundary;
+    private int _fixedCommitted;
+    private int _fixedPublished;
+    private int _fixedDisposed;
+
+    private AdmissionRateState(
+        AdmissionRateStateDefinition definition,
+        TimeProvider timeProvider)
+    {
+        _definition = definition;
+        _lineage = new AdmissionRateTransitionLineage();
+        var window = TimeSpan.FromTicks(definition.PeriodTicks);
+        _fixedCounter = new Counter(definition.Limit, window, timeProvider);
+        _fixedSequence = 1;
+        _fixedWindowTimestampTicks = _fixedCounter.ToTimestampTicks(definition.PeriodTicks);
+        _fixedActivationMode = DynamicFixedWindowActivationMode.Immediate;
+        _fixedPreActivationLimit = definition.Limit;
+        _fixedCommitted = 1;
+        _fixedPublished = 1;
+    }
+
+    private AdmissionRateState(
+        AdmissionRateStateDefinition definition,
+        Counter counter,
+        long sequence,
+        long windowTimestampTicks,
+        DynamicFixedWindowActivationMode activationMode,
+        AdmissionRateTransitionLineage lineage)
+    {
+        _definition = definition;
+        _lineage = lineage;
+        _fixedCounter = counter;
+        _fixedSequence = sequence;
+        _fixedWindowTimestampTicks = windowTimestampTicks;
+        _fixedActivationMode = activationMode;
+    }
+
+    internal AdmissionRateState? FixedWindowForTests => _fixedCounter is null ? null : this;
+    internal int PermitLimit => _definition.Limit;
+    internal TimeSpan Window => TimeSpan.FromTicks(_definition.PeriodTicks);
+    internal DynamicFixedWindowActivationMode ActivationModeForTests => _fixedActivationMode;
+    internal long ConsumedForTests => _fixedCounter!.Consumed;
+    internal int ActiveLimitForTests => _fixedCounter!.ActiveLimit;
+    internal int QueuedLimitForTests => _fixedCounter!.QueuedLimit;
+    internal TimeSpan ActiveWindowForTests => _fixedCounter!.ActiveWindow;
+    internal bool HasPendingWindowForTests => _fixedCounter!.HasPendingTarget;
+    internal long CounterIdentityForTests => _fixedCounter!.Identity;
+
+    private AdmissionRateState CreateFixedSuccessor(
+        AdmissionRateStateDefinition definition,
+        DynamicFixedWindowActivationMode? activationMode)
+    {
+        ThrowIfFixedDisposed();
+        var counter = _fixedCounter ??
+            throw new InvalidOperationException("FixedWindow successor requires a stable counter.");
+        var windowTimestampTicks = counter.ToTimestampTicks(definition.PeriodTicks);
+        var resolvedActivation = counter.ResolveActivation(windowTimestampTicks, activationMode);
+        return counter.CreateSuccessor(
+            definition,
+            _lineage,
+            windowTimestampTicks,
+            resolvedActivation);
+    }
+
+    private void CommitFixedTransitionTo(AdmissionRateState target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ThrowIfFixedDisposed();
+        if (target._fixedActivationMode == DynamicFixedWindowActivationMode.Immediate &&
+            target._fixedWindowTimestampTicks != _fixedWindowTimestampTicks)
+        {
+            throw new InvalidOperationException(
+                "Immediate FixedWindow updates may change PermitLimit only. Change Window with NextWindowBoundary activation.");
+        }
+        _fixedCounter!.CommitTransition(this, target);
+    }
+
+    private void OnFixedPublished()
+    {
+        ThrowIfFixedDisposed();
+        _fixedCounter!.Publish(this);
+    }
+
+    private RateLimitLease AttemptAcquireFixed(int permitCount)
+    {
+        ValidateFixedPermitCount(permitCount);
+        if (Volatile.Read(ref _fixedDisposed) != 0)
+            return AdmissionRateLeases.Failed;
+        _fixedCounter!.Publish(this);
+        return _fixedCounter.AttemptAcquire(this);
+    }
+
+    private ValueTask<RateLimitLease> AcquireFixedAsync(
+        int permitCount,
+        CancellationToken cancellationToken)
+    {
+        ValidateFixedPermitCount(permitCount);
+        if (Volatile.Read(ref _fixedDisposed) != 0)
+            return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Failed);
+        _fixedCounter!.Publish(this);
+        return _fixedCounter.AcquireAsync(cancellationToken);
+    }
+
+    private void DisposeFixed()
+    {
+        if (Interlocked.Exchange(ref _fixedDisposed, 1) != 0)
+            return;
+        _fixedCounter!.ReleaseView();
+    }
+
+    private void FinalizeFixedForCommit(int preActivationLimit, long activationBoundary)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(preActivationLimit);
+        if (Interlocked.Exchange(ref _fixedCommitted, 1) != 0)
+            throw new InvalidOperationException("FixedWindow policy view was committed more than once.");
+        _fixedPreActivationLimit = preActivationLimit;
+        _fixedActivationBoundary = activationBoundary;
+    }
+
+    private void MarkFixedPublishedLocked()
+        => Volatile.Write(ref _fixedPublished, 1);
+
+    private void ThrowIfFixedDisposed()
+    {
+        if (Volatile.Read(ref _fixedDisposed) != 0)
+            throw new ObjectDisposedException(nameof(AdmissionRateState));
+    }
+
+    private static void ValidateFixedPermitCount(int permitCount)
+    {
+        if (permitCount != 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(permitCount),
+                "Admission FixedWindow limiters acquire exactly one permit.");
+        }
+    }
+}

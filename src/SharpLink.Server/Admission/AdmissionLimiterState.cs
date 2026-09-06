@@ -545,10 +545,9 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 /// SlidingWindow keep the existing #333 implementation. Algorithm identity changes are generation
 /// boundaries rather than history translations.
 /// </summary>
-internal sealed class AdmissionRateState : RateLimiter
+internal sealed partial class AdmissionRateState : RateLimiter
 {
     private readonly AdmissionDynamicRateState? _state;
-    private readonly DynamicFixedWindowRateLimiter? _fixedWindow;
     private readonly AdmissionRateTransitionLineage _lineage;
     private readonly AdmissionRateStateDefinition _definition;
 
@@ -559,29 +558,22 @@ internal sealed class AdmissionRateState : RateLimiter
         _definition = state.Definition;
     }
 
-    private AdmissionRateState(
-        AdmissionRateStateDefinition definition,
-        DynamicFixedWindowRateLimiter fixedWindow,
-        AdmissionRateTransitionLineage lineage)
-    {
-        _definition = definition;
-        _fixedWindow = fixedWindow;
-        _lineage = lineage;
-    }
-
     internal AdmissionRateStateDefinition Definition => _definition;
 
     internal AdmissionRateTransitionLineage Lineage => _lineage;
 
-    internal int WaitingCount => _fixedWindow?.WaitingCount ?? _state!.WaitingCount;
+    internal int WaitingCount => _fixedCounter?.WaitingCount ?? _state!.WaitingCount;
 
     internal long TransitionDebtForDiagnostics => _state?.TransitionDebtForDiagnostics ?? 0;
 
     internal long TransitionBarrierExpiryForDiagnostics => _state?.TransitionBarrierExpiryForDiagnostics ?? 0;
 
-    internal DynamicFixedWindowRateLimiter? FixedWindowForTests => _fixedWindow;
 
-    internal void OnPublished() => _fixedWindow?.OnPublished();
+    internal void OnPublished()
+    {
+        if (_fixedCounter is not null)
+            OnFixedPublished();
+    }
 
     internal static AdmissionRateState Create(
         SharpLinkAdmissionRuleOptions options,
@@ -593,29 +585,9 @@ internal sealed class AdmissionRateState : RateLimiter
         if (canUseStableFixedWindow)
         {
             var fixedOptions = (SharpLinkFixedWindowLimitOptions)options.RateLimit!;
-            var window = TimeSpan.FromTicks(definition.PeriodTicks);
-            if (transitionSource?._fixedWindow is { } sourceFixed)
-            {
-                if (fixedOptions.UpdateActivation == DynamicFixedWindowActivationMode.Immediate &&
-                    definition.PeriodTicks != transitionSource.Definition.PeriodTicks)
-                {
-                    throw new InvalidOperationException(
-                        "Immediate FixedWindow updates may change PermitLimit only. Change Window with NextWindowBoundary activation.");
-                }
-
-                return new AdmissionRateState(
-                    definition,
-                    sourceFixed.CreateSuccessor(
-                        definition.Limit,
-                        window,
-                        fixedOptions.UpdateActivation),
-                    transitionSource._lineage);
-            }
-
-            return new AdmissionRateState(
-                definition,
-                new DynamicFixedWindowRateLimiter(definition.Limit, window, timeProvider),
-                new AdmissionRateTransitionLineage());
+            if (transitionSource?._fixedCounter is not null)
+                return transitionSource.CreateFixedSuccessor(definition, fixedOptions.UpdateActivation);
+            return new AdmissionRateState(definition, timeProvider);
         }
 
         // TokenBucket/SlidingWindow keep the existing #333 implementation. A source from the
@@ -629,10 +601,10 @@ internal sealed class AdmissionRateState : RateLimiter
 
     internal void CommitTransitionTo(AdmissionRateState? target)
     {
-        if (_fixedWindow is not null)
+        if (_fixedCounter is not null)
         {
-            if (target?._fixedWindow is not null && ReferenceEquals(_lineage, target._lineage))
-                _fixedWindow.CommitTransitionTo(target._fixedWindow);
+            if (target?._fixedCounter is not null && ReferenceEquals(_lineage, target._lineage))
+                CommitFixedTransitionTo(target);
             return;
         }
 
@@ -647,19 +619,23 @@ internal sealed class AdmissionRateState : RateLimiter
     public override RateLimiterStatistics? GetStatistics() => null;
 
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
-        => _fixedWindow?.AttemptAcquire(permitCount) ?? _state!.AttemptAcquire(permitCount);
+        => _fixedCounter is not null
+            ? AttemptAcquireFixed(permitCount)
+            : _state!.AttemptAcquire(permitCount);
 
     protected override ValueTask<RateLimitLease> AcquireAsyncCore(
         int permitCount,
         CancellationToken cancellationToken)
-        => _fixedWindow?.AcquireAsync(permitCount, cancellationToken) ??
-           _state!.AcquireAsync(permitCount, cancellationToken);
+        => _fixedCounter is not null
+            ? AcquireFixedAsync(permitCount, cancellationToken)
+            : _state!.AcquireAsync(permitCount, cancellationToken);
 
     protected override void Dispose(bool disposing)
     {
         if (!disposing)
             return;
-        _fixedWindow?.Dispose();
+        if (_fixedCounter is not null)
+            DisposeFixed();
         _state?.Dispose();
     }
 }
