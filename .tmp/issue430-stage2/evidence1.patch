@@ -1,0 +1,108 @@
+--- a/test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs
++++ b/test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs
+@@ -22,6 +22,8 @@
+     private static readonly int[] SWanConcurrency = [8, 32];
+     private static readonly string[] SPatterns = ["dto", "mixed", "random"];
+     private static readonly string[] SDirectShapes = ["contiguous", "segmented"];
++    private const int DirectMaxOutputBytes = SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes - sizeof(uint);
++    private const int BalancedSendQueueBytes = 8 * 1024 * 1024;
+ 
+     public static async Task RunAsync(string[] args)
+     {
+@@ -53,7 +55,9 @@
+             [
+                 "RPC CPU/allocation measurements are process-wide and include both client and server plus the fixed benchmark harness.",
+                 "Disabled baselines are content-pattern independent because byte[] serialization preserves the same payload size; one disabled row is recorded per transport/size/concurrency.",
+-                "Zstd candidate acceptance uses the runtime evidence configuration MinimumPayloadBytes=0, MinimumSavingsBytes=0, MinimumSavingsRatio=0, so a candidate is accepted exactly when compressedBytes + 4 < originalBytes.",
++                "Zstd candidate acceptance uses the runtime evidence configuration MinimumPayloadBytes=0, MinimumSavingsBytes=0, MinimumSavingsRatio=0, so a candidate is accepted exactly when compressedBytes + 4 < originalBytes; incompressible candidates are measured and recorded as raw fallback rather than treated as failures.",
++                "Direct compression uses the default 4 MiB frame-output budget instead of limiting output to the original payload length, matching Runtime candidate semantics before the adaptive savings decision.",
++                "RPC Concurrency is the requested matrix target. EffectiveConcurrency is conservatively capped so original in-flight request bytes use at most 75% of the default Balanced 8 MiB send queue; this keeps the evidence on production defaults and records where large-payload concurrency is not stable.",
+                 "P99.9 is reported for every scenario, but large-payload scenarios have fewer samples; SampleCount is included so percentile resolution is explicit.",
+                 "Large-payload memory-bandwidth effects are evaluated from payload throughput, CPU/op, allocated B/op, GC collections, and before/after working-set and managed-heap observations.",
+                 "The WAN profile expects external loopback shaping and records SHARPLINK_EVIDENCE_NETWORK in the evidence document."
+@@ -90,7 +94,7 @@
+         var input = shape == "segmented"
+             ? CreateSegmented(payload, 997)
+             : new ReadOnlySequence<byte>(payload);
+-        var compressed = CompressOnce(provider, input, payload.Length);
++        var compressed = CompressOnce(provider, input, DirectMaxOutputBytes);
+         var compressedInput = shape == "segmented"
+             ? CreateSegmented(compressed, 113)
+             : new ReadOnlySequence<byte>(compressed);
+@@ -98,16 +102,16 @@
+ 
+         for (var index = 0; index < 4; index++)
+         {
+-            using var warmCompressed = new PooledByteBufferWriter(payload.Length);
+-            _ = provider.TryCompress(input, warmCompressed, payload.Length);
++            using var warmCompressed = new PooledByteBufferWriter();
++            _ = provider.TryCompress(input, warmCompressed, DirectMaxOutputBytes);
+             using var warmDecoded = new PooledByteBufferWriter(payload.Length);
+             provider.Decompress(compressedInput, warmDecoded, payload.Length);
+         }
+ 
+         var compress = MeasureSynchronous(iterations, payload.Length, () =>
+         {
+-            using var writer = new PooledByteBufferWriter(payload.Length);
+-            if (!provider.TryCompress(input, writer, payload.Length))
++            using var writer = new PooledByteBufferWriter();
++            if (!provider.TryCompress(input, writer, DirectMaxOutputBytes))
+                 throw new InvalidOperationException("Measured Zstd compression candidate unexpectedly did not fit.");
+         });
+         var decompress = MeasureSynchronous(iterations, payload.Length, () =>
+@@ -257,6 +261,7 @@
+         for (var index = 0; index < 4; index++)
+             ValidateEcho(payload, await rpc.EchoBytesAsync(payload).ConfigureAwait(false));
+ 
++        var effectiveConcurrency = GetEffectiveConcurrency(concurrency, payload.Length);
+         var operations = Math.Max(concurrency, Math.Clamp((32 * 1024 * 1024) / payload.Length, 32, 2048));
+         var latencies = new long[operations];
+         var clientBefore = clientCompression?.Snapshot() ?? default;
+@@ -277,7 +282,7 @@
+         var watch = Stopwatch.StartNew();
+ 
+         var nextOperation = -1;
+-        var workers = new Task[Math.Min(concurrency, operations)];
++        var workers = new Task[Math.Min(effectiveConcurrency, operations)];
+         for (var workerIndex = 0; workerIndex < workers.Length; workerIndex++)
+         {
+             workers[workerIndex] = Task.Run(async () =>
+@@ -314,6 +319,7 @@
+             Pattern = pattern,
+             PayloadBytes = payload.Length,
+             Concurrency = concurrency,
++            EffectiveConcurrency = effectiveConcurrency,
+             SampleCount = operations,
+             Qps = operations / Math.Max(watch.Elapsed.TotalSeconds, double.Epsilon),
+             PayloadThroughputMiBPerSecond = operations * payload.Length / (1024d * 1024d) / Math.Max(watch.Elapsed.TotalSeconds, double.Epsilon),
+@@ -343,6 +349,13 @@
+         };
+     }
+ 
++    private static int GetEffectiveConcurrency(int requestedConcurrency, int payloadBytes)
++    {
++        var queueHeadroomBytes = BalancedSendQueueBytes * 3L / 4;
++        var byOriginalBytes = Math.Max(1L, queueHeadroomBytes / Math.Max(1, payloadBytes));
++        return Math.Min(requestedConcurrency, checked((int)Math.Min(int.MaxValue, byOriginalBytes)));
++    }
++
+     private static double PercentileMilliseconds(long[] sortedTicks, double percentile)
+     {
+         if (sortedTicks.Length == 0)
+@@ -366,7 +379,7 @@
+         ReadOnlySequence<byte> input,
+         int maxOutputBytes)
+     {
+-        using var writer = new PooledByteBufferWriter(maxOutputBytes);
++        using var writer = new PooledByteBufferWriter();
+         if (!provider.TryCompress(input, writer, maxOutputBytes))
+             throw new InvalidOperationException("Zstd evidence payload did not fit its candidate bound.");
+         return writer.WrittenMemory.ToArray();
+@@ -562,6 +575,7 @@
+     public string Pattern { get; init; } = string.Empty;
+     public int PayloadBytes { get; init; }
+     public int Concurrency { get; init; }
++    public int EffectiveConcurrency { get; init; }
+     public int SampleCount { get; init; }
+     public double Qps { get; init; }
+     public double PayloadThroughputMiBPerSecond { get; init; }
