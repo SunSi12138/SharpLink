@@ -1,29 +1,450 @@
-name: Temporary Issue 550 Review Inventory
+name: Temporary Issue 550 Review Follow-up
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
     branches:
       - tmp/issue-550-validation-gpt
 
+concurrency:
+  group: tmp-issue-550-review-followup
+  cancel-in-progress: true
+
 jobs:
-  inventory:
+  validate-and-publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout control branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Inspect feature references
+
+      - name: Rebase feature and apply review follow-up
         shell: bash
         run: |
-          git fetch origin fix/issue-550-dynamic-compression-policy dev
-          git checkout --detach origin/fix/issue-550-dynamic-compression-policy
-          echo '=== compression threshold references ==='
-          git grep -n -E 'Compression\.(MinimumPayloadBytes|MinimumSavingsBytes|MinimumSavingsRatio)|MinimumPayloadBytes|MinimumSavingsBytes|MinimumSavingsRatio' -- ':!artifacts' || true
-          echo '=== builder/compression references ==='
-          git grep -n -E 'UseRuntime\(.*Compression|Compression\.Providers|UpdateRequestCompressionPolicy|UpdateResponseCompressionPolicy|SetResponseCompressionPreferenceAsync' -- src test demo doc || true
-          echo '=== compression benchmark/evidence files ==='
-          find test eng -type f | grep -Ei 'compression|benchmark|evidence|hot.?path' | sort || true
+          git fetch origin dev fix/issue-550-dynamic-compression-policy
+          git checkout -B issue-550-review origin/fix/issue-550-dynamic-compression-policy
+          git rebase origin/dev
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          def replace(path, old, new, count=1):
+              text = read(path)
+              if old not in text:
+                  raise SystemExit(f"anchor not found in {path}: {old[:100]!r}")
+              write(path, text.replace(old, new, count))
+
+          # Capability options are provider/profile only. Directional send policy owns all thresholds.
+          path = 'src/SharpLink.Runtime/Compression/SharpLinkCompression.cs'
+          text = read(path)
+          start = text.index('/// <summary>Configures negotiated payload compression for one runtime context.</summary>')
+          end = text.index('internal readonly record struct SharpLinkCompressionProviderBinding(', start)
+          replacement = '''/// <summary>Configures negotiated payload-compression capability for one runtime context.</summary>
+          /// <example>
+          /// <code>
+          /// builder.UseRuntime(options =&gt;
+          ///     options.Compression.Providers.Add(new MyCompressionProvider()));
+          /// </code>
+          /// </example>
+          public sealed class SharpLinkCompressionOptions
+          {
+              private IReadOnlyList&lt;SharpLinkCompressionProviderBinding&gt;? _providerBindings;
+
+              /// <summary>The maximum number of advertised providers.</summary>
+              public const int MaxProviders = 16;
+
+              /// <summary>
+              /// Gets wire-profile providers in local preference order. An empty list completely disables compression.
+              /// Multiple configurations may participate in negotiation when they expose distinct tokens.
+              /// </summary>
+              public IList&lt;ISharpLinkCompressionProvider&gt; Providers { get; } = new List&lt;ISharpLinkCompressionProvider&gt;();
+
+              /// <summary>Validates provider tokens and uniqueness.</summary>
+              public void Validate()
+                  =&gt; _ = ValidateAndCreateBindings();
+
+              private List&lt;SharpLinkCompressionProviderBinding&gt; ValidateAndCreateBindings()
+              {
+                  if (Providers.Count &gt; MaxProviders)
+                      throw new ArgumentOutOfRangeException(nameof(Providers), $"At most {MaxProviders} providers may be configured.");
+
+                  var profiles = new HashSet&lt;string&gt;(StringComparer.Ordinal);
+                  var bindings = new List&lt;SharpLinkCompressionProviderBinding&gt;(Providers.Count);
+                  foreach (var provider in Providers)
+                  {
+                      ArgumentNullException.ThrowIfNull(provider);
+                      var wireProfile = provider.WireProfile;
+                      SharpLinkCompressionProfile.Validate(wireProfile, nameof(Providers));
+                      if (!profiles.Add(wireProfile))
+                          throw new ArgumentException($"Compression wire profile '{wireProfile}' is registered more than once.", nameof(Providers));
+                      bindings.Add(new SharpLinkCompressionProviderBinding(wireProfile, provider));
+                  }
+                  return bindings;
+              }
+
+              internal SharpLinkCompressionOptions CloneValidated()
+              {
+                  var bindings = _providerBindings ?? ValidateAndCreateBindings();
+                  var clone = new SharpLinkCompressionOptions { _providerBindings = bindings };
+                  foreach (var provider in Providers)
+                      clone.Providers.Add(provider);
+                  return clone;
+              }
+
+              internal IReadOnlyList&lt;SharpLinkCompressionProviderBinding&gt; ProviderBindings
+                  =&gt; _providerBindings ?? throw new InvalidOperationException(
+                      "Compression provider bindings are available only after options are frozen.");
+
+              internal void CopyValidatedSnapshotTo(SharpLinkCompressionOptions destination)
+              {
+                  foreach (var provider in Providers)
+                      destination.Providers.Add(provider);
+                  destination._providerBindings = ProviderBindings;
+              }
+
+              internal SharpLinkCompressionProviderBinding? FindProviderBinding(string wireProfile)
+              {
+                  foreach (var binding in ProviderBindings)
+                  {
+                      if (string.Equals(binding.WireProfile, wireProfile, StringComparison.Ordinal))
+                          return binding;
+                  }
+                  return null;
+              }
+          }
+
+          '''.replace('&lt;', '<').replace('&gt;', '>').replace('=&gt;', '=>')
+          write(path, text[:start] + replacement + text[end:])
+
+          path = 'src/SharpLink.Runtime/Compression/CompressionSendPolicyState.cs'
+          text = read(path)
+          text = re.sub(
+              r'''    internal static CompressionSendPolicySnapshot CreateInitial\(SharpLinkCompressionOptions options\)\n    \{\n        ArgumentNullException\.ThrowIfNull\(options\);\n        return CreateValidated\(\n            enabled: true,\n            options\.MinimumPayloadBytes,\n            options\.MinimumSavingsBytes,\n            options\.MinimumSavingsRatio\);\n    \}\n''',
+              '''    internal static CompressionSendPolicySnapshot CreateInitial(SharpLinkCompressionSendPolicy policy)\n        => CreateValidated(policy);\n''',
+              text,
+              count=1)
+          text = text.replace(
+              'internal static CompressionSendPolicyState CreateInitial(SharpLinkCompressionOptions options)\n        => new(CompressionSendPolicySnapshot.CreateInitial(options));',
+              'internal static CompressionSendPolicyState CreateInitial(SharpLinkCompressionSendPolicy policy)\n        => new(CompressionSendPolicySnapshot.CreateInitial(policy));')
+          write(path, text)
+
+          # Client builder/build plan/composition own the initial Request policy.
+          replace(
+              'src/SharpLink.Client/SharpClientBuilder.cs',
+              '    private readonly SharpLinkCircuitBreakerOptions _circuitBreaker = new();\n',
+              '    private readonly SharpLinkCircuitBreakerOptions _circuitBreaker = new();\n    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n')
+          replace(
+              'src/SharpLink.Client/SharpClientBuilder.cs',
+              '''    /// <summary>Uses an application-owned time source for the built client. The client never disposes it.</summary>\n''',
+              '''    /// <summary>Configures the initial Client Request compression send policy.</summary>\n    public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _requestCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n    internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)\n    {\n        Configure(() => _beforeReadyPublicationTestHook = hook ?? throw new ArgumentNullException(nameof(hook)));\n        return this;\n    }\n\n    /// <summary>Uses an application-owned time source for the built client. The client never disposes it.</summary>\n''')
+          replace(
+              'src/SharpLink.Client/SharpClientBuilder.cs',
+              '''            resources,\n            runtimeContext,\n            _heartbeatInterval,''',
+              '''            resources,\n            runtimeContext,\n            _requestCompressionPolicy,\n            _beforeReadyPublicationTestHook,\n            _heartbeatInterval,''')
+          replace(
+              'src/SharpLink.Client/SharpClientBuilder.cs',
+              '''            runtimeContext,\n            staticManifests,''',
+              '''            runtimeContext,\n            plan.RequestCompressionPolicy,\n            plan.BeforeReadyPublicationTestHook,\n            staticManifests,''')
+
+          replace(
+              'src/SharpLink.Client/ClientBuildPlan.cs',
+              '''        SharpLinkRuntimeContextBuildPlan runtimeContext,\n        TimeSpan heartbeatInterval,''',
+              '''        SharpLinkRuntimeContextBuildPlan runtimeContext,\n        SharpLinkCompressionSendPolicy requestCompressionPolicy,\n        Func<CancellationToken, ValueTask>? beforeReadyPublicationTestHook,\n        TimeSpan heartbeatInterval,''')
+          replace(
+              'src/SharpLink.Client/ClientBuildPlan.cs',
+              '''        RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));\n        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);''',
+              '''        RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));\n        RequestCompressionPolicy = requestCompressionPolicy ?? throw new ArgumentNullException(nameof(requestCompressionPolicy));\n        _ = CompressionSendPolicySnapshot.CreateValidated(RequestCompressionPolicy);\n        BeforeReadyPublicationTestHook = beforeReadyPublicationTestHook;\n        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);''')
+          replace(
+              'src/SharpLink.Client/ClientBuildPlan.cs',
+              '''    internal SharpLinkRuntimeContextBuildPlan RuntimeContext { get; }\n    internal TimeSpan HeartbeatInterval { get; }''',
+              '''    internal SharpLinkRuntimeContextBuildPlan RuntimeContext { get; }\n    internal SharpLinkCompressionSendPolicy RequestCompressionPolicy { get; }\n    internal Func<CancellationToken, ValueTask>? BeforeReadyPublicationTestHook { get; }\n    internal TimeSpan HeartbeatInterval { get; }''')
+
+          replace(
+              'src/SharpLink.Client/ClientRuntimeComposition.cs',
+              '''        SharpLinkRuntimeContext runtimeContext,\n        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,''',
+              '''        SharpLinkRuntimeContext runtimeContext,\n        SharpLinkCompressionSendPolicy requestCompressionPolicy,\n        Func<CancellationToken, ValueTask>? beforeReadyPublicationTestHook,\n        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,''')
+          replace(
+              'src/SharpLink.Client/ClientRuntimeComposition.cs',
+              '''        RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));\n        ArgumentNullException.ThrowIfNull(staticManifests);''',
+              '''        RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));\n        RequestCompressionPolicy = requestCompressionPolicy ?? throw new ArgumentNullException(nameof(requestCompressionPolicy));\n        _ = CompressionSendPolicySnapshot.CreateValidated(RequestCompressionPolicy);\n        BeforeReadyPublicationTestHook = beforeReadyPublicationTestHook;\n        ArgumentNullException.ThrowIfNull(staticManifests);''')
+          replace(
+              'src/SharpLink.Client/ClientRuntimeComposition.cs',
+              '''    internal SharpLinkRuntimeContext RuntimeContext { get; }\n\n    internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> StaticProxies { get; }''',
+              '''    internal SharpLinkRuntimeContext RuntimeContext { get; }\n\n    internal SharpLinkCompressionSendPolicy RequestCompressionPolicy { get; }\n\n    internal Func<CancellationToken, ValueTask>? BeforeReadyPublicationTestHook { get; }\n\n    internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> StaticProxies { get; }''')
+
+          replace(
+              'src/SharpLink.Client/SharpLinkClient.cs',
+              '''    private readonly ISharpLinkReconnectJitter _reconnectJitter;\n''',
+              '''    private readonly ISharpLinkReconnectJitter _reconnectJitter;\n    private readonly Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n''')
+          replace(
+              'src/SharpLink.Client/SharpLinkClient.cs',
+              '''        _runtimeContext = composition.RuntimeContext;\n        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(_runtimeContext.Compression);''',
+              '''        _runtimeContext = composition.RuntimeContext;\n        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(composition.RequestCompressionPolicy);\n        _beforeReadyPublicationTestHook = composition.BeforeReadyPublicationTestHook;''')
+
+          # Remove the pre-publication post-handshake reconcile; publication sites perform the final read.
+          replace(
+              'src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+              '''                if (handshakeException is null)\n                {\n                    var currentPreference = CaptureResponseCompressionPreference();\n                    if (currentPreference.Generation > handshakePreference.Generation)\n                        session.ReconcileResponseCompressionPreference(currentPreference);\n                }\n                return handshakeException;''',
+              '''                return handshakeException;''')
+          replace(
+              'src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+              '''            await CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken).ConfigureAwait(false);\n\n            var sessionCts''',
+              '''            await CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken).ConfigureAwait(false);\n            if (_beforeReadyPublicationTestHook is not null)\n                await _beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);\n\n            var sessionCts''')
+          replace(
+              'src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+              '''                    _connections.Add(clientConnection);\n                    PublishReadySnapshotLocked();\n                    readySession.NotifyConnected();''',
+              '''                    _connections.Add(clientConnection);\n                    PublishReadySnapshotLocked();\n                    try\n                    {\n                        ReconcileResponseCompressionPreferenceAfterReadyPublication(readySession);\n                    }\n                    catch (Exception exception)\n                    {\n                        _connections.Remove(clientConnection);\n                        PublishReadySnapshotLocked();\n                        poolException = exception;\n                    }\n                    if (poolException is not null)\n                        goto PublicationFailed;\n                    readySession.NotifyConnected();''')
+          replace(
+              'src/SharpLink.Client/SharpLinkClient.Lifecycle.cs',
+              '''                    TrackFrameworkTask(\n                        RunProcessRequestLoopAsync(clientConnection, sessionCts.Token),\n                        "ProcessRequestLoop");\n                }\n            }''',
+              '''                    TrackFrameworkTask(\n                        RunProcessRequestLoopAsync(clientConnection, sessionCts.Token),\n                        "ProcessRequestLoop");\n                PublicationFailed:;\n                }\n            }''')
+
+          # Static and dynamic cluster publication use the same publication-before-final-read invariant.
+          for cluster_path, add_anchor, remove_anchor in [
+              ('src/SharpLink.Client/SharpLinkClient.StaticCluster.cs',
+               '                    endpoint.Connections.Add(createdConnection);\n                    PublishReadySnapshotLocked();\n                    session.NotifyConnected();',
+               '                    endpoint.Connections.Remove(createdConnection);\n                    PublishReadySnapshotLocked();'),
+              ('src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs',
+               '                    _connections.Add(endpoint, createdConnection);\n                    PublishReadySnapshotLocked();\n                    session.NotifyConnected();',
+               '                    _connections.Remove(endpoint, createdConnection);\n                    PublishReadySnapshotLocked();')]:
+              text = read(cluster_path)
+              if 'await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)' in text:
+                  text = text.replace(
+                      '                await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)\n                    .ConfigureAwait(false);\n\n                var sessionCts',
+                      '                await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)\n                    .ConfigureAwait(false);\n                if (_client._beforeReadyPublicationTestHook is not null)\n                    await _client._beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);\n\n                var sessionCts',
+                      1)
+              if add_anchor not in text:
+                  raise SystemExit(f'publication anchor missing in {cluster_path}')
+              text = text.replace(
+                  add_anchor,
+                  add_anchor.replace('                    session.NotifyConnected();',
+                      '                    try\n                    {\n                        _client.ReconcileResponseCompressionPreferenceAfterReadyPublication(session);\n                    }\n                    catch\n                    {\n' + remove_anchor + '\n                        throw;\n                    }\n                    session.NotifyConnected();'),
+                  1)
+              write(cluster_path, text)
+
+          # Server builder/build plan/composition own the initial Response policy.
+          replace(
+              'src/SharpLink.Server/SharpLinkServerBuilder.cs',
+              '    private SharpLinkConnectionAdmissionOptions? _connectionAdmissionOptions;\n',
+              '    private SharpLinkConnectionAdmissionOptions? _connectionAdmissionOptions;\n    private SharpLinkCompressionSendPolicy _responseCompressionPolicy = new();\n')
+          replace(
+              'src/SharpLink.Server/SharpLinkServerBuilder.cs',
+              '''    /// <summary>Uses an application-owned time source for the built server. The server never disposes it.</summary>\n''',
+              '''    /// <summary>Configures the initial Server Response compression send policy.</summary>\n    public SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _responseCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n    /// <summary>Uses an application-owned time source for the built server. The server never disposes it.</summary>\n''')
+          replace(
+              'src/SharpLink.Server/SharpLinkServerBuilder.cs',
+              '''            runtimeContext,\n            services,\n            _heartbeatCheckInterval,''',
+              '''            runtimeContext,\n            services,\n            _responseCompressionPolicy,\n            _heartbeatCheckInterval,''')
+          replace(
+              'src/SharpLink.Server/SharpLinkServerBuilder.cs',
+              '''                logger,\n                runtimeContext,\n                plan.Authenticator,''',
+              '''                logger,\n                runtimeContext,\n                plan.ResponseCompressionPolicy,\n                plan.Authenticator,''')
+
+          replace(
+              'src/SharpLink.Server/ServerBuildPlan.cs',
+              '''        ServerServiceRegistrationPlanEntry[] services,\n        TimeSpan heartbeatCheckInterval,''',
+              '''        ServerServiceRegistrationPlanEntry[] services,\n        SharpLinkCompressionSendPolicy responseCompressionPolicy,\n        TimeSpan heartbeatCheckInterval,''')
+          replace(
+              'src/SharpLink.Server/ServerBuildPlan.cs',
+              '''        _services = [.. services];\n        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatCheckInterval, TimeSpan.Zero);''',
+              '''        _services = [.. services];\n        ResponseCompressionPolicy = responseCompressionPolicy ?? throw new ArgumentNullException(nameof(responseCompressionPolicy));\n        _ = CompressionSendPolicySnapshot.CreateValidated(ResponseCompressionPolicy);\n        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatCheckInterval, TimeSpan.Zero);''')
+          replace(
+              'src/SharpLink.Server/ServerBuildPlan.cs',
+              '''    internal int ServiceCount => _services.Length;\n''',
+              '''    internal int ServiceCount => _services.Length;\n    internal SharpLinkCompressionSendPolicy ResponseCompressionPolicy { get; }\n''')
+
+          replace(
+              'src/SharpLink.Server/ServerRuntimeComposition.cs',
+              '''        ILogger logger,\n        SharpLinkRuntimeContext runtimeContext,\n        ISharpLinkServerAuthenticator? authenticator,''',
+              '''        ILogger logger,\n        SharpLinkRuntimeContext runtimeContext,\n        SharpLinkCompressionSendPolicy responseCompressionPolicy,\n        ISharpLinkServerAuthenticator? authenticator,''')
+          replace(
+              'src/SharpLink.Server/ServerRuntimeComposition.cs',
+              '''        RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));\n        ProtocolOptions = protocolOptions ?? throw new ArgumentNullException(nameof(protocolOptions));''',
+              '''        RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));\n        ResponseCompressionPolicy = responseCompressionPolicy ?? throw new ArgumentNullException(nameof(responseCompressionPolicy));\n        _ = CompressionSendPolicySnapshot.CreateValidated(ResponseCompressionPolicy);\n        ProtocolOptions = protocolOptions ?? throw new ArgumentNullException(nameof(protocolOptions));''')
+          replace(
+              'src/SharpLink.Server/ServerRuntimeComposition.cs',
+              '''    internal SharpLinkRuntimeContext RuntimeContext { get; }\n\n    internal ServerAuthenticationCoordinator Authentication { get; }''',
+              '''    internal SharpLinkRuntimeContext RuntimeContext { get; }\n\n    internal SharpLinkCompressionSendPolicy ResponseCompressionPolicy { get; }\n\n    internal ServerAuthenticationCoordinator Authentication { get; }''')
+          replace(
+              'src/SharpLink.Server/SharpLinkServer.cs',
+              '''        _runtimeContext = composition.RuntimeContext;\n        _responseCompressionPolicy = CompressionSendPolicyState.CreateInitial(_runtimeContext.Compression);''',
+              '''        _runtimeContext = composition.RuntimeContext;\n        _responseCompressionPolicy = CompressionSendPolicyState.CreateInitial(composition.ResponseCompressionPolicy);''')
+
+          # Cohort propagation: first attempt every eligible session, then await, then report live failures.
+          path = 'src/SharpLink.Client/SharpLinkClient.Compression.cs'
+          text = read(path)
+          old = '''        var desired = PublishResponseCompressionPreference(allowResponseCompression);\n        var cohort = CaptureResponseCompressionPreferenceCohort();\n\n        for (var index = 0; index < cohort.Length; index++)\n        {\n            try\n            {\n                cohort[index].Session.ReconcileResponseCompressionPreference(desired);\n            }\n            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)\n            {\n            }\n            catch (ObjectDisposedException)\n            {\n            }\n        }\n\n        for (var index = 0; index < cohort.Length; index++)\n        {\n            await cohort[index].Session.WaitForResponseCompressionPreferenceAsync(\n                desired.Generation,\n                cancellationToken).ConfigureAwait(false);\n        }'''
+          new = '''        var desired = PublishResponseCompressionPreference(allowResponseCompression);\n        var cohort = CaptureResponseCompressionPreferenceCohort();\n        List<Exception>? failures = null;\n        var failed = cohort.Length == 0 ? Array.Empty<bool>() : new bool[cohort.Length];\n\n        for (var index = 0; index < cohort.Length; index++)\n        {\n            try\n            {\n                cohort[index].ReconcileResponseCompressionPreference(desired);\n            }\n            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)\n            {\n            }\n            catch (ObjectDisposedException)\n            {\n            }\n            catch (Exception exception)\n            {\n                failed[index] = true;\n                (failures ??= []).Add(exception);\n            }\n        }\n\n        for (var index = 0; index < cohort.Length; index++)\n        {\n            if (failed[index])\n                continue;\n            try\n            {\n                await cohort[index].WaitForResponseCompressionPreferenceAsync(\n                    desired.Generation,\n                    cancellationToken).ConfigureAwait(false);\n            }\n            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)\n            {\n            }\n            catch (ObjectDisposedException)\n            {\n            }\n            catch (Exception exception)\n            {\n                (failures ??= []).Add(exception);\n            }\n        }\n\n        ThrowResponseCompressionPreferenceFailures(failures);'''
+          if old not in text:
+              raise SystemExit('cohort update block not found')
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              '    private ClientConnection[] CaptureResponseCompressionPreferenceCohort()\n',
+              '    private RpcSession[] CaptureResponseCompressionPreferenceCohort()\n',
+              1)
+          text = text.replace('            return [];\n\n        var eligible = new List<ClientConnection>(ready.Length);',
+                              '            return [];\n\n        var eligible = new List<RpcSession>(ready.Length);', 1)
+          text = text.replace('                eligible.Add(connection);', '                eligible.Add(connection.Session);', 1)
+          insert = '''\n    private void ReconcileResponseCompressionPreferenceAfterReadyPublication(RpcSession session)\n    {\n        if (!session.HasNegotiatedCompression)\n            return;\n        session.ReconcileResponseCompressionPreference(CaptureResponseCompressionPreference());\n    }\n\n    private static void ThrowResponseCompressionPreferenceFailures(List<Exception>? failures)\n    {\n        if (failures is null || failures.Count == 0)\n            return;\n        if (failures.Count == 1)\n            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();\n        throw new AggregateException("One or more response-compression preference sessions failed to converge.", failures);\n    }\n'''
+          marker = '\n    private ResponseCompressionPreferenceSnapshot PublishResponseCompressionPreference(bool allowed)\n'
+          if marker not in text:
+              raise SystemExit('compression helper insertion marker missing')
+          text = text.replace(marker, insert + marker, 1)
+          write(path, text)
+
+          # Runtime diagnostics used only by deterministic acceptance tests.
+          path = 'src/SharpLink.Runtime/RpcSession.ResponseCompressionPreference.cs'
+          text = read(path)
+          marker = '    internal bool HasNegotiatedCompression\n'
+          diagnostics = '''    internal ulong RemoteResponseCompressionAppliedGeneration\n    {\n        get\n        {\n            lock (_responseCompressionPreferenceControlGate)\n                return _remoteResponseCompressionAppliedGeneration;\n        }\n    }\n\n    internal ResponseCompressionPreferenceSnapshot AppliedResponseCompressionPreference\n        => Volatile.Read(ref _appliedResponseCompressionPreference);\n\n'''
+          text = text.replace(marker, diagnostics + marker, 1)
+          write(path, text)
+
+          # Remove legacy threshold configuration from capability-only runtime options.
+          for p in ['demo/Compression/Program.cs', 'test/SharpLink.AotSmoke/Program.cs', 'test/SharpLink.PackageSmoke/Program.cs']:
+              text = read(p)
+              text = re.sub(r'\s*options\.Compression\.MinimumPayloadBytes\s*=\s*[^;]+;\n', '', text)
+              text = re.sub(r'\s*options\.Compression\.MinimumSavingsBytes\s*=\s*[^;]+;\n', '', text)
+              text = re.sub(r'\s*options\.Compression\.MinimumSavingsRatio\s*=\s*[^;]+;\n', '', text)
+              write(p, text)
+
+          # Preserve the stress test's deliberately low thresholds via directional builder policies.
+          path = 'test/SharpLink.IntegrationTests/ClientStreamingResultStressTests.cs'
+          text = read(path)
+          text = text.replace(
+              '            if (enableCompression)\n                serverBuilder.UseRuntime(ConfigureCompression);',
+              '            if (enableCompression)\n                serverBuilder.UseRuntime(ConfigureCompression).UseResponseCompressionPolicy(CreateCompressionPolicy());',
+              1)
+          text = text.replace(
+              '            if (enableCompression)\n                clientBuilder.UseRuntime(ConfigureCompression);',
+              '            if (enableCompression)\n                clientBuilder.UseRuntime(ConfigureCompression).UseRequestCompressionPolicy(CreateCompressionPolicy());',
+              1)
+          text = re.sub(r'\s*options\.Compression\.MinimumPayloadBytes = 1;\n\s*options\.Compression\.MinimumSavingsBytes = 1;\n\s*options\.Compression\.MinimumSavingsRatio = 0;\n', '\n', text, count=1)
+          marker = '        private static void ConfigureCompression(SharpLinkRuntimeOptions options)\n'
+          policy = '''        private static SharpLinkCompressionSendPolicy CreateCompressionPolicy()\n            => new()\n            {\n                MinimumPayloadBytes = 1,\n                MinimumSavingsBytes = 1,\n                MinimumSavingsRatio = 0\n            };\n\n'''
+          text = text.replace(marker, policy + marker, 1)
+          write(path, text)
+
+          # Compression benchmark runtime options now configure providers only; directional policy is applied through built APIs.
+          path = 'test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs'
+          text = read(path)
+          text = re.sub(r'\s*options\.Compression\.MinimumPayloadBytes = 0;\n\s*options\.Compression\.MinimumSavingsBytes = 0;\n\s*options\.Compression\.MinimumSavingsRatio = 0;\n', '\n', text, count=1)
+          # Apply zero thresholds after environment construction at the two factory call sites.
+          text = text.replace(
+              '                options => ConfigureCompression(options, serverCompression),\n                options => ConfigureCompression(options, clientCompression)).ConfigureAwait(false);',
+              '                options => ConfigureCompression(options, serverCompression),\n                options => ConfigureCompression(options, clientCompression),\n                configureBuiltServer: static server => server.UpdateResponseCompressionPolicy(CompressionEvidencePolicy),\n                configureBuiltClient: static client => client.UpdateRequestCompressionPolicy(CompressionEvidencePolicy)).ConfigureAwait(false);',
+              1)
+          if 'CompressionEvidencePolicy' not in text:
+              raise SystemExit('compression evidence call-site update failed')
+          # The raw/compressed factory helper has an explicit shared-memory branch; extend its signature usage later by overload.
+          marker = 'internal static class CompressionZstdEvidenceRunner\n{\n'
+          text = text.replace(marker, marker + '''    private static readonly SharpLinkCompressionSendPolicy CompressionEvidencePolicy = new()\n    {\n        MinimumPayloadBytes = 0,\n        MinimumSavingsBytes = 0,\n        MinimumSavingsRatio = 0\n    };\n\n''', 1)
+          write(path, text)
+
+          # BenchmarkEnvironment shared-memory factory accepts the same built-instance policy callbacks.
+          path = 'test/SharpLink.Benchmarks/BenchmarkEnvironment.cs'
+          text = read(path)
+          text = text.replace(
+              '''    public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync(\n        Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,\n        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)''',
+              '''    public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync(\n        Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,\n        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null,\n        Action<ISharpLinkServer>? configureBuiltServer = null,\n        Action<ISharpLinkClient>? configureBuiltClient = null)''',
+              1)
+          text = text.replace('        var server = serverBuilder.Build();\n        var shutdown = new CancellationTokenSource();',
+                              '        var server = serverBuilder.Build();\n        configureBuiltServer?.Invoke(server);\n        var shutdown = new CancellationTokenSource();', 1)
+          text = text.replace('        var client = clientBuilder.Build();\n        try\n        {\n            await client.ConnectAsync',
+                              '        var client = clientBuilder.Build();\n        configureBuiltClient?.Invoke(client);\n        try\n        {\n            await client.ConnectAsync', 1)
+          text = text.replace('    public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();',
+                              '    internal ISharpLinkClient Client => _client;\n    internal ISharpLinkServer Server => _server;\n\n    public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();', 1)
+          write(path, text)
+
+          # Fix compression options validation test to validate the directional policy instead.
+          path = 'test/SharpLink.UnitTests/Runtime/CompressionProviderTests.cs'
+          text = read(path)
+          text = text.replace(
+              '        var ratio = new SharpLinkCompressionOptions { MinimumSavingsRatio = 1.01 };',
+              '        var ratio = new SharpLinkCompressionSendPolicy { MinimumSavingsRatio = 1.01 };',
+              1)
+          text = text.replace('            ratio.Validate();', '            CompressionSendPolicyState.CreateInitial(ratio);', 1)
+          write(path, text)
+
+          # Documentation examples reflect capability/policy separation.
+          for p in ['README.md', 'doc/contracts-and-codecs.md']:
+              text = read(p)
+              text = re.sub(r'\s*options\.Compression\.MinimumPayloadBytes\s*=\s*[^;]+;\n', '', text)
+              text = re.sub(r'\s*options\.Compression\.MinimumSavingsBytes\s*=\s*[^;]+;\n', '', text)
+              text = re.sub(r'\s*options\.Compression\.MinimumSavingsRatio\s*=\s*[^;]+;\n', '', text)
+              write(p, text)
+
+          # Ensure no legacy threshold remains under SharpLinkCompressionOptions configuration outside deliberate policy models.
+          offenders = []
+          for p in Path('.').rglob('*.cs'):
+              if any(part in {'.git', 'artifacts', 'bin', 'obj'} for part in p.parts):
+                  continue
+              t = p.read_text(errors='ignore')
+              if re.search(r'Compression\.Minimum(?:PayloadBytes|SavingsBytes|SavingsRatio)', t):
+                  offenders.append(str(p))
+          if offenders:
+              raise SystemExit('legacy compression threshold references remain: ' + ', '.join(offenders))
+          PY
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Format
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+
+      - name: Boundary and maintainability gates
+        shell: bash
+        run: |
+          python3 eng/check-project-reference-boundaries.py
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Squash clean feature commit
+        shell: bash
+        run: |
+          git reset --soft origin/dev
+          git add src test demo doc README.md
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "feat(compression): add dynamic runtime policy control"
+          test -z "$(git status --short)"
+
+      - name: Pack and package verify
+        shell: bash
+        run: |
+          dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+          ./eng/verify-packages.sh artifacts/nuget
+
+      - name: Publish reviewed feature commit
+        shell: bash
+        run: git push origin HEAD:refs/heads/fix/issue-550-dynamic-compression-policy --force
