@@ -154,11 +154,11 @@ public static class CompressionDynamicPolicyEvidenceRunner
             var cpuAfter = process.TotalProcessorTime;
             var allocatedAfter = GC.GetTotalAllocatedBytes(precise: true);
             samples.Add(new CompressionDynamicPolicyRound(
-                allocatedBytesPerOperation: (allocatedAfter - allocatedBefore) / (double)OperationsPerRound,
-                cpuMicrosecondsPerOperation: (cpuAfter - cpuBefore).TotalMilliseconds * 1000d / OperationsPerRound,
-                elapsedMicrosecondsPerOperation: watch.Elapsed.TotalMilliseconds * 1000d / OperationsPerRound,
-                qps: OperationsPerRound / Math.Max(watch.Elapsed.TotalSeconds, double.Epsilon),
-                compressionAttemptsPerOperation: (clientProvider?.Attempts ?? 0) / (double)OperationsPerRound));
+                (allocatedAfter - allocatedBefore) / (double)OperationsPerRound,
+                (cpuAfter - cpuBefore).TotalMilliseconds * 1000d / OperationsPerRound,
+                watch.Elapsed.TotalMilliseconds * 1000d / OperationsPerRound,
+                OperationsPerRound / Math.Max(watch.Elapsed.TotalSeconds, double.Epsilon),
+                (clientProvider?.Attempts ?? 0) / (double)OperationsPerRound));
         }
 
         return new CompressionDynamicPolicyMeasurement
