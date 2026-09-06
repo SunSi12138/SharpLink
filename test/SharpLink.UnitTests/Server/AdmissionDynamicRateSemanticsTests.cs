@@ -69,7 +69,7 @@ public sealed class AdmissionDynamicRateSemanticsTests
     }
 
     [Test]
-    public async Task FixedWindowShrinkAndDurationIncreaseShouldPreserveActiveEpoch()
+    public async Task FixedWindowShrinkAndDurationIncreaseShouldSwitchAtOldBoundary()
     {
         var time = new ManualTimeProvider();
         await using var kernel = new AdmissionStateKernel(time);
@@ -82,12 +82,16 @@ public sealed class AdmissionDynamicRateSemanticsTests
             source,
             options => ConfigureFixedWindow(options, 2, 20));
         await EnsureRateRejectedAsync(replacement,
-            "fixed-window shrink must preserve the three permits consumed in the active epoch");
-        time.Advance(TimeSpan.FromSeconds(16).Subtract(TimeSpan.FromTicks(1)));
+            "a changed Window keeps the exhausted old window authoritative until its natural boundary");
+
+        time.Advance(TimeSpan.FromSeconds(6).Subtract(TimeSpan.FromTicks(1)));
         await EnsureRateRejectedAsync(replacement,
-            "duration increase must not start a fresh window at publication");
+            "the target twenty-second Window must remain pending one tick before the old boundary");
         time.Advance(TimeSpan.FromTicks(1));
-        await ConsumeAsync(replacement, 1);
+
+        await ConsumeAsync(replacement, 2);
+        await EnsureRateRejectedAsync(replacement,
+            "the new twenty-second Window must begin with exactly the two-permit target");
     }
 
     [Test]
