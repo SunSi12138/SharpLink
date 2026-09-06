@@ -36,6 +36,7 @@ jobs:
           echo '119f40a4ee901170a621fc9410b3a5cee038243ce90139be29e192f0dde5acd0  .tmp/issue430/fix06.03' | sha256sum -c -
           echo 'f80fdb8d766290318ac79b5f7f3e1a5779d4c3a73a018455e989bdd9877fd88a  .tmp/issue430/followup1.patch' | sha256sum -c -
           echo '0dbf17dd266eaff298c382d025bb53189352a4845336b525db377d429f7517a9  .tmp/issue430/followup2.patch' | sha256sum -c -
+          echo '1b80abd43680d72fe5aab8dd3be0d6a77375392884c77b0bb6affebf5a395ac5  .tmp/issue430/followup3.patch' | sha256sum -c -
           echo '4bdaa07ca9a3e8f76495ac88fa9eec6852da30471ae4433efab6f9b03a13884b  .tmp/issue430/new-integration-provider.patch' | sha256sum -c -
           echo 'a37c14f66c55abf33816abf3f9d5235becab180fcc997d7f266c65ffb5876e4d  .tmp/issue430/new-unit-provider.patch' | sha256sum -c -
           cat \
@@ -51,6 +52,7 @@ jobs:
           base64 -d /tmp/issue430.patch.b64 | gzip -d > /tmp/issue430.patch
           cp .tmp/issue430/followup1.patch /tmp/issue430-followup1.patch
           cp .tmp/issue430/followup2.patch /tmp/issue430-followup2.patch
+          cp .tmp/issue430/followup3.patch /tmp/issue430-followup3.patch
           cp .tmp/issue430/new-integration-provider.patch /tmp/issue430-new-integration-provider.patch
           cp .tmp/issue430/new-unit-provider.patch /tmp/issue430-new-unit-provider.patch
           git fetch origin fix/430-compression-provider-boundary
@@ -66,6 +68,8 @@ jobs:
           git apply /tmp/issue430-followup1.patch
           git apply --check /tmp/issue430-followup2.patch
           git apply /tmp/issue430-followup2.patch
+          git apply --check /tmp/issue430-followup3.patch
+          git apply /tmp/issue430-followup3.patch
           git diff --check
           echo "PATCH_APPLIED $(git diff --shortstat)"
 
