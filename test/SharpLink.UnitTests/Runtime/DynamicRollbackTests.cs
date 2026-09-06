@@ -27,10 +27,10 @@ public class DynamicRollbackTests
         {
             var assembly = typeof(RollbackMarker).Assembly;
             Ensure(client.RegisterAssembly(assembly).Succeeded, "dynamic Client registration");
-            var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)(typeof(SharpLinkClient)
-                .GetField("_dynamicModules", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(client)!);
-            var module = modules[assembly];
+            var registry = (ClientAssemblyRegistry)typeof(SharpLinkClient)
+                .GetField("_assemblyRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client)!;
+            Ensure(registry.DynamicModules.TryGetValue(assembly, out var module), "registered Client module");
             Ensure(module.TryAcquire(stream: false, out lease), "dynamic module lease");
 
             var unregister = client.UnregisterAssemblyAsync(assembly, TimeSpan.MaxValue).AsTask();
@@ -84,10 +84,10 @@ public class DynamicRollbackTests
         {
             var assembly = typeof(RollbackMarker).Assembly;
             Ensure(client.RegisterAssembly(assembly).Succeeded, "dynamic Client registration");
-            var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)typeof(SharpLinkClient)
-                .GetField("_dynamicModules", BindingFlags.Instance | BindingFlags.NonPublic)!
+            var registry = (ClientAssemblyRegistry)typeof(SharpLinkClient)
+                .GetField("_assemblyRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(client)!;
-            var module = modules[assembly];
+            Ensure(registry.DynamicModules.TryGetValue(assembly, out var module), "registered Client module");
             Ensure(module.TryAcquire(stream: false, out lease), "retained Client module lease");
             var forcedCancellationCount = 0;
             using var registration = module.ForcedCancellation.Register(
@@ -119,7 +119,7 @@ public class DynamicRollbackTests
                 "the Client unregister drain must leave both module counters exactly zero");
             await client.StopAsync();
             await ownerProvider.WaitForTimersDrainedAsync();
-            Ensure(module.State == SharpLinkDynamicModuleState.Released && !modules.ContainsKey(assembly),
+            Ensure(module.State == SharpLinkDynamicModuleState.Released && !registry.DynamicModules.ContainsKey(assembly),
                 "Client module must be released after its retained lease and framework owner drain");
             Ensure(ownerProvider.ActiveTimerCount == 0 && forcedCancellationCount == 1,
                 "Client deferred release must leave no provider timer or duplicate forced cancellation");
