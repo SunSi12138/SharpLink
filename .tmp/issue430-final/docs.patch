@@ -1,0 +1,333 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 09fa004..80ace1b 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,7 @@
+ 
+ - Compression policy is now algorithm-neutral: `SharpLink.Runtime` ships no concrete compressor, algorithm-specific framing, or checksum machinery. Negotiation, adaptive raw/compressed selection, bounds, flow-control accounting, and call/stream failure isolation remain in Core.
+ - `ISharpLinkCompressionProvider` now uses `TryCompress(...) -> bool` plus `void Decompress(...)`. Successful return means the complete input was consumed; Core measures output bytes from its bounded writer. `TryCompress=false` is the public bounded-candidate fallback and replaces the old internal output-limit exception path.
++- The compression SPI now explicitly permits zero-byte successful representations; the generic inbound envelope no longer imposes a one-byte algorithm-specific minimum, and an end-to-end length-only compressed-frame test locks the contract.
+ 
+ - Client and Server interceptor generations are now composed once when published instead of interpreting an interceptor array through per-RPC continuation state. Correct `next` usage is an interceptor-author contract: invoke it at most once, await or directly return it, and do not retain it after the interceptor returns. SharpLink no longer allocates/verifies per-layer duplicate, retained, or fire-and-forget continuation misuse; generation capture, deadline/re-entry guards, legal short-circuit behavior, and the response-bearing Server terminal check remain enforced.
+ 
+@@ -20,6 +21,7 @@
+ 
+ ### Added
+ 
++- Added `SharpLink.Compression.Zstd` for .NET 10 with the official `zstd-rfc8878-w23-checksum/v1` profile. It uses `ZstdSharp.Port` 0.8.8, requires the standard frame checksum, forbids dictionaries/trailing/concatenated frames, caps the window at 8 MiB, and keeps compression level as encode-only tuning. Linux/Windows/macOS NativeAOT, .NET 11 Preview BCL interoperability, local/WAN-like compression evidence, and disabled-fast-path A/B are recorded in `doc/issue-430-zstd-evidence.md`.
+ - Client readiness snapshots now expose lifecycle state, active/ready endpoint counts, ready connection count, and the current convergence target. Built-in fixed, static, and resolver topologies support caller-selected endpoint thresholds without raising configured convergence targets or changing `ConnectAsync` connectivity semantics.
+ - Runtime sessions now receive one immutable creation snapshot containing their Client/Server role, real Runtime Context, and flush policy. Context-derived protocol limits and the sole StreamManager instance are established before the constructor returns.
+ - `PendingRequestTable` now requires an explicit capacity, codec provider, pending-call owner, and time provider; Client connections supply the dependency set from their Runtime Context without transferring ownership.
+diff --git a/README.md b/README.md
+index 952c8da..328d794 100644
+--- a/README.md
++++ b/README.md
+@@ -31,6 +31,7 @@
+ - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
+ - `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成
+ - `SharpLink.Serializer.SharpPack`：精确依赖 SharpPack `[1.1.0]` 的 Codec Adapter（`memorypack-binary/v1`）
++- `SharpLink.Compression.Zstd`：官方 Zstandard compression provider；当前稳定目标为 .NET 10，wire profile 为 `zstd-rfc8878-w23-checksum/v1`
+ 
+ 示例（`demo/`）：
+ 
+@@ -227,14 +228,16 @@ Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自
+ 
+ ## 协商压缩
+ 
+-压缩默认完全关闭，Core 不再内置具体压缩算法。Client 与 Server 分别按本地偏好注册应用或可选包提供的 `ISharpLinkCompressionProvider`；握手有交集时 Server 选择自身列表中的第一个 wire profile，没有交集或只有一端启用时自动发送原始帧：
++压缩默认完全关闭，Core 不内置具体压缩算法。官方 `SharpLink.Compression.Zstd` 包当前面向稳定的 .NET 10，使用标准 Zstandard frame、标准 frame checksum、8 MiB 最大 window，并禁止 dictionary、trailing bytes 和拼接第二帧；Client 与 Server 仍可按本地偏好注册任意符合公开 SPI 的 Provider。握手有交集时 Server 选择自身列表中的第一个 wire profile，没有交集或只有一端启用时自动发送原始帧：
+ 
+ ```csharp
++using SharpLink.Compression.Zstd;
++
+ var server = SharpLinkServerBuilder.Create()
+     .UseTcp(5000)
+     .UseRuntime(options =>
+     {
+-        options.Compression.Providers.Add(myCompressionProvider);
++        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
+         options.Compression.MinimumPayloadBytes = 2048;
+         options.Compression.MinimumSavingsBytes = 96;
+         options.Compression.MinimumSavingsRatio = 0.08;
+@@ -242,7 +245,9 @@ var server = SharpLinkServerBuilder.Create()
+     .Build();
+ ```
+ 
+-`WireProfile` 是完整的 decode-compatible wire identity。Provider 必须线程安全，不保留调用方 buffer；`TryCompress` 只有在完整 representation 无法放入给定上限时才返回 `false`，收益判断仍由 Core 负责。`Decompress` 正常返回表示完整消费输入并拒绝 trailing bytes；格式完整性属于 profile/provider，不由 Core 添加算法专属 framing 或 checksum。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)。
++官方 Zstd profile 为 `zstd-rfc8878-w23-checksum/v1`。`SharpLinkZstdCompressionProvider` 的 `CompressionLevel` 仅调整编码成本，因此不同 level 可以协商同一 wire profile；checksum、window 上限、dictionary/trailing/concat 规则属于 profile identity。未来稳定的 .NET 11 backend 只有在与该 profile 互操作重新验证后才可替换 net10 backend，backend 名称不会进入 wire identity。
++
++通用 `WireProfile` 是完整的 decode-compatible wire identity。Provider 必须线程安全，不保留调用方 buffer；`TryCompress` 只有在完整 representation 无法放入给定上限时才返回 `false`，收益判断仍由 Core 负责。成功 representation 可以是 0 byte，是否有效由 profile/provider 决定；`Decompress` 正常返回表示完整消费输入并拒绝 trailing bytes。格式完整性属于 profile/provider，不由 Core 添加算法专属 framing 或 checksum。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)，Zstd 可行性、NativeAOT、跨 backend 与性能证据见 [`doc/issue-430-zstd-evidence.md`](doc/issue-430-zstd-evidence.md)。
+ 
+ 压缩在连接握手后按每个方向自动应用，不存在 per-call 强制开关；需要控制是否尝试压缩时，应在对应 Client/Server Runtime Context 配置 Provider 或调整 payload/收益阈值。
+ 
+diff --git a/doc/index.md b/doc/index.md
+index af12193..9619b05 100644
+--- a/doc/index.md
++++ b/doc/index.md
+@@ -18,7 +18,7 @@
+ 12. [故障排查](troubleshooting.md)：常见配置、协议、资源和生命周期错误。
+ 13. [迁移到 2.0](migration.md)：Generated ABI（API 4）、包依赖变化和完整重建要求。
+ 
+-深入资料：[架构总览](architecture.md)（[Generator](architecture-generator.md) / [Runtime](architecture-runtime.md) / [Client](architecture-client.md) / [Server](architecture-server.md)）、[生产项目引用边界](project-reference-boundaries.md)、[测试项目引用边界](test-project-reference-boundaries.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
++深入资料：[架构总览](architecture.md)（[Generator](architecture-generator.md) / [Runtime](architecture-runtime.md) / [Client](architecture-client.md) / [Server](architecture-server.md)）、[生产项目引用边界](project-reference-boundaries.md)、[测试项目引用边界](test-project-reference-boundaries.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[Issue #430 Zstd 可行性与性能证据](issue-430-zstd-evidence.md)、[发布流程](releasing.md)。
+ 
+ 工程与 CI 资料：[ADR 约定](adr/README.md)、[CI validation tiers](ci-validation-tiers.md)、[PR Fast gate](pr-fast.md)。
+ 
+diff --git a/doc/issue-430-zstd-evidence.md b/doc/issue-430-zstd-evidence.md
+new file mode 100644
+index 0000000..1b61153
+--- /dev/null
++++ b/doc/issue-430-zstd-evidence.md
+@@ -0,0 +1,253 @@
++# Issue #430 Zstandard feasibility and performance evidence
++
++Status: **Go** for the algorithm-free Core boundary and the official .NET 10 Zstandard provider described here.
++
++This document records the durable evidence used to finish the Zstandard and performance acceptance work for issue #430. Raw machine-readable rows were captured by the linked GitHub Actions runs; the benchmark/evidence runner is committed in-tree so the matrix can be reproduced, while the decision-relevant platform, percentile, CPU/allocation, wire-savings, rejection, and A/B values are preserved below.
++
++## Candidate and profile
++
++The production package is `SharpLink.Compression.Zstd`, targeting the repository's stable `net10.0` baseline and depending on the exact `ZstdSharp.Port` `0.8.8` package. The backend is not part of wire identity.
++
++The official profile is:
++
++```text
++zstd-rfc8878-w23-checksum/v1
++```
++
++Its decode-relevant contract is fixed:
++
++- exactly one standard RFC 8878 Zstandard frame;
++- standard Zstandard frame checksum required;
++- dictionaries forbidden;
++- trailing bytes and a concatenated second frame forbidden;
++- maximum window log 23 (8 MiB);
++- bounded output enforced by the provider and rechecked by Core against the generic `originalLength`;
++- compression level is encode-only tuning and therefore does not change `WireProfile`.
++
++This uses the format's own checksum rather than restoring a SharpLink-specific trailer or CRC path.
++
++## Generic SPI zero-byte representation fix
++
++The Stage-1 SPI allowed `TryCompress(...) == true` without requiring a non-empty representation, while inbound Core validation required at least one `compressedBody` byte. That made a zero-byte provider legal on the send side but a `ProtocolViolation` on receipt.
++
++The final contract deliberately allows a successful representation to contain zero bytes. The generic four-byte `originalLength` envelope already frames the payload, and representation validity belongs to the negotiated provider. Inbound envelope validation therefore requires the original-length prefix but does not impose an algorithm-independent body minimum. `CompressionFrameTests.ZeroByteRepresentationShouldRoundTripThroughWireEnvelope` sends and decodes a real length-only compressed frame to lock the contract end to end.
++
++## .NET 10 backend feasibility
++
++`ZstdSharp.Port` was selected over copying the .NET 11 implementation. The .NET 11 implementation is a managed API over `System.IO.Compression.Native`/native zstd integration; copying it to .NET 10 would amount to maintaining a Runtime/native fork. `ZstdSharp.Port` is an MIT C# port and keeps the .NET 10 package self-contained at the managed dependency level.
++
++The provider validation covers:
++
++- contiguous and multi-segment round trips;
++- checksum corruption;
++- truncation;
++- trailing bytes;
++- concatenated second frame;
++- checksum-disabled frame rejection;
++- dictionary-bearing frame rejection;
++- compression output bound (`TryCompress=false`);
++- decompression output bound;
++- cancellation;
++- concurrent calls on one provider instance;
++- multiple compression levels sharing one wire identity.
++
++Stable Stage-2 validation run: https://github.com/SunSi12138/SharpLink/actions/runs/34022883327
++
++- Release solution build: 0 warnings / 0 errors.
++- Unit: 1470 passed.
++- Generator: 264 passed.
++- Load-test tests: 60 passed.
++- Integration: 421 passed.
++- direct Zstd NativeAOT smoke: passed.
++- full TCP/shared-memory NativeAOT topology, SharpPack sidecar, and pre-credit smokes: passed.
++- pack, package contract verification, and package smoke: passed.
++
++## Platform and future .NET 11 backend matrix
++
++Platform/BCL evidence run: https://github.com/SunSi12138/SharpLink/actions/runs/34024909888
++
++The workflow pins .NET 11 Preview 7 SDK `11.0.100-preview.7.26381.103` only as evidence. The shipping package in this change does **not** target preview `net11.0`. A stable .NET 11 TFM/backend can be added after GA without changing the SharpLink profile if these compatibility properties continue to hold.
++
++| Platform | .NET 10 ZstdSharp NativeAOT | Separate native zstd deployment | ZstdSharp -> BCL | BCL -> ZstdSharp | corruption/truncation/trailing/concat/bound |
++|---|---|---|---|---|---|
++| Linux x64 | pass | absent | 12/12 pass | 12/12 pass | pass |
++| Windows x64 | pass | absent | 12/12 pass | 12/12 pass | pass |
++| macOS arm64 | pass | absent | 12/12 pass | 12/12 pass | pass |
++
++Each 12-case direction covers `4 KiB / 64 KiB / 256 KiB / 1 MiB` × `DTO-like / mixed / random`. The same run also verifies ZstdSharp->ZstdSharp and BCL->BCL. Across the three platforms this is 144 cross/self-backend round trips plus the negative/bounded checks.
++
++The byte streams are intentionally not required to be identical: for example the two encoders differ by a few bytes for several inputs. Wire compatibility is defined by mutual decoding of the fixed profile, not by backend identity or byte-for-byte encoder output.
++
++Representative encoded sizes from the cross-backend run:
++
++| Payload | Pattern | ZstdSharp bytes | BCL bytes |
++|---|---|---:|---:|
++| 4 KiB | dto | 107 | 106 |
++| 4 KiB | mixed | 1,131 | 1,131 |
++| 4 KiB | random | 4,110 | 4,110 |
++| 256 KiB | dto | 124 | 123 |
++| 256 KiB | mixed | 67,342 | 67,323 |
++| 256 KiB | random | 262,163 | 262,163 |
++| 1 MiB | dto | 196 | 193 |
++| 1 MiB | mixed | 269,246 | 269,117 |
++| 1 MiB | random | 1,048,609 | 1,048,609 |
++
++The current decision is therefore to ship the validated pure-managed .NET 10 backend now and delay an actual BCL implementation switch until stable .NET 11 is available. No preview TFM is added by this change.
++
++## Direct compression evidence
++
++Compression/RPC evidence run: https://github.com/SunSi12138/SharpLink/actions/runs/34024844173
++
++Environment: `.NET 10.0.11`, Ubuntu 24.04.4 LTS, x64, 4 logical processors. Direct rows use the provider's actual maximum frame payload budget, so a random/incompressible Zstd frame may be produced for measurement and then rejected by SharpLink's adaptive policy instead of being incorrectly treated as a provider output-bound failure.
++
++Representative contiguous direct rows:
++
++| Payload | Pattern | Compressed bytes | Wire saving | TryCompress candidate accepted | Compress MiB/s | Decompress MiB/s | Compress B/op | Decompress B/op |
++|---|---|---:|---:|---|---:|---:|---:|---:|
++| 4 KiB | dto | 107 | 97.29% | yes | 75.4 | 160.1 | 144 | 136 |
++| 4 KiB | mixed | 1,131 | 72.29% | yes | 46.0 | 366.2 | 144 | 136 |
++| 4 KiB | random | 4,110 | 0% | no -> raw | 64.4 | 383.6 | 144 | 136 |
++| 64 KiB | dto | 107 | 99.83% | yes | 585.6 | 920.4 | 144 | 136 |
++| 64 KiB | mixed | 16,880 | 74.24% | yes | 197.0 | 1,037.4 | 144 | 136 |
++| 64 KiB | random | 65,550 | 0% | no -> raw | 191.7 | 1,787.0 | 144 | 136 |
++| 256 KiB | dto | 124 | 99.95% | yes | 1,242.8 | 4,383.0 | 145 | 137 |
++| 256 KiB | mixed | 67,342 | 74.31% | yes | 261.0 | 2,222.9 | 145 | 137 |
++| 256 KiB | random | 262,163 | 0% | no -> raw | 263.6 | 4,611.1 | 145 | 137 |
++| 1 MiB | dto | 196 | 99.98% | yes | 2,968.7 | 5,224.1 | 145 | 137 |
++| 1 MiB | mixed | 269,246 | 74.32% | yes | 332.2 | 6,295.5 | 145 | 137 |
++| 1 MiB | random | 1,048,609 | 0% | no -> raw | 313.7 | 4,562.9 | 145 | 137 |
++
++For every random row, the representation is valid Zstd but not beneficial after SharpLink's four-byte `originalLength` overhead, so Core sends raw. This is the intended distinction between provider output-bound rejection and the Core-owned adaptive savings policy.
++
++Segmented versus contiguous evidence on accepted DTO/mixed cases shows no systemic segment penalty:
++
++- compression segmented/contiguous throughput ratio median: about 1.03x; observed range about 0.88x-1.36x;
++- decompression ratio median: about 0.88x; observed range about 0.50x-1.49x;
++- the runner observed no added per-operation allocation for segmented input relative to contiguous input in these rows.
++
++## Local RPC evidence
++
++The same runner uses real `BenchmarkEnvironment` TCP and SharedMemory sessions, with compression either disabled or negotiated using the official profile on both peers. Requested concurrency is `1/8/32/128`, but the evidence harness caps **effective** in-flight concurrency so the original payload bytes use at most 75% of the production `Balanced` 8 MiB send queue. The cap avoids measuring deliberate send-queue exhaustion rather than RPC throughput:
++
++| Payload | Requested c | Effective c |
++|---|---:|---:|
++| 4 KiB | 1 / 8 / 32 / 128 | 1 / 8 / 32 / 128 |
++| 64 KiB | 1 / 8 / 32 / 128 | 1 / 8 / 32 / 96 |
++| 256 KiB | 1 / 8 / 32 / 128 | 1 / 8 / 24 / 24 |
++| 1 MiB | 1 / 8 / 32 / 128 | 1 / 6 / 6 / 6 |
++
++Representative local TCP rows:
++
++| Payload | Pattern | c(req/eff) | Disabled QPS | Zstd QPS | Disabled P99 ms | Zstd P99 ms | Zstd wire saving | Zstd rejection |
++|---|---|---|---:|---:|---:|---:|---:|---:|
++| 4 KiB | dto | 8/8 | 11,010 | 7,178 | 1.41 | 3.25 | 97.10% | 0% |
++| 4 KiB | mixed | 8/8 | 10,275 | 7,323 | 1.66 | 5.31 | 72.17% | 0% |
++| 4 KiB | random | 8/8 | 10,526 | 9,163 | 1.60 | 2.29 | 0% | 100% |
++| 64 KiB | dto | 8/8 | 2,460 | 1,846 | 7.78 | 7.74 | 99.82% | 0% |
++| 64 KiB | mixed | 8/8 | 2,400 | 1,566 | 4.14 | 14.76 | 74.23% | 0% |
++| 64 KiB | random | 8/8 | 2,231 | 2,336 | 6.75 | 5.16 | 0% | 100% |
++| 256 KiB | dto | 8/8 | 992 | 760 | 19.78 | 13.29 | 99.95% | 0% |
++| 256 KiB | mixed | 8/8 | 860 | 625 | 11.17 | 21.47 | 74.31% | 0% |
++| 256 KiB | random | 8/8 | 1,064 | 883 | 20.27 | 27.02 | 0% | 100% |
++| 1 MiB | dto | 8/6 | 225 | 234 | 26.10 | 56.69 | 99.98% | 0% |
++| 1 MiB | mixed | 8/6 | 248 | 213 | 49.52 | 42.28 | 74.32% | 0% |
++| 1 MiB | random | 8/6 | 241 | 238 | 49.34 | 28.70 | 0% | 100% |
++
++Representative SharedMemory control rows show the expected trade-off: compression often reduces QPS for DTO/mixed data because bandwidth is not scarce, while random data is rejected and remains close to raw. For example at 64 KiB c8, DTO is about 8,943 raw vs 3,668 Zstd QPS, mixed 7,591 vs 2,555, and random 7,778 vs 7,545 with 100% rejection. This supports keeping compression as a session/runtime policy rather than codec identity.
++
++Localhost alone is therefore not evidence that compression should be globally enabled. Its value appears when wire bandwidth/latency dominate.
++
++## WAN-like TCP evidence
++
++The `wan` job applies Linux `netem` shaping on loopback:
++
++```text
++delay 20ms rate 50mbit
++```
++
++This is a controlled bandwidth/latency signal, not a public-internet benchmark. It makes wire-size value visible while keeping the same RPC implementation and payloads.
++
++Representative requested c8 / c32 rows:
++
++| Payload | Pattern | Compression | c(req/eff) | QPS | P99 ms | CPU us/op | B/op | Wire saving | Rejection |
++|---|---|---|---|---:|---:|---:|---:|---:|---:|
++| 64 KiB | dto | disabled | 8/8 | 26.2 | 306.7 | 801.0 | 323,915 | 0% | 0% |
++| 64 KiB | dto | zstd | 8/8 | 195.8 | 41.2 | 2,156.8 | 456,240 | 99.82% | 0% |
++| 64 KiB | dto | zstd | 32/32 | 739.7 | 47.1 | 1,931.9 | 493,506 | 99.82% | 0% |
++| 64 KiB | mixed | zstd | 8/8 | 172.0 | 46.8 | 2,067.3 | 467,895 | 74.23% | 0% |
++| 64 KiB | random | disabled | 32/32 | 47.5 | 764.1 | 542.7 | 315,679 | 0% | 0% |
++| 64 KiB | random | zstd | 32/32 | 47.4 | 772.7 | 1,064.1 | 353,404 | 0% | 100% |
++| 256 KiB | dto | disabled | 8/8 | 11.9 | 843.4 | 2,194.5 | 1,249,908 | 0% | 0% |
++| 256 KiB | dto | zstd | 8/8 | 193.5 | 42.0 | 3,060.7 | 1,267,565 | 99.95% | 0% |
++| 256 KiB | dto | zstd | 32/24 | 513.8 | 48.9 | 2,797.3 | 1,333,586 | 99.95% | 0% |
++| 256 KiB | mixed | zstd | 8/8 | 45.9 | 175.8 | 4,379.9 | 1,508,452 | 74.31% | 0% |
++| 256 KiB | random | disabled | 8/8 | 11.9 | 688.7 | 2,180.0 | 1,250,032 | 0% | 0% |
++| 256 KiB | random | zstd | 8/8 | 11.9 | 681.5 | 2,547.0 | 1,386,501 | 0% | 100% |
++| 1 MiB | dto | disabled | 8/6 | 3.0 | 2,056.6 | 8,206.0 | 4,970,443 | 0% | 0% |
++| 1 MiB | dto | zstd | 8/6 | 124.2 | 48.7 | 12,288.9 | 5,068,201 | 99.98% | 0% |
++| 1 MiB | mixed | disabled | 8/6 | 3.0 | 2,056.8 | 7,199.4 | 4,968,047 | 0% | 0% |
++| 1 MiB | mixed | zstd | 8/6 | 11.4 | 521.4 | 15,333.3 | 6,035,995 | 74.32% | 0% |
++| 1 MiB | random | disabled | 8/6 | 3.0 | 2,055.9 | 7,584.3 | 4,968,496 | 0% | 0% |
++| 1 MiB | random | zstd | 8/6 | 3.0 | 2,060.7 | 9,767.2 | 5,648,794 | 0% | 100% |
++
++For compressible 1 MiB DTO-like payloads, the shaped link moves from about 3 QPS raw to 124 QPS while saving about 99.98% of business bytes. For the mixed 1 MiB pattern it moves from about 3 to 11.4 QPS while saving about 74.3%. For random data, candidate rejection is 100%, wire savings are zero, and throughput remains essentially raw; the remaining CPU/allocation cost is the attempted candidate compression, which is exactly why per-payload savings policy is retained in Core.
++
++## Disabled-compression fast-path A/B
++
++Same-runner A/B evidence run: https://github.com/SunSi12138/SharpLink/actions/runs/34025165413
++
++This compares the PR Stage-1 head `5a025579` against the final Stage-2 code candidate with **no providers registered on either side**. Both revisions run on the same GitHub-hosted runner, use the common pre-Stage-2 `EchoAsync(string)` RPC, and are interleaved Stage1 -> Stage2 -> Stage2 -> Stage1 to reduce temporal bias.
++
++Matrix:
++
++- TCP + SharedMemory;
++- 4 KiB / 64 KiB / 256 KiB / 1 MiB string payloads;
++- requested concurrency 1 / 8 / 32 / 128, using the same 75%-of-8-MiB effective-concurrency cap described above;
++- two rounds per revision;
++- QPS, P50/P99/P99.9, CPU/op, B/op, GC.
++
++Across the 32 transport/payload/concurrency scenarios, the median Stage2/Stage1 ratios are:
++
++| Metric | Median ratio | Interpretation |
++|---|---:|---|
++| QPS | 1.0593 | no systematic throughput regression |
++| P99 | 0.9749 | no systematic tail-latency regression; lower is better |
++| CPU us/op | 0.9442 | no systematic CPU regression |
++| allocated B/op | 1.00002 | allocation is effectively unchanged |
++
++These ratios are regression evidence for the empty-provider fast path, not a claim that Stage 2 universally improves performance. Individual short benchmark rows vary in both directions, as expected on shared hosted hardware.
++
++## Complexity and ownership result
++
++The Zstd work does not reverse the Stage-1 Core simplification. `SharpLink.Runtime` still contains no Brotli, Zstd, CRC, compressor factory, or algorithm-specific parser. Stage 2 adds a separate optional package that implements the public SPI and owns its own standard wire profile.
++
++The final ownership split remains:
++
++```text
++SharpLink.Runtime
++  negotiation / session binding / adaptive savings policy
++  generic originalLength framing and resource accounting
++  call/stream failure isolation
++
++SharpLink.Compression.Zstd
++  standard Zstd frame profile
++  checksum / dictionary / trailing / window semantics
++  backend implementation and backend-specific validation
++```
++
++The generic Core patch for Stage 2 is limited to clarifying zero-byte representation semantics and removing the accidental one-byte inbound assumption. All Zstd format machinery stays outside Core.
++
++## Final decision
++
++**Go.**
++
++- The Core boundary is materially smaller than the old built-in Brotli + `SCP1 + CRC32` design and does not need privileged algorithm hooks.
++- The public SPI can host an official provider while keeping integrity and frame semantics in the provider/profile.
++- The .NET 10 backend meets the tested correctness, bounds, cancellation, concurrency, packaging, and NativeAOT requirements on the validated platform matrix.
++- The fixed standard profile interoperates in both directions with the .NET 11 Preview BCL backend on Linux, Windows, and macOS, so a later stable-backend switch does not require a new profile if GA revalidation remains green.
++- WAN-like evidence shows material value for compressible/mixed large payloads, while random data is rejected back to raw.
++- SharedMemory/local evidence shows why the feature must remain optional/adaptive rather than part of codec identity.
++- Same-runner A/B evidence does not show a systematic regression when compression is disabled.
++
++The shipping choice is therefore `SharpLink.Compression.Zstd` on `net10.0` with `ZstdSharp.Port` 0.8.8, plus a future stable .NET 11 backend switch only after GA revalidation under the same `zstd-rfc8878-w23-checksum/v1` profile.
