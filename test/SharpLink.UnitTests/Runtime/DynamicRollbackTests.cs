@@ -30,7 +30,7 @@ public class DynamicRollbackTests
             var registry = (ClientAssemblyRegistry)typeof(SharpLinkClient)
                 .GetField("_assemblyRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(client)!;
-            Ensure(registry.DynamicModules.TryGetValue(assembly, out var module), "registered Client module");
+            var module = registry.DynamicModules[assembly];
             Ensure(module.TryAcquire(stream: false, out lease), "dynamic module lease");
 
             var unregister = client.UnregisterAssemblyAsync(assembly, TimeSpan.MaxValue).AsTask();
@@ -87,7 +87,7 @@ public class DynamicRollbackTests
             var registry = (ClientAssemblyRegistry)typeof(SharpLinkClient)
                 .GetField("_assemblyRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(client)!;
-            Ensure(registry.DynamicModules.TryGetValue(assembly, out var module), "registered Client module");
+            var module = registry.DynamicModules[assembly];
             Ensure(module.TryAcquire(stream: false, out lease), "retained Client module lease");
             var forcedCancellationCount = 0;
             using var registration = module.ForcedCancellation.Register(
