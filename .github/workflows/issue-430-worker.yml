@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - tmp/issue-430-worker
+    paths:
+      - .github/workflows/issue-430-worker.yml
 
 permissions:
   contents: write
@@ -16,18 +18,5 @@ jobs:
         with:
           ref: fix/430-compression-provider-boundary
           fetch-depth: 0
-      - name: Verify target branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "WORKER_READY $(git rev-parse HEAD)"
-      - name: Export worktree
-        shell: bash
-        run: |
-          set -euo pipefail
-          tar --exclude=.git -czf /tmp/issue430-worktree.tar.gz .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: issue430-worktree
-          path: /tmp/issue430-worktree.tar.gz
-          retention-days: 1
+      - name: Await staged patch
+        run: echo PATCH_STAGING
