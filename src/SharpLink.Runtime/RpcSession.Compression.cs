@@ -52,19 +52,14 @@ internal sealed partial class RpcSession
 
             var compressedStart = candidate.WrittenCount;
             var maxCompressedBytes = maxFramePayloadBytes - prefixLength - sizeof(uint);
-            SharpLinkCompressionResult result;
+            bool compressed;
             try
             {
-                result = provider.Compress(
+                compressed = provider.TryCompress(
                     payload.Slice(prefixLength),
                     candidate,
                     maxCompressedBytes,
                     cancellationToken);
-            }
-            catch (SharpLinkCompressionOutputLimitException)
-            {
-                RuntimeContext.Buffers.Return(candidate);
-                return packet;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -78,13 +73,13 @@ internal sealed partial class RpcSession
                     exception);
             }
 
-            var actualWritten = candidate.WrittenCount - compressedStart;
-            if (result.ConsumedBytes != originalLength || result.WrittenBytes != actualWritten)
+            if (!compressed)
             {
-                throw new SharpLinkCompressionProviderException(
-                    SharpLinkErrorCode.Internal,
-                    $"Compression provider '{compressionProfile}' reported inconsistent consumed or written bytes.");
+                RuntimeContext.Buffers.Return(candidate);
+                return packet;
             }
+
+            var actualWritten = candidate.WrittenCount - compressedStart;
             if (!RuntimeContext.Compression.IsBeneficial(
                     originalLength,
                     checked(actualWritten + sizeof(uint))))
@@ -146,10 +141,9 @@ internal sealed partial class RpcSession
                     owner.Write(segment.Span);
             }
             var outputStart = owner.WrittenCount;
-            SharpLinkCompressionResult result;
             try
             {
-                result = provider.Decompress(
+                provider.Decompress(
                     compressedBody,
                     owner,
                     originalLength,
@@ -159,8 +153,7 @@ internal sealed partial class RpcSession
             {
                 throw;
             }
-            catch (Exception exception) when (
-                exception is InvalidDataException or EndOfStreamException or SharpLinkCompressionOutputLimitException)
+            catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DataLoss,
@@ -176,13 +169,11 @@ internal sealed partial class RpcSession
             }
 
             var actualWritten = owner.WrittenCount - outputStart;
-            if (result.ConsumedBytes != compressedBody.Length ||
-                result.WrittenBytes != actualWritten ||
-                actualWritten != originalLength)
+            if (actualWritten != originalLength)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DataLoss,
-                    "Compressed payload is truncated, contains trailing data, or does not match its declared original length.");
+                    "Compressed payload does not match its declared original length.");
             }
             return new ReadOnlySequence<byte>(owner.WrittenMemory);
         }

@@ -5,7 +5,7 @@ internal sealed partial class SharpLinkServer
     private const int MaxPersistentDecodeWorkers = 4;
     private const int MinimumPersistentDecodeQueueCapacity = 32;
     // Phase 0 has current-D performance evidence at 1 MiB decoded size. The same conservative
-    // bound also caps synchronous compressed-input work on the RequestLoop: built-in Brotli scans
+    // bound also caps synchronous compressed-input work on the RequestLoop: a provider may scan
     // the complete compressed body for integrity before its cancellable decode loop.
     private const int InitialPersistentDecodeThresholdBytes = 1024 * 1024;
     private ServerDecodeExecutor? _decodeExecutor;
