@@ -30,7 +30,9 @@ public sealed class CodecValidationProbe
             var listResult = Decode(listCodec, list)[0];
             PendingLifecycleValidationProbe.Write(new
             {
-                phase = "complete", operation = "write", zone = TimeZoneInfo.Local.Id,
+                phase = "complete",
+                operation = "write",
+                zone = TimeZoneInfo.Local.Id,
                 offsetTicks = TimeZoneInfo.Local.GetUtcOffset(value).Ticks,
                 source = Snapshot(value),
                 payloads = new { scalar, array, list },
@@ -48,11 +50,15 @@ public sealed class CodecValidationProbe
         var decodedList = Decode(listCodec, payloads.GetProperty("list").GetString()!)[0];
         PendingLifecycleValidationProbe.Write(new
         {
-            phase = "complete", operation = "read", sourceZone = root.GetProperty("zone").GetString(),
+            phase = "complete",
+            operation = "read",
+            sourceZone = root.GetProperty("zone").GetString(),
             zone = TimeZoneInfo.Local.Id,
             offsetTicks = TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 1, 15)).Ticks,
             source = root.GetProperty("source"),
-            scalar = Snapshot(decodedScalar), array = Snapshot(decodedArray), list = Snapshot(decodedList),
+            scalar = Snapshot(decodedScalar),
+            array = Snapshot(decodedArray),
+            list = Snapshot(decodedList),
             invariant = Same(decodedScalar, decodedArray) && Same(decodedScalar, decodedList)
         });
     }
@@ -83,7 +89,8 @@ public sealed class CodecValidationProbe
         }
         PendingLifecycleValidationProbe.Write(new
         {
-            phase = "complete", invariant = true,
+            phase = "complete",
+            invariant = true,
             runtime = RuntimeInformation.FrameworkDescription,
             os = RuntimeInformation.OSDescription,
             architecture = RuntimeInformation.ProcessArchitecture.ToString(),
@@ -101,7 +108,8 @@ public sealed class CodecValidationProbe
         // Deserialize takes the complete sequence by 'in' and enforces exact size;
         // this API has no consumed-position to advance or report.
         var inputLength = sequence.Length;
-        var first = codec.Deserialize(sequence);
+        var first = codec.Deserialize(sequence)
+            ?? throw new InvalidOperationException("Valid non-null collection decoded as null.");
         Check(first, expected);
         PendingLifecycleValidationProbe.Require(sequence.Length == inputLength, "input sequence was modified");
         for (var warmup = 0; warmup < 3; warmup++)
@@ -116,7 +124,8 @@ public sealed class CodecValidationProbe
             var before = GC.GetAllocatedBytesForCurrentThread();
             var started = Stopwatch.GetTimestamp();
             for (var iteration = 0; iteration < iterations; iteration++)
-                last = codec.Deserialize(sequence);
+                last = codec.Deserialize(sequence)
+                    ?? throw new InvalidOperationException("Valid non-null collection decoded as null.");
             var elapsed = Stopwatch.GetTimestamp() - started;
             var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
             times[sample] = elapsed * (1_000_000_000.0 / Stopwatch.Frequency) / iterations;
@@ -127,11 +136,18 @@ public sealed class CodecValidationProbe
         var sortedTimes = times.Order().ToArray();
         return new
         {
-            collection, count, fragmentSize,
+            collection,
+            count,
+            fragmentSize,
             segmentCount = (inputLength + fragmentSize - 1) / fragmentSize,
-            inputLength, samples, iterations, codec = codec.GetType().FullName,
-            medianNanoseconds = sortedTimes[samples / 2], minNanoseconds = sortedTimes[0],
-            maxNanoseconds = sortedTimes[^1], nanosecondsPerSample = times,
+            inputLength,
+            samples,
+            iterations,
+            codec = codec.GetType().FullName,
+            medianNanoseconds = sortedTimes[samples / 2],
+            minNanoseconds = sortedTimes[0],
+            maxNanoseconds = sortedTimes[^1],
+            nanosecondsPerSample = times,
             allocatedBytesPerOperation = allocations.Order().ElementAt(samples / 2),
             exactRoundtrip = true
         };
@@ -166,7 +182,10 @@ public sealed class CodecValidationProbe
     private static T Decode<T>(IRpcCodec<T> codec, string encoded)
     {
         var sequence = new ReadOnlySequence<byte>(Convert.FromBase64String(encoded));
-        return codec.Deserialize(sequence);
+        var result = codec.Deserialize(sequence);
+        if (result is null)
+            throw new InvalidOperationException("Valid non-null value decoded as null.");
+        return result;
     }
 
     private static bool Same(DateTime left, DateTime right)

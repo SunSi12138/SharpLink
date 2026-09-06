@@ -25,7 +25,17 @@ jobs:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Keep evidence tied to the PR's production baseline while dev advances.
+          # PR Fast still checks the normal merge ref independently.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: ./.github/actions/setup-dotnet
+      - name: Record exact evidence provenance
+        run: |
+          mkdir -p artifacts/validation
+          git rev-parse HEAD | tee artifacts/validation/commit.txt
+          dotnet --info > artifacts/validation/dotnet-info.txt
       - name: Build test workers (production code unchanged)
         run: dotnet build test/SharpLink.UnitTests -c Release -v minimal
       - name: Validate exact pending baseline failures and healthy controls

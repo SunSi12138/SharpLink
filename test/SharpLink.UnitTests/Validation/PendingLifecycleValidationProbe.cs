@@ -49,7 +49,8 @@ public sealed class PendingLifecycleValidationProbe
             {
                 scanFailure = exception;
             }
-        }) { IsBackground = true, Name = "deadline-reuse-validation" };
+        })
+        { IsBackground = true, Name = "deadline-reuse-validation" };
         scan.Start();
         try
         {
@@ -93,10 +94,20 @@ public sealed class PendingLifecycleValidationProbe
             var secondError = await Observe(second);
             Write(new
             {
-                phase = "complete", scenario = $"deadline-{completionPath}",
-                sameReference, firstId, secondId, futureBefore, futureAfter,
-                oldReason, firstError, reasonAfterScan, secondError,
-                invariant = pending, active = table.ActiveCount, count = table.Count
+                phase = "complete",
+                scenario = $"deadline-{completionPath}",
+                sameReference,
+                firstId,
+                secondId,
+                futureBefore,
+                futureAfter,
+                oldReason,
+                firstError,
+                reasonAfterScan,
+                secondError,
+                invariant = pending,
+                active = table.ActiveCount,
+                count = table.Count
             });
         }
         finally
@@ -156,9 +167,16 @@ public sealed class PendingLifecycleValidationProbe
             // see this exact state before treating a timeout as evidence of the bug.
             Write(new
             {
-                phase = "dispose-enter", scenario, countBefore, activeBefore,
-                registered, hits, positiveHits, negativeHits,
-                escaped = escaped?.GetType().Name, ownerRegistered = owner.Registered
+                phase = "dispose-enter",
+                scenario,
+                countBefore,
+                activeBefore,
+                registered,
+                hits,
+                positiveHits,
+                negativeHits,
+                escaped = escaped?.GetType().Name,
+                ownerRegistered = owner.Registered
             });
             table.Dispose();
             Write(new { phase = "dispose-returned", scenario });
@@ -187,9 +205,19 @@ public sealed class PendingLifecycleValidationProbe
         table.Dispose();
         Write(new
         {
-            phase = "complete", scenario, countBefore, activeBefore,
-            active = table.ActiveCount, count = table.Count, hits, positiveHits, negativeHits,
-            escaped = escaped?.GetType().Name, operationError, nextSucceeded, nextError,
+            phase = "complete",
+            scenario,
+            countBefore,
+            activeBefore,
+            active = table.ActiveCount,
+            count = table.Count,
+            hits,
+            positiveHits,
+            negativeHits,
+            escaped = escaped?.GetType().Name,
+            operationError,
+            nextSucceeded,
+            nextError,
             invariant = nextSucceeded && table.ActiveCount == 0 && table.Count == 0
         });
     }

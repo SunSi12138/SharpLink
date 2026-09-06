@@ -16,7 +16,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ("no-listener", "metric-control", "deadline-response", "deadline-cancel",
-             "deadline-disconnect", "metric-minus", "metric-plus")
+             "deadline-disconnect", "metric-minus", "metric-plus", "logger-control", "logger-throw")
 
 
 def run_probe(scenario, output_dir):
@@ -25,9 +25,10 @@ def run_probe(scenario, output_dir):
     result_path.unlink(missing_ok=True)
     environment = dict(os.environ, SHARPLINK_VALIDATION_SCENARIO=scenario,
                        SHARPLINK_VALIDATION_OUTPUT=str(result_path))
+    worker = "AdmissionDiagnosticsValidationProbe" if scenario.startswith("logger-") else "PendingLifecycleValidationProbe"
     command = ["dotnet", "run", "-c", "Release", "--no-build", "--no-launch-profile",
                "--project", "test/SharpLink.UnitTests", "--", "--treenode-filter",
-               "/*/*/PendingLifecycleValidationProbe/Run", "--maximum-parallel-tests", "1"]
+               f"/*/*/{worker}/Run", "--maximum-parallel-tests", "1"]
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=log,
                                    stderr=subprocess.STDOUT, start_new_session=True)
@@ -89,6 +90,14 @@ def baseline_matches(name, report):
                 report["operationError"] is None and not report["nextSucceeded"] and
                 report["nextError"] == "ResourceExhausted" and
                 report["positiveHits"] == 1 and report["negativeHits"] == 1)
+    if name.startswith("logger-"):
+        common = (report["policyAcquires"] == report["policyReports"] == report["loggerReports"] == 1 and
+                  report["countAfter"] == report["activeAfter"] == 0 and report["nextSucceeded"] and
+                  report["connectionsOpened"] == 0)
+        if name == "logger-control":
+            return common and report["invariant"] and report["completed"] and report["returned"]
+        return (common and not report["invariant"] and not report["completed"] and not report["returned"] and
+                report["escaped"] == "ProbeLoggerException")
     return report.get("watchdog") == "killed-after-15s-in-dispose" and not report["invariant"]
 
 
