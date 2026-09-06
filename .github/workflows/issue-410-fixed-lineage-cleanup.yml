@@ -1,4 +1,4 @@
-name: Issue 410 FixedWindow state cleanup
+name: Issue 410 FixedWindow lineage promotion
 
 on:
   push:
@@ -6,7 +6,11 @@ on:
       - tmp/issue-410-fixed-lineage-cleanup-20260906
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: issue-410-fixed-lineage-promote
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -17,12 +21,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
-      - name: Apply cleanup
-        run: |
-          python3 .github/issue410-fixed-lineage-cleanup.py
-          python3 .github/issue410-fixed-sequence-cleanup.py
+      - name: Apply lineage-only cleanup
+        run: python3 .github/issue410-fixed-lineage-cleanup.py
       - name: Restore
         run: dotnet restore Sharplink.slnx
       - name: Format
@@ -33,9 +37,17 @@ jobs:
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
-      - name: Report diff
-        if: always()
+      - name: Commit clean lineage cleanup
         shell: bash
         run: |
-          git add -N src test
-          git diff --stat
+          set -euo pipefail
+          rm .github/issue410-fixed-lineage-cleanup.py
+          rm .github/issue410-fixed-sequence-cleanup.py
+          rm .github/workflows/issue-410-fixed-lineage-cleanup.yml
+          rm .github/workflows/issue-410-fixed-state-performance.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor(admission): detach fixed window from legacy lineage'
+          git push origin HEAD:tmp/issue-410-fixed-lineage-cleanup-20260906
