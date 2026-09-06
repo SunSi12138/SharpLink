@@ -237,7 +237,8 @@ var server = SharpLinkServerBuilder.Create()
     .UseTcp(5000)
     .UseRuntime(options =>
     {
-        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());    })
+        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
+    })
     .Build();
 ```
 
