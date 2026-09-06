@@ -24,8 +24,8 @@ public sealed class SharpLinkClientContractDependencyTests
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
-        var implementation = client.GetType();
-        var validate = implementation.GetMethod(
+        var registry = GetAssemblyRegistry(client);
+        var validate = typeof(ClientAssemblyRegistry).GetMethod(
             "ValidateDependencies",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Client dependency validator was not found.");
@@ -34,7 +34,7 @@ public sealed class SharpLinkClientContractDependencyTests
         var emptyModules = Array.CreateInstance(dynamicModuleType, 0);
 
         var error = (SharpLinkAssemblyRegistrationError?)validate.Invoke(
-            client,
+            registry,
             [new TestManifest(typeof(TestManifest).Assembly, [MissingRpcCodecDependency]), emptyModules]);
 
         Ensure(error?.Code == SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
@@ -51,17 +51,17 @@ public sealed class SharpLinkClientContractDependencyTests
             .DisableRequestTimeout()
             .UseTcp("127.0.0.1", 1)
             .Build();
-        var implementation = client.GetType();
-        var modulesField = implementation.GetField(
+        var registry = GetAssemblyRegistry(client);
+        var modulesField = typeof(ClientAssemblyRegistry).GetField(
             "_dynamicModules",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Client dynamic module registry was not found.");
-        var modules = (IDictionary)(modulesField.GetValue(client)
+        var modules = (IDictionary)(modulesField.GetValue(registry)
             ?? throw new InvalidOperationException("Client dynamic module registry was null."));
         var dynamicModuleType = modulesField.FieldType.GetGenericArguments()[1];
         var constructor = dynamicModuleType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
             .Single(static ctor => ctor.GetParameters().Length == 3);
-        var ensureNoDependants = implementation.GetMethod(
+        var ensureNoDependants = typeof(ClientAssemblyRegistry).GetMethod(
             "EnsureNoDynamicDependants",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Client unregister dependency guard was not found.");
@@ -81,7 +81,7 @@ public sealed class SharpLinkClientContractDependencyTests
         {
             try
             {
-                ensureNoDependants.Invoke(client, [dependencyModule]);
+                ensureNoDependants.Invoke(registry, [dependencyModule]);
                 throw new InvalidOperationException(
                     "Client unregister accepted a module that still has a Contract-only dependant.");
             }
@@ -129,6 +129,13 @@ public sealed class SharpLinkClientContractDependencyTests
         Ensure(result.Error?.Message.Contains(StaleAbiIdentity, StringComparison.Ordinal) == true,
             "the stale ABI diagnostic must identify the rejected generated ABI identity");
     }
+
+    private static ClientAssemblyRegistry GetAssemblyRegistry(ISharpLinkClient client)
+        => (ClientAssemblyRegistry)(typeof(SharpLinkClient).GetField(
+                "_assemblyRegistry",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client)
+            ?? throw new InvalidOperationException("Client assembly registry was not found."));
 
     private sealed class TestManifest(
         Assembly ownerAssembly,
