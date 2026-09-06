@@ -120,18 +120,6 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.ChaosTests/Program.cs",
-      "maxLoc": 1540,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.LoadTest/Program.cs",
-      "maxLoc": 1506,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.IntegrationTests/DynamicEndpointIntegrationTests.cs",
       "maxLoc": 1401,
       "reason": "Existing dev debt captured by issue #350."
