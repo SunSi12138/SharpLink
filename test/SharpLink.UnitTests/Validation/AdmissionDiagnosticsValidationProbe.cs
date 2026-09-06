@@ -33,8 +33,10 @@ public sealed class AdmissionDiagnosticsValidationProbe
         var allowed = (bool)outcomeType.GetMethod("TryAcquire")!.Invoke(observer, new object[] { candidate })!;
         PendingLifecycleValidationProbe.Require(allowed && policy.Acquires == 1, "real admission lease not acquired");
         using var table = PendingRequestTableTestFixture.Create(1);
+        // Inspect the original IValueTaskSource status, not AsTask's asynchronously
+        // scheduled continuation. Otherwise a healthy response can look incomplete.
         var operation = table.Rent(Int32Codec.Instance, PendingCallKind.Unary, default,
-            CancellationToken.None, out var id, completionObserver: observer).AsValueTask().AsTask();
+            CancellationToken.None, out var id, completionObserver: observer).AsValueTask();
         var slots = (Array)typeof(PendingRequestTable).GetField("_slots",
             BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(table)!;
         var original = slots.GetValue(0)!;
