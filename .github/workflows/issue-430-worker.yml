@@ -22,23 +22,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Reconstruct exact patch and switch to clean implementation branch
+      - name: Reconstruct exact candidate on latest dev
         shell: bash
         run: |
           set -euo pipefail
-          echo 'cc9197d88eb1620c0ea1ff5b66a0f6b1ed922007d7f08691ceab362ad6072510  .tmp/issue430/fix01.00' | sha256sum -c -
-          echo '8c943e0f7ad7a08de2d11cbabcb11ba69dccf561d7413f6cfca0c263dfec6157  .tmp/issue430/fix01.01' | sha256sum -c -
-          echo '0cb1c5ca2902b7b6009b7b7da21408daa36388c403d07f65bed55a8fdc0f9148  .tmp/issue430/fix01.02' | sha256sum -c -
-          echo '84bd739f2eb7c0584b0f0745d88a16434bc4ec261bf1d0bcab5038dbe0660a4c  .tmp/issue430/fix01.03' | sha256sum -c -
-          echo '387aa40bb4af13a1852504947ee169267db81766c7e5bd83cc9914118174c9f6  .tmp/issue430/fix06.00' | sha256sum -c -
-          echo 'f373ab5374e341e11de3afceb212ec661ffe410871d988576e05556385949f68  .tmp/issue430/fix06.01' | sha256sum -c -
-          echo '4e3bdc1ff25fbaf21578bc01a1ee93c6b577ccdeda969666d78308d764c0efea  .tmp/issue430/fix06.02' | sha256sum -c -
-          echo '119f40a4ee901170a621fc9410b3a5cee038243ce90139be29e192f0dde5acd0  .tmp/issue430/fix06.03' | sha256sum -c -
-          echo 'f80fdb8d766290318ac79b5f7f3e1a5779d4c3a73a018455e989bdd9877fd88a  .tmp/issue430/followup1.patch' | sha256sum -c -
-          echo '0dbf17dd266eaff298c382d025bb53189352a4845336b525db377d429f7517a9  .tmp/issue430/followup2.patch' | sha256sum -c -
-          echo '1b80abd43680d72fe5aab8dd3be0d6a77375392884c77b0bb6affebf5a395ac5  .tmp/issue430/followup3.patch' | sha256sum -c -
-          echo '4bdaa07ca9a3e8f76495ac88fa9eec6852da30471ae4433efab6f9b03a13884b  .tmp/issue430/new-integration-provider.patch' | sha256sum -c -
-          echo 'a37c14f66c55abf33816abf3f9d5235becab180fcc997d7f266c65ffb5876e4d  .tmp/issue430/new-unit-provider.patch' | sha256sum -c -
           cat \
             .tmp/issue430/patch.00 \
             .tmp/issue430/fix01.* \
@@ -49,28 +36,29 @@ jobs:
             .tmp/issue430/fix06.* \
             > /tmp/issue430.patch.b64
           echo 'a3cbcd30bee0c5269fc1cff22d7c94f8f68630ab457ffc541c004b4326dd49ca  /tmp/issue430.patch.b64' | sha256sum -c -
+          echo '4bdaa07ca9a3e8f76495ac88fa9eec6852da30471ae4433efab6f9b03a13884b  .tmp/issue430/new-integration-provider.patch' | sha256sum -c -
+          echo 'a37c14f66c55abf33816abf3f9d5235becab180fcc997d7f266c65ffb5876e4d  .tmp/issue430/new-unit-provider.patch' | sha256sum -c -
+          echo 'f80fdb8d766290318ac79b5f7f3e1a5779d4c3a73a018455e989bdd9877fd88a  .tmp/issue430/followup1.patch' | sha256sum -c -
+          echo '0dbf17dd266eaff298c382d025bb53189352a4845336b525db377d429f7517a9  .tmp/issue430/followup2.patch' | sha256sum -c -
+          echo '1b80abd43680d72fe5aab8dd3be0d6a77375392884c77b0bb6affebf5a395ac5  .tmp/issue430/followup3.patch' | sha256sum -c -
           base64 -d /tmp/issue430.patch.b64 | gzip -d > /tmp/issue430.patch
-          cp .tmp/issue430/followup1.patch /tmp/issue430-followup1.patch
-          cp .tmp/issue430/followup2.patch /tmp/issue430-followup2.patch
-          cp .tmp/issue430/followup3.patch /tmp/issue430-followup3.patch
-          cp .tmp/issue430/new-integration-provider.patch /tmp/issue430-new-integration-provider.patch
-          cp .tmp/issue430/new-unit-provider.patch /tmp/issue430-new-unit-provider.patch
-          git fetch origin fix/430-compression-provider-boundary
-          git checkout -B fix/430-compression-provider-boundary origin/fix/430-compression-provider-boundary
-          test "$(git rev-parse HEAD)" = "e7177835114d34772087b059491fa0b4bd7607df"
+          git fetch origin dev
+          git checkout -B issue430-latest-dev origin/dev
+          test "$(git rev-parse HEAD)" = "51e3f2c66a24615abf738f76a2380f223d72f2ab"
           git apply --check /tmp/issue430.patch
           git apply /tmp/issue430.patch
-          git apply --check /tmp/issue430-new-integration-provider.patch
-          git apply /tmp/issue430-new-integration-provider.patch
-          git apply --check /tmp/issue430-new-unit-provider.patch
-          git apply /tmp/issue430-new-unit-provider.patch
-          git apply --check /tmp/issue430-followup1.patch
-          git apply /tmp/issue430-followup1.patch
-          git apply --check /tmp/issue430-followup2.patch
-          git apply /tmp/issue430-followup2.patch
-          git apply --check /tmp/issue430-followup3.patch
-          git apply /tmp/issue430-followup3.patch
+          git apply --check .tmp/issue430/new-integration-provider.patch
+          git apply .tmp/issue430/new-integration-provider.patch
+          git apply --check .tmp/issue430/new-unit-provider.patch
+          git apply .tmp/issue430/new-unit-provider.patch
+          git apply --check .tmp/issue430/followup1.patch
+          git apply .tmp/issue430/followup1.patch
+          git apply --check .tmp/issue430/followup2.patch
+          git apply .tmp/issue430/followup2.patch
+          git apply --check .tmp/issue430/followup3.patch
+          git apply .tmp/issue430/followup3.patch
           git diff --check
+          echo "BASE $(git rev-parse HEAD)"
           echo "PATCH_APPLIED $(git diff --shortstat)"
 
       - name: Verify concrete compression removal
