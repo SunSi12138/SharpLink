@@ -1,0 +1,82 @@
+name: Issue 550 Review Validation
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [tmp/issue-550-review-runner]
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: tmp/issue-550-review-candidate
+          fetch-depth: 0
+
+      - name: Repair review-doc formatting
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path('README.md'): (
+                  'options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());    })',
+                  'options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());\n    })'),
+              Path('doc/contracts-and-codecs.md'): (
+                  'options.Compression.Providers.Add(myCompressionProvider);});',
+                  'options.Compression.Providers.Add(myCompressionProvider);\n})'),
+          }
+          for path, (old, new) in replacements.items():
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one damaged review-doc fragment, found {count}')
+              path.write_text(text.replace(old, new))
+          PY
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Gate
+        run: |
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Integration Tests Serial
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Commit verified documentation repair to candidate
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add README.md doc/contracts-and-codecs.md
+          if ! git diff --cached --quiet; then
+            git commit -m "docs(compression): repair policy examples"
+            git push origin HEAD:refs/heads/tmp/issue-550-review-candidate
+          fi
