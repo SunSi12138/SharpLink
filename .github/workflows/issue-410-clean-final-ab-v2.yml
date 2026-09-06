@@ -1,0 +1,108 @@
+name: Issue 410 clean final A-B v2
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-dynamic-fixed-window-20260906
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-410-clean-final-ab-v2
+  cancel-in-progress: true
+
+env:
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+  BASE_SHA: '735e500016a8640258bb5270bc3c3878f67036f7'
+
+jobs:
+  validate-and-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Preserve benchmark source and resolve candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/issue410-clean-final-benchmarks.cs /tmp/Issue410CleanFinalBenchmarks.cs
+          git fetch origin issue-410-dynamic-fixed-window-clean
+          CANDIDATE_SHA="$(git rev-parse origin/issue-410-dynamic-fixed-window-clean)"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
+          mkdir -p artifacts/issue410-clean-final-v2/environment
+          printf '%s\n' "$BASE_SHA" > artifacts/issue410-clean-final-v2/environment/base-sha.txt
+          printf '%s\n' "$CANDIDATE_SHA" > artifacts/issue410-clean-final-v2/environment/candidate-sha.txt
+          git log -1 --oneline "$CANDIDATE_SHA" > artifacts/issue410-clean-final-v2/environment/candidate-commit.txt
+          git diff --stat "$BASE_SHA" "$CANDIDATE_SHA" > artifacts/issue410-clean-final-v2/environment/full-stat.txt
+          git diff --stat "$BASE_SHA" "$CANDIDATE_SHA" -- \
+            src/SharpLink.Server/Admission \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410-clean-final-v2/environment/product-stat.txt
+          git diff --numstat "$BASE_SHA" "$CANDIDATE_SHA" -- \
+            src/SharpLink.Server/Admission \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410-clean-final-v2/environment/product-numstat.txt
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Validate latest candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "$CANDIDATE_SHA"
+          dotnet restore
+          dotnet build --no-restore -c Release -v minimal
+          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore -c Release -v minimal
+          dotnet test test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj --no-restore -c Release -v minimal
+
+      - name: Benchmark baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "$BASE_SHA"
+          cp /tmp/Issue410CleanFinalBenchmarks.cs test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410CleanFinal*' \
+            --artifacts artifacts/issue410-clean-final-v2/baseline
+          rm -f test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+
+      - name: Benchmark latest candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "$CANDIDATE_SHA"
+          cp /tmp/Issue410CleanFinalBenchmarks.cs test/SharpLink.Benchmarks/Issue410CleanFinalBenchmarks.cs
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+            --filter '*Issue410CleanFinal*' \
+            --artifacts artifacts/issue410-clean-final-v2/candidate
+
+      - name: Record environment and product patch
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue410-clean-final-v2/environment
+          dotnet --info > artifacts/issue410-clean-final-v2/environment/dotnet-info.txt || true
+          lscpu > artifacts/issue410-clean-final-v2/environment/cpu.txt || true
+          git diff "$BASE_SHA" "$CANDIDATE_SHA" -- \
+            src/SharpLink.Server/Admission \
+            src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs \
+            > artifacts/issue410-clean-final-v2/environment/product.patch || true
+
+      - name: Upload clean final evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-clean-final-v2-${{ github.sha }}
+          path: artifacts/issue410-clean-final-v2
+          if-no-files-found: warn
+          retention-days: 30
