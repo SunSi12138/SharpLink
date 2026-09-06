@@ -198,7 +198,20 @@ public class SendPumpIdleShutdownTests
                             if (producerIndex == producers.Length - 1)
                             {
                                 var flush = session.SendPacketAndFlushAsync(frame).AsTask();
-                                flush.GetAwaiter().GetResult();
+                                try
+                                {
+                                    // The production liveness boundary is the DisposeAsync wait
+                                    // below. Once it returns, the send pump has stopped and has
+                                    // released every capacity/flush waiter. Do not make this
+                                    // dedicated owner depend on the shared ThreadPool scheduling
+                                    // the async caller continuation before test teardown can stop it.
+                                    flush.WaitAsync(producersStopped.Token).GetAwaiter().GetResult();
+                                }
+                                catch (OperationCanceledException) when (producersStopped.IsCancellationRequested)
+                                {
+                                    _ = ObserveProducerCompletionAsync(flush);
+                                    return;
+                                }
                             }
                             else
                             {
@@ -301,6 +314,19 @@ public class SendPumpIdleShutdownTests
             writer.Write(new byte[payloadBytes]);
         }
         return writer;
+    }
+
+    private static async Task ObserveProducerCompletionAsync(Task task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch
+        {
+            // The session shutdown path owns the operation outcome; this observer only keeps
+            // a stop-token-won caller race from surfacing an unobserved late terminal fault.
+        }
     }
 
     private static async Task<Exception?> CaptureCompletionExceptionAsync(Task task, TimeSpan timeout)
