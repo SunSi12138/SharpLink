@@ -1,0 +1,48 @@
+--- a/test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs
++++ b/test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs
+@@ -378,27 +378,27 @@
+         switch (pattern)
+         {
+             case "dto":
+-            {
+-                var token = "{\"id\":12345,\"name\":\"SharpLink\",\"region\":\"ap-northeast-1\",\"enabled\":true,\"tags\":[\"rpc\",\"zstd\"]}"u8;
+-                for (var offset = 0; offset < payload.Length; offset += token.Length)
+-                    token[..Math.Min(token.Length, payload.Length - offset)].CopyTo(payload.AsSpan(offset));
+-                break;
+-            }
++                {
++                    var token = "{\"id\":12345,\"name\":\"SharpLink\",\"region\":\"ap-northeast-1\",\"enabled\":true,\"tags\":[\"rpc\",\"zstd\"]}"u8;
++                    for (var offset = 0; offset < payload.Length; offset += token.Length)
++                        token[..Math.Min(token.Length, payload.Length - offset)].CopyTo(payload.AsSpan(offset));
++                    break;
++                }
+             case "mixed":
+-            {
+-                var random = new Random(0x430 + size);
+-                var token = "SharpLink|rpc|mixed|payload|"u8;
+-                for (var offset = 0; offset < payload.Length; offset += 256)
+                 {
+-                    var block = payload.AsSpan(offset, Math.Min(256, payload.Length - offset));
+-                    var structured = Math.Min(192, block.Length);
+-                    for (var inner = 0; inner < structured; inner += token.Length)
+-                        token[..Math.Min(token.Length, structured - inner)].CopyTo(block[inner..]);
+-                    if (structured < block.Length)
+-                        random.NextBytes(block[structured..]);
++                    var random = new Random(0x430 + size);
++                    var token = "SharpLink|rpc|mixed|payload|"u8;
++                    for (var offset = 0; offset < payload.Length; offset += 256)
++                    {
++                        var block = payload.AsSpan(offset, Math.Min(256, payload.Length - offset));
++                        var structured = Math.Min(192, block.Length);
++                        for (var inner = 0; inner < structured; inner += token.Length)
++                            token[..Math.Min(token.Length, structured - inner)].CopyTo(block[inner..]);
++                        if (structured < block.Length)
++                            random.NextBytes(block[structured..]);
++                    }
++                    break;
+                 }
+-                break;
+-            }
+             case "random":
+                 new Random(0x5A17 + size).NextBytes(payload);
+                 break;
