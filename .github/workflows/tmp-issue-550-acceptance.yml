@@ -35,7 +35,75 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git fetch origin dev tmp/issue-550-review-candidate
           git checkout -B issue-550-acceptance origin/tmp/issue-550-review-candidate
-          git rebase origin/dev
+
+          git rebase origin/dev || true
+          while git rev-parse --verify -q REBASE_HEAD >/dev/null; do
+            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+            subject="$(git show -s --format=%s REBASE_HEAD)"
+            printf 'rebase conflict while applying: %s\n' "$subject"
+            printf 'conflicts: %s\n' "${conflicts[*]:-none}"
+            if [[ ${#conflicts[@]} -ne 1 || "${conflicts[0]}" != "src/SharpLink.Client/SharpLinkClient.cs" ]]; then
+              echo 'Unexpected rebase conflict; refusing automatic resolution.' >&2
+              exit 1
+            fi
+
+            git checkout --ours -- src/SharpLink.Client/SharpLinkClient.cs
+            case "$subject" in
+              "feat(compression): add dynamic runtime policy control")
+                python3 - <<'PYTHON'
+          from pathlib import Path
+          path = Path('src/SharpLink.Client/SharpLinkClient.cs')
+          text = path.read_text()
+          anchor = '        _runtimeContext = composition.RuntimeContext;\n'
+          addition = '        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(_runtimeContext.Compression);\n'
+          if addition not in text:
+              if anchor not in text:
+                  raise SystemExit('runtime context constructor anchor missing')
+              text = text.replace(anchor, anchor + addition, 1)
+          path.write_text(text)
+          PYTHON
+                ;;
+              "fix(compression): address issue 550 review")
+                python3 - <<'PYTHON'
+          from pathlib import Path
+          path = Path('src/SharpLink.Client/SharpLinkClient.cs')
+          text = path.read_text()
+          field_anchor = '    private readonly ISharpLinkReconnectJitter _reconnectJitter;\n'
+          hook_field = '    private readonly Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n'
+          if hook_field not in text:
+              if field_anchor not in text:
+                  raise SystemExit('reconnect jitter field anchor missing')
+              text = text.replace(field_anchor, field_anchor + hook_field, 1)
+
+          old_init = '        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(_runtimeContext.Compression);\n'
+          new_init = '        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(composition.RequestCompressionPolicy);\n'
+          hook_init = '        _beforeReadyPublicationTestHook = composition.BeforeReadyPublicationTestHook;\n'
+          runtime_anchor = '        _runtimeContext = composition.RuntimeContext;\n'
+          if old_init in text:
+              text = text.replace(old_init, new_init, 1)
+          elif new_init not in text:
+              if runtime_anchor not in text:
+                  raise SystemExit('runtime context constructor anchor missing')
+              text = text.replace(runtime_anchor, runtime_anchor + new_init, 1)
+          if hook_init not in text:
+              text = text.replace(new_init, new_init + hook_init, 1)
+          path.write_text(text)
+          PYTHON
+                ;;
+              *)
+                echo "Unexpected commit conflict: $subject" >&2
+                exit 1
+                ;;
+            esac
+            git add src/SharpLink.Client/SharpLinkClient.cs
+            GIT_EDITOR=true git rebase --continue || true
+          done
+
+          if [[ -d .git/rebase-merge || -d .git/rebase-apply ]]; then
+            echo 'Rebase did not complete.' >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor origin/dev HEAD
           echo "rebased_sha=$(git rev-parse HEAD)"
           echo "dev_sha=$(git rev-parse origin/dev)"
 
