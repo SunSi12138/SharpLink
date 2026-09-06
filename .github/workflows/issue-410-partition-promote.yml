@@ -32,6 +32,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           path = Path('.github/issue410-partition-promote.py')
           text = path.read_text()
 
@@ -45,78 +46,55 @@ jobs:
               raise SystemExit(f'expected one constructor marker, found {text.count(old)}')
           text = text.replace(old, new, 1)
 
-          old = '''replace_once(
-              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
-              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        foreach (var binding in _ruleStateBindings)\\n            binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();\\n        _partitions?.GrantConcurrencyWaitersAfterTargetCommit();\\n    }\\n\\n""",
-              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        foreach (var binding in _ruleStateBindings)\\n            binding.ConcurrencyState?.GrantWaitersAfterTargetCommit();\\n        _partitions?.GrantConcurrencyWaitersAfterTargetCommit();\\n    }\\n\\n    internal void PublishRateTargets()\\n    {\\n        foreach (var binding in _ruleStateBindings)\\n            binding.RateState?.OnPublished();\\n        _partitions?.PublishRateTargets();\\n    }\\n\\n""",
-          )'''
-          new = '''replace_once(
-              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
-              "internal sealed class SharpLinkAdmissionController : IAsyncDisposable",
-              "internal sealed partial class SharpLinkAdmissionController : IAsyncDisposable",
-          )'''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one controller publication transform, found {text.count(old)}')
-          text = text.replace(old, new, 1)
-
-          old = '''replace_once(
-              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
-              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        lock (_gate)\\n        {\\n            foreach (var entry in _entries.Values)\\n            {\\n                foreach (var generation in entry.Generations)\\n                    generation.Concurrency?.GrantWaitersAfterTargetCommit();\\n            }\\n        }\\n    }\\n\\n""",
-              """    internal void GrantConcurrencyWaitersAfterTargetCommit()\\n    {\\n        lock (_gate)\\n        {\\n            foreach (var entry in _entries.Values)\\n            {\\n                foreach (var generation in entry.Generations)\\n                    generation.Concurrency?.GrantWaitersAfterTargetCommit();\\n            }\\n        }\\n    }\\n\\n    internal void PublishRateTargets()\\n    {\\n        lock (_gate)\\n        {\\n            foreach (var entry in _entries.Values)\\n                entry.Current.Rate?.OnPublished();\\n        }\\n    }\\n\\n""",
-          )'''
-          new = '''replace_once(
-              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
-              "internal sealed class AdmissionPartitionPool : IDisposable",
-              "internal sealed partial class AdmissionPartitionPool : IDisposable",
-          )'''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one partition publication transform, found {text.count(old)}')
-          text = text.replace(old, new, 1)
-
-          old = '''replace_once(
-              "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",
-              "AdmissionRatePublication.PublishTargets(replacement.Controller);",
-              "replacement.Controller.PublishRateTargets();",
+          start_marker = '# Consolidate rate publication on the controller and include every current partition entry.'
+          end_marker = '# The legacy state is now TokenBucket/SlidingWindow only; remove its dead FixedWindow branches.'
+          start = text.index(start_marker)
+          end = text.index(end_marker)
+          support_source = (
+              'namespace SharpLink.Server;\n\n'
+              '/// <summary>Post-pointer publication for stable FixedWindow targets.</summary>\n'
+              'internal sealed partial class SharpLinkAdmissionController\n'
+              '{\n'
+              '    internal void PublishRateTargets()\n'
+              '    {\n'
+              '        foreach (var binding in _ruleStateBindings)\n'
+              '            binding.RateState?.OnPublished();\n'
+              '        _partitions?.PublishRateTargets();\n'
+              '    }\n'
+              '}\n\n'
+              'internal sealed partial class AdmissionPartitionPool\n'
+              '{\n'
+              '    internal void PublishRateTargets()\n'
+              '    {\n'
+              '        lock (_gate)\n'
+              '        {\n'
+              '            foreach (var entry in _entries.Values)\n'
+              '                entry.Current.Rate?.OnPublished();\n'
+              '        }\n'
+              '    }\n'
+              '}\n'
           )
-          publication = ROOT / "src/SharpLink.Server/Admission/AdmissionRatePublication.cs"
-          if not publication.exists():
-              raise RuntimeError("AdmissionRatePublication.cs unexpectedly missing")
-          publication.unlink()'''
-          new = '''replace_once(
-              "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",
-              "AdmissionRatePublication.PublishTargets(replacement.Controller);",
-              "replacement.Controller.PublishRateTargets();",
+          replacement = (
+              start_marker + '\n'
+              'replace_once(\n'
+              '    "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",\n'
+              '    "internal sealed class SharpLinkAdmissionController : IAsyncDisposable",\n'
+              '    "internal sealed partial class SharpLinkAdmissionController : IAsyncDisposable",\n'
+              ')\n'
+              'replace_once(\n'
+              '    "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",\n'
+              '    "internal sealed class AdmissionPartitionPool : IDisposable",\n'
+              '    "internal sealed partial class AdmissionPartitionPool : IDisposable",\n'
+              ')\n'
+              'replace_once(\n'
+              '    "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",\n'
+              '    "AdmissionRatePublication.PublishTargets(replacement.Controller);",\n'
+              '    "replacement.Controller.PublishRateTargets();",\n'
+              ')\n'
+              'publication = ROOT / "src/SharpLink.Server/Admission/AdmissionRatePublication.cs"\n'
+              f'publication.write_text({support_source!r})\n\n'
           )
-          publication = ROOT / "src/SharpLink.Server/Admission/AdmissionRatePublication.cs"
-          publication.write_text("""namespace SharpLink.Server;
-
-/// <summary>Post-pointer publication for stable FixedWindow targets.</summary>
-internal sealed partial class SharpLinkAdmissionController
-{
-    internal void PublishRateTargets()
-    {
-        foreach (var binding in _ruleStateBindings)
-            binding.RateState?.OnPublished();
-        _partitions?.PublishRateTargets();
-    }
-}
-
-internal sealed partial class AdmissionPartitionPool
-{
-    internal void PublishRateTargets()
-    {
-        lock (_gate)
-        {
-            foreach (var entry in _entries.Values)
-                entry.Current.Rate?.OnPublished();
-        }
-    }
-}
-""")'''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one publication-file transform, found {text.count(old)}')
-          text = text.replace(old, new, 1)
-
+          text = text[:start] + replacement + text[end:]
           path.write_text(text)
           PY
           python3 .github/issue410-partition-promote.py
@@ -149,6 +127,6 @@ internal sealed partial class AdmissionPartitionPool
             exit 0
           fi
           git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.email '41898282+SunSi12138@users.noreply.github.com'
           git commit -m 'refactor(admission): unify fixed-window partition state'
           git push origin HEAD:issue-410-dynamic-fixed-window-clean
