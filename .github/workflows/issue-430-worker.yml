@@ -35,6 +35,7 @@ jobs:
           echo '4e3bdc1ff25fbaf21578bc01a1ee93c6b577ccdeda969666d78308d764c0efea  .tmp/issue430/fix06.02' | sha256sum -c -
           echo '119f40a4ee901170a621fc9410b3a5cee038243ce90139be29e192f0dde5acd0  .tmp/issue430/fix06.03' | sha256sum -c -
           echo 'f80fdb8d766290318ac79b5f7f3e1a5779d4c3a73a018455e989bdd9877fd88a  .tmp/issue430/followup1.patch' | sha256sum -c -
+          echo '0dbf17dd266eaff298c382d025bb53189352a4845336b525db377d429f7517a9  .tmp/issue430/followup2.patch' | sha256sum -c -
           cat \
             .tmp/issue430/patch.00 \
             .tmp/issue430/fix01.* \
@@ -47,6 +48,7 @@ jobs:
           echo 'a3cbcd30bee0c5269fc1cff22d7c94f8f68630ab457ffc541c004b4326dd49ca  /tmp/issue430.patch.b64' | sha256sum -c -
           base64 -d /tmp/issue430.patch.b64 | gzip -d > /tmp/issue430.patch
           cp .tmp/issue430/followup1.patch /tmp/issue430-followup1.patch
+          cp .tmp/issue430/followup2.patch /tmp/issue430-followup2.patch
           git fetch origin fix/430-compression-provider-boundary
           git checkout -B fix/430-compression-provider-boundary origin/fix/430-compression-provider-boundary
           test "$(git rev-parse HEAD)" = "e7177835114d34772087b059491fa0b4bd7607df"
@@ -54,6 +56,8 @@ jobs:
           git apply /tmp/issue430.patch
           git apply --check /tmp/issue430-followup1.patch
           git apply /tmp/issue430-followup1.patch
+          git apply --check /tmp/issue430-followup2.patch
+          git apply /tmp/issue430-followup2.patch
           git diff --check
           echo "PATCH_APPLIED $(git diff --shortstat)"
 
