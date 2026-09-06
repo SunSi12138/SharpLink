@@ -1,0 +1,65 @@
+name: Issue 410 shared waiter performance
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-clean-perf-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Compare pre/post waiter refactor
+        shell: bash
+        env:
+          PRE_SHA: d7856f2b7ce2d266276efbd85e0d2219cce0055b
+          POST_SHA: e05fc2ed8a03f13214f34d4b852d9f6236f3dc77
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/issue410-waiter-performance"
+          mkdir -p "$output"
+          dotnet --info > "$output/dotnet-info.txt"
+          uname -a > "$output/uname.txt"
+          lscpu > "$output/cpu.txt"
+
+          run_case() {
+            local label="$1"
+            local sha="$2"
+            git checkout --force "$sha"
+            dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+            rm -rf BenchmarkDotNet.Artifacts
+            dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+              --filter '*AdmissionRateControllerBenchmarks*'
+            mkdir -p "$output/$label"
+            cp -R BenchmarkDotNet.Artifacts/. "$output/$label/"
+            git clean -fdx
+          }
+
+          run_case pre-forward "$PRE_SHA"
+          run_case post-forward "$POST_SHA"
+          run_case post-reverse "$POST_SHA"
+          run_case pre-reverse "$PRE_SHA"
+
+          git checkout --force "$GITHUB_SHA"
+          mkdir -p artifacts/issue410-waiter-performance
+          cp -R "$output/." artifacts/issue410-waiter-performance/
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-410-waiter-performance-${{ github.sha }}
+          path: artifacts/issue410-waiter-performance
+          if-no-files-found: error
+          retention-days: 30
