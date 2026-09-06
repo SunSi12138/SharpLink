@@ -44,20 +44,23 @@ jobs:
           python3 /tmp/apply.py
           python3 - <<'PYTHON'
           from pathlib import Path
-          import re
 
-          def remove_method(text, signature):
+          def remove_method(text, signature, include_doc=True):
               pos = text.find(signature)
               if pos < 0:
                   raise SystemExit(f'method signature missing: {signature}')
-              start = text.rfind('    /// <summary>', 0, pos)
-              if start < 0:
-                  start = pos
+              line_start = text.rfind('\n', 0, pos) + 1
+              start = line_start
+              if include_doc:
+                  doc_start = text.rfind('    /// <summary>', 0, pos)
+                  if doc_start >= 0 and text[doc_start:line_start].strip().startswith('/// <summary>'):
+                      start = doc_start
               brace = text.find('{', pos)
               depth = 0
               end = brace
               while end < len(text):
-                  if text[end] == '{': depth += 1
+                  if text[end] == '{':
+                      depth += 1
                   elif text[end] == '}':
                       depth -= 1
                       if depth == 0:
@@ -73,11 +76,11 @@ jobs:
           client = client.replace('public class SharpClientBuilder\n{', 'public partial class SharpClientBuilder\n{', 1)
           client = client.replace('    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n', '', 1)
           client = client.replace('    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n', '', 1)
-          client = remove_method(client, 'public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)')
-          client = remove_method(client, 'internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)')
           client = remove_method(client, 'public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)')
+          client = remove_method(client, 'public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)')
+          client = remove_method(client, 'internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)', include_doc=False)
           client_path.write_text(client)
-          Path('src/SharpLink.Client/SharpClientBuilder.Compression.cs').write_text('''namespace SharpLink.Client;\n\npublic partial class SharpClientBuilder\n{\n    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n\n    /// <summary>Configures instance-scoped runtime capability and behavior.</summary>\n    public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)\n    {\n        _runtimeContextBuilder.Configure(configure);\n        return this;\n    }\n\n    /// <summary>Configures the initial Client Request compression send policy.</summary>\n    public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _requestCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n    internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)\n    {\n        Configure(() => _beforeReadyPublicationTestHook = hook ?? throw new ArgumentNullException(nameof(hook)));\n        return this;\n    }\n}\n''')
+          Path('src/SharpLink.Client/SharpClientBuilder.Compression.cs').write_text('''namespace SharpLink.Client;\n\npublic partial class SharpClientBuilder\n{\n    private SharpLinkCompressionSendPolicy _requestCompressionPolicy = new();\n    private Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;\n\n    /// <summary>Configures instance-scoped runtime capability and behavior.</summary>\n    public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(configure);\n            _runtimeContextBuilder.Configure(configure);\n        });\n        return this;\n    }\n\n    /// <summary>Configures the initial Client Request compression send policy.</summary>\n    public SharpClientBuilder UseRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)\n    {\n        Configure(() =>\n        {\n            ArgumentNullException.ThrowIfNull(policy);\n            _ = CompressionSendPolicySnapshot.CreateValidated(policy);\n            _requestCompressionPolicy = policy;\n        });\n        return this;\n    }\n\n    internal SharpClientBuilder UseBeforeReadyPublicationTestHook(Func<CancellationToken, ValueTask> hook)\n    {\n        Configure(() => _beforeReadyPublicationTestHook = hook ?? throw new ArgumentNullException(nameof(hook)));\n        return this;\n    }\n}\n''')
 
           server_path = Path('src/SharpLink.Server/SharpLinkServerBuilder.cs')
           server = server_path.read_text()
