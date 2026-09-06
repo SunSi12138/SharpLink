@@ -594,12 +594,23 @@ internal sealed class AdmissionRateState : RateLimiter
             options is not SharpLinkPartitionAdmissionOptions;
         if (canUseStableFixedWindow)
         {
+            var fixedOptions = (SharpLinkFixedWindowLimitOptions)options.RateLimit!;
             var window = TimeSpan.FromTicks(definition.PeriodTicks);
             if (transitionSource?._fixedWindow is { } sourceFixed)
             {
+                if (fixedOptions.UpdateActivation == DynamicFixedWindowActivationMode.Immediate &&
+                    definition.PeriodTicks != transitionSource.Definition.PeriodTicks)
+                {
+                    throw new InvalidOperationException(
+                        "Immediate FixedWindow updates may change PermitLimit only. Change Window with NextWindowBoundary activation.");
+                }
+
                 return new AdmissionRateState(
                     definition,
-                    sourceFixed.CreateSuccessor(definition.Limit, window),
+                    sourceFixed.CreateSuccessor(
+                        definition.Limit,
+                        window,
+                        fixedOptions.UpdateActivation),
                     transitionSource._lineage);
             }
 
