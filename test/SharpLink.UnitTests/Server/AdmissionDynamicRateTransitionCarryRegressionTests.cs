@@ -32,7 +32,7 @@ public sealed class AdmissionDynamicRateTransitionCarryRegressionTests
     [Test]
     [Arguments(CarriedBarrierTarget.TokenBucket)]
     [Arguments(CarriedBarrierTarget.FixedWindow)]
-    public async Task SameAlgorithmUpdateAfterReplacementShouldKeepCarriedTransitionDebt(
+    public async Task SameAlgorithmUpdateAfterFixedBoundaryShouldPreserveTargetOwnedConsumption(
         CarriedBarrierTarget targetKind)
     {
         var time = new ManualTimeProvider();
@@ -44,8 +44,9 @@ public sealed class AdmissionDynamicRateTransitionCarryRegressionTests
             kernel,
             source,
             options => ConfigureFastTarget(options, targetKind, limit: 1));
+        await ConsumeAsync(replacement, 1);
         await EnsureRateRejectedAsync(replacement,
-            $"{targetKind}: structural replacement must initially carry the consumed source quota");
+            $"{targetKind}: algorithm identity change through FixedWindow starts a fresh one-permit target generation");
 
         var resizedTarget = CommitUpdate(
             kernel,
@@ -53,7 +54,7 @@ public sealed class AdmissionDynamicRateTransitionCarryRegressionTests
             options => ConfigureFastTarget(options, targetKind, limit: 2));
         await ConsumeAsync(resizedTarget, 1);
         await EnsureRateRejectedAsync(resizedTarget,
-            $"{targetKind}: same-algorithm parameter update must preserve the replacement barrier instead of exposing a fresh second permit");
+            $"{targetKind}: same-algorithm resize must preserve the target generation's consumed permit instead of exposing a fresh two");
     }
 
     [Test]
