@@ -90,63 +90,9 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs",
-      "maxLoc": 2692,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs",
-      "maxLoc": 2499,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs",
       "maxLoc": 2155,
       "reason": "KEEP for issue #529: this [NotInParallel(\"dispatcher-pool\")] fixture is the single owner of shared pooled-dispatcher static state, pool clear/retention/collectibility assertions, and race cleanup; splitting it would fragment one isolation invariant without creating an independent behavior boundary."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/TransportConnectionIntegrationTests.cs",
-      "maxLoc": 2075,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/SharpLinkRuntimeContextTests.cs",
-      "maxLoc": 1552,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.ChaosTests/Program.cs",
-      "maxLoc": 1540,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.LoadTest/Program.cs",
-      "maxLoc": 1506,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/DynamicEndpointIntegrationTests.cs",
-      "maxLoc": 1401,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/StaticEndpointIntegrationTests.cs",
-      "maxLoc": 1360,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/SharedMemoryTransportConnectionIntegrationTests.cs",
-      "maxLoc": 1330,
-      "reason": "Existing dev debt captured by issue #350."
     },
     {
       "domain": "test",
@@ -159,36 +105,6 @@
       "path": "test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs",
       "maxLoc": 1289,
       "reason": "KEEP for issue #529: this end-to-end interceptor fixture shares one client/server harness, contract/service, invocation status and exception state, continuation rules, and call-shape support; separating it by side would duplicate setup and obscure paired lifecycle assertions."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
-      "maxLoc": 1281,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/StreamManagerTests.cs",
-      "maxLoc": 1252,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs",
-      "maxLoc": 1095,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/RpcChannelCallShapeIntegrationTests.cs",
-      "maxLoc": 1056,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.cs",
-      "maxLoc": 1047,
-      "reason": "Existing dev debt captured by issue #350."
     },
     {
       "domain": "test",
