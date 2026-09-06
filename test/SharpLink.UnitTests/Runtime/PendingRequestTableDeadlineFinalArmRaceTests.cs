@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Buffers.Binary;
-using System.Reflection;
 using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Client;
@@ -68,69 +67,28 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
     }
 
     [Test]
-    public async Task ReconcileMustValidateActualEarliestValueAfterStaleArm()
+    public async Task SchedulerReconcileMustValidateActualEarliestValueAfterStaleArm()
     {
-        var timeProvider = new FinalArmRaceTimeProvider(blockChangeNumber: 2);
-        using var table = new PendingRequestTable(
-            8,
-            Int32CodecProvider.Instance,
-            NoopOwner.Instance,
-            timeProvider);
+        var timeProvider = new FinalArmRaceTimeProvider(blockChangeNumber: 1);
+        using var scheduler = new PendingDeadlineScheduler(
+            timeProvider,
+            static () => { });
 
         var laterDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), timeProvider);
-        var later = table.Rent(
-            Int32Codec.Instance,
-            PendingCallKind.Unary,
-            laterDeadline,
-            CancellationToken.None,
-            out var laterId).AsValueTask().AsTask();
-
-        var tableType = typeof(PendingRequestTable);
-        var reconcile = tableType.GetMethod(
-            "ReconcileDeadlineTimer",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(tableType.FullName, "ReconcileDeadlineTimer");
-        var arm = tableType.GetMethod(
-            "ArmDeadlineTimer",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(tableType.FullName, "ArmDeadlineTimer");
-        var earliest = tableType.GetField(
-            "_approximateEarliestDeadline",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingFieldException(tableType.FullName, "_approximateEarliestDeadline");
-        var revision = tableType.GetField(
-            "_deadlineRevision",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingFieldException(tableType.FullName, "_deadlineRevision");
-
-        var reconcileTask = Task.Run(() => reconcile.Invoke(table, parameters: null));
+        var laterObservation = Task.Run(() => scheduler.Observe(laterDeadline));
         Ensure(timeProvider.BlockedChangeEntered.Wait(CoordinationTimeout),
-            "reconciliation should sample the ten-second earliest value before its stale arm is applied");
+            "scheduler reconciliation should reach the deterministic stale-arm gate");
 
         var earlierDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
-
-        // Model the review interleaving directly: schedule identity has already been observed,
-        // then the actual earliest deadline moves earlier before the stale arm completes. Using
-        // reflection here avoids adding a production-only test hook to the registration hot path.
-        earliest.SetValue(table, earlierDeadline);
-        revision.SetValue(table, (long)revision.GetValue(table)! + 1);
-        arm.Invoke(table, [earlierDeadline]);
+        scheduler.Observe(earlierDeadline);
         Ensure(timeProvider.GetScheduledDelay() == TimeSpan.FromSeconds(1),
-            "the simulated earlier writer should arm the one-second deadline first");
+            "the concurrent earlier observation should arm the one-second deadline first");
 
         timeProvider.ReleaseBlockedChange.Set();
-        await reconcileTask.WaitAsync(CoordinationTimeout);
+        await laterObservation.WaitAsync(CoordinationTimeout);
 
         Ensure(timeProvider.GetScheduledDelay() == TimeSpan.FromSeconds(1),
-            "a stale ten-second arm must be rejected by validating the actual shared earliest value");
-
-        Ensure(table.TryComplete(
-            laterId,
-            PendingCallCompletionReason.ConnectionClosed,
-            new IOException("test cleanup")),
-            "later call cleanup");
-        Ensure(await CaptureExceptionAsync(later) is IOException,
-            "later call cleanup result");
+            "a stale ten-second arm must be reconciled to the actual shared earliest deadline");
     }
 
     private static async Task<Exception?> CaptureExceptionAsync(Task task)
