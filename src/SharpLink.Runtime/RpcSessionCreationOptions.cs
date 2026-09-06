@@ -29,7 +29,7 @@ internal sealed class RpcSessionCreationOptions
         RuntimeContext = runtimeContext;
         FlushOptions = flushOptions;
         CompressionSendPolicyState = compressionSendPolicyState ??
-            SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(runtimeContext.Compression);
+            SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
     }
 
     internal RpcSessionRole Role { get; }

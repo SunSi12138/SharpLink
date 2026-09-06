@@ -121,8 +121,8 @@ public class CompressionProviderTests
         invalid.Providers.Add(new MutableTokenProvider("bad token"));
         EnsureThrows<ArgumentException>(invalid.Validate, "non-canonical provider token");
 
-        var ratio = new SharpLinkCompressionOptions { MinimumSavingsRatio = 1.01 };
-        EnsureThrows<ArgumentOutOfRangeException>(ratio.Validate, "invalid savings ratio");
+        var ratio = new SharpLinkCompressionSendPolicy { MinimumSavingsRatio = 1.01 };
+        EnsureThrows<ArgumentOutOfRangeException>(() => { _ = CompressionSendPolicyState.CreateInitial(ratio); }, "invalid savings ratio");
     }
 
     [Test]

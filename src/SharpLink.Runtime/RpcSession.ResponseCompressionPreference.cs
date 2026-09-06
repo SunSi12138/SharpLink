@@ -14,6 +14,18 @@ internal sealed partial class RpcSession
     private Exception? _responseCompressionPreferenceControlFailure;
     private TaskCompletionSource _responseCompressionPreferenceProgress = CreateResponseCompressionPreferenceProgress();
 
+    internal ulong RemoteResponseCompressionAppliedGeneration
+    {
+        get
+        {
+            lock (_responseCompressionPreferenceControlGate)
+                return _remoteResponseCompressionAppliedGeneration;
+        }
+    }
+
+    internal ResponseCompressionPreferenceSnapshot AppliedResponseCompressionPreference
+        => Volatile.Read(ref _appliedResponseCompressionPreference);
+
     internal bool HasNegotiatedCompression
         => (NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0 &&
            Volatile.Read(ref _protocolState).Options?.CompressionBinding is not null;

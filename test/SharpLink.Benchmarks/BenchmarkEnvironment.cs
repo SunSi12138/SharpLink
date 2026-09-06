@@ -93,7 +93,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
     public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync(
         Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
-        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null,
+        Action<ISharpLinkServer>? configureBuiltServer = null,
+        Action<ISharpLinkClient>? configureBuiltClient = null)
     {
         var name = $"sharplink-allocation-{Guid.NewGuid():N}";
         var localService = new BenchmarkRpcService();
@@ -104,6 +106,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             serverBuilder.UseRuntime(configureServerRuntime);
         serverBuilder.ReplaceService<IBenchmarkRpc>(localService);
         var server = serverBuilder.Build();
+        configureBuiltServer?.Invoke(server);
         var shutdown = new CancellationTokenSource();
         var serverTask = Task.Run(async () =>
         {
@@ -123,6 +126,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         if (configureClientRuntime is not null)
             clientBuilder.UseRuntime(configureClientRuntime);
         var client = clientBuilder.Build();
+        configureBuiltClient?.Invoke(client);
         try
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
@@ -138,6 +142,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             throw;
         }
     }
+
+    internal ISharpLinkClient Client => _client;
+    internal ISharpLinkServer Server => _server;
 
     public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
 
