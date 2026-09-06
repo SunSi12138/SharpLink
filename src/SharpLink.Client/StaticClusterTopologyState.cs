@@ -11,6 +11,7 @@ internal sealed partial class SharpLinkClient
     {
         private readonly SharpLinkLoadBalancingStrategy _strategy;
         private readonly ISharpLinkEndpointSelector? _selector;
+        private readonly ILogger? _logger;
         private StaticClientRuntimeEndpointState[] _readyEndpoints = [];
         private StaticEndpointSelectionSnapshot _selectionSnapshot = StaticEndpointSelectionSnapshot.Empty;
         private int _roundRobinCursor;
@@ -18,13 +19,13 @@ internal sealed partial class SharpLinkClient
 
         public StaticClusterTopologyState(
             SharpLinkLoadBalancingStrategy strategy,
-            ISharpLinkEndpointSelector? selector)
+            ISharpLinkEndpointSelector? selector,
+            ILogger? logger = null)
         {
             _strategy = strategy;
             _selector = selector;
+            _logger = logger;
         }
-
-        public bool HasCustomSelector => _selector is not null;
 
         public int ReadyEndpointCount => Volatile.Read(ref _readyEndpoints).Length;
 
@@ -96,7 +97,6 @@ internal sealed partial class SharpLinkClient
 
         public int SelectEndpoint(StaticEndpointSelectionSnapshot snapshot, ulong excluded)
         {
-            ArgumentNullException.ThrowIfNull(snapshot);
             var endpoints = snapshot.Endpoints;
             var availableCount = 0;
             for (var index = 0; index < endpoints.Length; index++)
@@ -110,7 +110,20 @@ internal sealed partial class SharpLinkClient
                         return index;
             }
             if (_selector is not null)
-                return _selector.Select(new SharpLinkEndpointSelectionContext(snapshot.Candidates, excluded));
+            {
+                try
+                {
+                    return _selector.Select(new SharpLinkEndpointSelectionContext(snapshot.Candidates, excluded));
+                }
+                catch (Exception exception)
+                {
+                    _logger?.LogError(exception, "SharpLink endpoint selector failed.");
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.FailedPrecondition,
+                        "The endpoint selector failed.",
+                        exception);
+                }
+            }
             return _strategy switch
             {
                 SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
