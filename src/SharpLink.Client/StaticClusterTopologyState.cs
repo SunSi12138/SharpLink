@@ -95,6 +95,8 @@ internal sealed partial class SharpLinkClient
             return previousReadyEndpointCount;
         }
 
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         public int SelectEndpoint(StaticEndpointSelectionSnapshot snapshot, ulong excluded)
         {
             var endpoints = snapshot.Endpoints;
@@ -110,20 +112,7 @@ internal sealed partial class SharpLinkClient
                         return index;
             }
             if (_selector is not null)
-            {
-                try
-                {
-                    return _selector.Select(new SharpLinkEndpointSelectionContext(snapshot.Candidates, excluded));
-                }
-                catch (Exception exception)
-                {
-                    _logger?.LogError(exception, "SharpLink endpoint selector failed.");
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.FailedPrecondition,
-                        "The endpoint selector failed.",
-                        exception);
-                }
-            }
+                return SelectCustomEndpoint(snapshot.Candidates, excluded);
             return _strategy switch
             {
                 SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
@@ -132,6 +121,22 @@ internal sealed partial class SharpLinkClient
                 SharpLinkLoadBalancingStrategy.LeastPending => SelectLeastPending(endpoints, excluded),
                 _ => SelectPowerOfTwo(endpoints, excluded, availableCount)
             };
+        }
+
+        private int SelectCustomEndpoint(SharpLinkEndpointCandidate[] candidates, ulong excluded)
+        {
+            try
+            {
+                return _selector!.Select(new SharpLinkEndpointSelectionContext(candidates, excluded));
+            }
+            catch (Exception exception)
+            {
+                _logger?.LogError(exception, "SharpLink endpoint selector failed.");
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.FailedPrecondition,
+                    "The endpoint selector failed.",
+                    exception);
+            }
         }
 
         private int SelectPowerOfTwo(
