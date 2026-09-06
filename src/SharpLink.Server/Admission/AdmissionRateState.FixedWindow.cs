@@ -18,9 +18,7 @@ internal sealed partial class AdmissionRateState
 
     private readonly Counter? _fixedCounter;
     private readonly long _fixedSequence;
-    private readonly long _fixedWindowTimestampTicks;
     private readonly DynamicFixedWindowActivationMode _fixedActivationMode;
-    private int _fixedPreActivationLimit;
     private long _fixedActivationBoundary;
     private int _fixedLifecycleState;
 
@@ -29,12 +27,12 @@ internal sealed partial class AdmissionRateState
         TimeProvider timeProvider)
     {
         _definition = definition;
-        var window = TimeSpan.FromTicks(definition.PeriodTicks);
-        _fixedCounter = new Counter(definition.Limit, window, timeProvider);
+        _fixedCounter = new Counter(
+            definition.Limit,
+            TimeSpan.FromTicks(definition.PeriodTicks),
+            timeProvider);
         _fixedSequence = 1;
-        _fixedWindowTimestampTicks = _fixedCounter.ToTimestampTicks(definition.PeriodTicks);
         _fixedActivationMode = DynamicFixedWindowActivationMode.Immediate;
-        _fixedPreActivationLimit = definition.Limit;
         _fixedLifecycleState = FixedPublished;
     }
 
@@ -42,13 +40,11 @@ internal sealed partial class AdmissionRateState
         AdmissionRateStateDefinition definition,
         Counter counter,
         long sequence,
-        long windowTimestampTicks,
         DynamicFixedWindowActivationMode activationMode)
     {
         _definition = definition;
         _fixedCounter = counter;
         _fixedSequence = sequence;
-        _fixedWindowTimestampTicks = windowTimestampTicks;
         _fixedActivationMode = activationMode;
     }
 
@@ -70,12 +66,9 @@ internal sealed partial class AdmissionRateState
         ThrowIfFixedDisposed();
         var counter = _fixedCounter ??
             throw new InvalidOperationException("FixedWindow successor requires a stable counter.");
-        var windowTimestampTicks = counter.ToTimestampTicks(definition.PeriodTicks);
-        var resolvedActivation = counter.ResolveActivation(windowTimestampTicks, activationMode);
-        return counter.CreateSuccessor(
-            definition,
-            windowTimestampTicks,
-            resolvedActivation);
+        var requestedWindow = counter.ToTimestampTicks(definition.PeriodTicks);
+        var resolvedActivation = counter.ResolveActivation(requestedWindow, activationMode);
+        return counter.CreateSuccessor(definition, resolvedActivation);
     }
 
     private void CommitFixedTransitionTo(AdmissionRateState target)
@@ -83,7 +76,7 @@ internal sealed partial class AdmissionRateState
         ArgumentNullException.ThrowIfNull(target);
         ThrowIfFixedDisposed();
         if (target._fixedActivationMode == DynamicFixedWindowActivationMode.Immediate &&
-            target._fixedWindowTimestampTicks != _fixedWindowTimestampTicks)
+            target._definition.PeriodTicks != _definition.PeriodTicks)
         {
             throw new InvalidOperationException(
                 "Immediate FixedWindow updates may change PermitLimit only. Change Window with NextWindowBoundary activation.");
@@ -124,29 +117,17 @@ internal sealed partial class AdmissionRateState
         _fixedCounter!.ReleaseView();
     }
 
-    private void FinalizeFixedForCommit(int preActivationLimit, long activationBoundary)
+    private void FinalizeFixedForCommit(long activationBoundary)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(preActivationLimit);
-        if (Interlocked.CompareExchange(
-                ref _fixedLifecycleState,
-                FixedCommitted,
-                FixedPrepared) != FixedPrepared)
-        {
+        if (Interlocked.CompareExchange(ref _fixedLifecycleState, FixedCommitted, FixedPrepared) != FixedPrepared)
             throw new InvalidOperationException("FixedWindow policy view was committed more than once.");
-        }
-        _fixedPreActivationLimit = preActivationLimit;
         _fixedActivationBoundary = activationBoundary;
     }
 
     private void MarkFixedPublishedLocked()
     {
-        if (Interlocked.CompareExchange(
-                ref _fixedLifecycleState,
-                FixedPublished,
-                FixedCommitted) != FixedCommitted)
-        {
+        if (Interlocked.CompareExchange(ref _fixedLifecycleState, FixedPublished, FixedCommitted) != FixedCommitted)
             throw new InvalidOperationException("FixedWindow policy view was published from an invalid state.");
-        }
     }
 
     private void ThrowIfFixedDisposed()
