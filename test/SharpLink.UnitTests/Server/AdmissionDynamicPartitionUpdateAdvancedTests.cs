@@ -188,10 +188,9 @@ public sealed class AdmissionDynamicPartitionUpdateAdvancedTests
     }
 
     [Test]
-    [Arguments(PartitionRateKind.TokenBucket, PartitionRateKind.FixedWindow)]
-    [Arguments(PartitionRateKind.FixedWindow, PartitionRateKind.SlidingWindow)]
+    [Arguments(PartitionRateKind.TokenBucket, PartitionRateKind.SlidingWindow)]
     [Arguments(PartitionRateKind.SlidingWindow, PartitionRateKind.TokenBucket)]
-    public async Task PartitionRateAlgorithmReplacementShouldCarryRecentConsumption(
+    public async Task LegacyPartitionAlgorithmReplacementShouldCarryRecentConsumption(
         PartitionRateKind sourceKind,
         PartitionRateKind targetKind)
     {
@@ -211,7 +210,41 @@ public sealed class AdmissionDynamicPartitionUpdateAdvancedTests
         var replacement = Current(server);
         var attempt = await replacement.Controller.AcquireAsync(context, 1, false, CancellationToken.None);
         Ensure(!attempt.IsAcquired && attempt.Reason == "rate",
-            $"{sourceKind}->{targetKind}: replacement must carry a conservative debt barrier rather than a fresh quota");
+            $"{sourceKind}->{targetKind}: legacy replacement must keep its conservative debt barrier");
+    }
+
+    [Test]
+    [Arguments(PartitionRateKind.TokenBucket, PartitionRateKind.FixedWindow)]
+    [Arguments(PartitionRateKind.FixedWindow, PartitionRateKind.TokenBucket)]
+    [Arguments(PartitionRateKind.FixedWindow, PartitionRateKind.SlidingWindow)]
+    [Arguments(PartitionRateKind.SlidingWindow, PartitionRateKind.FixedWindow)]
+    public async Task FixedWindowPartitionAlgorithmReplacementShouldStartFreshGeneration(
+        PartitionRateKind sourceKind,
+        PartitionRateKind targetKind)
+    {
+        await using var server = CreateServer();
+        var publicServer = (ISharpLinkServer)server;
+        publicServer.EnableAdmissionControl(options =>
+            ConfigurePartitionRate(options, ConnectionSelector, sourceKind, permitLimit: 1));
+        var context = Context("tenant-a");
+
+        var consumed = await Current(server).Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(consumed.IsAcquired, $"{sourceKind}: source quota must be consumed before replacement");
+        consumed.Lease!.Dispose();
+
+        publicServer.UpdateAdmissionControl(options =>
+            ConfigurePartitionRate(options, ConnectionSelector, targetKind, permitLimit: 1));
+        var replacement = Current(server);
+        var fresh = await replacement.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(fresh.IsAcquired,
+            $"{sourceKind}->{targetKind}: FixedWindow boundary must start one fresh target generation");
+        fresh.Lease!.Dispose();
+        var exhausted = await replacement.Controller.AcquireAsync(
+            context, 1, false, CancellationToken.None);
+        Ensure(!exhausted.IsAcquired && exhausted.Reason == "rate",
+            $"{sourceKind}->{targetKind}: fresh target must still enforce its own one-permit budget");
     }
 
     [Test]

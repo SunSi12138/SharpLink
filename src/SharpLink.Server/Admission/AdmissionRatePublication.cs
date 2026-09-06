@@ -1,16 +1,34 @@
 namespace SharpLink.Server;
 
-/// <summary>
-/// Completes publication-only rate state after the immutable AdmissionProgram pointer is visible.
-/// Candidate construction and update-plan commit may prepare a DynamicFixedWindow successor, but
-/// only this hook is allowed to make its queued/current-window target authoritative.
-/// </summary>
-internal static class AdmissionRatePublication
+/// <summary>Post-pointer publication for stable FixedWindow targets.</summary>
+internal sealed partial class SharpLinkAdmissionController
 {
-    internal static void PublishTargets(SharpLinkAdmissionController controller)
+    internal void PublishRateTargets()
     {
-        ArgumentNullException.ThrowIfNull(controller);
-        foreach (var binding in controller.RuleStateBindings)
+        foreach (var binding in _ruleStateBindings)
             binding.RateState?.OnPublished();
+        _partitions?.PublishRateTargets();
+    }
+}
+
+internal sealed partial class AdmissionPartitionPool
+{
+    private AdmissionPartitionPolicyGeneration? _publishedPolicy;
+
+    internal void PublishRateTargets()
+    {
+        lock (_gate)
+        {
+            _publishedPolicy = _currentPolicy;
+            foreach (var entry in _entries.Values)
+                entry.Current.Rate?.OnPublished();
+        }
+    }
+
+    private AdmissionPartitionEntry FinalizeNewEntryLocked(AdmissionPartitionEntry entry)
+    {
+        if (ReferenceEquals(entry.Current.Policy, _publishedPolicy))
+            entry.Current.Rate?.OnPublished();
+        return entry;
     }
 }

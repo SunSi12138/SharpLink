@@ -541,9 +541,9 @@ internal sealed class ResizableConcurrencyState : RateLimiter
 }
 
 /// <summary>
-/// Immutable rate-policy view. Every non-partition FixedWindow uses a stable shared counter;
-/// TokenBucket, SlidingWindow and partition rate state keep the existing #333 implementation.
-/// Algorithm identity changes are generation boundaries rather than history translations.
+/// Immutable rate-policy view. Every FixedWindow uses a stable shared counter; TokenBucket and
+/// SlidingWindow keep the existing #333 implementation. Algorithm identity changes are generation
+/// boundaries rather than history translations.
 /// </summary>
 internal sealed class AdmissionRateState : RateLimiter
 {
@@ -589,9 +589,7 @@ internal sealed class AdmissionRateState : RateLimiter
         AdmissionRateState? transitionSource = null)
     {
         var definition = AdmissionRateStateDefinition.Create(options.RateLimit);
-        var canUseStableFixedWindow =
-            definition.Kind == AdmissionRateStateKind.FixedWindow &&
-            options is not SharpLinkPartitionAdmissionOptions;
+        var canUseStableFixedWindow = definition.Kind == AdmissionRateStateKind.FixedWindow;
         if (canUseStableFixedWindow)
         {
             var fixedOptions = (SharpLinkFixedWindowLimitOptions)options.RateLimit!;
@@ -620,8 +618,8 @@ internal sealed class AdmissionRateState : RateLimiter
                 new AdmissionRateTransitionLineage());
         }
 
-        // TokenBucket/SlidingWindow and partitions keep the existing #333 implementation. A source
-        // from the specialized FixedWindow model deliberately starts a fresh algorithm generation.
+        // TokenBucket/SlidingWindow keep the existing #333 implementation. A source from the
+        // specialized FixedWindow model deliberately starts a fresh algorithm generation.
         var state = new AdmissionDynamicRateState(
             definition,
             timeProvider,

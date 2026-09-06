@@ -128,8 +128,9 @@ public sealed class AdmissionDynamicPartitionRateTransitionTests
                 "old partition waiter must preserve cancellation semantics after N+1 publication");
             Ensure(kernel.QueuedCalls == 0 && kernel.QueuedBytes == 0,
                 "partition waiter cancellation must release outer queue accounting exactly once");
+            await ConsumeAsync(current, 1);
             await EnsureRateRejectedAsync(current,
-                "cancelling an old partition waiter must not erase quota consumed before update");
+                "the fresh FixedWindow target must enforce its own one-permit budget after old waiter cancellation");
         }
         finally
         {
@@ -143,7 +144,7 @@ public sealed class AdmissionDynamicPartitionRateTransitionTests
     }
 
     [Test]
-    public async Task LateOldPartitionFixedWindowGrantShouldRemainDebtOnTokenBucketTarget()
+    public async Task LateOldPartitionFixedWindowGrantShouldNotChargeFreshTokenBucketTarget()
     {
         var time = new ManualTimeProvider();
         await using var owner = SharpLinkAdmissionController.CreateDisabled(time);
@@ -170,6 +171,9 @@ public sealed class AdmissionDynamicPartitionRateTransitionTests
                 ConfigureQueue(options);
                 ConfigureTokenBucket(options, 1, 1, 1);
             });
+            await ConsumeAsync(current, 1);
+            await EnsureRateRejectedAsync(current,
+                "the fresh TokenBucket target must initially enforce its own one-token budget");
 
             time.Advance(TimeSpan.FromSeconds(40));
             var oldDecision = await oldQueued;
@@ -179,16 +183,9 @@ public sealed class AdmissionDynamicPartitionRateTransitionTests
             Ensure(kernel.QueuedCalls == 0,
                 "late old partition grant must release its outer queue reservation exactly once");
 
-            await EnsureRateRejectedAsync(current,
-                "target partition lineage must account for the old-generation grant at handoff time");
-            time.Advance(TimeSpan.FromSeconds(1));
-            await EnsureRateRejectedAsync(current,
-                "fast target replenishment must not erase debt belonging to the old forty-second window");
-            time.Advance(TimeSpan.FromSeconds(39).Subtract(TimeSpan.FromTicks(1)));
-            await EnsureRateRejectedAsync(current,
-                "legacy partition grant debt must remain one tick before conservative expiry");
-            time.Advance(TimeSpan.FromTicks(1));
             await ConsumeAsync(current, 1);
+            await EnsureRateRejectedAsync(current,
+                "the late old FixedWindow grant must not be translated into debt on the fresh TokenBucket generation");
         }
         finally
         {

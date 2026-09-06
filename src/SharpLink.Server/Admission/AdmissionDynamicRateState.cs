@@ -66,8 +66,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
     private long _tokenDebt;
     private long _tokenAnchor;
     private long _tokenTransitionCredit;
-    private long _fixedConsumed;
-    private long _fixedWindowStart;
     private long _slidingOwnTotal;
     private int _slidingCurrentSegment;
     private long _slidingSegmentStart;
@@ -82,8 +80,11 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         TimeProvider timeProvider,
         AdmissionRateTransitionLineage? lineage = null)
     {
-        if (definition.Kind == AdmissionRateStateKind.None)
-            throw new InvalidOperationException("Admission dynamic rate state requires one rate policy.");
+        if (definition.Kind is AdmissionRateStateKind.None or AdmissionRateStateKind.FixedWindow)
+        {
+            throw new InvalidOperationException(
+                "Legacy dynamic rate state supports TokenBucket or SlidingWindow only.");
+        }
         _definition = definition;
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         Lineage = lineage ?? new AdmissionRateTransitionLineage();
@@ -93,7 +94,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
 
         var now = _timeProvider.GetTimestamp();
         _tokenAnchor = now;
-        _fixedWindowStart = now;
         _slidingSegmentStart = now;
         if (lineage is null)
             Lineage.AttachFresh(this);
@@ -219,15 +219,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
                         : now;
                     _latestGrantTimestamp = source._latestGrantTimestamp;
                     break;
-                case AdmissionRateStateKind.FixedWindow:
-                    CopyTransitionBarrierLocked(source, now);
-                    _fixedConsumed = source._fixedConsumed;
-                    _fixedWindowStart = source._fixedWindowStart;
-                    var targetWindow = GetWindowTimestampTicks();
-                    if (now >= SaturatingAdd(_fixedWindowStart, targetWindow))
-                        _fixedWindowStart = now;
-                    _latestGrantTimestamp = source._latestGrantTimestamp;
-                    break;
                 case AdmissionRateStateKind.SlidingWindow:
                     if (source._definition.PeriodTicks == _definition.PeriodTicks &&
                         source._definition.Segments == _definition.Segments)
@@ -300,8 +291,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         _tokenDebt = 0;
         _tokenAnchor = now;
         _tokenTransitionCredit = 0;
-        _fixedConsumed = 0;
-        _fixedWindowStart = now;
         _slidingOwnTotal = 0;
         _slidingCurrentSegment = 0;
         _slidingSegmentStart = now;
@@ -333,9 +322,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         {
             case AdmissionRateStateKind.TokenBucket:
                 _tokenDebt = SaturatingAdd(_tokenDebt, 1);
-                break;
-            case AdmissionRateStateKind.FixedWindow:
-                _fixedConsumed = SaturatingAdd(_fixedConsumed, 1);
                 break;
             case AdmissionRateStateKind.SlidingWindow:
                 _slidingSegments[_slidingCurrentSegment] = SaturatingAdd(
@@ -369,7 +355,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         => _definition.Kind switch
         {
             AdmissionRateStateKind.TokenBucket => _tokenDebt,
-            AdmissionRateStateKind.FixedWindow => _fixedConsumed,
             AdmissionRateStateKind.SlidingWindow => _slidingOwnTotal,
             _ => long.MaxValue
         };
@@ -385,11 +370,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         var expiry = _transitionDebt == 0 ? now : _transitionDebtExpiry;
         switch (_definition.Kind)
         {
-            case AdmissionRateStateKind.FixedWindow when _fixedConsumed != 0:
-                expiry = Math.Max(
-                    expiry,
-                    SaturatingAdd(_fixedWindowStart, GetWindowTimestampTicks()));
-                break;
             case AdmissionRateStateKind.SlidingWindow when _slidingOwnTotal != 0:
                 expiry = Math.Max(expiry, GetSlidingOwnDebtExpiryLocked());
                 break;
@@ -433,15 +413,8 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             _transitionDebtExpiry = 0;
         }
 
-        switch (_definition.Kind)
-        {
-            case AdmissionRateStateKind.FixedWindow:
-                AdvanceFixedWindowLocked(now);
-                break;
-            case AdmissionRateStateKind.SlidingWindow:
-                AdvanceSlidingWindowLocked(now);
-                break;
-        }
+        if (_definition.Kind == AdmissionRateStateKind.SlidingWindow)
+            AdvanceSlidingWindowLocked(now);
     }
 
     private void AdvanceTokenBucketLocked(long now)
@@ -482,20 +455,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         _transitionDebt = 0;
         _transitionDebtExpiry = 0;
         _tokenTransitionCredit = 0;
-    }
-
-    private void AdvanceFixedWindowLocked(long now)
-    {
-        var window = GetWindowTimestampTicks();
-        var elapsed = now - _fixedWindowStart;
-        if (elapsed < window)
-            return;
-
-        var windows = elapsed / window;
-        _fixedWindowStart = SaturatingAdd(
-            _fixedWindowStart,
-            SaturatingMultiply(windows, window));
-        _fixedConsumed = 0;
     }
 
     private void AdvanceSlidingWindowLocked(long now)
@@ -541,11 +500,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         {
             case AdmissionRateStateKind.TokenBucket when _tokenDebt != 0:
                 next = Math.Min(next, GetNextTokenOwnAvailabilityLocked());
-                break;
-            case AdmissionRateStateKind.FixedWindow when _fixedConsumed != 0:
-                next = Math.Min(
-                    next,
-                    SaturatingAdd(_fixedWindowStart, GetWindowTimestampTicks()));
                 break;
             case AdmissionRateStateKind.SlidingWindow when _slidingOwnTotal != 0:
                 next = Math.Min(next, GetNextSlidingOwnAvailabilityLocked());
@@ -765,7 +719,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             AdmissionRateStateKind.TokenBucket => SaturatingMultiply(
                 DivideRoundUp(burden, _definition.Secondary),
                 GetPeriodTimestampTicks()),
-            AdmissionRateStateKind.FixedWindow => GetWindowTimestampTicks(),
             AdmissionRateStateKind.SlidingWindow => GetWindowTimestampTicks(),
             _ => long.MaxValue
         };
