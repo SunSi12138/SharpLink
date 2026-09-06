@@ -1,0 +1,63 @@
+name: Issue 410 rate waiter dedup
+
+on:
+  push:
+    branches:
+      - issue-410-dynamic-fixed-window-clean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-410-waiter-dedup
+  cancel-in-progress: true
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Apply refactor
+        run: python3 .github/issue410-waiter-dedup.py
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Format
+        run: dotnet format whitespace Sharplink.slnx --no-restore
+
+      - name: Maintainability
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Remove staging harness and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/issue410-waiter-dedup.py
+          rm .github/workflows/issue-410-waiter-dedup.yml
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No refactor diff to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor(admission): share rate waiter queue'
+          git push origin HEAD:issue-410-dynamic-fixed-window-clean
