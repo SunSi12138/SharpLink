@@ -66,7 +66,7 @@ internal sealed partial class SharpLinkClient
 
     private void ValidateAcquiredContractAssemblies()
     {
-        foreach (var registration in Volatile.Read(ref _proxies).Values)
+        foreach (var registration in _assemblyRegistry.CaptureProxySnapshot().Values)
         {
             if (Volatile.Read(ref registration.Proxy) is null)
                 continue;
@@ -109,21 +109,7 @@ internal sealed partial class SharpLinkClient
     }
 
     private ISharpLinkGeneratedAssemblyManifest FindOwningManifest(ClientProxyRegistration registration)
-    {
-        if (registration.Module is { } module)
-            return module.Manifest;
-
-        var assembly = registration.Descriptor.ContractType.Assembly;
-        for (var index = 0; index < _staticManifests.Count; index++)
-        {
-            var manifest = _staticManifests[index];
-            if (ReferenceEquals(manifest.OwnerAssembly, assembly))
-                return manifest;
-        }
-
-        throw new InvalidOperationException(
-            $"No registered manifest owns RPC contract assembly '{assembly.FullName}'.");
-    }
+        => _assemblyRegistry.FindOwningManifest(registration);
 
     private static void ValidateRemoteContractAssembly(
         ClientProxyRegistration registration,
