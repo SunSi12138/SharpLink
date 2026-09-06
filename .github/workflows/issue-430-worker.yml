@@ -65,6 +65,12 @@ jobs:
           git diff --check
           echo "BASE $(git rev-parse HEAD)"
           echo "PATCH_APPLIED $(git diff --shortstat)"
+          git config user.name 'issue-430-validator'
+          git config user.email 'issue-430-validator@users.noreply.github.com'
+          git add -A
+          git commit -m 'validation: materialize issue 430 candidate'
+          test -z "$(git status --porcelain)"
+          echo "CANDIDATE $(git rev-parse HEAD)"
 
       - name: Verify concrete compression removal
         shell: bash
