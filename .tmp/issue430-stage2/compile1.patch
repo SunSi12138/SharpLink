@@ -1,0 +1,10 @@
+--- a/src/SharpLink.Compression.Zstd/SharpLinkZstdCompressionProvider.cs
++++ b/src/SharpLink.Compression.Zstd/SharpLinkZstdCompressionProvider.cs
+@@ -1,6 +1,7 @@
+ using System;
+ using System.Buffers;
+ using System.IO;
++using System.Threading;
+ using SharpLink.Runtime;
+ using ZstdSharp;
+ using ZstdSharp.Unsafe;
