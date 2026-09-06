@@ -114,12 +114,6 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/SharpLinkRuntimeContextTests.cs",
-      "maxLoc": 1552,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.ChaosTests/Program.cs",
       "maxLoc": 1540,
       "reason": "Existing dev debt captured by issue #350."
@@ -162,32 +156,8 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
-      "maxLoc": 1281,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/StreamManagerTests.cs",
-      "maxLoc": 1252,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs",
-      "maxLoc": 1095,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.IntegrationTests/RpcChannelCallShapeIntegrationTests.cs",
       "maxLoc": 1056,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.cs",
-      "maxLoc": 1047,
       "reason": "Existing dev debt captured by issue #350."
     },
     {
