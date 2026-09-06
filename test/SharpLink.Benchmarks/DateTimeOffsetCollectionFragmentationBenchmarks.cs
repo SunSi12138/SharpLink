@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
@@ -84,11 +85,12 @@ public class DateTimeOffsetCollectionFragmentationBenchmarks
         return new ReadOnlySequence<byte>(first!, 0, last!, last!.Memory.Length);
     }
 
-    private sealed class Segment(ReadOnlyMemory<byte> memory) : ReadOnlySequenceSegment<byte>
+    private sealed class Segment : ReadOnlySequenceSegment<byte>
     {
+        public Segment(ReadOnlyMemory<byte> memory) => Memory = memory;
+
         public Segment SetNext(Segment next)
         {
-            Memory = memory;
             next.RunningIndex = RunningIndex + Memory.Length;
             Next = next;
             return next;
