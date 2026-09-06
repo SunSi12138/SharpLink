@@ -71,13 +71,8 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly IPendingCallOwner _owner;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _slotAvailable;
-    private readonly ITimer _deadlineTimer;
-    private readonly Lock _deadlineGate = new();
+    private readonly PendingDeadlineScheduler _deadlineScheduler;
     private long _nextId;
-    private RpcDeadline _approximateEarliestDeadline;
-    private long _deadlineRevision;
-    private bool _hasApproximateEarliestDeadline;
-    private int _deadlineScanRunning;
     private int _activeSlots;
     private int _waiterCount;
     private int _slotAvailableDisposed;
@@ -109,11 +104,9 @@ internal sealed class PendingRequestTable : IDisposable
         _owner = owner;
         _timeProvider = timeProvider;
         _slotAvailable = new SemaphoreSlim(0, capacity);
-        _deadlineTimer = _timeProvider.CreateTimer(
-            static state => ((PendingRequestTable)state!).ScanExpiredDeadlines(),
-            this,
-            Timeout.InfiniteTimeSpan,
-            Timeout.InfiniteTimeSpan);
+        _deadlineScheduler = new PendingDeadlineScheduler(
+            _timeProvider,
+            ScanExpiredDeadlines);
     }
 
     public int Capacity => _capacity;
@@ -561,11 +554,10 @@ internal sealed class PendingRequestTable : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _deadlineTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _deadlineScheduler.Dispose();
         FailAllPendingRequests(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "Pending request table is disposed."));
-        _deadlineTimer.Dispose();
 
         if (Volatile.Read(ref _waiterCount) == 0)
             DisposeSlotAvailable();
@@ -783,7 +775,7 @@ internal sealed class PendingRequestTable : IDisposable
         _owner.OnPendingCallRegistered();
         call.MarkRegistered();
         if (call.Deadline.HasValue)
-            UpdateEarliestDeadline(call.Deadline);
+            _deadlineScheduler.Observe(call.Deadline);
         if (call.CancellationToken.IsCancellationRequested)
             TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
     }
@@ -1003,113 +995,28 @@ internal sealed class PendingRequestTable : IDisposable
         return id != 0 ? id : Interlocked.Increment(ref _nextId);
     }
 
-    private void UpdateEarliestDeadline(RpcDeadline deadline)
-    {
-        lock (_deadlineGate)
-        {
-            if (Volatile.Read(ref _disposed) != 0)
-                return;
-
-            if (_hasApproximateEarliestDeadline &&
-                _approximateEarliestDeadline.IsEarlierOrEqual(
-                    deadline,
-                    _timeProvider.GetTimestamp()))
-            {
-                return;
-            }
-
-            _approximateEarliestDeadline = deadline;
-            _hasApproximateEarliestDeadline = true;
-            _deadlineRevision++;
-        }
-
-        ReconcileDeadlineTimer();
-    }
-
     private void ScanExpiredDeadlines()
-    {
-        if (Volatile.Read(ref _disposed) != 0 ||
-            Interlocked.CompareExchange(ref _deadlineScanRunning, 1, 0) != 0)
-        {
-            return;
-        }
-
-        try
-        {
-            lock (_deadlineGate)
-            {
-                _approximateEarliestDeadline = default;
-                _hasApproximateEarliestDeadline = false;
-                _deadlineRevision++;
-            }
-            var slots = Volatile.Read(ref _slots);
-            if (slots is null)
-                return;
-
-            for (var index = 0; index < slots.Length; index++)
-            {
-                var call = Volatile.Read(ref slots[index]);
-                if (call is null || !call.Deadline.HasValue)
-                    continue;
-                if (call.Deadline.IsExpired(_timeProvider))
-                {
-                    TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
-                }
-                else
-                {
-                    UpdateEarliestDeadline(call.Deadline);
-                }
-            }
-        }
-        finally
-        {
-            Volatile.Write(ref _deadlineScanRunning, 0);
-            ReconcileDeadlineTimer();
-        }
-    }
-
-    private void ReconcileDeadlineTimer()
-    {
-        while (Volatile.Read(ref _disposed) == 0)
-        {
-            RpcDeadline next;
-            long revision;
-            lock (_deadlineGate)
-            {
-                if (Volatile.Read(ref _disposed) != 0 || !_hasApproximateEarliestDeadline)
-                    return;
-                next = _approximateEarliestDeadline;
-                revision = _deadlineRevision;
-            }
-
-            ArmDeadlineTimer(next);
-
-            lock (_deadlineGate)
-            {
-                if (Volatile.Read(ref _disposed) != 0 ||
-                    !_hasApproximateEarliestDeadline ||
-                    revision == _deadlineRevision)
-                {
-                    return;
-                }
-            }
-        }
-    }
-
-    private void ArmDeadlineTimer(RpcDeadline deadline)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var delay = deadline.GetRemaining(_timeProvider);
-        if (delay > SharpLinkTimer.MaximumDelay)
-            delay = SharpLinkTimer.MaximumDelay;
-        try
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return;
+
+        for (var index = 0; index < slots.Length; index++)
         {
-            _deadlineTimer.Change(delay, Timeout.InfiniteTimeSpan);
-        }
-        catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) != 0)
-        {
+            var call = Volatile.Read(ref slots[index]);
+            if (call is null || !call.Deadline.HasValue)
+                continue;
+            if (call.Deadline.IsExpired(_timeProvider))
+            {
+                TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
+            }
+            else
+            {
+                _deadlineScheduler.Observe(call.Deadline);
+            }
         }
     }
 
