@@ -3,9 +3,10 @@ using System.Threading.RateLimiting;
 namespace SharpLink.Server;
 
 /// <summary>
-/// Immutable FixedWindow policy view over one stable logical counter. Limit-only successors can
-/// become authoritative immediately for newly captured programs without resetting consumed quota.
-/// Window changes are staged on the shared counter and activate only at its next natural boundary.
+/// Immutable FixedWindow policy view over one stable logical counter. Synchronous attempts use the
+/// policy captured by their AdmissionProgram. Rate waiters are a later admission attempt and follow
+/// the latest published limit for the currently active window. Window changes activate only at the
+/// next natural boundary of the shared counter.
 /// </summary>
 internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 {
@@ -14,7 +15,9 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
     private readonly int _permitLimit;
     private readonly long _windowTimestampTicks;
     private int _preActivationLimit;
+    private long _activationBoundary;
     private int _committed;
+    private int _published;
     private int _disposed;
 
     internal DynamicFixedWindowRateLimiter(
@@ -33,6 +36,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         _windowTimestampTicks = _counter.ToTimestampTicks(window.Ticks);
         _preActivationLimit = permitLimit;
         _committed = 1;
+        _published = 1;
     }
 
     private DynamicFixedWindowRateLimiter(
@@ -57,6 +61,8 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 
     internal int ActiveLimitForTests => _counter.ActiveLimit;
 
+    internal int QueuedLimitForTests => _counter.QueuedLimit;
+
     internal TimeSpan ActiveWindowForTests => _counter.ActiveWindow;
 
     internal bool HasPendingWindowForTests => _counter.HasPendingWindow;
@@ -72,11 +78,27 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         return _counter.CreateSuccessor(permitLimit, window);
     }
 
+    /// <summary>
+    /// Finalizes a winning successor without mutating the live counter. The actual shared target is
+    /// installed only after publication, so a losing candidate and the commit-before-pointer window
+    /// cannot leak target state into requests still bound to the old publication.
+    /// </summary>
     internal void CommitTransitionTo(DynamicFixedWindowRateLimiter target)
     {
         ArgumentNullException.ThrowIfNull(target);
         ThrowIfDisposed();
         _counter.CommitTransition(this, target);
+    }
+
+    /// <summary>
+    /// Installs this policy as the published target. Server publication calls this after the program
+    /// pointer is visible. Acquisition also calls it as a lazy fallback for direct kernel tests and
+    /// other internal publication paths.
+    /// </summary>
+    internal void OnPublished()
+    {
+        ThrowIfDisposed();
+        _counter.Publish(this);
     }
 
     public override TimeSpan? IdleDuration => null;
@@ -88,6 +110,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         ValidatePermitCount(permitCount);
         if (Volatile.Read(ref _disposed) != 0)
             return FailedLease.Instance;
+        _counter.Publish(this);
         return _counter.AttemptAcquire(this);
     }
 
@@ -98,7 +121,8 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         ValidatePermitCount(permitCount);
         if (Volatile.Read(ref _disposed) != 0)
             return ValueTask.FromResult<RateLimitLease>(FailedLease.Instance);
-        return _counter.AcquireAsync(this, cancellationToken);
+        _counter.Publish(this);
+        return _counter.AcquireAsync(cancellationToken);
     }
 
     protected override void Dispose(bool disposing)
@@ -108,13 +132,17 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         _counter.ReleaseView();
     }
 
-    private void FinalizeForCommit(int preActivationLimit)
+    private void FinalizeForCommit(int preActivationLimit, long activationBoundary)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(preActivationLimit);
         if (Interlocked.Exchange(ref _committed, 1) != 0)
             throw new InvalidOperationException("Dynamic FixedWindow policy view was committed more than once.");
         _preActivationLimit = preActivationLimit;
+        _activationBoundary = activationBoundary;
     }
+
+    private void MarkPublishedLocked()
+        => Volatile.Write(ref _published, 1);
 
     private void ThrowIfDisposed()
     {
@@ -147,8 +175,10 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         private long _nextSequence = 1;
         private long _retiredThroughSequence;
         private long _pendingSequence;
+        private long _pendingBoundary;
         private long _pendingWindowTimestampTicks;
         private int _activeLimit;
+        private int _queuedLimit;
         private int _pendingLimit;
         private int _waitingCount;
         private int _references = 1;
@@ -158,6 +188,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         {
             _timeProvider = timeProvider;
             _activeLimit = permitLimit;
+            _queuedLimit = permitLimit;
             _activeWindowTimestampTicks = ToTimestampTicks(window.Ticks);
             _windowStart = _timeProvider.GetTimestamp();
             Identity = Interlocked.Increment(ref s_nextIdentity);
@@ -190,6 +221,18 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
                 {
                     AdvanceLocked(_timeProvider.GetTimestamp());
                     return _activeLimit;
+                }
+            }
+        }
+
+        internal int QueuedLimit
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    AdvanceLocked(_timeProvider.GetTimestamp());
+                    return _queuedLimit;
                 }
             }
         }
@@ -230,32 +273,32 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             if (!ReferenceEquals(source._counter, this) || !ReferenceEquals(target._counter, this))
                 throw new InvalidOperationException("Dynamic FixedWindow transition crossed logical counters.");
 
+            RateWaiter? granted;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
                 var now = _timeProvider.GetTimestamp();
+                granted = PublishLocked(source, now);
                 AdvanceLocked(now);
-
-                var sourceLimit = GetEffectiveLimitLocked(source);
-                target.FinalizeForCommit(sourceLimit);
-
-                if (target._windowTimestampTicks == _activeWindowTimestampTicks)
-                {
-                    // Limit-only changes are immediate for the newly published immutable policy view.
-                    // Existing views retain their limit snapshot, but all views charge this same counter.
-                    ClearPendingLocked();
-                }
-                else
-                {
-                    // A Window change never reinterprets the current window. Only the last winning
-                    // target is staged, and it becomes globally active at the current natural boundary.
-                    _pendingSequence = target._sequence;
-                    _pendingLimit = target._permitLimit;
-                    _pendingWindowTimestampTicks = target._windowTimestampTicks;
-                }
-
-                ScheduleTimerLocked(now);
+                var sourceLimit = GetDirectLimitLocked(source);
+                var boundary = SaturatingAdd(_windowStart, _activeWindowTimestampTicks);
+                target.FinalizeForCommit(sourceLimit, boundary);
             }
+            CompleteGranted(granted);
+        }
+
+        internal void Publish(DynamicFixedWindowRateLimiter policy)
+        {
+            if (Volatile.Read(ref policy._published) != 0)
+                return;
+
+            RateWaiter? granted;
+            lock (_gate)
+            {
+                ThrowIfDisposedLocked();
+                granted = PublishLocked(policy, _timeProvider.GetTimestamp());
+            }
+            CompleteGranted(granted);
         }
 
         internal RateLimitLease AttemptAcquire(DynamicFixedWindowRateLimiter policy)
@@ -267,7 +310,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 
                 var now = _timeProvider.GetTimestamp();
                 AdvanceLocked(now);
-                if (_waitingCount != 0 || _consumed >= GetEffectiveLimitLocked(policy))
+                if (_waitingCount != 0 || _consumed >= GetDirectLimitLocked(policy))
                     return FailedLease.Instance;
 
                 _consumed++;
@@ -275,9 +318,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             }
         }
 
-        internal ValueTask<RateLimitLease> AcquireAsync(
-            DynamicFixedWindowRateLimiter policy,
-            CancellationToken cancellationToken)
+        internal ValueTask<RateLimitLease> AcquireAsync(CancellationToken cancellationToken)
         {
             if (cancellationToken.IsCancellationRequested)
                 return ValueTask.FromCanceled<RateLimitLease>(cancellationToken);
@@ -290,13 +331,13 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 
                 var now = _timeProvider.GetTimestamp();
                 AdvanceLocked(now);
-                if (_waitingCount == 0 && _consumed < GetEffectiveLimitLocked(policy))
+                if (_waitingCount == 0 && _consumed < _queuedLimit)
                 {
                     _consumed++;
                     return ValueTask.FromResult<RateLimitLease>(AcquiredLease.Instance);
                 }
 
-                waiter = new RateWaiter(this, policy, cancellationToken);
+                waiter = new RateWaiter(this, cancellationToken);
                 EnqueueLocked(waiter);
                 ScheduleTimerLocked(now);
             }
@@ -319,9 +360,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             {
                 if (--_references < 0)
                     throw new InvalidOperationException("Dynamic FixedWindow view reference count underflowed.");
-                if (_references != 0)
-                    return;
-                if (_disposed != 0)
+                if (_references != 0 || _disposed != 0)
                     return;
 
                 _disposed = 1;
@@ -351,7 +390,37 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             return TimeSpan.FromTicks(Math.Max(1, (long)Math.Ceiling(scaled)));
         }
 
-        private int GetEffectiveLimitLocked(DynamicFixedWindowRateLimiter policy)
+        private RateWaiter? PublishLocked(DynamicFixedWindowRateLimiter policy, long now)
+        {
+            if (Volatile.Read(ref policy._published) != 0)
+                return null;
+            if (Volatile.Read(ref policy._committed) == 0)
+                throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
+
+            AdvanceLocked(now);
+            if (policy._windowTimestampTicks == _activeWindowTimestampTicks)
+            {
+                ClearPendingLocked();
+                _queuedLimit = policy._permitLimit;
+            }
+            else if (now < policy._activationBoundary)
+            {
+                _pendingSequence = policy._sequence;
+                _pendingBoundary = policy._activationBoundary;
+                _pendingLimit = policy._permitLimit;
+                _pendingWindowTimestampTicks = policy._windowTimestampTicks;
+                _queuedLimit = policy._preActivationLimit;
+            }
+            else
+            {
+                ActivateLatePublishedPolicyLocked(policy, now);
+            }
+
+            policy.MarkPublishedLocked();
+            return GrantWaitersLocked(now);
+        }
+
+        private int GetDirectLimitLocked(DynamicFixedWindowRateLimiter policy)
         {
             if (!ReferenceEquals(policy._counter, this))
                 throw new InvalidOperationException("Dynamic FixedWindow policy belongs to another counter.");
@@ -366,24 +435,22 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 
         private void AdvanceLocked(long now)
         {
-            var boundary = SaturatingAdd(_windowStart, _activeWindowTimestampTicks);
-            if (now < boundary)
-                return;
-
-            _windowStart = boundary;
-            _consumed = 0;
-            if (_pendingSequence != 0)
+            if (_pendingSequence != 0 && now >= _pendingBoundary)
             {
+                _windowStart = _pendingBoundary;
+                _consumed = 0;
                 _activeLimit = _pendingLimit;
+                _queuedLimit = _pendingLimit;
                 _activeWindowTimestampTicks = _pendingWindowTimestampTicks;
                 _retiredThroughSequence = Math.Max(_retiredThroughSequence, _pendingSequence);
                 ClearPendingLocked();
             }
 
-            var elapsed = now - _windowStart;
-            if (elapsed < _activeWindowTimestampTicks)
+            var boundary = SaturatingAdd(_windowStart, _activeWindowTimestampTicks);
+            if (now < boundary)
                 return;
 
+            var elapsed = now - _windowStart;
             var windows = elapsed / _activeWindowTimestampTicks;
             _windowStart = SaturatingAdd(
                 _windowStart,
@@ -391,13 +458,35 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             _consumed = 0;
         }
 
+        private void ActivateLatePublishedPolicyLocked(
+            DynamicFixedWindowRateLimiter policy,
+            long now)
+        {
+            var activationBoundary = policy._activationBoundary;
+            _activeLimit = policy._permitLimit;
+            _queuedLimit = policy._permitLimit;
+            _activeWindowTimestampTicks = policy._windowTimestampTicks;
+            _retiredThroughSequence = Math.Max(_retiredThroughSequence, policy._sequence);
+            ClearPendingLocked();
+
+            // Normally publication happens immediately after commit and this branch is reached only
+            // when the natural boundary raced publication. If old captured work already advanced the
+            // counter past that boundary, preserve its consumed count rather than forgiving quota.
+            if (_windowStart < activationBoundary)
+                _windowStart = activationBoundary;
+            if (_windowStart > activationBoundary ||
+                now >= SaturatingAdd(_windowStart, _activeWindowTimestampTicks))
+            {
+                _windowStart = now;
+            }
+        }
+
         private RateWaiter? GrantWaitersLocked(long now)
         {
             AdvanceLocked(now);
             RateWaiter? grantedHead = null;
             RateWaiter? grantedTail = null;
-            while (_waiterHead is not null &&
-                   _consumed < GetEffectiveLimitLocked(_waiterHead.Policy))
+            while (_waiterHead is not null && _consumed < _queuedLimit)
             {
                 var waiter = DequeueLocked();
                 _consumed++;
@@ -420,10 +509,12 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             }
 
             AdvanceLocked(now);
-            if (_consumed < GetEffectiveLimitLocked(_waiterHead.Policy))
+            if (_consumed < _queuedLimit)
                 return;
 
-            var next = SaturatingAdd(_windowStart, _activeWindowTimestampTicks);
+            var next = _pendingSequence != 0
+                ? _pendingBoundary
+                : SaturatingAdd(_windowStart, _activeWindowTimestampTicks);
             if (next == long.MaxValue)
                 return;
             var due = TimestampDeltaToTimeSpan(Math.Max(1, next - now));
@@ -527,6 +618,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         private void ClearPendingLocked()
         {
             _pendingSequence = 0;
+            _pendingBoundary = 0;
             _pendingLimit = 0;
             _pendingWindowTimestampTicks = 0;
         }
@@ -576,7 +668,6 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 
     private sealed class RateWaiter(
         Counter owner,
-        DynamicFixedWindowRateLimiter policy,
         CancellationToken cancellationToken)
         : TaskCompletionSource<RateLimitLease>(TaskCreationOptions.RunContinuationsAsynchronously)
     {
@@ -584,7 +675,6 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         private int _completed;
 
         internal Counter Owner { get; } = owner;
-        internal DynamicFixedWindowRateLimiter Policy { get; } = policy;
         internal CancellationToken CancellationToken { get; } = cancellationToken;
         internal RateWaiter? Previous { get; set; }
         internal RateWaiter? Next { get; set; }
