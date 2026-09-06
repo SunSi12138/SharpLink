@@ -301,4 +301,12 @@ for dead in ("_waiterHead", "_waiterTail", "_waitingCount", "EnqueueLocked(", "D
         raise RuntimeError(f"FixedWindow waiter duplication survived: {dead}")
 path.write_text(text)
 
+# The outer immutable FixedWindow policy view still has disposed fast-failure paths.
+path = ROOT / "src/SharpLink.Server/Admission/DynamicFixedWindowRateLimiter.cs"
+text = path.read_text()
+if text.count("FailedLease.Instance") != 2:
+    raise RuntimeError(
+        f"FixedWindow policy view: expected two legacy failed-lease references, found {text.count('FailedLease.Instance')}")
+path.write_text(text.replace("FailedLease.Instance", "AdmissionRateLeases.Failed"))
+
 print("issue #410 shared rate waiter refactor staged")
