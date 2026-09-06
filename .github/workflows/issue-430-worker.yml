@@ -14,11 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: fix/430-compression-provider-boundary
           fetch-depth: 0
       - name: Verify target branch
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin fix/430-compression-provider-boundary
-          git checkout -B fix/430-compression-provider-boundary origin/fix/430-compression-provider-boundary
           echo "WORKER_READY $(git rev-parse HEAD)"
+      - name: Export worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf /tmp/issue430-worktree.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue430-worktree
+          path: /tmp/issue430-worktree.tar.gz
+          retention-days: 1
