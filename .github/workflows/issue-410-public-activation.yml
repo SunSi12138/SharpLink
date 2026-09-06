@@ -1,0 +1,59 @@
+name: Issue 410 public FixedWindow activation
+
+on:
+  push:
+    branches:
+      - issue-410-dynamic-fixed-window-clean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-410-public-fixed-window-activation
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Apply public API transform
+        run: python3 .github/issue410-public-activation.py
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Format
+        run: dotnet format whitespace Sharplink.slnx --no-restore
+
+      - name: Maintainability
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Remove staging harness and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/issue410-public-activation.py
+          rm .github/workflows/issue-410-public-activation.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(admission): expose fixed-window update activation'
+          git push origin HEAD:issue-410-dynamic-fixed-window-clean
