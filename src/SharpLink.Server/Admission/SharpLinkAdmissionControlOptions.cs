@@ -37,10 +37,10 @@ public sealed class SharpLinkFixedWindowLimitOptions
     /// <summary>Gets or sets the fixed window duration, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromSeconds(1);
 
-    // Investigation-only selector for #410. Keep this internal until the semantic/performance gates
-    // decide whether an activation choice deserves public API surface.
-    internal DynamicFixedWindowActivationMode UpdateActivation { get; set; } =
-        DynamicFixedWindowActivationMode.Immediate;
+    // Investigation-only selector for #410. Null keeps the current compatibility inference:
+    // same Window => Immediate, changed Window => NextWindowBoundary. An explicit value lets tests
+    // validate both candidate semantics without freezing public API yet.
+    internal DynamicFixedWindowActivationMode? UpdateActivation { get; set; }
 
     internal void Validate()
     {
