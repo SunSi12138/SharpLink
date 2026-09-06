@@ -57,7 +57,7 @@ internal sealed partial class AdmissionRateState
     internal int QueuedLimitForTests => _fixedCounter!.QueuedLimit;
     internal TimeSpan ActiveWindowForTests => _fixedCounter!.ActiveWindow;
     internal bool HasPendingWindowForTests => _fixedCounter!.HasPendingTarget;
-    internal long CounterIdentityForTests => _fixedCounter!.Identity;
+    internal object CounterIdentityForTests => _fixedCounter!;
 
     private AdmissionRateState CreateFixedSuccessor(
         AdmissionRateStateDefinition definition,
