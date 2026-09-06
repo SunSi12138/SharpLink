@@ -78,12 +78,6 @@
     },
     {
       "domain": "source",
-      "path": "src/SharpLink.Client/SharpLinkClient.StaticCluster.cs",
-      "maxLoc": 908,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Server/SharpLinkServerBuilder.cs",
       "maxLoc": 829,
       "reason": "Existing dev debt captured by issue #350."
