@@ -136,7 +136,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter : RateLimiter
     {
         ValidatePermitCount(permitCount);
         if (Volatile.Read(ref _disposed) != 0)
-            return FailedLease.Instance;
+            return AdmissionRateLeases.Failed;
         _counter.Publish(this);
         return _counter.AttemptAcquire(this);
     }
@@ -147,7 +147,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter : RateLimiter
     {
         ValidatePermitCount(permitCount);
         if (Volatile.Read(ref _disposed) != 0)
-            return ValueTask.FromResult<RateLimitLease>(FailedLease.Instance);
+            return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Failed);
         _counter.Publish(this);
         return _counter.AcquireAsync(cancellationToken);
     }

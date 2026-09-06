@@ -55,13 +55,12 @@ internal sealed class AdmissionRateTransitionLineage
 /// quota/history are mutable under the logical lineage lock and may be conservatively translated
 /// into a prepared successor at publication time.
 /// </summary>
-internal sealed class AdmissionDynamicRateState : IDisposable
+internal sealed class AdmissionDynamicRateState : IDisposable, IAdmissionRateWaiterOwner
 {
     private readonly AdmissionRateStateDefinition _definition;
     private readonly TimeProvider _timeProvider;
     private readonly long[] _slidingSegments;
-    private RateWaiter? _waiterHead;
-    private RateWaiter? _waiterTail;
+    private AdmissionRateWaitQueue _waiters;
     private ITimer? _timer;
     private long _tokenDebt;
     private long _tokenAnchor;
@@ -72,7 +71,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable
     private long _transitionDebt;
     private long _transitionDebtExpiry;
     private long _latestGrantTimestamp = long.MinValue;
-    private int _waitingCount;
     private int _disposed;
 
     internal AdmissionDynamicRateState(
@@ -108,7 +106,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         get
         {
             lock (Lineage.Gate)
-                return _waitingCount;
+                return _waiters.Count;
         }
     }
 
@@ -143,15 +141,15 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         lock (Lineage.Gate)
         {
             if (_disposed != 0)
-                return FailedLease.Instance;
+                return AdmissionRateLeases.Failed;
 
             var now = _timeProvider.GetTimestamp();
             AdvanceLocked(now);
-            if (_waitingCount != 0 || !CanGrantLocked())
-                return FailedLease.Instance;
+            if (_waiters.Count != 0 || !CanGrantLocked())
+                return AdmissionRateLeases.Failed;
 
             RecordGrantLocked(now);
-            return AcquiredLease.Instance;
+            return AdmissionRateLeases.Acquired;
         }
     }
 
@@ -163,32 +161,26 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled<RateLimitLease>(cancellationToken);
 
-        RateWaiter waiter;
+        AdmissionRateWaiter waiter;
         lock (Lineage.Gate)
         {
             if (_disposed != 0)
-                return ValueTask.FromResult<RateLimitLease>(FailedLease.Instance);
+                return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Failed);
 
             var now = _timeProvider.GetTimestamp();
             AdvanceLocked(now);
-            if (_waitingCount == 0 && CanGrantLocked())
+            if (_waiters.Count == 0 && CanGrantLocked())
             {
                 RecordGrantLocked(now);
-                return ValueTask.FromResult<RateLimitLease>(AcquiredLease.Instance);
+                return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Acquired);
             }
 
-            waiter = new RateWaiter(this, cancellationToken);
-            EnqueueLocked(waiter);
+            waiter = new AdmissionRateWaiter(this, cancellationToken);
+            _waiters.Enqueue(waiter);
             ScheduleTimerLocked(now);
         }
 
-        if (cancellationToken.CanBeCanceled)
-        {
-            var registration = cancellationToken.UnsafeRegister(
-                static state => ((RateWaiter)state!).Owner.CancelWaiter((RateWaiter)state!),
-                waiter);
-            waiter.SetRegistration(registration);
-        }
+        waiter.RegisterCancellation();
         return new ValueTask<RateLimitLease>(waiter.Task);
     }
 
@@ -537,14 +529,14 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         return long.MaxValue;
     }
 
-    private RateWaiter? GrantWaitersLocked(long now)
+    private AdmissionRateWaiter? GrantWaitersLocked(long now)
     {
         AdvanceLocked(now);
-        RateWaiter? grantedHead = null;
-        RateWaiter? grantedTail = null;
-        while (_waiterHead is not null && CanGrantLocked())
+        AdmissionRateWaiter? grantedHead = null;
+        AdmissionRateWaiter? grantedTail = null;
+        while (!_waiters.IsEmpty && CanGrantLocked())
         {
-            var waiter = DequeueLocked();
+            var waiter = _waiters.Dequeue();
             RecordGrantLocked(now);
             if (grantedTail is null)
                 grantedHead = waiter;
@@ -558,7 +550,7 @@ internal sealed class AdmissionDynamicRateState : IDisposable
 
     private void ScheduleTimerLocked(long now)
     {
-        if (_disposed != 0 || _waiterHead is null)
+        if (_disposed != 0 || _waiters.IsEmpty)
         {
             _timer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             return;
@@ -582,22 +574,24 @@ internal sealed class AdmissionDynamicRateState : IDisposable
 
     private void OnTimer()
     {
-        RateWaiter? granted;
+        AdmissionRateWaiter? granted;
         lock (Lineage.Gate)
         {
             if (_disposed != 0)
                 return;
             granted = GrantWaitersLocked(_timeProvider.GetTimestamp());
         }
-        CompleteGranted(granted);
+        AdmissionRateWaitQueue.CompleteGranted(granted);
     }
 
-    private void CancelWaiter(RateWaiter waiter)
+    void IAdmissionRateWaiterOwner.CancelRateWaiter(AdmissionRateWaiter waiter) => CancelWaiter(waiter);
+
+    private void CancelWaiter(AdmissionRateWaiter waiter)
     {
         var removed = false;
         lock (Lineage.Gate)
         {
-            removed = RemoveLocked(waiter);
+            removed = _waiters.Remove(waiter);
             if (removed)
                 ScheduleTimerLocked(_timeProvider.GetTimestamp());
         }
@@ -605,108 +599,22 @@ internal sealed class AdmissionDynamicRateState : IDisposable
             waiter.CompleteCanceled();
     }
 
-    private void EnqueueLocked(RateWaiter waiter)
-    {
-        waiter.IsQueued = true;
-        waiter.Previous = _waiterTail;
-        if (_waiterTail is null)
-            _waiterHead = waiter;
-        else
-            _waiterTail.Next = waiter;
-        _waiterTail = waiter;
-        _waitingCount++;
-    }
-
-    private RateWaiter DequeueLocked()
-    {
-        var waiter = _waiterHead ??
-            throw new InvalidOperationException("Admission rate waiter queue was unexpectedly empty.");
-        var next = waiter.Next;
-        _waiterHead = next;
-        if (next is null)
-            _waiterTail = null;
-        else
-            next.Previous = null;
-        waiter.Previous = null;
-        waiter.Next = null;
-        waiter.IsQueued = false;
-        _waitingCount--;
-        return waiter;
-    }
-
-    private bool RemoveLocked(RateWaiter waiter)
-    {
-        if (!waiter.IsQueued)
-            return false;
-        var previous = waiter.Previous;
-        var next = waiter.Next;
-        if (previous is null)
-            _waiterHead = next;
-        else
-            previous.Next = next;
-        if (next is null)
-            _waiterTail = previous;
-        else
-            next.Previous = previous;
-        waiter.Previous = null;
-        waiter.Next = null;
-        waiter.IsQueued = false;
-        _waitingCount--;
-        return true;
-    }
-
-    private RateWaiter? DetachAllLocked()
-    {
-        var head = _waiterHead;
-        _waiterHead = null;
-        _waiterTail = null;
-        _waitingCount = 0;
-        for (var waiter = head; waiter is not null; waiter = waiter.Next)
-        {
-            waiter.Previous = null;
-            waiter.IsQueued = false;
-        }
-        return head;
-    }
-
-    private static void CompleteGranted(RateWaiter? waiter)
-    {
-        while (waiter is not null)
-        {
-            var next = waiter.Next;
-            waiter.Next = null;
-            waiter.CompleteGranted();
-            waiter = next;
-        }
-    }
-
-    private static void CompleteFailed(RateWaiter? waiter)
-    {
-        while (waiter is not null)
-        {
-            var next = waiter.Next;
-            waiter.Next = null;
-            waiter.CompleteFailed();
-            waiter = next;
-        }
-    }
-
     public void Dispose()
     {
-        RateWaiter? failed;
+        AdmissionRateWaiter? failed;
         ITimer? timer;
         lock (Lineage.Gate)
         {
             if (_disposed != 0)
                 return;
             _disposed = 1;
-            failed = DetachAllLocked();
+            failed = _waiters.DetachAll();
             timer = _timer;
             _timer = null;
             Lineage.DetachIfCurrentLocked(this);
         }
         timer?.Dispose();
-        CompleteFailed(failed);
+        AdmissionRateWaitQueue.CompleteFailed(failed);
     }
 
     private long GetBarrierHorizonTimestampTicks(long burden)
@@ -778,79 +686,4 @@ internal sealed class AdmissionDynamicRateState : IDisposable
         }
     }
 
-    private sealed class RateWaiter(
-        AdmissionDynamicRateState owner,
-        CancellationToken cancellationToken)
-        : TaskCompletionSource<RateLimitLease>(TaskCreationOptions.RunContinuationsAsynchronously)
-    {
-        private CancellationTokenRegistration _registration;
-        private int _completed;
-
-        internal AdmissionDynamicRateState Owner { get; } = owner;
-        internal CancellationToken CancellationToken { get; } = cancellationToken;
-        internal RateWaiter? Previous { get; set; }
-        internal RateWaiter? Next { get; set; }
-        internal bool IsQueued { get; set; }
-
-        internal void SetRegistration(CancellationTokenRegistration registration)
-        {
-            _registration = registration;
-            if (Volatile.Read(ref _completed) != 0)
-                registration.Dispose();
-        }
-
-        internal void CompleteGranted()
-        {
-            if (Interlocked.Exchange(ref _completed, 1) != 0)
-                return;
-            _registration.Dispose();
-            TrySetResult(AcquiredLease.Instance);
-        }
-
-        internal void CompleteCanceled()
-        {
-            if (Interlocked.Exchange(ref _completed, 1) != 0)
-                return;
-            _registration.Dispose();
-            TrySetCanceled(CancellationToken);
-        }
-
-        internal void CompleteFailed()
-        {
-            if (Interlocked.Exchange(ref _completed, 1) != 0)
-                return;
-            _registration.Dispose();
-            TrySetResult(FailedLease.Instance);
-        }
-    }
-
-    private sealed class AcquiredLease : RateLimitLease
-    {
-        internal static AcquiredLease Instance { get; } = new();
-
-        public override bool IsAcquired => true;
-
-        public override IEnumerable<string> MetadataNames => [];
-
-        public override bool TryGetMetadata(string metadataName, out object? metadata)
-        {
-            metadata = null;
-            return false;
-        }
-    }
-
-    private sealed class FailedLease : RateLimitLease
-    {
-        internal static FailedLease Instance { get; } = new();
-
-        public override bool IsAcquired => false;
-
-        public override IEnumerable<string> MetadataNames => [];
-
-        public override bool TryGetMetadata(string metadataName, out object? metadata)
-        {
-            metadata = null;
-            return false;
-        }
-    }
 }

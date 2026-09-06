@@ -4,14 +4,13 @@ namespace SharpLink.Server;
 
 internal sealed partial class DynamicFixedWindowRateLimiter
 {
-    private sealed class Counter
+    private sealed class Counter : IAdmissionRateWaiterOwner
     {
         private static long s_nextIdentity;
 
         private readonly Lock _gate = new();
         private readonly TimeProvider _timeProvider;
-        private RateWaiter? _waiterHead;
-        private RateWaiter? _waiterTail;
+        private AdmissionRateWaitQueue _waiters;
         private ITimer? _timer;
         private long _windowStart;
         private long _activeWindowTimestampTicks;
@@ -24,7 +23,6 @@ internal sealed partial class DynamicFixedWindowRateLimiter
         private int _activeLimit;
         private int _queuedLimit;
         private int _pendingLimit;
-        private int _waitingCount;
         private int _references = 1;
         private int _disposed;
 
@@ -42,7 +40,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter
 
         internal int WaitingCount
         {
-            get { lock (_gate) return _waitingCount; }
+            get { lock (_gate) return _waiters.Count; }
         }
 
         internal long Consumed
@@ -156,7 +154,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter
             if (!ReferenceEquals(source._counter, this) || !ReferenceEquals(target._counter, this))
                 throw new InvalidOperationException("Dynamic FixedWindow transition crossed logical counters.");
 
-            RateWaiter? granted;
+            AdmissionRateWaiter? granted;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
@@ -167,7 +165,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter
                 var boundary = SaturatingAdd(_windowStart, _activeWindowTimestampTicks);
                 target.FinalizeForCommit(sourceLimit, boundary);
             }
-            CompleteGranted(granted);
+            AdmissionRateWaitQueue.CompleteGranted(granted);
         }
 
         internal void Publish(DynamicFixedWindowRateLimiter policy)
@@ -175,13 +173,13 @@ internal sealed partial class DynamicFixedWindowRateLimiter
             if (Volatile.Read(ref policy._published) != 0)
                 return;
 
-            RateWaiter? granted;
+            AdmissionRateWaiter? granted;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
                 granted = PublishLocked(policy, _timeProvider.GetTimestamp());
             }
-            CompleteGranted(granted);
+            AdmissionRateWaitQueue.CompleteGranted(granted);
         }
 
         internal RateLimitLease AttemptAcquire(DynamicFixedWindowRateLimiter policy)
@@ -189,15 +187,15 @@ internal sealed partial class DynamicFixedWindowRateLimiter
             lock (_gate)
             {
                 if (_disposed != 0)
-                    return FailedLease.Instance;
+                    return AdmissionRateLeases.Failed;
 
                 var now = _timeProvider.GetTimestamp();
                 AdvanceLocked(now);
-                if (_waitingCount != 0 || _consumed >= GetDirectLimitLocked(policy))
-                    return FailedLease.Instance;
+                if (_waiters.Count != 0 || _consumed >= GetDirectLimitLocked(policy))
+                    return AdmissionRateLeases.Failed;
 
                 _consumed++;
-                return AcquiredLease.Instance;
+                return AdmissionRateLeases.Acquired;
             }
         }
 
@@ -206,38 +204,32 @@ internal sealed partial class DynamicFixedWindowRateLimiter
             if (cancellationToken.IsCancellationRequested)
                 return ValueTask.FromCanceled<RateLimitLease>(cancellationToken);
 
-            RateWaiter waiter;
+            AdmissionRateWaiter waiter;
             lock (_gate)
             {
                 if (_disposed != 0)
-                    return ValueTask.FromResult<RateLimitLease>(FailedLease.Instance);
+                    return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Failed);
 
                 var now = _timeProvider.GetTimestamp();
                 AdvanceLocked(now);
-                if (_waitingCount == 0 && _consumed < _queuedLimit)
+                if (_waiters.Count == 0 && _consumed < _queuedLimit)
                 {
                     _consumed++;
-                    return ValueTask.FromResult<RateLimitLease>(AcquiredLease.Instance);
+                    return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Acquired);
                 }
 
-                waiter = new RateWaiter(this, cancellationToken);
-                EnqueueLocked(waiter);
+                waiter = new AdmissionRateWaiter(this, cancellationToken);
+                _waiters.Enqueue(waiter);
                 ScheduleTimerLocked(now);
             }
 
-            if (cancellationToken.CanBeCanceled)
-            {
-                var registration = cancellationToken.UnsafeRegister(
-                    static state => ((RateWaiter)state!).Owner.CancelWaiter((RateWaiter)state!),
-                    waiter);
-                waiter.SetRegistration(registration);
-            }
+            waiter.RegisterCancellation();
             return new ValueTask<RateLimitLease>(waiter.Task);
         }
 
         internal void ReleaseView()
         {
-            RateWaiter? failed = null;
+            AdmissionRateWaiter? failed = null;
             ITimer? timer = null;
             lock (_gate)
             {
@@ -247,12 +239,12 @@ internal sealed partial class DynamicFixedWindowRateLimiter
                     return;
 
                 _disposed = 1;
-                failed = DetachAllLocked();
+                failed = _waiters.DetachAll();
                 timer = _timer;
                 _timer = null;
             }
             timer?.Dispose();
-            CompleteFailed(failed);
+            AdmissionRateWaitQueue.CompleteFailed(failed);
         }
 
         internal long ToTimestampTicks(long timeSpanTicks)
@@ -273,7 +265,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter
             return TimeSpan.FromTicks(Math.Max(1, (long)Math.Ceiling(scaled)));
         }
 
-        private RateWaiter? PublishLocked(DynamicFixedWindowRateLimiter policy, long now)
+        private AdmissionRateWaiter? PublishLocked(DynamicFixedWindowRateLimiter policy, long now)
         {
             if (Volatile.Read(ref policy._published) != 0)
                 return null;
@@ -380,14 +372,14 @@ internal sealed partial class DynamicFixedWindowRateLimiter
             }
         }
 
-        private RateWaiter? GrantWaitersLocked(long now)
+        private AdmissionRateWaiter? GrantWaitersLocked(long now)
         {
             AdvanceLocked(now);
-            RateWaiter? grantedHead = null;
-            RateWaiter? grantedTail = null;
-            while (_waiterHead is not null && _consumed < _queuedLimit)
+            AdmissionRateWaiter? grantedHead = null;
+            AdmissionRateWaiter? grantedTail = null;
+            while (!_waiters.IsEmpty && _consumed < _queuedLimit)
             {
-                var waiter = DequeueLocked();
+                var waiter = _waiters.Dequeue();
                 _consumed++;
                 if (grantedTail is null)
                     grantedHead = waiter;
@@ -401,7 +393,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter
 
         private void ScheduleTimerLocked(long now)
         {
-            if (_disposed != 0 || _waiterHead is null)
+            if (_disposed != 0 || _waiters.IsEmpty)
             {
                 _timer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 return;
@@ -427,91 +419,29 @@ internal sealed partial class DynamicFixedWindowRateLimiter
 
         private void OnTimer()
         {
-            RateWaiter? granted;
+            AdmissionRateWaiter? granted;
             lock (_gate)
             {
                 if (_disposed != 0)
                     return;
                 granted = GrantWaitersLocked(_timeProvider.GetTimestamp());
             }
-            CompleteGranted(granted);
+            AdmissionRateWaitQueue.CompleteGranted(granted);
         }
 
-        private void CancelWaiter(RateWaiter waiter)
+        void IAdmissionRateWaiterOwner.CancelRateWaiter(AdmissionRateWaiter waiter) => CancelWaiter(waiter);
+
+        private void CancelWaiter(AdmissionRateWaiter waiter)
         {
             var removed = false;
             lock (_gate)
             {
-                removed = RemoveLocked(waiter);
+                removed = _waiters.Remove(waiter);
                 if (removed)
                     ScheduleTimerLocked(_timeProvider.GetTimestamp());
             }
             if (removed)
                 waiter.CompleteCanceled();
-        }
-
-        private void EnqueueLocked(RateWaiter waiter)
-        {
-            waiter.IsQueued = true;
-            waiter.Previous = _waiterTail;
-            if (_waiterTail is null)
-                _waiterHead = waiter;
-            else
-                _waiterTail.Next = waiter;
-            _waiterTail = waiter;
-            _waitingCount++;
-        }
-
-        private RateWaiter DequeueLocked()
-        {
-            var waiter = _waiterHead ??
-                throw new InvalidOperationException("Dynamic FixedWindow waiter queue was unexpectedly empty.");
-            var next = waiter.Next;
-            _waiterHead = next;
-            if (next is null)
-                _waiterTail = null;
-            else
-                next.Previous = null;
-            waiter.Previous = null;
-            waiter.Next = null;
-            waiter.IsQueued = false;
-            _waitingCount--;
-            return waiter;
-        }
-
-        private bool RemoveLocked(RateWaiter waiter)
-        {
-            if (!waiter.IsQueued)
-                return false;
-            var previous = waiter.Previous;
-            var next = waiter.Next;
-            if (previous is null)
-                _waiterHead = next;
-            else
-                previous.Next = next;
-            if (next is null)
-                _waiterTail = previous;
-            else
-                next.Previous = previous;
-            waiter.Previous = null;
-            waiter.Next = null;
-            waiter.IsQueued = false;
-            _waitingCount--;
-            return true;
-        }
-
-        private RateWaiter? DetachAllLocked()
-        {
-            var head = _waiterHead;
-            _waiterHead = null;
-            _waiterTail = null;
-            _waitingCount = 0;
-            for (var waiter = head; waiter is not null; waiter = waiter.Next)
-            {
-                waiter.Previous = null;
-                waiter.IsQueued = false;
-            }
-            return head;
         }
 
         private void ClearPendingLocked()
@@ -528,7 +458,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter
                 throw new ObjectDisposedException(nameof(DynamicFixedWindowRateLimiter));
         }
 
-        private static void CompleteGranted(RateWaiter? waiter)
+        private static void CompleteGranted(AdmissionRateWaiter? waiter)
         {
             while (waiter is not null)
             {
@@ -539,7 +469,7 @@ internal sealed partial class DynamicFixedWindowRateLimiter
             }
         }
 
-        private static void CompleteFailed(RateWaiter? waiter)
+        private static void CompleteFailed(AdmissionRateWaiter? waiter)
         {
             while (waiter is not null)
             {
@@ -565,79 +495,4 @@ internal sealed partial class DynamicFixedWindowRateLimiter
         }
     }
 
-    private sealed class RateWaiter(
-        Counter owner,
-        CancellationToken cancellationToken)
-        : TaskCompletionSource<RateLimitLease>(TaskCreationOptions.RunContinuationsAsynchronously)
-    {
-        private CancellationTokenRegistration _registration;
-        private int _completed;
-
-        internal Counter Owner { get; } = owner;
-        internal CancellationToken CancellationToken { get; } = cancellationToken;
-        internal RateWaiter? Previous { get; set; }
-        internal RateWaiter? Next { get; set; }
-        internal bool IsQueued { get; set; }
-
-        internal void SetRegistration(CancellationTokenRegistration registration)
-        {
-            _registration = registration;
-            if (Volatile.Read(ref _completed) != 0)
-                registration.Dispose();
-        }
-
-        internal void CompleteGranted()
-        {
-            if (Interlocked.Exchange(ref _completed, 1) != 0)
-                return;
-            _registration.Dispose();
-            TrySetResult(AcquiredLease.Instance);
-        }
-
-        internal void CompleteCanceled()
-        {
-            if (Interlocked.Exchange(ref _completed, 1) != 0)
-                return;
-            _registration.Dispose();
-            TrySetCanceled(CancellationToken);
-        }
-
-        internal void CompleteFailed()
-        {
-            if (Interlocked.Exchange(ref _completed, 1) != 0)
-                return;
-            _registration.Dispose();
-            TrySetResult(FailedLease.Instance);
-        }
-    }
-
-    private sealed class AcquiredLease : RateLimitLease
-    {
-        internal static AcquiredLease Instance { get; } = new();
-
-        public override bool IsAcquired => true;
-
-        public override IEnumerable<string> MetadataNames => [];
-
-        public override bool TryGetMetadata(string metadataName, out object? metadata)
-        {
-            metadata = null;
-            return false;
-        }
-    }
-
-    private sealed class FailedLease : RateLimitLease
-    {
-        internal static FailedLease Instance { get; } = new();
-
-        public override bool IsAcquired => false;
-
-        public override IEnumerable<string> MetadataNames => [];
-
-        public override bool TryGetMetadata(string metadataName, out object? metadata)
-        {
-            metadata = null;
-            return false;
-        }
-    }
 }
