@@ -1,0 +1,84 @@
+name: Issue 410 waiter empty-check probe
+
+on:
+  push:
+    branches:
+      - tmp/issue-410-waiter-isempty-probe-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      CANDIDATE_SHA: 28d574b555f6204d626ecb0399603ba6c22b0a7e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Compare current and IsEmpty probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/issue410-waiter-isempty-probe"
+          mkdir -p "$evidence"
+          dotnet --info > "$evidence/dotnet-info.txt"
+          uname -a > "$evidence/uname.txt"
+          lscpu > "$evidence/cpu.txt"
+
+          apply_probe() {
+            python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs')
+          text = path.read_text()
+          old1 = 'if (_waiters.Count != 0 || !CanGrantLocked())'
+          new1 = 'if (!_waiters.IsEmpty || !CanGrantLocked())'
+          old2 = 'if (_waiters.Count == 0 && CanGrantLocked())'
+          new2 = 'if (_waiters.IsEmpty && CanGrantLocked())'
+          if text.count(old1) != 1 or text.count(old2) != 1:
+              raise SystemExit('expected rate waiter hot-path markers were not found exactly once')
+          path.write_text(text.replace(old1, new1, 1).replace(old2, new2, 1))
+          PY
+          }
+
+          run_case() {
+            local label="$1"
+            local mode="$2"
+            git checkout --force "$CANDIDATE_SHA"
+            git clean -fdx
+            if [[ "$mode" == probe ]]; then
+              apply_probe
+            fi
+            dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+            rm -rf BenchmarkDotNet.Artifacts
+            dotnet run -c Release --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+              --filter '*AdmissionRateControllerBenchmarks*ImmediateReject*'
+            mkdir -p "$evidence/$label"
+            cp -R BenchmarkDotNet.Artifacts/. "$evidence/$label/"
+          }
+
+          run_case current-1 current
+          run_case probe-1 probe
+          run_case probe-2 probe
+          run_case current-2 current
+          run_case current-3 current
+          run_case probe-3 probe
+
+          git checkout --force "$GITHUB_SHA"
+          mkdir -p artifacts/issue410-waiter-isempty-probe
+          cp -R "$evidence/." artifacts/issue410-waiter-isempty-probe/
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6.0.0
+        with:
+          name: issue-410-waiter-isempty-probe-${{ github.sha }}
+          path: artifacts/issue410-waiter-isempty-probe
+          if-no-files-found: error
