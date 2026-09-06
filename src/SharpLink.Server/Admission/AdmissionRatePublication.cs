@@ -11,6 +11,6 @@ internal static class AdmissionRatePublication
     {
         ArgumentNullException.ThrowIfNull(controller);
         foreach (var binding in controller.RuleStateBindings)
-            binding.RateState?.FixedWindowForTests?.OnPublished();
+            binding.RateState?.OnPublished();
     }
 }
