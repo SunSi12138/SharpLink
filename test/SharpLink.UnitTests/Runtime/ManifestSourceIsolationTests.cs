@@ -415,10 +415,26 @@ public sealed class ManifestSourceIsolationTests
     }
 
     private static IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> GetFinalManifestSnapshot(object owner)
-        => (IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>)(owner.GetType().GetField(
+    {
+        if (owner is SharpLinkClient client)
+        {
+            var registry = typeof(SharpLinkClient).GetField(
+                    "_assemblyRegistry",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(client)
+                ?? throw new Exception("materialized Client has no assembly registry");
+            return (IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>)(typeof(ClientAssemblyRegistry).GetField(
+                    "_staticManifests",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(registry)
+                ?? throw new Exception("materialized Client registry has no frozen manifest snapshot"));
+        }
+
+        return (IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>)(owner.GetType().GetField(
                 "_staticManifests",
                 BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(owner) ?? throw new Exception("materialized runtime has no frozen manifest snapshot"));
+    }
 
     private static ServerBuildPlan CompileServerPlan(SharpLinkServerBuilder builder)
         => (ServerBuildPlan)(typeof(SharpLinkServerBuilder).GetMethod(

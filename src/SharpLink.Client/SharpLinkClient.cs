@@ -1,6 +1,3 @@
-
-using System.Reflection;
-
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient :
@@ -15,14 +12,10 @@ internal sealed partial class SharpLinkClient :
     // Retained for endpoint-aware diagnostics without routing fixed calls through cluster selection.
     private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext;
-    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
-    private FrozenDictionary<Type, ClientProxyRegistration> _proxies;
-    private readonly Lock _registryGate = new();
-    private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
-        new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
-        new(ReferenceEqualityComparer.Instance);
-    private long _registryGeneration;
+    private readonly ClientAssemblyRegistry _assemblyRegistry;
+    // Stable lookup facade retained on the outer Client so Get<T>() keeps its direct acquisition path.
+    // The registry owns and atomically publishes the immutable snapshots behind this object.
+    private ClientProxyLookup _proxies;
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();
     private readonly Lock _readySignalGate = new();
@@ -77,8 +70,7 @@ internal sealed partial class SharpLinkClient :
             CreateReadinessSnapshotLocked());
         transportFactory = composition.TransportFactory;
         _runtimeContext = composition.RuntimeContext;
-        _staticManifests = composition.StaticManifests;
-        _proxies = composition.StaticProxies;
+        _proxies = new ClientProxyLookup(composition.StaticProxies);
         _heartbeatInterval = composition.HeartbeatInterval;
         _heartbeatTimeout = composition.HeartbeatTimeout;
         _hasRequestTimeout = composition.HasRequestTimeout;
@@ -95,6 +87,12 @@ internal sealed partial class SharpLinkClient :
         _reconnectJitter = composition.ReconnectJitter;
         _logger = composition.Logger;
         _frameworkTasks = composition.FrameworkTasks;
+        _assemblyRegistry = new ClientAssemblyRegistry(
+            _runtimeContext,
+            composition.StaticManifests,
+            _proxies,
+            () => State,
+            TrackFrameworkTask);
 
         // Builder has already selected and materialized exactly one tagged topology. Creating the
         // Client-owned cluster object here does not enumerate endpoints, invoke a transport factory,
@@ -164,8 +162,7 @@ internal sealed partial class SharpLinkClient :
         var cleanupFailures = new List<Exception>();
         lock (_stateGate)
             TransitionTo(SharpLinkConnectionState.Draining);
-        lock (_registryGate)
-            TransitionTo(SharpLinkConnectionState.Draining);
+        _assemblyRegistry.BeginShutdown();
         lock (_poolGate)
         {
             _poolStopping = true;
@@ -192,12 +189,7 @@ internal sealed partial class SharpLinkClient :
             catch (Exception exception) { cleanupFailures.Add(exception); }
         }
 
-        var dynamicAssemblies = GetDynamicAssembliesForShutdown();
-        for (var index = 0; index < dynamicAssemblies.Length; index++)
-        {
-            try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
-            catch (Exception exception) { cleanupFailures.Add(exception); }
-        }
+        cleanupFailures.AddRange(await _assemblyRegistry.DrainForShutdownAsync().ConfigureAwait(false));
 
         try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
@@ -219,8 +211,7 @@ internal sealed partial class SharpLinkClient :
         var cleanupFailures = new List<Exception>();
         lock (_stateGate)
             TransitionTo(SharpLinkConnectionState.Draining);
-        lock (_registryGate)
-            TransitionTo(SharpLinkConnectionState.Draining);
+        _assemblyRegistry.BeginShutdown();
         _cluster!.BeginStop();
         _frameworkTasks.Seal();
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
@@ -229,12 +220,7 @@ internal sealed partial class SharpLinkClient :
         try { await _cluster.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
-        var dynamicAssemblies = GetDynamicAssembliesForShutdown();
-        for (var index = 0; index < dynamicAssemblies.Length; index++)
-        {
-            try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
-            catch (Exception exception) { cleanupFailures.Add(exception); }
-        }
+        cleanupFailures.AddRange(await _assemblyRegistry.DrainForShutdownAsync().ConfigureAwait(false));
 
         try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
@@ -251,86 +237,10 @@ internal sealed partial class SharpLinkClient :
         ThrowStopCleanupFailures(cleanupFailures);
     }
 
-    private Assembly[] GetDynamicAssembliesForShutdown()
-    {
-        SharpLinkDynamicModule[] modules;
-        lock (_registryGate)
-            modules = [.. _dynamicModules.Values];
-
-        if (modules.Length == 0)
-            return [];
-        if (modules.Length == 1)
-            return [modules[0].Assembly];
-
-        var manifests = modules.Select(static module => module.Manifest).ToArray();
-        var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
-        var assemblies = new Assembly[order.Length];
-        for (var index = 0; index < order.Length; index++)
-            assemblies[index] = modules[order[index]].Assembly;
-        return assemblies;
-    }
-
     internal static int[] GetShutdownDependencyOrder(
         string[] identities,
         string[][] dependencies)
-    {
-        ArgumentNullException.ThrowIfNull(identities);
-        ArgumentNullException.ThrowIfNull(dependencies);
-        if (identities.Length != dependencies.Length)
-            throw new ArgumentException("Dependency rows must match the module identity count.", nameof(dependencies));
-
-        var remaining = new bool[identities.Length];
-        Array.Fill(remaining, true);
-        var order = new int[identities.Length];
-        for (var outputIndex = 0; outputIndex < order.Length; outputIndex++)
-        {
-            var selected = -1;
-            for (var candidate = 0; candidate < identities.Length; candidate++)
-            {
-                if (!remaining[candidate])
-                    continue;
-
-                var hasRemainingDependant = false;
-                for (var dependant = 0; dependant < identities.Length; dependant++)
-                {
-                    if (dependant == candidate || !remaining[dependant])
-                        continue;
-                    if (dependencies[dependant].Any(dependency =>
-                            string.Equals(dependency, identities[candidate], StringComparison.Ordinal)))
-                    {
-                        hasRemainingDependant = true;
-                        break;
-                    }
-                }
-
-                if (!hasRemainingDependant)
-                {
-                    selected = candidate;
-                    break;
-                }
-            }
-
-            // Registration validates dependency closure before publication, so a live cycle is not
-            // expected. Keep teardown deterministic for corrupted/custom manifests; the normal
-            // unregister guard will then surface the invalid graph rather than looping forever.
-            if (selected < 0)
-            {
-                for (var candidate = identities.Length - 1; candidate >= 0; candidate--)
-                {
-                    if (remaining[candidate])
-                    {
-                        selected = candidate;
-                        break;
-                    }
-                }
-            }
-
-            order[outputIndex] = selected;
-            remaining[selected] = false;
-        }
-
-        return order;
-    }
+        => ClientAssemblyRegistry.GetShutdownDependencyOrder(identities, dependencies);
 
     private static void ThrowStopCleanupFailures(List<Exception> failures)
     {

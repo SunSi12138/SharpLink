@@ -7,40 +7,6 @@ namespace SharpLink.IntegrationTests;
 
 public sealed partial class RuntimeAssemblyIntegrationTests
 {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<TrackedWeakReferences> LoadInvokeUnregisterAndUnloadAsync()
     {
@@ -344,8 +310,23 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             $"{name} leaves client pending/call/stream and server call counters at zero");
     }
 
+    private static ClientAssemblyRegistry GetClientAssemblyRegistry(ISharpLinkClient client)
+        => (ClientAssemblyRegistry)(typeof(SharpLinkClient)
+            .GetField("_assemblyRegistry", BindingFlags.Instance | BindingFlags.NonPublic)?
+            .GetValue(client)
+            ?? throw new InvalidOperationException("Client assembly registry was not found."));
+
     private static SharpLinkDynamicModule GetDynamicModule(object owner, Assembly assembly)
     {
+        if (owner is ISharpLinkClient client)
+        {
+            var registry = GetClientAssemblyRegistry(client);
+            return registry.DynamicModules.TryGetValue(assembly, out var module)
+                ? module
+                : throw new InvalidOperationException(
+                    $"Dynamic module was not found for '{assembly.FullName}'.");
+        }
+
         var modules = owner.GetType().GetField(
                 "_dynamicModules",
                 BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(owner)
@@ -400,17 +381,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     private static bool HasLocalProxyDescriptor(ISharpLinkClient client, Type contractType)
-    {
-        var snapshotField = typeof(SharpLinkClient).GetField(
-            "_proxies",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Client proxy snapshot field was not found.");
-        var snapshot = snapshotField.GetValue(client)
-            ?? throw new InvalidOperationException("Client proxy snapshot was unavailable.");
-        var containsKey = snapshot.GetType().GetMethod("ContainsKey", [typeof(Type)])
-            ?? throw new InvalidOperationException("Client proxy snapshot lookup method was not found.");
-        return (bool)containsKey.Invoke(snapshot, [contractType])!;
-    }
+        => GetClientAssemblyRegistry(client).CaptureProxySnapshot().ContainsKey(contractType);
 
     private static object GetProxy(ISharpLinkClient client, Type contractType)
     {
@@ -590,5 +561,4 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         }
         return exception.InnerException is { } nested && ContainsMessage(nested, message);
     }
-
 }

@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Reflection;
+using SharpLink.Client;
 using SharpLink.Server;
 
 namespace SharpLink.IntegrationTests;
@@ -23,6 +24,8 @@ internal static class ServerRegistryTestAccessor
         RequireField(ServiceModuleRegistryField.FieldType, "_services");
     private static readonly FieldInfo DynamicModulesField =
         RequireField(ServiceModuleRegistryField.FieldType, "_dynamicModules");
+    private static readonly FieldInfo ClientAssemblyRegistryField =
+        RequireField(typeof(SharpLinkClient), "_assemblyRegistry");
     private static readonly MethodInfo PublishServicesMethod =
         ServiceModuleRegistryField.FieldType.GetMethod("PublishServices", InstanceFlags)
         ?? throw new MissingMethodException(ServiceModuleRegistryField.FieldType.FullName, "PublishServices");
@@ -57,6 +60,13 @@ internal static class ServerRegistryTestAccessor
         {
             return DynamicModulesField.GetValue(ServiceModuleRegistry(server)) as IDictionary
                    ?? throw new InvalidOperationException("Server dynamic module registry was unavailable.");
+        }
+        if (endpoint is SharpLinkClient client)
+        {
+            var registry = ClientAssemblyRegistryField.GetValue(client) as ClientAssemblyRegistry
+                ?? throw new InvalidOperationException("Client assembly registry was unavailable.");
+            return registry.DynamicModules as IDictionary
+                   ?? throw new InvalidOperationException("Client dynamic module registry was unavailable.");
         }
 
         var field = endpoint.GetType().GetField("_dynamicModules", InstanceFlags)
