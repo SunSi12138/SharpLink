@@ -70,6 +70,18 @@ jobs:
           --maximum-parallel-tests 1
           --timeout 120s
 
+      - name: Dynamic Compression Policy Evidence
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-550
+          SHARPLINK_BENCHMARK_SHA="$(git rev-parse HEAD)" \
+            dotnet run -c Release --no-build \
+            --project test/SharpLink.Benchmarks \
+            -- \
+            --dynamic-compression-policy-evidence \
+            artifacts/issue-550/dynamic-compression-policy.json
+          cat artifacts/issue-550/dynamic-compression-policy.json
+
       - name: Commit verified documentation repair to candidate
         shell: bash
         run: |
