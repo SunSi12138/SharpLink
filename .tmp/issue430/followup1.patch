@@ -1,0 +1,48 @@
+diff --git a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeControlPlaneTests.cs b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeControlPlaneTests.cs
+index e4f92b3..a3fb639 100644
+--- a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeControlPlaneTests.cs
++++ b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeControlPlaneTests.cs
+@@ -311,7 +311,6 @@ public class CompressionPersistentDecodeControlPlaneTests
+             {
+                 _release.Wait(cancellationToken);
+                 inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+-            return;
+             }
+             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+             {
+diff --git a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeDrainAndFailureTests.cs b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeDrainAndFailureTests.cs
+index 249af8d..d0e99b9 100644
+--- a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeDrainAndFailureTests.cs
++++ b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeDrainAndFailureTests.cs
+@@ -219,7 +219,6 @@ public class CompressionPersistentDecodeDrainAndFailureTests
+             {
+                 _release.Wait(cancellationToken);
+                 inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+-            return;
+             }
+             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+             {
+diff --git a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeFairLifecycleTests.cs b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeFairLifecycleTests.cs
+index 7f01bc8..ab99719 100644
+--- a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeFairLifecycleTests.cs
++++ b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeFairLifecycleTests.cs
+@@ -300,7 +300,6 @@ public class CompressionPersistentDecodeFairLifecycleTests
+             {
+                 _release.Wait(cancellationToken);
+                 inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+-            return;
+             }
+             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+             {
+diff --git a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeReviewTests.cs b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeReviewTests.cs
+index 3faefe5..87e1dc6 100644
+--- a/test/SharpLink.IntegrationTests/CompressionPersistentDecodeReviewTests.cs
++++ b/test/SharpLink.IntegrationTests/CompressionPersistentDecodeReviewTests.cs
+@@ -482,7 +482,6 @@ public class CompressionPersistentDecodeReviewTests
+             {
+                 _release.Wait(cancellationToken);
+                 inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+-            return;
+             }
+             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+             {
