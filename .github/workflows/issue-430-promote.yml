@@ -56,7 +56,14 @@ jobs:
           git apply --check "$RUNNER_TEMP/docs.patch"
           git apply "$RUNNER_TEMP/docs.patch"
 
+          # The Actions GITHUB_TOKEN cannot update workflow files without the
+          # separate workflows permission. Keep that real production change out
+          # of this push; it is applied immediately afterward through the
+          # authorized GitHub connection as its own clean commit.
+          git checkout -- .github/workflows/release-gate.yml
+
           git diff --check
+          test -z "$(git diff --name-only -- .github/workflows)"
           test "$(grep -c 'Added `SharpLink.Compression.Zstd`' CHANGELOG.md)" -eq 1
           grep -q 'zstd-rfc8878-w23-checksum/v1' src/SharpLink.Compression.Zstd/SharpLinkZstdCompressionProvider.cs
           grep -q 'ZeroByteRepresentationShouldRoundTripThroughWireEnvelope' test/SharpLink.UnitTests/Runtime/CompressionFrameTests.cs
