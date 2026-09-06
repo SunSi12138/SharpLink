@@ -4,7 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!--  分析器依赖  -->
-    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.6.0">
+    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageVersion>
