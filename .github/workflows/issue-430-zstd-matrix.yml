@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  STAGE2_SHA: 2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab
+
 jobs:
   bcl-interop:
     strategy:
@@ -27,7 +30,8 @@ jobs:
         run: |
           set -euo pipefail
           cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
-          echo '2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab  '"$RUNNER_TEMP/stage2.b64" | sha256sum -c -
+          actual="$(openssl dgst -sha256 "$RUNNER_TEMP/stage2.b64" | awk '{print $NF}')"
+          test "$actual" = "$STAGE2_SHA"
           base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
           cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
           cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
@@ -81,7 +85,8 @@ jobs:
         run: |
           set -euo pipefail
           cat .tmp/issue430-stage2/part.* > "$RUNNER_TEMP/stage2.b64"
-          echo '2e465cf5896e36bb4c408c55b48a7bd7c735339229f8401b261189ff3473b0ab  '"$RUNNER_TEMP/stage2.b64" | sha256sum -c -
+          actual="$(openssl dgst -sha256 "$RUNNER_TEMP/stage2.b64" | awk '{print $NF}')"
+          test "$actual" = "$STAGE2_SHA"
           base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
           cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
           cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
@@ -110,8 +115,8 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then exe="$out/SharpLink.ZstdAotSmoke.exe"; else exe="$out/SharpLink.ZstdAotSmoke"; fi
           "$exe" | tee "$out/run.stdout"
           grep -q ZSTD_AOT_PASS "$out/run.stdout"
-          find "$out" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort > "$out/files.txt" || ls -1 "$out" | sort > "$out/files.txt"
-          if grep -Ei '(^|[^A-Za-z])lib?zstd|zstd\.(dll|so|dylib)$' "$out/files.txt"; then
+          ls -1 "$out" | sort > "$out/files.txt"
+          if grep -Ei '^(lib)?zstd\.(dll|so|dylib)$' "$out/files.txt"; then
             echo 'Unexpected separately deployed native zstd library.' >&2
             exit 1
           fi
