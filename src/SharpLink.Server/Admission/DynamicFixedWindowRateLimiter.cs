@@ -84,13 +84,22 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
     internal DynamicFixedWindowRateLimiter CreateSuccessor(
         int permitLimit,
         TimeSpan window,
-        DynamicFixedWindowActivationMode activationMode)
+        DynamicFixedWindowActivationMode? activationMode)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(permitLimit);
         if (window <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(window));
         ThrowIfDisposed();
-        return _counter.CreateSuccessor(permitLimit, window, activationMode);
+
+        var windowTimestampTicks = _counter.ToTimestampTicks(window.Ticks);
+        var resolvedActivation = activationMode ??
+            (windowTimestampTicks == _windowTimestampTicks
+                ? DynamicFixedWindowActivationMode.Immediate
+                : DynamicFixedWindowActivationMode.NextWindowBoundary);
+        return _counter.CreateSuccessor(
+            permitLimit,
+            window,
+            resolvedActivation);
     }
 
     /// <summary>
