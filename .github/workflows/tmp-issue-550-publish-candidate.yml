@@ -1,0 +1,81 @@
+name: Temporary Issue 550 Publish Candidate
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - tmp/issue-550-validation-gpt
+    paths:
+      - .github/workflows/tmp-issue-550-publish-candidate.yml
+
+concurrency:
+  group: tmp-issue-550-publish-candidate
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Materialize validated candidate
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import textwrap
+
+          runner = Path('.github/workflows/tmp-issue-550-runner.yml').read_text()
+          base_start = "          python3 - <<'PY'\n"
+          base_end = "\n          PY\n\n      - name: Setup .NET CI environment"
+          base_body = runner.split(base_start, 1)[1].split(base_end, 1)[0]
+          Path('/tmp/apply.py').write_text(textwrap.dedent(base_body) + '\n')
+
+          v2 = Path('.github/workflows/tmp-issue-550-review-core-v2.yml').read_text()
+          search_from = v2.index('          git rebase origin/dev\n')
+          post_start = v2.index("          python3 - <<'PYTHON'\n", search_from) + len("          python3 - <<'PYTHON'\n")
+          post_end = v2.index("\n          PYTHON\n\n      - name: Setup .NET", post_start)
+          Path('/tmp/post.py').write_text(textwrap.dedent(v2[post_start:post_end]) + '\n')
+          PYTHON
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin dev fix/issue-550-dynamic-compression-policy
+          git checkout -B issue-550-review origin/fix/issue-550-dynamic-compression-policy
+          git rebase origin/dev
+          python3 /tmp/apply.py
+          python3 /tmp/post.py
+
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          path = Path('test/SharpLink.Benchmarks/CompressionZstdEvidenceRunner.cs')
+          text = path.read_text()
+          declaration = '    private static readonly SharpLinkCompressionSendPolicy CompressionEvidencePolicy = new()'
+          if declaration not in text:
+              marker = 'public static class CompressionZstdEvidenceRunner\n{\n'
+              if marker not in text:
+                  raise SystemExit('compression evidence class marker missing')
+              field = '''    private static readonly SharpLinkCompressionSendPolicy CompressionEvidencePolicy = new()\n    {\n        MinimumPayloadBytes = 0,\n        MinimumSavingsBytes = 0,\n        MinimumSavingsRatio = 0\n    };\n'''
+              text = text.replace(marker, marker + field, 1)
+          path.write_text(text)
+          PYTHON
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Format and publish candidate
+        shell: bash
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+          git diff --check
+          git add -A
+          git commit -m "fix(compression): address issue 550 review"
+          git push --force origin HEAD:refs/heads/tmp/issue-550-review-candidate
+          echo "candidate_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
