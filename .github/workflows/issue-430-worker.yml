@@ -11,20 +11,108 @@ permissions:
   contents: read
 
 jobs:
-  diagnose:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout helper branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Report staged patch chunks
+      - name: Reconstruct exact patch and switch to clean implementation branch
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum .tmp/issue430/patch.*
-          wc -c .tmp/issue430/patch.*
-          cat .tmp/issue430/patch.* > /tmp/issue430.patch.b64
-          echo "WHOLE $(sha256sum /tmp/issue430.patch.b64)"
-          echo "WHOLE_BYTES $(wc -c < /tmp/issue430.patch.b64)"
+          echo 'cc9197d88eb1620c0ea1ff5b66a0f6b1ed922007d7f08691ceab362ad6072510  .tmp/issue430/fix01.00' | sha256sum -c -
+          echo '8c943e0f7ad7a08de2d11cbabcb11ba69dccf561d7413f6cfca0c263dfec6157  .tmp/issue430/fix01.01' | sha256sum -c -
+          echo '0cb1c5ca2902b7b6009b7b7da21408daa36388c403d07f65bed55a8fdc0f9148  .tmp/issue430/fix01.02' | sha256sum -c -
+          echo '84bd739f2eb7c0584b0f0745d88a16434bc4ec261bf1d0bcab5038dbe0660a4c  .tmp/issue430/fix01.03' | sha256sum -c -
+          echo '387aa40bb4af13a1852504947ee169267db81766c7e5bd83cc9914118174c9f6  .tmp/issue430/fix06.00' | sha256sum -c -
+          echo 'f373ab5374e341e11de3afceb212ec661ffe410871d988576e05556385949f68  .tmp/issue430/fix06.01' | sha256sum -c -
+          echo '4e3bdc1ff25fbaf21578bc01a1ee93c6b577ccdeda969666d78308d764c0efea  .tmp/issue430/fix06.02' | sha256sum -c -
+          echo '119f40a4ee901170a621fc9410b3a5cee038243ce90139be29e192f0dde5acd0  .tmp/issue430/fix06.03' | sha256sum -c -
+          cat \
+            .tmp/issue430/patch.00 \
+            .tmp/issue430/fix01.* \
+            .tmp/issue430/patch.02 \
+            .tmp/issue430/patch.03 \
+            .tmp/issue430/patch.04 \
+            .tmp/issue430/patch.05 \
+            .tmp/issue430/fix06.* \
+            > /tmp/issue430.patch.b64
+          echo 'a3cbcd30bee0c5269fc1cff22d7c94f8f68630ab457ffc541c004b4326dd49ca  /tmp/issue430.patch.b64' | sha256sum -c -
+          base64 -d /tmp/issue430.patch.b64 | gzip -d > /tmp/issue430.patch
+          git fetch origin fix/430-compression-provider-boundary
+          git checkout -B fix/430-compression-provider-boundary origin/fix/430-compression-provider-boundary
+          test "$(git rev-parse HEAD)" = "e7177835114d34772087b059491fa0b4bd7607df"
+          git apply --check /tmp/issue430.patch
+          git apply /tmp/issue430.patch
+          git diff --check
+          echo "PATCH_APPLIED $(git diff --shortstat)"
+
+      - name: Verify concrete compression removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rg -n 'SharpLinkCompressionProviders|SharpLinkCompressionResult|SharpLinkCompressionOutputLimitException|Crc32Accumulator|BrotliCompressionProvider|SCP1|Brotli|brotli' src demo doc README.md; then
+            echo 'Concrete compression machinery remains outside historical changelog/tests.' >&2
+            exit 1
+          fi
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: NativeAOT Transport and Topology Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
