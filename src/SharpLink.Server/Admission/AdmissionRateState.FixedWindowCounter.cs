@@ -77,9 +77,9 @@ internal sealed partial class AdmissionRateState
             get { lock (_gate) return _pendingPolicy is not null; }
         }
 
-        internal DynamicFixedWindowActivationMode ResolveActivation(
+        internal SharpLinkFixedWindowUpdateActivation ResolveActivation(
             long requestedWindowTimestampTicks,
-            DynamicFixedWindowActivationMode? requestedActivation)
+            SharpLinkFixedWindowUpdateActivation requestedActivation)
         {
             lock (_gate)
             {
@@ -89,28 +89,30 @@ internal sealed partial class AdmissionRateState
                 var requestedWindowIsActive =
                     requestedWindowTimestampTicks == _activeWindowTimestampTicks;
                 var hasPendingTarget = _pendingPolicy is not null;
-                if (requestedActivation == DynamicFixedWindowActivationMode.Immediate)
+                if (requestedActivation == SharpLinkFixedWindowUpdateActivation.Immediate)
                 {
                     if (!requestedWindowIsActive || hasPendingTarget)
                     {
                         throw new InvalidOperationException(
                             "Immediate FixedWindow updates require the requested Window to be the active Window with no pending Window activation.");
                     }
-                    return DynamicFixedWindowActivationMode.Immediate;
+                    return SharpLinkFixedWindowUpdateActivation.Immediate;
                 }
 
-                if (requestedActivation == DynamicFixedWindowActivationMode.NextWindowBoundary)
-                    return DynamicFixedWindowActivationMode.NextWindowBoundary;
+                if (requestedActivation == SharpLinkFixedWindowUpdateActivation.NextWindow)
+                    return SharpLinkFixedWindowUpdateActivation.NextWindow;
+                if (requestedActivation != SharpLinkFixedWindowUpdateActivation.Automatic)
+                    throw new ArgumentOutOfRangeException(nameof(requestedActivation));
 
                 return requestedWindowIsActive && !hasPendingTarget
-                    ? DynamicFixedWindowActivationMode.Immediate
-                    : DynamicFixedWindowActivationMode.NextWindowBoundary;
+                    ? SharpLinkFixedWindowUpdateActivation.Immediate
+                    : SharpLinkFixedWindowUpdateActivation.NextWindow;
             }
         }
 
         internal AdmissionRateState CreateSuccessor(
             AdmissionRateStateDefinition definition,
-            DynamicFixedWindowActivationMode activationMode)
+            SharpLinkFixedWindowUpdateActivation activationMode)
         {
             lock (_gate)
             {
@@ -248,7 +250,7 @@ internal sealed partial class AdmissionRateState
 
             AdvanceLocked(now);
             var policyWindow = ToTimestampTicks(policy._definition.PeriodTicks);
-            if (policy._fixedActivationMode == DynamicFixedWindowActivationMode.Immediate)
+            if (policy._fixedActivationMode == SharpLinkFixedWindowUpdateActivation.Immediate)
             {
                 if (policyWindow != _activeWindowTimestampTicks || _pendingPolicy is not null)
                 {
@@ -277,7 +279,7 @@ internal sealed partial class AdmissionRateState
                 throw new InvalidOperationException("Dynamic FixedWindow policy belongs to another counter.");
             if (policy._fixedSequence <= _retiredThroughSequence)
                 return _activeLimit;
-            if (policy._fixedActivationMode == DynamicFixedWindowActivationMode.Immediate)
+            if (policy._fixedActivationMode == SharpLinkFixedWindowUpdateActivation.Immediate)
                 return policy._definition.Limit;
             if (Volatile.Read(ref policy._fixedLifecycleState) < FixedCommitted)
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");

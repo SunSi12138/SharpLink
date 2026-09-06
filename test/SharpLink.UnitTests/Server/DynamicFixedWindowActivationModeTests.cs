@@ -4,7 +4,7 @@ using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
 
-public sealed class DynamicFixedWindowActivationModeTests
+public sealed class SharpLinkFixedWindowUpdateActivationTests
 {
     [Test]
     public void LimitOnlyNextWindowBoundaryShouldDeferTheEntireTarget()
@@ -19,12 +19,12 @@ public sealed class DynamicFixedWindowActivationModeTests
             TimeSpan.FromSeconds(10),
             time,
             source,
-            DynamicFixedWindowActivationMode.NextWindowBoundary);
+            SharpLinkFixedWindowUpdateActivation.NextWindow);
         source.CommitTransitionTo(target);
         target.OnPublished();
 
         Ensure(target.FixedWindowForTests!.ActivationModeForTests ==
-               DynamicFixedWindowActivationMode.NextWindowBoundary,
+               SharpLinkFixedWindowUpdateActivation.NextWindow,
             "the explicit deferred selector must survive candidate construction");
         Ensure(target.FixedWindowForTests.HasPendingWindowForTests,
             "a limit-only deferred update still needs one pending target at the natural boundary");
@@ -56,7 +56,7 @@ public sealed class DynamicFixedWindowActivationModeTests
                 TimeSpan.FromSeconds(20),
                 time,
                 source,
-                DynamicFixedWindowActivationMode.Immediate);
+                SharpLinkFixedWindowUpdateActivation.Immediate);
         }
         catch (Exception exception)
         {
@@ -77,7 +77,7 @@ public sealed class DynamicFixedWindowActivationModeTests
         TimeSpan window,
         TimeProvider timeProvider,
         AdmissionRateState? source = null,
-        DynamicFixedWindowActivationMode? activation = null)
+        SharpLinkFixedWindowUpdateActivation activation = SharpLinkFixedWindowUpdateActivation.Automatic)
     {
         var rule = new SharpLinkAdmissionRuleOptions();
         rule.UseFixedWindow(options =>

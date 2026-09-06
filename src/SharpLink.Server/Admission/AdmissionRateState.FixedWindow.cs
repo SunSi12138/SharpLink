@@ -2,12 +2,6 @@ using System.Threading.RateLimiting;
 
 namespace SharpLink.Server;
 
-internal enum DynamicFixedWindowActivationMode
-{
-    Immediate,
-    NextWindowBoundary
-}
-
 /// <summary>Immutable FixedWindow policy view carried directly by one AdmissionProgram rate state.</summary>
 internal sealed partial class AdmissionRateState
 {
@@ -18,7 +12,7 @@ internal sealed partial class AdmissionRateState
 
     private readonly Counter? _fixedCounter;
     private readonly long _fixedSequence;
-    private readonly DynamicFixedWindowActivationMode _fixedActivationMode;
+    private readonly SharpLinkFixedWindowUpdateActivation _fixedActivationMode;
     private long _fixedActivationBoundary;
     private int _fixedLifecycleState;
 
@@ -32,7 +26,7 @@ internal sealed partial class AdmissionRateState
             TimeSpan.FromTicks(definition.PeriodTicks),
             timeProvider);
         _fixedSequence = 1;
-        _fixedActivationMode = DynamicFixedWindowActivationMode.Immediate;
+        _fixedActivationMode = SharpLinkFixedWindowUpdateActivation.Immediate;
         _fixedLifecycleState = FixedPublished;
     }
 
@@ -40,7 +34,7 @@ internal sealed partial class AdmissionRateState
         AdmissionRateStateDefinition definition,
         Counter counter,
         long sequence,
-        DynamicFixedWindowActivationMode activationMode)
+        SharpLinkFixedWindowUpdateActivation activationMode)
     {
         _definition = definition;
         _fixedCounter = counter;
@@ -51,7 +45,7 @@ internal sealed partial class AdmissionRateState
     internal AdmissionRateState? FixedWindowForTests => _fixedCounter is null ? null : this;
     internal int PermitLimit => _definition.Limit;
     internal TimeSpan Window => TimeSpan.FromTicks(_definition.PeriodTicks);
-    internal DynamicFixedWindowActivationMode ActivationModeForTests => _fixedActivationMode;
+    internal SharpLinkFixedWindowUpdateActivation ActivationModeForTests => _fixedActivationMode;
     internal long ConsumedForTests => _fixedCounter!.Consumed;
     internal int ActiveLimitForTests => _fixedCounter!.ActiveLimit;
     internal int QueuedLimitForTests => _fixedCounter!.QueuedLimit;
@@ -61,7 +55,7 @@ internal sealed partial class AdmissionRateState
 
     private AdmissionRateState CreateFixedSuccessor(
         AdmissionRateStateDefinition definition,
-        DynamicFixedWindowActivationMode? activationMode)
+        SharpLinkFixedWindowUpdateActivation activationMode)
     {
         ThrowIfFixedDisposed();
         var counter = _fixedCounter ??
@@ -75,11 +69,11 @@ internal sealed partial class AdmissionRateState
     {
         ArgumentNullException.ThrowIfNull(target);
         ThrowIfFixedDisposed();
-        if (target._fixedActivationMode == DynamicFixedWindowActivationMode.Immediate &&
+        if (target._fixedActivationMode == SharpLinkFixedWindowUpdateActivation.Immediate &&
             target._definition.PeriodTicks != _definition.PeriodTicks)
         {
             throw new InvalidOperationException(
-                "Immediate FixedWindow updates may change PermitLimit only. Change Window with NextWindowBoundary activation.");
+                "Immediate FixedWindow updates may change PermitLimit only. Change Window with NextWindow activation.");
         }
         _fixedCounter!.CommitTransition(this, target);
     }

@@ -24,7 +24,7 @@ public sealed class DynamicFixedWindowChainedUpdateRegressionTests
         target.OnPublished();
 
         Ensure(target.FixedWindowForTests!.ActivationModeForTests ==
-               DynamicFixedWindowActivationMode.NextWindowBoundary,
+               SharpLinkFixedWindowUpdateActivation.NextWindow,
             "a limit-only successor of a not-yet-active Window must remain boundary-deferred");
         Ensure(target.FixedWindowForTests.QueuedLimitForTests == 2,
             "the old current-window limit must stay authoritative before activation");
