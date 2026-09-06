@@ -28,7 +28,23 @@ jobs:
         uses: ./.github/actions/setup-dotnet
 
       - name: Apply refactor
-        run: python3 .github/issue410-partition-promote.py
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/issue410-partition-promote.py')
+          text = path.read_text()
+          old = 'replace_once(path, "        _fixedWindowStart = now;\\n", "")'
+          new = '''replace_once(
+              path,
+              """        _tokenAnchor = now;\\n        _fixedWindowStart = now;\\n        _slidingSegmentStart = now;\\n""",
+              """        _tokenAnchor = now;\\n        _slidingSegmentStart = now;\\n""",
+          )'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one staging transform marker, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          python3 .github/issue410-partition-promote.py
 
       - name: Restore
         run: dotnet restore Sharplink.slnx
