@@ -2,11 +2,17 @@ using System.Threading.RateLimiting;
 
 namespace SharpLink.Server;
 
+internal enum DynamicFixedWindowActivationMode
+{
+    Immediate,
+    NextWindowBoundary
+}
+
 /// <summary>
 /// Immutable FixedWindow policy view over one stable logical counter. Synchronous attempts use the
 /// policy captured by their AdmissionProgram. Rate waiters are a later admission attempt and follow
-/// the latest published limit for the currently active window. Window changes activate only at the
-/// next natural boundary of the shared counter.
+/// the latest published current-window target. Immediate updates may change only the limit; an
+/// explicitly deferred target activates limit and window together at the next natural boundary.
 /// </summary>
 internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 {
@@ -14,6 +20,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
     private readonly long _sequence;
     private readonly int _permitLimit;
     private readonly long _windowTimestampTicks;
+    private readonly DynamicFixedWindowActivationMode _activationMode;
     private int _preActivationLimit;
     private long _activationBoundary;
     private int _committed;
@@ -34,6 +41,7 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         _sequence = 1;
         _permitLimit = permitLimit;
         _windowTimestampTicks = _counter.ToTimestampTicks(window.Ticks);
+        _activationMode = DynamicFixedWindowActivationMode.Immediate;
         _preActivationLimit = permitLimit;
         _committed = 1;
         _published = 1;
@@ -43,17 +51,21 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
         Counter counter,
         long sequence,
         int permitLimit,
-        long windowTimestampTicks)
+        long windowTimestampTicks,
+        DynamicFixedWindowActivationMode activationMode)
     {
         _counter = counter;
         _sequence = sequence;
         _permitLimit = permitLimit;
         _windowTimestampTicks = windowTimestampTicks;
+        _activationMode = activationMode;
     }
 
     internal int PermitLimit => _permitLimit;
 
     internal TimeSpan Window => _counter.TimestampDeltaToTimeSpan(_windowTimestampTicks);
+
+    internal DynamicFixedWindowActivationMode ActivationModeForTests => _activationMode;
 
     internal int WaitingCount => _counter.WaitingCount;
 
@@ -65,17 +77,20 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
 
     internal TimeSpan ActiveWindowForTests => _counter.ActiveWindow;
 
-    internal bool HasPendingWindowForTests => _counter.HasPendingWindow;
+    internal bool HasPendingWindowForTests => _counter.HasPendingTarget;
 
     internal long CounterIdentityForTests => _counter.Identity;
 
-    internal DynamicFixedWindowRateLimiter CreateSuccessor(int permitLimit, TimeSpan window)
+    internal DynamicFixedWindowRateLimiter CreateSuccessor(
+        int permitLimit,
+        TimeSpan window,
+        DynamicFixedWindowActivationMode activationMode)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(permitLimit);
         if (window <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(window));
         ThrowIfDisposed();
-        return _counter.CreateSuccessor(permitLimit, window);
+        return _counter.CreateSuccessor(permitLimit, window, activationMode);
     }
 
     /// <summary>
@@ -87,6 +102,12 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
     {
         ArgumentNullException.ThrowIfNull(target);
         ThrowIfDisposed();
+        if (target._activationMode == DynamicFixedWindowActivationMode.Immediate &&
+            target._windowTimestampTicks != _windowTimestampTicks)
+        {
+            throw new InvalidOperationException(
+                "Immediate FixedWindow updates may change PermitLimit only. Change Window with NextWindowBoundary activation.");
+        }
         _counter.CommitTransition(this, target);
     }
 
@@ -249,12 +270,15 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             }
         }
 
-        internal bool HasPendingWindow
+        internal bool HasPendingTarget
         {
             get { lock (_gate) return _pendingSequence != 0; }
         }
 
-        internal DynamicFixedWindowRateLimiter CreateSuccessor(int permitLimit, TimeSpan window)
+        internal DynamicFixedWindowRateLimiter CreateSuccessor(
+            int permitLimit,
+            TimeSpan window,
+            DynamicFixedWindowActivationMode activationMode)
         {
             lock (_gate)
             {
@@ -262,7 +286,12 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
                 var sequence = checked(++_nextSequence);
                 var windowTicks = ToTimestampTicks(window.Ticks);
                 _references = checked(_references + 1);
-                return new DynamicFixedWindowRateLimiter(this, sequence, permitLimit, windowTicks);
+                return new DynamicFixedWindowRateLimiter(
+                    this,
+                    sequence,
+                    permitLimit,
+                    windowTicks,
+                    activationMode);
             }
         }
 
@@ -398,17 +427,28 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
 
             AdvanceLocked(now);
-            if (policy._windowTimestampTicks == _activeWindowTimestampTicks)
+            if (policy._activationMode == DynamicFixedWindowActivationMode.Immediate)
             {
-                ClearPendingLocked();
+                if (policy._windowTimestampTicks == _activeWindowTimestampTicks)
+                {
+                    ClearPendingLocked();
+                }
+                else if (now < policy._activationBoundary)
+                {
+                    StagePendingLocked(policy);
+                }
+                else
+                {
+                    ActivateLatePublishedPolicyLocked(policy, now);
+                    policy.MarkPublishedLocked();
+                    return GrantWaitersLocked(now);
+                }
+
                 _queuedLimit = policy._permitLimit;
             }
             else if (now < policy._activationBoundary)
             {
-                _pendingSequence = policy._sequence;
-                _pendingBoundary = policy._activationBoundary;
-                _pendingLimit = policy._permitLimit;
-                _pendingWindowTimestampTicks = policy._windowTimestampTicks;
+                StagePendingLocked(policy);
                 _queuedLimit = policy._preActivationLimit;
             }
             else
@@ -420,14 +460,25 @@ internal sealed class DynamicFixedWindowRateLimiter : RateLimiter
             return GrantWaitersLocked(now);
         }
 
+        private void StagePendingLocked(DynamicFixedWindowRateLimiter policy)
+        {
+            _pendingSequence = policy._sequence;
+            _pendingBoundary = policy._activationBoundary;
+            _pendingLimit = policy._permitLimit;
+            _pendingWindowTimestampTicks = policy._windowTimestampTicks;
+        }
+
         private int GetDirectLimitLocked(DynamicFixedWindowRateLimiter policy)
         {
             if (!ReferenceEquals(policy._counter, this))
                 throw new InvalidOperationException("Dynamic FixedWindow policy belongs to another counter.");
             if (policy._sequence <= _retiredThroughSequence)
                 return _activeLimit;
-            if (policy._windowTimestampTicks == _activeWindowTimestampTicks)
+            if (policy._activationMode == DynamicFixedWindowActivationMode.Immediate ||
+                policy._windowTimestampTicks == _activeWindowTimestampTicks)
+            {
                 return policy._permitLimit;
+            }
             if (Volatile.Read(ref policy._committed) == 0)
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
             return policy._preActivationLimit;
