@@ -77,7 +77,7 @@ public sealed class AdmissionDynamicRateUpdateTests
     }
 
     [Test]
-    public async Task AlgorithmReplacementShouldCarryAConservativeConsumedQuotaBarrier()
+    public async Task TokenBucketToFixedWindowShouldStartAFreshGeneration()
     {
         var time = new ManualTimeProvider();
         await using var kernel = new AdmissionStateKernel(time);
@@ -89,9 +89,11 @@ public sealed class AdmissionDynamicRateUpdateTests
             source,
             options => ConfigureFixedWindow(options, 4, TimeSpan.FromSeconds(10)));
 
-        await ConsumeAsync(replacement, 1);
+        await ConsumeAsync(replacement, 4);
         await EnsureRateRejectedAsync(replacement,
-            "TokenBucket -> FixedWindow replacement must not layer a fresh four-permit target on top of three source permits");
+            "TokenBucket -> FixedWindow must enforce a fresh four-permit FixedWindow generation without source-history translation");
+        Ensure(kernel.RateStateCount == 1,
+            "the drained TokenBucket source must not remain as a cross-algorithm history bridge");
     }
 
     private static AdmissionProgram CreateProgram(
