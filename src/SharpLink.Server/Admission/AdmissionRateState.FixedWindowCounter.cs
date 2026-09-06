@@ -21,7 +21,6 @@ internal sealed partial class AdmissionRateState
         private long _pendingBoundary;
         private long _pendingWindowTimestampTicks;
         private int _activeLimit;
-        private int _queuedLimit;
         private int _pendingLimit;
         private int _references = 1;
         private int _disposed;
@@ -30,7 +29,6 @@ internal sealed partial class AdmissionRateState
         {
             _timeProvider = timeProvider;
             _activeLimit = permitLimit;
-            _queuedLimit = permitLimit;
             _activeWindowTimestampTicks = ToTimestampTicks(window.Ticks);
             _windowStart = _timeProvider.GetTimestamp();
             Identity = Interlocked.Increment(ref s_nextIdentity);
@@ -67,17 +65,7 @@ internal sealed partial class AdmissionRateState
             }
         }
 
-        internal int QueuedLimit
-        {
-            get
-            {
-                lock (_gate)
-                {
-                    AdvanceLocked(_timeProvider.GetTimestamp());
-                    return _queuedLimit;
-                }
-            }
-        }
+        internal int QueuedLimit => ActiveLimit;
 
         internal TimeSpan ActiveWindow
         {
@@ -129,7 +117,6 @@ internal sealed partial class AdmissionRateState
 
         internal AdmissionRateState CreateSuccessor(
             AdmissionRateStateDefinition definition,
-            long windowTimestampTicks,
             DynamicFixedWindowActivationMode activationMode)
         {
             lock (_gate)
@@ -137,12 +124,7 @@ internal sealed partial class AdmissionRateState
                 ThrowIfDisposedLocked();
                 var sequence = checked(++_nextSequence);
                 _references = checked(_references + 1);
-                return new AdmissionRateState(
-                    definition,
-                    this,
-                    sequence,
-                    windowTimestampTicks,
-                    activationMode);
+                return new AdmissionRateState(definition, this, sequence, activationMode);
             }
         }
 
@@ -160,9 +142,7 @@ internal sealed partial class AdmissionRateState
                 var now = _timeProvider.GetTimestamp();
                 granted = PublishLocked(source, now);
                 AdvanceLocked(now);
-                var sourceLimit = GetDirectLimitLocked(source);
-                var boundary = SaturatingAdd(_windowStart, _activeWindowTimestampTicks);
-                target.FinalizeFixedForCommit(sourceLimit, boundary);
+                target.FinalizeFixedForCommit(SaturatingAdd(_windowStart, _activeWindowTimestampTicks));
             }
             AdmissionRateWaitQueue.CompleteGranted(granted);
         }
@@ -211,7 +191,7 @@ internal sealed partial class AdmissionRateState
 
                 var now = _timeProvider.GetTimestamp();
                 AdvanceLocked(now);
-                if (_waiters.Count == 0 && _consumed < _queuedLimit)
+                if (_waiters.Count == 0 && _consumed < _activeLimit)
                 {
                     _consumed++;
                     return ValueTask.FromResult<RateLimitLease>(AdmissionRateLeases.Acquired);
@@ -273,45 +253,35 @@ internal sealed partial class AdmissionRateState
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
 
             AdvanceLocked(now);
+            var policyWindow = ToTimestampTicks(policy._definition.PeriodTicks);
             if (policy._fixedActivationMode == DynamicFixedWindowActivationMode.Immediate)
             {
-                if (policy._fixedWindowTimestampTicks == _activeWindowTimestampTicks)
+                if (policyWindow != _activeWindowTimestampTicks || _pendingSequence != 0)
                 {
-                    ClearPendingLocked();
+                    throw new InvalidOperationException(
+                        "Committed Immediate FixedWindow target no longer matches the active Window.");
                 }
-                else if (now < policy._fixedActivationBoundary)
-                {
-                    StagePendingLocked(policy);
-                }
-                else
-                {
-                    ActivateLatePublishedPolicyLocked(policy, now);
-                    policy.MarkFixedPublishedLocked();
-                    return GrantWaitersLocked(now);
-                }
-
-                _queuedLimit = policy._definition.Limit;
+                _activeLimit = policy._definition.Limit;
             }
             else if (now < policy._fixedActivationBoundary)
             {
-                StagePendingLocked(policy);
-                _queuedLimit = policy._fixedPreActivationLimit;
+                StagePendingLocked(policy, policyWindow);
             }
             else
             {
-                ActivateLatePublishedPolicyLocked(policy, now);
+                ActivateLatePublishedPolicyLocked(policy, policyWindow, now);
             }
 
             policy.MarkFixedPublishedLocked();
             return GrantWaitersLocked(now);
         }
 
-        private void StagePendingLocked(AdmissionRateState policy)
+        private void StagePendingLocked(AdmissionRateState policy, long policyWindow)
         {
             _pendingSequence = policy._fixedSequence;
             _pendingBoundary = policy._fixedActivationBoundary;
             _pendingLimit = policy._definition.Limit;
-            _pendingWindowTimestampTicks = policy._fixedWindowTimestampTicks;
+            _pendingWindowTimestampTicks = policyWindow;
         }
 
         private int GetDirectLimitLocked(AdmissionRateState policy)
@@ -324,7 +294,7 @@ internal sealed partial class AdmissionRateState
                 return policy._definition.Limit;
             if (Volatile.Read(ref policy._fixedLifecycleState) < FixedCommitted)
                 throw new InvalidOperationException("Uncommitted Dynamic FixedWindow policy became visible.");
-            return policy._fixedPreActivationLimit;
+            return _activeLimit;
         }
 
         private void AdvanceLocked(long now)
@@ -334,7 +304,6 @@ internal sealed partial class AdmissionRateState
                 _windowStart = _pendingBoundary;
                 _consumed = 0;
                 _activeLimit = _pendingLimit;
-                _queuedLimit = _pendingLimit;
                 _activeWindowTimestampTicks = _pendingWindowTimestampTicks;
                 _retiredThroughSequence = Math.Max(_retiredThroughSequence, _pendingSequence);
                 ClearPendingLocked();
@@ -354,12 +323,12 @@ internal sealed partial class AdmissionRateState
 
         private void ActivateLatePublishedPolicyLocked(
             AdmissionRateState policy,
+            long policyWindow,
             long now)
         {
             var activationBoundary = policy._fixedActivationBoundary;
             _activeLimit = policy._definition.Limit;
-            _queuedLimit = policy._definition.Limit;
-            _activeWindowTimestampTicks = policy._fixedWindowTimestampTicks;
+            _activeWindowTimestampTicks = policyWindow;
             _retiredThroughSequence = Math.Max(_retiredThroughSequence, policy._fixedSequence);
             ClearPendingLocked();
 
@@ -377,7 +346,7 @@ internal sealed partial class AdmissionRateState
             AdvanceLocked(now);
             AdmissionRateWaiter? grantedHead = null;
             AdmissionRateWaiter? grantedTail = null;
-            while (!_waiters.IsEmpty && _consumed < _queuedLimit)
+            while (!_waiters.IsEmpty && _consumed < _activeLimit)
             {
                 var waiter = _waiters.Dequeue();
                 _consumed++;
@@ -400,7 +369,7 @@ internal sealed partial class AdmissionRateState
             }
 
             AdvanceLocked(now);
-            if (_consumed < _queuedLimit)
+            if (_consumed < _activeLimit)
                 return;
 
             var next = _pendingSequence != 0
@@ -472,5 +441,4 @@ internal sealed partial class AdmissionRateState
             return left > long.MaxValue / right ? long.MaxValue : left * right;
         }
     }
-
 }
