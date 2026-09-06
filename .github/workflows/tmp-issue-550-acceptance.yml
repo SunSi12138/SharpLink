@@ -1,0 +1,143 @@
+name: Temporary Issue 550 Acceptance
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - tmp/issue-550-validation-gpt
+    paths:
+      - .github/workflows/tmp-issue-550-acceptance.yml
+
+concurrency:
+  group: tmp-issue-550-acceptance
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: tmp/issue-550-review-candidate
+          fetch-depth: 0
+
+      - name: Rebase candidate onto latest dev
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin dev tmp/issue-550-review-candidate
+          git checkout -B issue-550-acceptance origin/tmp/issue-550-review-candidate
+          git rebase origin/dev
+          echo "rebased_sha=$(git rev-parse HEAD)"
+          echo "dev_sha=$(git rev-parse origin/dev)"
+
+      - name: Verify compression model and candidate scope
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if git grep -nE 'options\.Compression\.(MinimumPayloadBytes|MinimumSavingsBytes|MinimumSavingsRatio)' -- '*.cs' '*.md' README.md; then
+            echo 'Found stale capability-owned compression thresholds.' >&2
+            exit 1
+          fi
+          if grep -nE 'MinimumPayloadBytes|MinimumSavingsBytes|MinimumSavingsRatio' src/SharpLink.Runtime/Compression/SharpLinkCompression.cs; then
+            echo 'SharpLinkCompressionOptions still owns send-policy thresholds.' >&2
+            exit 1
+          fi
+          if git diff --name-only origin/dev...HEAD | grep -E '^\.github/workflows/tmp-issue-550'; then
+            echo 'Temporary validation workflow leaked into candidate.' >&2
+            exit 1
+          fi
+          git diff --stat origin/dev...HEAD
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore and format
+        shell: bash
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+          git diff --check
+
+      - name: Quality gates
+        shell: bash
+        run: |
+          python3 eng/check-project-reference-boundaries.py
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests --
+          --maximum-parallel-tests 1 --timeout 120s
+
+      - name: Dynamic compression hot-path evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore -c Release -v minimal
+          SHARPLINK_BENCHMARK_SHA="$(git rev-parse HEAD)" \
+            dotnet run -c Release --no-build --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+            --dynamic-compression-policy-evidence artifacts/issue-550-dynamic-policy.json
+
+      - name: Summarize hot-path evidence
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('artifacts/issue-550-dynamic-policy.json').read_text())
+          rows = {row['state']: row for row in data['measurements']}
+          for name in ('no-provider', 'negotiated-disabled', 'enabled', 'after-update-disabled'):
+              row = rows[name]
+              print(
+                  f"{name}: alloc={row['allocatedBytesPerOperation']:.2f} B/op "
+                  f"cpu={row['cpuMicrosecondsPerOperation']:.3f} us/op "
+                  f"elapsed={row['elapsedMicrosecondsPerOperation']:.3f} us/op "
+                  f"qps={row['qps']:.1f} attempts/op={row['compressionAttemptsPerOperation']:.3f}")
+
+          baseline = rows['no-provider']
+          disabled = rows['negotiated-disabled']
+          after = rows['after-update-disabled']
+          def ratio(value, base):
+              return value / base if base else float('inf')
+          print(
+              'negotiated-disabled/no-provider: '
+              f"alloc_delta={disabled['allocatedBytesPerOperation'] - baseline['allocatedBytesPerOperation']:.2f} B/op "
+              f"cpu_ratio={ratio(disabled['cpuMicrosecondsPerOperation'], baseline['cpuMicrosecondsPerOperation']):.4f} "
+              f"elapsed_ratio={ratio(disabled['elapsedMicrosecondsPerOperation'], baseline['elapsedMicrosecondsPerOperation']):.4f}")
+          print(
+              'after-update/negotiated-disabled: '
+              f"alloc_delta={after['allocatedBytesPerOperation'] - disabled['allocatedBytesPerOperation']:.2f} B/op "
+              f"cpu_ratio={ratio(after['cpuMicrosecondsPerOperation'], disabled['cpuMicrosecondsPerOperation']):.4f} "
+              f"elapsed_ratio={ratio(after['elapsedMicrosecondsPerOperation'], disabled['elapsedMicrosecondsPerOperation']):.4f}")
+          PYTHON
+
+      - name: Publish validated rebased candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git diff --check
+          git status --short
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "style: format issue 550 acceptance changes"
+          fi
+          git push --force origin HEAD:refs/heads/tmp/issue-550-review-candidate
+          echo "validated_candidate_sha=$(git rev-parse HEAD)"
