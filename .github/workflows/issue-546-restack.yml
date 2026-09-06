@@ -45,16 +45,7 @@ jobs:
             # dev removed the resolved static-cluster allowance; the candidate removed the
             # resolved AdmissionDynamicRateState allowance. Keep both deletions.
             git checkout --theirs eng/maintainability/baseline.json
-            python3 - <<'PY'
-import json
-from pathlib import Path
-
-path = Path('eng/maintainability/baseline.json')
-data = json.loads(path.read_text())
-target = 'src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs'
-data['allowances'] = [entry for entry in data['allowances'] if entry.get('path') != target]
-path.write_text(json.dumps(data, indent=2) + '\n')
-PY
+            python3 -c "import json,pathlib; p=pathlib.Path('eng/maintainability/baseline.json'); d=json.loads(p.read_text()); d['allowances']=[e for e in d['allowances'] if e.get('path')!='src/SharpLink.Server/Admission/AdmissionDynamicRateState.cs']; p.write_text(json.dumps(d, indent=2)+'\\n')"
             git add eng/maintainability/baseline.json
             git commit --no-edit
           fi
