@@ -12,21 +12,15 @@ internal sealed partial class SharpLinkClient
     {
         private readonly SharpLinkClient _client;
         private readonly SharpLinkClusterOptions _options;
-        private readonly SharpLinkLoadBalancingStrategy _strategy;
-        private readonly ISharpLinkEndpointSelector? _selector;
         private readonly EndpointState[] _endpoints;
+        private readonly StaticClusterTopologyState _topology;
         private readonly Lock _gate = new();
         private readonly HashSet<ClientConnection> _retiringConnections = [];
-        private EndpointState[] _readyEndpoints = [];
-        private EndpointSelectionSnapshot _selectionSnapshot = EndpointSelectionSnapshot.Empty;
         private Task? _connectTask;
         private Task? _stopTask;
-        private int _roundRobinCursor;
-        private int _leastPendingCursor;
         private int _reconnectCursor;
         private int _initialDialReservations;
         private int _initialConnectCoordinatorCount;
-        private int _telemetryReadyEndpointCount;
         private int _stopping;
 
         private int TargetReadyEndpointCount => Math.Min(_options.MinReadyEndpoints, _endpoints.Length);
@@ -38,23 +32,14 @@ internal sealed partial class SharpLinkClient
             _client = client ?? throw new ArgumentNullException(nameof(client));
             ArgumentNullException.ThrowIfNull(topology);
             _options = topology.ClusterOptions;
-            _strategy = topology.LoadBalancingStrategy;
-            _selector = topology.EndpointSelector;
             _endpoints = topology.EndpointStates;
+            _topology = new StaticClusterTopologyState(
+                topology.LoadBalancingStrategy,
+                topology.EndpointSelector);
             SharpLinkTelemetry.AddClientActiveEndpoints(_endpoints.Length);
         }
 
-        public int ReadyConnectionCount
-        {
-            get
-            {
-                var endpoints = Volatile.Read(ref _readyEndpoints);
-                var count = 0;
-                for (var index = 0; index < endpoints.Length; index++)
-                    count += endpoints[index].ReadyConnections.Length;
-                return count;
-            }
-        }
+        public int ReadyConnectionCount => _topology.ReadyConnectionCount;
 
         public int PendingCallCount => CountConnections(static connection => connection.PendingCalls.Count);
 
@@ -109,7 +94,7 @@ internal sealed partial class SharpLinkClient
             EndpointRetrySelectionState? retrySelection,
             AttemptOutcomeState? attemptOutcome)
         {
-            var snapshot = Volatile.Read(ref _selectionSnapshot);
+            var snapshot = _topology.SelectionSnapshot;
             var endpoints = snapshot.Endpoints;
             if (endpoints.Length == 0)
             {
@@ -120,7 +105,19 @@ internal sealed partial class SharpLinkClient
             var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
             for (var attempt = 0; attempt < endpoints.Length; attempt++)
             {
-                var selectedIndex = SelectEndpoint(endpoints, snapshot.Candidates, excluded);
+                int selectedIndex;
+                try
+                {
+                    selectedIndex = _topology.SelectEndpoint(snapshot, excluded);
+                }
+                catch (Exception exception) when (_topology.HasCustomSelector)
+                {
+                    _client._logger.LogError(exception, "SharpLink endpoint selector failed.");
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.FailedPrecondition,
+                        "The endpoint selector failed.",
+                        exception);
+                }
                 if ((uint)selectedIndex >= (uint)endpoints.Length || (excluded & (1UL << selectedIndex)) != 0)
                 {
                     throw new SharpLinkException(
@@ -536,7 +533,7 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
-                var readyCount = Volatile.Read(ref _readyEndpoints).Length;
+                var readyCount = _topology.ReadyEndpointCount;
                 var availableCapacity = _options.MaxConnections - TotalConnectionsLocked();
                 var activeReconnects = _endpoints.Count(static endpoint => endpoint.ReconnectTask is { IsCompleted: false });
                 var activeInitialDials = _initialDialReservations;
@@ -569,7 +566,7 @@ internal sealed partial class SharpLinkClient
             {
                 var activeReconnects = _endpoints.Count(static candidate => candidate.ReconnectTask is { IsCompleted: false });
                 if (endpoint.ReconnectTask is { IsCompleted: false } || !NeedsReconnectLocked(endpoint) ||
-                    activeReconnects >= TargetReadyEndpointCount - Volatile.Read(ref _readyEndpoints).Length)
+                    activeReconnects >= TargetReadyEndpointCount - _topology.ReadyEndpointCount)
                 {
                     return;
                 }
@@ -665,138 +662,17 @@ internal sealed partial class SharpLinkClient
 
         private void PublishReadySnapshotLocked()
         {
-            var ready = new List<EndpointState>(_endpoints.Length);
-            var readyConnections = 0;
             for (var index = 0; index < _endpoints.Length; index++)
-            {
-                var endpoint = _endpoints[index];
-                endpoint.PublishReadyConnections();
-                var endpointReadyConnections = endpoint.ReadyConnections.Length;
-                if (endpointReadyConnections != 0)
-                {
-                    ready.Add(endpoint);
-                    readyConnections += endpointReadyConnections;
-                }
-            }
-            var endpoints = ready.ToArray();
-            var existing = Volatile.Read(ref _readyEndpoints);
-            if (!HasSameMembership(existing, endpoints))
-            {
-                var candidates = new SharpLinkEndpointCandidate[endpoints.Length];
-                for (var index = 0; index < endpoints.Length; index++)
-                {
-                    var endpoint = endpoints[index];
-                    candidates[index] = new SharpLinkEndpointCandidate(
-                        endpoint.Configuration.Endpoint,
-                        endpoint.ReadyConnectionCountProvider,
-                        endpoint.ActiveCallCountProvider,
-                        generation: 1);
-                }
-                Volatile.Write(ref _readyEndpoints, endpoints);
-                Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
-                SharpLinkTelemetry.AddClientReadyEndpoints(endpoints.Length - _telemetryReadyEndpointCount);
-                _telemetryReadyEndpointCount = endpoints.Length;
-            }
+                _endpoints[index].PublishReadyConnections();
+
+            var publication = _topology.PublishReadySnapshot(_endpoints);
+            if (publication.ReadyEndpointDelta != 0)
+                SharpLinkTelemetry.AddClientReadyEndpoints(publication.ReadyEndpointDelta);
             _client.PublishReadinessFacts(new ClientReadinessFacts(
                 ActiveEndpoints: _endpoints.Length,
-                ReadyEndpoints: endpoints.Length,
-                ReadyConnections: readyConnections,
+                ReadyEndpoints: publication.ReadyEndpoints,
+                ReadyConnections: publication.ReadyConnections,
                 TargetReadyEndpoints: TargetReadyEndpointCount));
-        }
-
-        private static bool HasSameMembership(EndpointState[] left, EndpointState[] right)
-        {
-            if (left.Length != right.Length)
-                return false;
-            for (var index = 0; index < left.Length; index++)
-                if (!ReferenceEquals(left[index], right[index]))
-                    return false;
-            return true;
-        }
-
-        private int SelectEndpoint(
-            EndpointState[] endpoints,
-            SharpLinkEndpointCandidate[] candidates,
-            ulong excluded)
-        {
-            var availableCount = 0;
-            for (var index = 0; index < endpoints.Length; index++)
-                availableCount += (excluded & (1UL << index)) == 0 ? 1 : 0;
-            if (availableCount == 0)
-                return -1;
-            if (availableCount == 1 && _selector is null)
-            {
-                for (var index = 0; index < endpoints.Length; index++)
-                    if ((excluded & (1UL << index)) == 0)
-                        return index;
-            }
-            if (_selector is not null)
-            {
-                try
-                {
-                    return _selector.Select(new SharpLinkEndpointSelectionContext(candidates, excluded));
-                }
-                catch (Exception exception)
-                {
-                    _client._logger.LogError(exception, "SharpLink endpoint selector failed.");
-                    throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "The endpoint selector failed.", exception);
-                }
-            }
-            return _strategy switch
-            {
-                SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
-                SharpLinkLoadBalancingStrategy.RoundRobin => SelectRoundRobin(endpoints.Length, excluded),
-                SharpLinkLoadBalancingStrategy.LeastPending => SelectLeastPending(endpoints, excluded),
-                _ => SelectPowerOfTwo(endpoints, excluded, availableCount)
-            };
-        }
-
-        private int SelectPowerOfTwo(EndpointState[] endpoints, ulong excluded, int availableCount)
-        {
-            var first = SelectRandom(endpoints.Length, excluded, availableCount);
-            var second = SelectRandom(endpoints.Length, excluded | (1UL << first), availableCount - 1);
-            if (second < 0)
-                return first;
-            var firstState = endpoints[first];
-            var secondState = endpoints[second];
-            return EndpointSelectionKernel.CompareNormalizedLoad(
-                firstState.ActiveCallCount,
-                firstState.ReadyConnections.Length,
-                secondState.ActiveCallCount,
-                secondState.ReadyConnections.Length) <= 0
-                ? first
-                : second;
-        }
-
-        private static int SelectRandom(int length, ulong excluded, int availableCount)
-        {
-            if (availableCount <= 0)
-                return -1;
-            return EndpointSelectionKernel.SelectRandomIndex(
-                length,
-                excluded,
-                availableCount,
-                Random.Shared.Next(availableCount));
-        }
-
-        private int SelectRoundRobin(int length, ulong excluded)
-        {
-            return EndpointSelectionKernel.SelectRoundRobinIndex(ref _roundRobinCursor, length, excluded);
-        }
-
-        private int SelectLeastPending(EndpointState[] endpoints, ulong excluded)
-        {
-            var start = unchecked((uint)Interlocked.Increment(ref _leastPendingCursor));
-            var selected = -1;
-            for (var offset = 0; offset < endpoints.Length; offset++)
-            {
-                var index = (int)((start + (uint)offset) % (uint)endpoints.Length);
-                if ((excluded & (1UL << index)) != 0)
-                    continue;
-                if (selected < 0 || endpoints[index].ActiveCallCount < endpoints[selected].ActiveCallCount)
-                    selected = index;
-            }
-            return selected;
         }
 
         private static ClientConnection? SelectConnection(EndpointState endpoint)
@@ -820,7 +696,7 @@ internal sealed partial class SharpLinkClient
 
         private bool NeedsReconnectLocked(EndpointState endpoint)
             => Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested &&
-               Volatile.Read(ref _readyEndpoints).Length < TargetReadyEndpointCount &&
+               _topology.ReadyEndpointCount < TargetReadyEndpointCount &&
                TotalConnectionsLocked() < _options.MaxConnections &&
                endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount == 0;
 
@@ -847,10 +723,9 @@ internal sealed partial class SharpLinkClient
                 for (var index = 0; index < _endpoints.Length; index++)
                     _endpoints[index].Connections.Clear();
                 _retiringConnections.Clear();
-                Volatile.Write(ref _readyEndpoints, []);
-                Volatile.Write(ref _selectionSnapshot, EndpointSelectionSnapshot.Empty);
-                SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
-                _telemetryReadyEndpointCount = 0;
+                var previousReadyEndpoints = _topology.Clear();
+                if (previousReadyEndpoints != 0)
+                    SharpLinkTelemetry.AddClientReadyEndpoints(-previousReadyEndpoints);
                 _client.PublishReadinessFacts(new ClientReadinessFacts(
                     ActiveEndpoints: _endpoints.Length,
                     ReadyEndpoints: 0,
@@ -892,15 +767,6 @@ internal sealed partial class SharpLinkClient
         {
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
-        }
-
-        private sealed class EndpointSelectionSnapshot(
-            EndpointState[] endpoints,
-            SharpLinkEndpointCandidate[] candidates)
-        {
-            public static readonly EndpointSelectionSnapshot Empty = new([], []);
-            public EndpointState[] Endpoints { get; } = endpoints;
-            public SharpLinkEndpointCandidate[] Candidates { get; } = candidates;
         }
     }
 }
