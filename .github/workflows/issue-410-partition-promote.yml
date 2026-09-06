@@ -64,6 +64,7 @@ jobs:
               '}\n\n'
               'internal sealed partial class AdmissionPartitionPool\n'
               '{\n'
+              '    private AdmissionPartitionPolicyGeneration? _publishedPolicy;\n\n'
               '    internal void PublishRateTargets()\n'
               '    {\n'
               '        lock (_gate)\n'
@@ -72,6 +73,12 @@ jobs:
               '            foreach (var entry in _entries.Values)\n'
               '                entry.Current.Rate?.OnPublished();\n'
               '        }\n'
+              '    }\n\n'
+              '    private AdmissionPartitionEntry FinalizeNewEntryLocked(AdmissionPartitionEntry entry)\n'
+              '    {\n'
+              '        if (ReferenceEquals(entry.Current.Policy, _publishedPolicy))\n'
+              '            entry.Current.Rate?.OnPublished();\n'
+              '        return entry;\n'
               '    }\n'
               '}\n'
           )
@@ -88,6 +95,11 @@ jobs:
               '    "internal sealed partial class AdmissionPartitionPool : IDisposable",\n'
               ')\n'
               'replace_once(\n'
+              '    "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",\n'
+              '    "            return entry;\\n        }\\n        catch\\n",\n'
+              '    "            return FinalizeNewEntryLocked(entry);\\n        }\\n        catch\\n",\n'
+              ')\n'
+              'replace_once(\n'
               '    "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",\n'
               '    "AdmissionRatePublication.PublishTargets(replacement.Controller);",\n'
               '    "replacement.Controller.PublishRateTargets();",\n'
@@ -97,30 +109,7 @@ jobs:
           )
           text = text[:start] + replacement + text[end:]
 
-          insert_marker = '# Server-level partition integration: shared accounting snapshots and post-pointer queue activation.'
-          published_state = '''# Partition entries created after publication must know which policy may publish its queued target.
-          replace_once(
-              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
-              """    private SharpLinkPartitionAdmissionOptions _options;\\n    private AdmissionPartitionPolicyGeneration _currentPolicy;\\n    private List<AdmissionPartitionPolicyGeneration> _policies;\\n""",
-              """    private SharpLinkPartitionAdmissionOptions _options;\\n    private AdmissionPartitionPolicyGeneration _currentPolicy;\\n    private AdmissionPartitionPolicyGeneration _publishedPolicy;\\n    private List<AdmissionPartitionPolicyGeneration> _policies;\\n""",
-          )
-          replace_once(
-              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
-              """        _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);\\n        _policies = [_currentPolicy];\\n""",
-              """        _currentPolicy = new AdmissionPartitionPolicyGeneration(this, _options, sequence: 1);\\n        _publishedPolicy = _currentPolicy;\\n        _policies = [_currentPolicy];\\n""",
-          )
-          replace_once(
-              "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
-              """            if (!ReferenceEquals(entry.Current.Policy, _currentPolicy))\\n            {\\n                throw new InvalidOperationException(\\n                    \"New admission partition entry did not converge to the current policy generation.\");\\n            }\\n            return entry;\\n""",
-              """            if (!ReferenceEquals(entry.Current.Policy, _currentPolicy))\\n            {\\n                throw new InvalidOperationException(\\n                    \"New admission partition entry did not converge to the current policy generation.\");\\n            }\\n            if (ReferenceEquals(entry.Current.Policy, _publishedPolicy))\\n                entry.Current.Rate?.OnPublished();\\n            return entry;\\n""",
-          )
-
-          '''
-          if text.count(insert_marker) != 1:
-              raise SystemExit(f'expected one partition-test insertion marker, found {text.count(insert_marker)}')
-          text = text.replace(insert_marker, published_state + insert_marker, 1)
-
-          extra_test_marker = '    [Test]\n    [NotInParallel]\n    public async Task PartitionImmediateIncreaseMustNotWakeQueuedWorkBeforeProgramPublication()'
+          # Add a deterministic late-entry regression after the staging script emits its test file.
           extra_test = '''    [Test]
               public async Task OldSnapshotCreatingEntryAfterPublicationShouldSeePublishedQueuedTarget()
               {
@@ -156,16 +145,15 @@ jobs:
               }
 
           '''
-          # Insert the generated test into the raw source emitted by the staging script.
-          raw_test_marker = "    [Test]\\n    [NotInParallel]\\n    public async Task PartitionImmediateIncreaseMustNotWakeQueuedWorkBeforeProgramPublication()"
-          generated_test_insert = extra_test.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
           test_patch = (
               "partition_text = partition_tests.read_text()\n"
-              f"marker = {raw_test_marker!r}\n"
+              "method = 'public async Task PartitionImmediateIncreaseMustNotWakeQueuedWorkBeforeProgramPublication()'\n"
+              "method_index = partition_text.index(method)\n"
+              "insert_at = partition_text.rfind('    [Test]', 0, method_index)\n"
+              "if insert_at < 0:\n"
+              "    raise RuntimeError('late-entry test insertion point not found')\n"
               f"insert = {extra_test!r}\n"
-              "if partition_text.count(marker) != 1:\n"
-              "    raise RuntimeError(f'expected one late-entry test marker, found {partition_text.count(marker)}')\n"
-              "partition_tests.write_text(partition_text.replace(marker, insert + marker, 1))\n\n"
+              "partition_tests.write_text(partition_text[:insert_at] + insert + partition_text[insert_at:])\n\n"
           )
           final_marker = 'print("issue #410 partition FixedWindow refactor staged")'
           if text.count(final_marker) != 1:
