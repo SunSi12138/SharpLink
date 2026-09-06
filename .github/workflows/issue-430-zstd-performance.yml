@@ -36,12 +36,14 @@ jobs:
           base64 -d "$RUNNER_TEMP/stage2.b64" | gzip -d > "$RUNNER_TEMP/stage2.patch"
           cp .tmp/issue430-stage2/format.patch "$RUNNER_TEMP/format.patch"
           cp .tmp/issue430-stage2/compile1.patch "$RUNNER_TEMP/compile1.patch"
+          cp .tmp/issue430-stage2/evidence1.patch "$RUNNER_TEMP/evidence1.patch"
           git fetch origin fix/430-compression-provider-boundary
           git checkout -B issue430-stage2 origin/fix/430-compression-provider-boundary
           test "$(git rev-parse HEAD)" = '5a025579e2417e5b72a91ab4dd924d871c0cd02f'
           git apply "$RUNNER_TEMP/stage2.patch"
           git apply "$RUNNER_TEMP/format.patch"
           git apply "$RUNNER_TEMP/compile1.patch"
+          git apply "$RUNNER_TEMP/evidence1.patch"
           git diff --check
       - uses: ./.github/actions/setup-dotnet
       - name: Build evidence runner
