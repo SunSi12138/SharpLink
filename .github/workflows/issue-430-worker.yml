@@ -42,21 +42,26 @@ jobs:
           echo '0dbf17dd266eaff298c382d025bb53189352a4845336b525db377d429f7517a9  .tmp/issue430/followup2.patch' | sha256sum -c -
           echo '1b80abd43680d72fe5aab8dd3be0d6a77375392884c77b0bb6affebf5a395ac5  .tmp/issue430/followup3.patch' | sha256sum -c -
           base64 -d /tmp/issue430.patch.b64 | gzip -d > /tmp/issue430.patch
+          cp .tmp/issue430/new-integration-provider.patch /tmp/issue430-new-integration-provider.patch
+          cp .tmp/issue430/new-unit-provider.patch /tmp/issue430-new-unit-provider.patch
+          cp .tmp/issue430/followup1.patch /tmp/issue430-followup1.patch
+          cp .tmp/issue430/followup2.patch /tmp/issue430-followup2.patch
+          cp .tmp/issue430/followup3.patch /tmp/issue430-followup3.patch
           git fetch origin dev
           git checkout -B issue430-latest-dev origin/dev
           test "$(git rev-parse HEAD)" = "51e3f2c66a24615abf738f76a2380f223d72f2ab"
           git apply --check /tmp/issue430.patch
           git apply /tmp/issue430.patch
-          git apply --check .tmp/issue430/new-integration-provider.patch
-          git apply .tmp/issue430/new-integration-provider.patch
-          git apply --check .tmp/issue430/new-unit-provider.patch
-          git apply .tmp/issue430/new-unit-provider.patch
-          git apply --check .tmp/issue430/followup1.patch
-          git apply .tmp/issue430/followup1.patch
-          git apply --check .tmp/issue430/followup2.patch
-          git apply .tmp/issue430/followup2.patch
-          git apply --check .tmp/issue430/followup3.patch
-          git apply .tmp/issue430/followup3.patch
+          git apply --check /tmp/issue430-new-integration-provider.patch
+          git apply /tmp/issue430-new-integration-provider.patch
+          git apply --check /tmp/issue430-new-unit-provider.patch
+          git apply /tmp/issue430-new-unit-provider.patch
+          git apply --check /tmp/issue430-followup1.patch
+          git apply /tmp/issue430-followup1.patch
+          git apply --check /tmp/issue430-followup2.patch
+          git apply /tmp/issue430-followup2.patch
+          git apply --check /tmp/issue430-followup3.patch
+          git apply /tmp/issue430-followup3.patch
           git diff --check
           echo "BASE $(git rev-parse HEAD)"
           echo "PATCH_APPLIED $(git diff --shortstat)"
