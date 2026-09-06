@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
@@ -12,7 +11,7 @@ namespace SharpLink.Benchmarks;
 
 public static class DisabledCompressionComparisonRunner
 {
-    private static readonly int[] Sizes = [4 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024];
+    private static readonly int[] PayloadByteTargets = [4 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024];
     private static readonly int[] Concurrencies = [1, 8, 32, 128];
     private const int BalancedSendQueueBytes = 8 * 1024 * 1024;
 
@@ -27,12 +26,20 @@ public static class DisabledCompressionComparisonRunner
             await using var environment = transport == "tcp"
                 ? await BenchmarkEnvironment.CreateAsync().ConfigureAwait(false)
                 : await BenchmarkEnvironment.CreateSharedMemoryAsync().ConfigureAwait(false);
-            foreach (var size in Sizes)
+            foreach (var targetBytes in PayloadByteTargets)
             {
-                var payload = new byte[size];
-                Array.Fill(payload, (byte)0x5A);
+                var payloadChars = Math.Max(1, (targetBytes - sizeof(int)) / sizeof(char));
+                var payload = new string('x', payloadChars);
+                var payloadBytes = checked(sizeof(int) + payloadChars * sizeof(char));
                 foreach (var concurrency in Concurrencies)
-                    rows.Add(await MeasureAsync(environment.Rpc, transport, payload, concurrency).ConfigureAwait(false));
+                {
+                    rows.Add(await MeasureAsync(
+                        environment.Rpc,
+                        transport,
+                        payload,
+                        payloadBytes,
+                        concurrency).ConfigureAwait(false));
+                }
             }
         }
 
@@ -46,7 +53,9 @@ public static class DisabledCompressionComparisonRunner
             notes = new[]
             {
                 "Compression providers are not configured; this measures the empty-provider fast path only.",
-                "Concurrency is the requested matrix target. EffectiveConcurrency uses at most 75% of the default Balanced 8 MiB send queue based on original payload bytes so both revisions run on production defaults without benchmark-induced queue exhaustion."
+                "The same pre-Stage-2 EchoAsync(string) benchmark RPC is injected into both revisions so the A/B does not depend on APIs added by Stage 2.",
+                "PayloadBytes is the canonical string codec payload size: 4-byte UTF-16 byte-length prefix plus two bytes per char.",
+                "Concurrency is the requested matrix target. EffectiveConcurrency uses at most 75% of the default Balanced 8 MiB send queue based on canonical payload bytes so both revisions run on production defaults without benchmark-induced queue exhaustion."
             },
             rows
         };
@@ -63,18 +72,19 @@ public static class DisabledCompressionComparisonRunner
     private static async Task<Row> MeasureAsync(
         IBenchmarkRpc rpc,
         string transport,
-        byte[] payload,
+        string payload,
+        int payloadBytes,
         int concurrency)
     {
         for (var i = 0; i < 4; i++)
         {
-            var warm = await rpc.EchoBytesAsync(payload).ConfigureAwait(false);
+            var warm = await rpc.EchoAsync(payload).ConfigureAwait(false);
             if (warm.Length != payload.Length)
                 throw new InvalidOperationException("warmup mismatch");
         }
 
-        var effectiveConcurrency = GetEffectiveConcurrency(concurrency, payload.Length);
-        var operations = Math.Max(concurrency, Math.Clamp((16 * 1024 * 1024) / payload.Length, 32, 1024));
+        var effectiveConcurrency = GetEffectiveConcurrency(concurrency, payloadBytes);
+        var operations = Math.Max(concurrency, Math.Clamp((16 * 1024 * 1024) / payloadBytes, 32, 1024));
         var latencies = new long[operations];
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -99,7 +109,7 @@ public static class DisabledCompressionComparisonRunner
                     if (index >= operations)
                         return;
                     var start = Stopwatch.GetTimestamp();
-                    var response = await rpc.EchoBytesAsync(payload).ConfigureAwait(false);
+                    var response = await rpc.EchoAsync(payload).ConfigureAwait(false);
                     latencies[index] = Stopwatch.GetTimestamp() - start;
                     if (response.Length != payload.Length)
                         throw new InvalidOperationException("payload mismatch");
@@ -115,7 +125,7 @@ public static class DisabledCompressionComparisonRunner
         return new Row
         {
             Transport = transport,
-            PayloadBytes = payload.Length,
+            PayloadBytes = payloadBytes,
             Concurrency = concurrency,
             EffectiveConcurrency = effectiveConcurrency,
             Samples = operations,
