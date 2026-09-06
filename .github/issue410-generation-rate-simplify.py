@@ -423,7 +423,6 @@ internal sealed class AdmissionDynamicRateState : IDisposable, IAdmissionRateWai
 }
 ''')
 
-# Token/Sliding successors are independent generation-scoped states; Fixed still shares its Counter.
 path = "src/SharpLink.Server/Admission/AdmissionLimiterState.cs"
 replace_once(
     path,
@@ -439,14 +438,6 @@ replace_once(
     path,
     """        if (target?._state is not null && ReferenceEquals(_state!.Lineage, target._state.Lineage))\n            _state.CommitTransitionTo(target._state);\n        else\n            _state!.CommitTransitionTo(null);\n""",
     """        // TokenBucket / SlidingWindow updates are generation-scoped and need no state commit.\n""",
-)
-
-# Migration anchor detection remains meaningful only for Fixed wrappers sharing the same Counter.
-path = "src/SharpLink.Server/Admission/AdmissionStateKernel.cs"
-replace_once(
-    path,
-    "if (ReferenceEquals(pair.Value.State.Lineage, state.Lineage))",
-    "if (ReferenceEquals(pair.Value.State.LineageIdentity, state.LineageIdentity))",
 )
 
 print("issue #410 generation-scoped Token/Sliding experiment staged")
