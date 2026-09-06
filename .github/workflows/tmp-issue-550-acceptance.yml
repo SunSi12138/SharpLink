@@ -1,3 +1,4 @@
+# trigger: issue-550-build-reconnect-evidence
 name: Temporary Issue 550 Acceptance
 
 permissions:
@@ -91,7 +92,7 @@ jobs:
           PYTHON
                 ;;
               *)
-                echo "Unexpected commit conflict: $subject" >&2
+                echo "Unexpected rebase conflict; refusing automatic resolution for $subject" >&2
                 exit 1
                 ;;
             esac
