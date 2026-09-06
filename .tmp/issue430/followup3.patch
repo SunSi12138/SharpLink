@@ -1,0 +1,94 @@
+diff --git a/demo/Compression/Program.cs b/demo/Compression/Program.cs
+index b2f54ab..6942adf 100644
+--- a/demo/Compression/Program.cs
++++ b/demo/Compression/Program.cs
+@@ -108,6 +108,7 @@ public sealed class DemoRleCompressionProvider(int maxRunLength = byte.MaxValue)
+             throw new ArgumentOutOfRangeException(nameof(maxRunLength));
+         var source = input.ToArray();
+         var runs = 0;
++        Span<byte> run = stackalloc byte[2];
+         for (var offset = 0; offset < source.Length;)
+         {
+             cancellationToken.ThrowIfCancellationRequested();
+@@ -134,7 +135,6 @@ public sealed class DemoRleCompressionProvider(int maxRunLength = byte.MaxValue)
+                    count < maxRunLength &&
+                    source[offset + count] == source[offset])
+                 count++;
+-            Span<byte> run = stackalloc byte[2];
+             run[0] = checked((byte)count);
+             run[1] = source[offset];
+             output.Write(run);
+diff --git a/test/SharpLink.IntegrationTests/CompressionPersistentDecodePreActivationRaceTests.cs b/test/SharpLink.IntegrationTests/CompressionPersistentDecodePreActivationRaceTests.cs
+index 167f8a8..fd4c343 100644
+--- a/test/SharpLink.IntegrationTests/CompressionPersistentDecodePreActivationRaceTests.cs
++++ b/test/SharpLink.IntegrationTests/CompressionPersistentDecodePreActivationRaceTests.cs
+@@ -153,9 +153,8 @@ public class CompressionPersistentDecodePreActivationRaceTests
+             // This proves the framework's pre-activation terminal check rather than relying on a
+             // cooperative provider to throw OperationCanceledException.
+             _release.Wait();
+-            var result = inner.Decompress(input, output, maxOutputBytes, CancellationToken.None);
++            inner.Decompress(input, output, maxOutputBytes, CancellationToken.None);
+             Interlocked.Increment(ref _completedCount);
+-            return result;
+         }
+     }
+ 
+diff --git a/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs b/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
+index 57203d4..080d632 100644
+--- a/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
++++ b/test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs
+@@ -2249,9 +2249,11 @@ public class IntegrationBehaviorTests
+             IBufferWriter<byte> output,
+             int maxOutputBytes,
+             CancellationToken cancellationToken = default)
+-            => throwOnDecompress
+-                ? throw new InvalidOperationException("Injected decompression failure.")
+-                : inner.Decompress(input, output, maxOutputBytes, cancellationToken);
++        {
++            if (throwOnDecompress)
++                throw new InvalidOperationException("Injected decompression failure.");
++            inner.Decompress(input, output, maxOutputBytes, cancellationToken);
++        }
+     }
+ }
+ 
+diff --git a/test/SharpLink.IntegrationTests/TestCompressionProvider.cs b/test/SharpLink.IntegrationTests/TestCompressionProvider.cs
+index 6d3b3a3..49c61db 100644
+--- a/test/SharpLink.IntegrationTests/TestCompressionProvider.cs
++++ b/test/SharpLink.IntegrationTests/TestCompressionProvider.cs
+@@ -33,6 +33,7 @@ internal sealed class TestCompressionProvider(
+         BinaryPrimitives.WriteUInt32LittleEndian(header, Magic);
+         output.Write(header);
+         var checksum = 2166136261u;
++        Span<byte> run = stackalloc byte[2];
+         for (var offset = 0; offset < source.Length;)
+         {
+             cancellationToken.ThrowIfCancellationRequested();
+@@ -44,7 +45,6 @@ internal sealed class TestCompressionProvider(
+                 checksum = AppendChecksum(checksum, value);
+                 count++;
+             }
+-            Span<byte> run = stackalloc byte[2];
+             run[0] = checked((byte)count);
+             run[1] = value;
+             output.Write(run);
+diff --git a/test/SharpLink.UnitTests/TestCompressionProvider.cs b/test/SharpLink.UnitTests/TestCompressionProvider.cs
+index 734af07..f900ae4 100644
+--- a/test/SharpLink.UnitTests/TestCompressionProvider.cs
++++ b/test/SharpLink.UnitTests/TestCompressionProvider.cs
+@@ -33,6 +33,7 @@ internal sealed class TestCompressionProvider(
+         BinaryPrimitives.WriteUInt32LittleEndian(header, Magic);
+         output.Write(header);
+         var checksum = 2166136261u;
++        Span<byte> run = stackalloc byte[2];
+         for (var offset = 0; offset < source.Length;)
+         {
+             cancellationToken.ThrowIfCancellationRequested();
+@@ -44,7 +45,6 @@ internal sealed class TestCompressionProvider(
+                 checksum = AppendChecksum(checksum, value);
+                 count++;
+             }
+-            Span<byte> run = stackalloc byte[2];
+             run[0] = checked((byte)count);
+             run[1] = value;
+             output.Write(run);
