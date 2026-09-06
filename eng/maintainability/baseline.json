@@ -90,26 +90,8 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/IntegrationBehaviorTests.cs",
-      "maxLoc": 2692,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs",
-      "maxLoc": 2499,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs",
       "maxLoc": 2155,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/TransportConnectionIntegrationTests.cs",
-      "maxLoc": 2075,
       "reason": "Existing dev debt captured by issue #350."
     },
     {
@@ -126,24 +108,6 @@
     },
     {
       "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/DynamicEndpointIntegrationTests.cs",
-      "maxLoc": 1401,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/StaticEndpointIntegrationTests.cs",
-      "maxLoc": 1360,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/SharedMemoryTransportConnectionIntegrationTests.cs",
-      "maxLoc": 1330,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
       "path": "test/SharpLink.Benchmarks/SendPumpIsolationEvidenceRunner.cs",
       "maxLoc": 1318,
       "reason": "Existing dev debt captured by issue #350."
@@ -152,12 +116,6 @@
       "domain": "test",
       "path": "test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs",
       "maxLoc": 1289,
-      "reason": "Existing dev debt captured by issue #350."
-    },
-    {
-      "domain": "test",
-      "path": "test/SharpLink.IntegrationTests/RpcChannelCallShapeIntegrationTests.cs",
-      "maxLoc": 1056,
       "reason": "Existing dev debt captured by issue #350."
     },
     {
