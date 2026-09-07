@@ -152,6 +152,64 @@ public sealed class SharpLinkTelemetryObserverIsolationTests
     }
 
     [Test]
+    public void ThrowingActivityStartedListenerShouldStillPairEarlierObserverStartAndStop()
+    {
+        var observedStarted = 0;
+        var observedStopped = 0;
+        using var observer = new ActivityListener
+        {
+            ShouldListenTo = static source =>
+                ReferenceEquals(source, SharpLinkTelemetry.ClientActivitySource),
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = static (ref ActivityCreationOptions<string> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStarted = _ => Interlocked.Increment(ref observedStarted),
+            ActivityStopped = _ => Interlocked.Increment(ref observedStopped)
+        };
+        ActivitySource.AddActivityListener(observer);
+
+        var throwingStarted = 0;
+        using var thrower = new ActivityListener
+        {
+            ShouldListenTo = static source =>
+                ReferenceEquals(source, SharpLinkTelemetry.ClientActivitySource),
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = static (ref ActivityCreationOptions<string> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStarted = _ =>
+            {
+                Interlocked.Increment(ref throwingStarted);
+                throw new InvalidOperationException("injected later ActivityStarted listener failure");
+            }
+        };
+        ActivitySource.AddActivityListener(thrower);
+
+        var previous = Activity.Current;
+
+        var logical = SharpLinkTelemetry.StartClientCall(Method);
+        Ensure(throwingStarted == 1, "throwing logical ActivityStarted listener should be exercised");
+        Ensure(observedStarted == 1, "earlier observer should receive logical ActivityStarted");
+        Ensure(observedStopped == 1,
+            "earlier observer should receive matching logical ActivityStopped after later start failure");
+        EnsureCurrent(previous, "logical start fault cleanup must restore ambient activity");
+        logical.Complete();
+        Ensure(observedStopped == 1,
+            "logical scope completion must not emit a duplicate stop after start fault cleanup");
+
+        var attempt = SharpLinkTelemetry.StartClientAttempt(Method, attempt: 4);
+        Ensure(throwingStarted == 2, "throwing attempt ActivityStarted listener should be exercised");
+        Ensure(observedStarted == 2, "earlier observer should receive attempt ActivityStarted");
+        Ensure(observedStopped == 2,
+            "earlier observer should receive matching attempt ActivityStopped after later start failure");
+        EnsureCurrent(previous, "attempt start fault cleanup must restore ambient activity");
+        attempt.Complete(new SharpLinkException(SharpLinkErrorCode.Unavailable, "attempt failure"));
+        Ensure(observedStopped == 2,
+            "attempt scope completion must not emit a duplicate stop after start fault cleanup");
+    }
+
+    [Test]
     public void ThrowingActivityStoppedCallbackShouldNotEscapeAndShouldRestoreAmbientParent()
     {
         using var parentSource = new ActivitySource("SharpLink.UnitTests.TelemetryObserverIsolation.Parent.Stopped");
