@@ -128,7 +128,7 @@ internal sealed partial class SharpLinkClient
         return control with { LogicalCall = generation.SharedLogicalCall };
     }
 
-    private readonly record struct ClientRetrySettings(
+    internal readonly record struct ClientRetrySettings(
         int MaxAttempts,
         TimeSpan InitialBackoff,
         TimeSpan MaxBackoff,
@@ -166,7 +166,7 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private sealed class ClientRetryGeneration
+    internal sealed class ClientRetryGeneration
     {
         internal ClientRetryGeneration(
             ulong generation,
