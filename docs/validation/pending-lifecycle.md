@@ -1,46 +1,59 @@
-# Pending lifecycle validation — #556 fix + #557 evidence
+# Pending lifecycle validation — #556 + #557 regression evidence
 
-Issues: #556, #557. Characterization baseline: `dev@acb160faa72a07835b01d049a2fbcf9070b061df`.
+Issues: #556, #557. Original characterization baseline: `dev@acb160faa72a07835b01d049a2fbcf9070b061df`.
 
-#556 now carries its minimal production fix in this validation PR. #557 remains characterization/evidence only. No public API, wire format, pool topology, or global synchronization policy is changed; neither issue is auto-closed by this PR.
+#556's pooled-deadline identity fix was merged by #565. #557 now adds the production diagnostic-exception isolation that the same validation surface previously characterized. No public API, wire format, pool topology, second pending table, or global synchronization policy is changed.
 
 ## Run and interpretation
 
 ```sh
 dotnet build test/SharpLink.UnitTests -c Release
-# #556: the three deterministic deadline-reuse scenarios must now satisfy the correct invariant.
+# #556: the three deterministic deadline-reuse scenarios retain the correct invariant.
 python3 eng/validate-pending-lifecycle.py --mode regression \
   --scenario deadline-response --scenario deadline-cancel --scenario deadline-disconnect
-# #557 and controls remain characterization evidence in this PR.
-python3 eng/validate-pending-lifecycle.py --mode characterize \
+# #557: healthy controls plus throwing pending metrics / admission logger must all preserve lifecycle invariants.
+python3 eng/validate-pending-lifecycle.py --mode regression \
   --scenario no-listener --scenario metric-control --scenario metric-minus \
   --scenario metric-plus --scenario logger-control --scenario logger-throw
 ```
 
-The default is **regression**, checking correct invariants. CI now runs #556's three deadline scenarios in regression mode while the remaining #557 scenarios stay in characterize mode. Every scenario's `invariant` is recorded in its evidence directory. Startup, build, filtering, worker exceptions, and unarmed timeouts are infrastructure failures, never positive reproductions.
+The driver defaults to **regression**, checking correct invariants. Characterization mode is retained only so the original #557 baseline evidence remains reproducible against an unfixed revision. Every scenario records its `invariant` in the evidence directory. Startup, build, filtering, worker exceptions, and unarmed timeouts are infrastructure failures, never positive reproductions.
 
-The evidence workflow checks out the PR head SHA, not the moving merge ref, and archives `commit.txt` and `dotnet-info.txt`. PR Fast separately checks the normal merge ref against current dev. Do not attribute head-baseline experiments to a newer untested production commit.
+The evidence workflow archives the exact tested commit and `dotnet --info`. The #557 worker job checks out the PR head because its process-isolated validation is specific to the proposed production fix; PR Fast separately validates the normal merge ref against current `dev`.
 
-## Deterministic deadline experiment
+## #556 deterministic deadline experiment
 
-Each scenario runs in a fresh filtered TUnit process, so no unrelated test can access the static PendingCall queue or listener. A no-op ITimer suppresses autonomous scheduling; the real private scanner is invoked by reflection. A controlled TimeProvider blocks the scanner *inside* IsExpired after the old Deadline struct has been read. A is already expired. The competing response / real CancellationTokenSource.Cancel / FailAllPendingRequests entry point completes A and returns its object; all correctly select DeadlineExceeded for A. Therefore the entry-point name must not be mistaken for A's authoritative completion reason.
+Each scenario runs in a fresh filtered TUnit process. A no-op ITimer suppresses autonomous scheduling; the real private scanner is invoked by reflection. A controlled TimeProvider blocks the scanner *inside* IsExpired after the old Deadline struct has been read. A is already expired. The competing response / real CancellationTokenSource.Cancel / FailAllPendingRequests entry point completes A and returns its object; all correctly select DeadlineExceeded for A.
 
-B must rent the **same object reference** with a distinct ID and a future deadline. Releasing the scanner lets the old deadline check finish before it reads the recycled object's ID. The assertions distinguish fixture setup failure from a successful premature timeout. Correct behavior is that B remains pending, then completes only from its own response. No sleeps, stress loops, production hooks, pool clearing, or simulated replacement implementation are used to produce the interleaving.
+B must rent the **same object reference** with a distinct ID and a future deadline. Releasing the scanner lets the old deadline check finish before it reads the recycled object's identity. Correct behavior is that B remains pending, then completes only from its own response. No sleeps, stress loops, production hooks, pool clearing, or simulated replacement implementation are used to produce the interleaving.
 
-The #556 fix intentionally keeps the first deadline sample as a non-authoritative candidate filter, so this deterministic barrier still forces the original A -> B object-reuse interleaving. Before a timeout is actually committed, the scanner enters the existing CompletionGate, revalidates the slot reference and captured request ID, rechecks the current deadline, and only then removes the slot. Therefore the same fixture now proves the ABA is rejected: B stays pending and completes from its own response. The driver still rejects unarmed timeouts.
+The merged #556 fix keeps the first deadline sample only as a non-authoritative candidate filter. Before timeout is committed, the scanner enters the existing CompletionGate, revalidates the slot reference and captured request ID, rechecks the current deadline, and only then removes the slot.
 
-## Metric experiments
+## #557 pending metric experiments
 
-The listener enables only `SharpLink` / `sharplink.requests.pending` and throws only on the selected delta. Controls run without a listener and with a nonthrowing listener. The -1 experiment records physical slot count, active capacity, the first operation's outcome and whether a later request succeeds.
+The listener enables only `SharpLink` / `sharplink.requests.pending` and throws only on the selected delta. Controls run without a listener and with a nonthrowing listener.
 
-For +1, the child atomically writes the exact published-but-unregistered state immediately before Dispose. The POSIX parent kills the entire process group if Dispose remains blocked for 15 seconds. A timeout without this exact marker is a harness failure. The overall startup bound is 120 seconds. Neither deadline is used to orchestrate the race. The explicit TUnit worker must not be run directly without an external watchdog.
+The original characterization established two distinct failures:
 
-## Admission Report and logger experiment
+- throwing on `+1` happened after the PendingCall slot was published but before owner registration and `MarkRegistered`, so terminal cleanup could remove the slot and then wait forever in `WaitUntilRegistered`;
+- throwing on `-1` happened after the physical slot was removed and operation completed but before `_activeSlots` capacity was refunded, so later requests saw false `ResourceExhausted`.
+
+The production fix makes the internal pending-occupancy telemetry helper a no-throw diagnostic boundary. The PendingRequestTable sequencing itself is unchanged. Regression mode now requires:
+
+- `metric-plus`: Rent does not expose the listener exception, the published call reaches `_registered=1`, owner registration is committed exactly once, Dispose returns, the outstanding operation reaches normal connection-close completion, and count/capacity return to zero;
+- `metric-minus`: the listener exception does not escape response dispatch, the original operation succeeds, physical count and active capacity are both zero, and the capacity is immediately reusable;
+- healthy controls remain unchanged.
+
+The +1 worker still writes its pre-Dispose state atomically. On an unfixed baseline the POSIX parent keeps the original 15-second watchdog and only classifies the hang when the exact published/unregistered marker is present. The overall startup bound remains 120 seconds; neither timeout orchestrates the race.
+
+## #557 admission Report and logger experiment
 
 A production-builder-created endpoint client supplies the real private AttemptOutcomeState, instantiated through reflection and attached as the actual pending completion observer. Its real TryAcquire obtains a token from a custom policy whose Report throws. A nonthrowing logger is the control; a logger throwing only while reporting that exact exception is the fault case. Neither fixture starts a connection or replaces the completion state machine.
 
-After real response dispatch, inspect operation completion and the old PendingCall's return-cleared Id/Operation **before** the next rent, plus capacity and a subsequent healthy request. An orphaned operation is not awaited without a bound: the isolated worker reports its state and exits. The later production decision may isolate diagnostics; this test does not implement that decision.
+The policy Report exception remains isolated as before and is still offered to the configured logger. The #557 production fix adds a second narrow boundary around that error log: a logger failure cannot escape into the authoritative pending completion. Regression mode requires policy and logger to each execute exactly once while the original operation completes, the old PendingCall has its Id/Operation cleared for return, pending count/capacity are zero, and a subsequent request succeeds.
+
+This is deliberately narrower than swallowing every `IPendingCallCompletionObserver` exception in `CompleteTakenCall`; internal observer bugs remain visible instead of being reclassified as diagnostics.
 
 ## Related codec evidence
 
-`docs/validation/codec-semantics.md` covers DateTime cross-zone semantics (#558) and DateTimeOffset segmented-input measurements (#559). CI run links and observed results are recorded in the PR and issue conversations, not assumed merely because a probe was added.
+`docs/validation/codec-semantics.md` covers DateTime cross-zone semantics (#558) and DateTimeOffset segmented-input measurements (#559). Those remain characterization/measurement work and are not changed by the #557 production fix.

@@ -2,8 +2,9 @@
 """Real-provider DateTime cross-zone checks and DateTimeOffset Release measurements.
 
 Build: dotnet build test/SharpLink.UnitTests -c Release
-Default --mode regression rejects scalar/collection semantic disagreement.
---mode characterize expects the explicitly documented baseline behavior instead.
+Default --mode regression requires DateTime scalar/nullable/collection paths to preserve
+raw ticks + Kind across process time zones. --mode characterize retains the original
+pre-fix scalar-vs-collection baseline matcher for historical evidence.
 """
 import argparse
 import json
@@ -15,13 +16,15 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ZONES = {"Etc/UTC": 0, "Asia/Tokyo": 9 * 3600 * 10_000_000}
+DATE_PATHS = ("scalar", "nullable", "array", "list", "memory", "readOnlyMemory", "immutableArray")
+COLLECTION_PATHS = ("array", "list", "memory", "readOnlyMemory", "immutableArray")
 
 
-def worker(name, method, directory, zone="Etc/UTC", kind="Local", source=None):
+def worker(name, method, directory, zone="Etc/UTC", kind="Local", source=None, date_case="normal"):
     result = directory / (name + ".json")
     result.unlink(missing_ok=True)
     environment = dict(os.environ, TZ=zone, SHARPLINK_DATE_KIND=kind,
-                       SHARPLINK_VALIDATION_OUTPUT=str(result))
+                       SHARPLINK_DATE_CASE=date_case, SHARPLINK_VALIDATION_OUTPUT=str(result))
     environment.pop("SHARPLINK_CODEC_INPUT", None)
     if source is not None:
         environment["SHARPLINK_CODEC_INPUT"] = str(source)
@@ -51,16 +54,32 @@ def worker(name, method, directory, zone="Etc/UTC", kind="Local", source=None):
     return report, result
 
 
-def matches_baseline(report, source_zone, target_zone, kind):
-    scalar, array, values = report["scalar"], report["array"], report["list"]
+def matches_raw_contract(report):
     source = report["source"]
-    if scalar["kind"] != kind or array["kind"] != kind or values["kind"] != kind or array != values:
+    values = [report[name] for name in DATE_PATHS]
+    return (report["invariant"] and
+            all(value["ticks"] == source["ticks"] and value["kind"] == source["kind"]
+                for value in values))
+
+
+def matches_baseline(report, source_zone, target_zone, kind):
+    scalar = report["scalar"]
+    nullable = report["nullable"]
+    collections = [report[name] for name in COLLECTION_PATHS]
+    source = report["source"]
+    values = [scalar, nullable, *collections]
+    if any(value["kind"] != kind for value in values):
+        return False
+    if any(value != collections[0] for value in collections[1:]):
+        return False
+    if scalar != nullable:
         return False
     if source_zone == target_zone or kind != "Local":
-        return report["invariant"] and scalar["ticks"] == source["ticks"]
+        return report["invariant"] and all(value["ticks"] == source["ticks"] for value in values)
     return (not report["invariant"] and scalar["utcTicks"] == source["utcTicks"] and
-            array["ticks"] == source["ticks"] and
-            scalar["ticks"] - array["ticks"] == ZONES[target_zone] - ZONES[source_zone])
+            nullable["utcTicks"] == source["utcTicks"] and
+            all(value["ticks"] == source["ticks"] for value in collections) and
+            scalar["ticks"] - collections[0]["ticks"] == ZONES[target_zone] - ZONES[source_zone])
 
 
 def main():
@@ -85,9 +104,12 @@ def main():
                 for target_zone in ZONES:
                     name = prefix + "-to-" + target_zone.replace("/", "-")
                     report, _ = worker(name, "DateTimeCrossZone", directory, target_zone, kind, source)
-                    matched = matches_baseline(report, source_zone, target_zone, kind)
-                    passed = matched if args.mode == "characterize" else report["invariant"]
-                    report.update(baselineMatched=matched, selectedModePassed=passed)
+                    baseline_matched = matches_baseline(report, source_zone, target_zone, kind)
+                    raw_matched = matches_raw_contract(report)
+                    passed = baseline_matched if args.mode == "characterize" else raw_matched
+                    report.update(baselineMatched=baseline_matched,
+                                  rawContractMatched=raw_matched,
+                                  selectedModePassed=passed)
                     failed |= not passed
                     rows.append(report)
                     print(json.dumps(report), flush=True)
@@ -95,6 +117,28 @@ def main():
                 failed = True
                 errors.append(str(error))
                 print(f"INFRASTRUCTURE FAILURE: {error}", file=sys.stderr, flush=True)
+    boundary_rows = []
+    if args.mode == "regression":
+        try:
+            produced, source = worker(
+                "boundary-max-local-write", "DateTimeCrossZone", directory,
+                "Etc/UTC", "Local", date_case="max-local")
+            if not produced["invariant"]:
+                raise RuntimeError("max-local: same-process roundtrip control failed")
+            report, _ = worker(
+                "boundary-max-local-to-Asia-Tokyo", "DateTimeCrossZone", directory,
+                "Asia/Tokyo", "Local", source, date_case="max-local")
+            raw_matched = matches_raw_contract(report)
+            report.update(boundaryCase="max-local", rawContractMatched=raw_matched,
+                          selectedModePassed=raw_matched)
+            failed |= not raw_matched
+            boundary_rows.append(report)
+            print(json.dumps(report), flush=True)
+        except Exception as error:
+            failed = True
+            errors.append(str(error))
+            print(f"INFRASTRUCTURE FAILURE: {error}", file=sys.stderr, flush=True)
+
     performance = None
     try:
         performance, _ = worker("datetimeoffset-fragmentation", "DateTimeOffsetFragmentation", directory)
@@ -107,9 +151,12 @@ def main():
         failed = True
         errors.append(str(error))
         print(f"INFRASTRUCTURE FAILURE: {error}", file=sys.stderr, flush=True)
-    summary = dict(mode=args.mode, baseline="acb160faa72a07835b01d049a2fbcf9070b061df",
-                   dateTime=rows, performance=performance, infrastructureErrors=errors,
-                   note="Green characterization confirms baseline discrepancies; timings are evidence, not an optimization claim.")
+    summary = dict(mode=args.mode, originalBaseline="acb160faa72a07835b01d049a2fbcf9070b061df",
+                   dateTime=rows, dateTimeBoundary=boundary_rows, performance=performance,
+                   infrastructureErrors=errors,
+                   note=("Green regression means DateTime scalar, nullable and built-in collection paths preserve "
+                         "raw ticks + Kind across zones, including a Local value one hour below DateTime.MaxValue "
+                         "decoded in UTC+9; DateTimeOffset timings remain measurement evidence only."))
     (directory / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return int(failed)
 

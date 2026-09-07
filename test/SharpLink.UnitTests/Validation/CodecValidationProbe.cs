@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -15,29 +16,61 @@ public sealed class CodecValidationProbe
     {
         using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
         var scalarCodec = provider.GetCodec<DateTime>();
+        var nullableCodec = provider.GetCodec<DateTime?>();
         var arrayCodec = provider.GetCodec<DateTime[]>();
         var listCodec = provider.GetCodec<List<DateTime>>();
+        var memoryCodec = provider.GetCodec<Memory<DateTime>>();
+        var readOnlyMemoryCodec = provider.GetCodec<ReadOnlyMemory<DateTime>>();
+        var immutableArrayCodec = provider.GetCodec<ImmutableArray<DateTime>>();
         var input = Environment.GetEnvironmentVariable("SHARPLINK_CODEC_INPUT");
+        var dateCase = Environment.GetEnvironmentVariable("SHARPLINK_DATE_CASE") ?? "normal";
         if (string.IsNullOrEmpty(input))
         {
             var kind = Enum.Parse<DateTimeKind>(Environment.GetEnvironmentVariable("SHARPLINK_DATE_KIND")!);
-            var value = new DateTime(2026, 1, 15, 12, 34, 56, kind);
+            var value = dateCase switch
+            {
+                "normal" => new DateTime(2026, 1, 15, 12, 34, 56, kind),
+                "max-local" when kind == DateTimeKind.Local =>
+                    new DateTime(DateTime.MaxValue.Ticks - TimeSpan.TicksPerHour, DateTimeKind.Local),
+                _ => throw new InvalidOperationException($"Unsupported DateTime validation case '{dateCase}' for {kind}.")
+            };
             var scalar = Encode(scalarCodec, value);
+            var nullable = Encode(nullableCodec, (DateTime?)value);
             var array = Encode(arrayCodec, new[] { value });
             var list = Encode(listCodec, new List<DateTime> { value });
+            var memory = Encode(memoryCodec, new[] { value }.AsMemory());
+            var readOnlyMemory = Encode(readOnlyMemoryCodec, new ReadOnlyMemory<DateTime>(new[] { value }));
+            var immutableArray = Encode(immutableArrayCodec, ImmutableArray.Create(value));
             var scalarResult = Decode(scalarCodec, scalar);
+            var nullableResult = Decode(nullableCodec, nullable)
+                ?? throw new InvalidOperationException("Valid nullable DateTime decoded as null.");
             var arrayResult = Decode(arrayCodec, array)[0];
             var listResult = Decode(listCodec, list)[0];
+            var memoryResult = Decode(memoryCodec, memory).Span[0];
+            var readOnlyMemoryResult = Decode(readOnlyMemoryCodec, readOnlyMemory).Span[0];
+            var immutableArrayResult = Decode(immutableArrayCodec, immutableArray)[0];
             PendingLifecycleValidationProbe.Write(new
             {
                 phase = "complete",
                 operation = "write",
+                dateCase,
                 zone = TimeZoneInfo.Local.Id,
                 offsetTicks = TimeZoneInfo.Local.GetUtcOffset(value).Ticks,
                 source = Snapshot(value),
-                payloads = new { scalar, array, list },
-                codecs = new { scalar = scalarCodec.GetType().FullName, array = arrayCodec.GetType().FullName, list = listCodec.GetType().FullName },
-                invariant = Same(value, scalarResult) && Same(value, arrayResult) && Same(value, listResult)
+                payloads = new { scalar, nullable, array, list, memory, readOnlyMemory, immutableArray },
+                codecs = new
+                {
+                    scalar = scalarCodec.GetType().FullName,
+                    nullable = nullableCodec.GetType().FullName,
+                    array = arrayCodec.GetType().FullName,
+                    list = listCodec.GetType().FullName,
+                    memory = memoryCodec.GetType().FullName,
+                    readOnlyMemory = readOnlyMemoryCodec.GetType().FullName,
+                    immutableArray = immutableArrayCodec.GetType().FullName
+                },
+                invariant = Same(value, scalarResult) && Same(value, nullableResult) &&
+                    Same(value, arrayResult) && Same(value, listResult) && Same(value, memoryResult) &&
+                    Same(value, readOnlyMemoryResult) && Same(value, immutableArrayResult)
             });
             return;
         }
@@ -46,20 +79,32 @@ public sealed class CodecValidationProbe
         var root = document.RootElement;
         var payloads = root.GetProperty("payloads");
         var decodedScalar = Decode(scalarCodec, payloads.GetProperty("scalar").GetString()!);
+        var decodedNullable = Decode(nullableCodec, payloads.GetProperty("nullable").GetString()!)
+            ?? throw new InvalidOperationException("Valid nullable DateTime decoded as null.");
         var decodedArray = Decode(arrayCodec, payloads.GetProperty("array").GetString()!)[0];
         var decodedList = Decode(listCodec, payloads.GetProperty("list").GetString()!)[0];
+        var decodedMemory = Decode(memoryCodec, payloads.GetProperty("memory").GetString()!).Span[0];
+        var decodedReadOnlyMemory = Decode(readOnlyMemoryCodec, payloads.GetProperty("readOnlyMemory").GetString()!).Span[0];
+        var decodedImmutableArray = Decode(immutableArrayCodec, payloads.GetProperty("immutableArray").GetString()!)[0];
         PendingLifecycleValidationProbe.Write(new
         {
             phase = "complete",
             operation = "read",
+            dateCase,
             sourceZone = root.GetProperty("zone").GetString(),
             zone = TimeZoneInfo.Local.Id,
-            offsetTicks = TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 1, 15)).Ticks,
+            offsetTicks = TimeZoneInfo.Local.GetUtcOffset(decodedScalar).Ticks,
             source = root.GetProperty("source"),
             scalar = Snapshot(decodedScalar),
+            nullable = Snapshot(decodedNullable),
             array = Snapshot(decodedArray),
             list = Snapshot(decodedList),
-            invariant = Same(decodedScalar, decodedArray) && Same(decodedScalar, decodedList)
+            memory = Snapshot(decodedMemory),
+            readOnlyMemory = Snapshot(decodedReadOnlyMemory),
+            immutableArray = Snapshot(decodedImmutableArray),
+            invariant = Same(decodedScalar, decodedNullable) && Same(decodedScalar, decodedArray) &&
+                Same(decodedScalar, decodedList) && Same(decodedScalar, decodedMemory) &&
+                Same(decodedScalar, decodedReadOnlyMemory) && Same(decodedScalar, decodedImmutableArray)
         });
     }
 
@@ -189,8 +234,7 @@ public sealed class CodecValidationProbe
     }
 
     private static bool Same(DateTime left, DateTime right)
-        => left.Ticks == right.Ticks && left.Kind == right.Kind &&
-           left.ToUniversalTime().Ticks == right.ToUniversalTime().Ticks;
+        => left.Ticks == right.Ticks && left.Kind == right.Kind;
 
     private static object Snapshot(DateTime value)
         => new { ticks = value.Ticks, kind = value.Kind.ToString(), utcTicks = value.ToUniversalTime().Ticks };
