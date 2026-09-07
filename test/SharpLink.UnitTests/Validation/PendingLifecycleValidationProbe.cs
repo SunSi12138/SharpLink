@@ -179,7 +179,7 @@ public sealed class PendingLifecycleValidationProbe
                 ownerRegistered = owner.Registered
             });
             table.Dispose();
-            var operationError = operation is null
+            var disposeOperationError = operation is null
                 ? null
                 : await Observe(operation.AsValueTask().AsTask());
             var active = table.ActiveCount;
@@ -196,11 +196,11 @@ public sealed class PendingLifecycleValidationProbe
                 negativeHits,
                 escaped = escaped?.GetType().Name,
                 ownerRegistered = owner.Registered,
-                operationError,
+                operationError = disposeOperationError,
                 active,
                 count,
                 invariant = escaped is null && registered == 1 && owner.Registered == 1 &&
-                    operationError == SharpLinkErrorCode.ConnectionClosed.ToString() &&
+                    disposeOperationError == SharpLinkErrorCode.ConnectionClosed.ToString() &&
                     active == 0 && count == 0
             });
             return;
