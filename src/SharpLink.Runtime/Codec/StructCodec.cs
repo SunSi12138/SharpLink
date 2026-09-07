@@ -323,10 +323,7 @@ internal sealed class DateTimeOffsetListCodec : IRpcCodec<List<DateTimeOffset>?>
     }
 
     public List<DateTimeOffset>? Deserialize(in ReadOnlySequence<byte> buffer)
-    {
-        var array = CodecHelpers.ReadDateTimeOffsetCollection(buffer);
-        return array is null ? null : [.. array];
-    }
+        => CodecHelpers.ReadDateTimeOffsetList(buffer);
 }
 
 internal sealed class DateTimeOffsetMemoryCodec : IRpcCodec<Memory<DateTimeOffset>>

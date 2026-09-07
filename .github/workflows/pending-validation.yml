@@ -9,9 +9,11 @@ on:
       - 'src/SharpLink.Client/SharpLinkClient.Attempts.cs'
       - 'src/SharpLink.Runtime/Codec/CodecHelpers.cs'
       - 'src/SharpLink.Runtime/Codec/DateTimeCodec.cs'
+      - 'src/SharpLink.Runtime/Codec/StructCodec.cs'
       - 'test/SharpLink.UnitTests/Validation/**'
       - 'eng/validate-pending-lifecycle.py'
       - 'eng/validate-codec-semantics.py'
+      - 'eng/validate-datetimeoffset-performance.py'
       - '.github/workflows/pending-validation.yml'
   workflow_dispatch:
 
@@ -87,6 +89,11 @@ jobs:
       - name: Validate issue 558 raw DateTime semantics and measure issue 559 DateTimeOffset fragmentation
         if: ${{ !cancelled() && steps.pending.outcome != 'skipped' }}
         run: python3 eng/validate-codec-semantics.py --mode regression
+      - name: Compare issue 559 DateTimeOffset decode against pre-fix baseline
+        if: ${{ !cancelled() && steps.pending.outcome != 'skipped' }}
+        run: >-
+          python3 eng/validate-datetimeoffset-performance.py
+          --output artifacts/validation/datetimeoffset-performance
       - name: Upload complete validation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

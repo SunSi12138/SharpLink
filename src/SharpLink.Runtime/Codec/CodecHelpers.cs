@@ -279,13 +279,42 @@ internal static class CodecHelpers
 
     public static DateTimeOffset[]? ReadDateTimeOffsetCollection(in ReadOnlySequence<byte> buffer)
     {
+        var length = GetValidatedDateTimeOffsetCollectionLength(buffer);
+        if (length == -1)
+            return null;
+        if (length == 0)
+            return [];
+
+        var result = new DateTimeOffset[length];
+        ReadDateTimeOffsetCollectionPayload(buffer.Slice(sizeof(int)), result);
+        return result;
+    }
+
+    public static List<DateTimeOffset>? ReadDateTimeOffsetList(in ReadOnlySequence<byte> buffer)
+    {
+        var length = GetValidatedDateTimeOffsetCollectionLength(buffer);
+        if (length == -1)
+            return null;
+        if (length == 0)
+            return [];
+
+        var result = new List<DateTimeOffset>(length);
+        CollectionsMarshal.SetCount(result, length);
+        ReadDateTimeOffsetCollectionPayload(
+            buffer.Slice(sizeof(int)),
+            CollectionsMarshal.AsSpan(result));
+        return result;
+    }
+
+    private static int GetValidatedDateTimeOffsetCollectionLength(in ReadOnlySequence<byte> buffer)
+    {
         var length = ReadInt32(buffer);
         if (length < -1)
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Invalid collection length {length}.");
         if (length <= 0)
         {
             EnsureExactSize(buffer, sizeof(int));
-            return length == -1 ? null : [];
+            return length;
         }
 
         int payloadBytes;
@@ -300,25 +329,47 @@ internal static class CodecHelpers
         if (payloadBytes > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(int))
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Collection payload exceeds the protocol maximum.");
         EnsureExactSize(buffer, (long)sizeof(int) + payloadBytes);
+        return length;
+    }
 
-        var result = new DateTimeOffset[length];
-        var payload = buffer.Slice(sizeof(int));
-        Span<byte> temporary = stackalloc byte[DateTimeOffsetCollectionElementSize];
-        for (var index = 0; index < length; index++)
+    private static void ReadDateTimeOffsetCollectionPayload(
+        in ReadOnlySequence<byte> payload,
+        Span<DateTimeOffset> destination)
+    {
+        if (payload.IsSingleSegment)
         {
-            var encoded = payload.Slice((long)index * DateTimeOffsetCollectionElementSize, DateTimeOffsetCollectionElementSize);
-            if (encoded.FirstSpan.Length >= DateTimeOffsetCollectionElementSize)
+            var source = payload.FirstSpan;
+            for (var index = 0; index < destination.Length; index++)
             {
-                result[index] = ReadDateTimeOffsetCollectionElement(
-                    encoded.FirstSpan[..DateTimeOffsetCollectionElementSize]);
+                destination[index] = ReadDateTimeOffsetCollectionElement(
+                    source.Slice(
+                        index * DateTimeOffsetCollectionElementSize,
+                        DateTimeOffsetCollectionElementSize));
+            }
+            return;
+        }
+
+        var reader = new SequenceReader<byte>(payload);
+        Span<byte> temporary = stackalloc byte[DateTimeOffsetCollectionElementSize];
+        for (var index = 0; index < destination.Length; index++)
+        {
+            if (reader.UnreadSpan.Length >= DateTimeOffsetCollectionElementSize)
+            {
+                destination[index] = ReadDateTimeOffsetCollectionElement(
+                    reader.UnreadSpan[..DateTimeOffsetCollectionElementSize]);
             }
             else
             {
-                encoded.CopyTo(temporary);
-                result[index] = ReadDateTimeOffsetCollectionElement(temporary);
+                if (!reader.TryCopyTo(temporary))
+                {
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.DataLoss,
+                        "DateTimeOffset collection payload is truncated.");
+                }
+                destination[index] = ReadDateTimeOffsetCollectionElement(temporary);
             }
+            reader.Advance(DateTimeOffsetCollectionElementSize);
         }
-        return result;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
