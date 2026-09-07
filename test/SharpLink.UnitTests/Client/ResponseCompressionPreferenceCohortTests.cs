@@ -58,6 +58,57 @@ public class ResponseCompressionPreferenceCohortTests
         await healthyInput.Writer.CompleteAsync();
     }
 
+    [Test]
+    public async Task CallerCancellationShouldNotBecomeAggregateFailureForMultiSessionCohort()
+    {
+        using var firstContext = CreateContext(maxSendQueueBytes: 1024);
+        using var secondContext = CreateContext(maxSendQueueBytes: 1024);
+        var firstInput = new Pipe();
+        var firstOutput = new Pipe();
+        var secondInput = new Pipe();
+        var secondOutput = new Pipe();
+        var policy = CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
+
+        await using var firstSession = CreateClientSession(
+            "compression-cohort-cancel-first",
+            firstContext,
+            firstInput,
+            firstOutput,
+            policy);
+        await using var secondSession = CreateClientSession(
+            "compression-cohort-cancel-second",
+            secondContext,
+            secondInput,
+            secondOutput,
+            policy);
+        using var cancellation = new CancellationTokenSource();
+
+        var desired = new ResponseCompressionPreferenceSnapshot(1, false);
+        var convergence = SharpLinkClient.ApplyResponseCompressionPreferenceToCohortAsync(
+            [firstSession, secondSession],
+            desired,
+            cancellation.Token).AsTask();
+
+        var firstUpdate = await ReadPreferenceUpdateAsync(firstOutput.Reader, firstContext.Protocol);
+        var secondUpdate = await ReadPreferenceUpdateAsync(secondOutput.Reader, secondContext.Protocol);
+        Ensure(firstUpdate.Generation == desired.Generation && !firstUpdate.AllowResponseCompression,
+            "first cohort session must receive the desired update before caller cancellation");
+        Ensure(secondUpdate.Generation == desired.Generation && !secondUpdate.AllowResponseCompression,
+            "second cohort session must receive the desired update before caller cancellation");
+
+        cancellation.Cancel();
+        var failure = await CaptureExceptionAsync(convergence.WaitAsync(TimeSpan.FromSeconds(2)));
+        Ensure(failure is OperationCanceledException,
+            "caller cancellation must remain a cancellation for a multi-session cohort");
+        Ensure(failure is not AggregateException,
+            "caller cancellation must not be aggregated as a session convergence failure");
+
+        await firstOutput.Reader.CompleteAsync();
+        await firstInput.Writer.CompleteAsync();
+        await secondOutput.Reader.CompleteAsync();
+        await secondInput.Writer.CompleteAsync();
+    }
+
     private static SharpLinkRuntimeContext CreateContext(int maxSendQueueBytes)
         => new SharpLinkRuntimeContextBuilder()
             .Configure(options =>
