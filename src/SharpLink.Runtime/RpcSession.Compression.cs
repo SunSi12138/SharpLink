@@ -37,7 +37,15 @@ internal sealed partial class RpcSession
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Outbound frame payload exceeds the negotiated {maxFramePayloadBytes}-byte limit.");
         }
-        if (originalLength == 0 || originalLength < RuntimeContext.Compression.MinimumPayloadBytes)
+        var policy = _compressionSendPolicyState.Current;
+        if (!policy.Enabled)
+            return packet;
+        if (Role == RpcSessionRole.Server &&
+            !Volatile.Read(ref _appliedResponseCompressionPreference).Allowed)
+        {
+            return packet;
+        }
+        if (originalLength == 0 || originalLength < policy.MinimumPayloadBytes)
             return packet;
 
         var candidate = RuntimeContext.Buffers.Rent(
@@ -80,7 +88,7 @@ internal sealed partial class RpcSession
             }
 
             var actualWritten = candidate.WrittenCount - compressedStart;
-            if (!RuntimeContext.Compression.IsBeneficial(
+            if (!policy.IsBeneficial(
                     originalLength,
                     checked(actualWritten + sizeof(uint))))
             {

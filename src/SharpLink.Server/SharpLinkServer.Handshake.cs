@@ -67,6 +67,9 @@ internal sealed partial class SharpLinkServer
                     {
                         var acceptedNegotiation = negotiation ?? throw new InvalidOperationException(
                             "Authentication succeeded without a protocol negotiation result.");
+                        runtimeSession.InitializeServerResponseCompressionPreference(
+                            request.ResponseCompressionPreferenceGeneration,
+                            request.AllowResponseCompression);
                         await session.SendHandshakeResponseAndFlushAsync(
                             acceptedNegotiation.Response,
                             ct).ConfigureAwait(false);

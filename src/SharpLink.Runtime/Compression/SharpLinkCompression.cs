@@ -52,14 +52,11 @@ public interface ISharpLinkCompressionProvider
         CancellationToken cancellationToken = default);
 }
 
-/// <summary>Configures negotiated payload compression for one runtime context.</summary>
+/// <summary>Configures negotiated payload-compression capability for one runtime context.</summary>
 /// <example>
 /// <code>
-/// builder.UseRuntime(options =&gt;
-/// {
-///     options.Compression.Providers.Add(new MyCompressionProvider());
-///     options.Compression.MinimumPayloadBytes = 2048;
-/// });
+/// builder.UseRuntime(options =>
+///     options.Compression.Providers.Add(new MyCompressionProvider()));
 /// </code>
 /// </example>
 public sealed class SharpLinkCompressionOptions
@@ -75,25 +72,12 @@ public sealed class SharpLinkCompressionOptions
     /// </summary>
     public IList<ISharpLinkCompressionProvider> Providers { get; } = new List<ISharpLinkCompressionProvider>();
 
-    /// <summary>Gets or sets the smallest business payload considered for compression.</summary>
-    public int MinimumPayloadBytes { get; set; } = 1024;
-
-    /// <summary>Gets or sets the minimum absolute byte saving, including the original-length prefix.</summary>
-    public int MinimumSavingsBytes { get; set; } = 64;
-
-    /// <summary>Gets or sets the minimum fractional saving in the inclusive range 0 through 1.</summary>
-    public double MinimumSavingsRatio { get; set; } = 0.05;
-
-    /// <summary>Validates provider tokens and compression-benefit thresholds.</summary>
+    /// <summary>Validates provider tokens and uniqueness.</summary>
     public void Validate()
         => _ = ValidateAndCreateBindings();
 
     private List<SharpLinkCompressionProviderBinding> ValidateAndCreateBindings()
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(MinimumPayloadBytes);
-        ArgumentOutOfRangeException.ThrowIfNegative(MinimumSavingsBytes);
-        if (double.IsNaN(MinimumSavingsRatio) || MinimumSavingsRatio is < 0 or > 1)
-            throw new ArgumentOutOfRangeException(nameof(MinimumSavingsRatio));
         if (Providers.Count > MaxProviders)
             throw new ArgumentOutOfRangeException(nameof(Providers), $"At most {MaxProviders} providers may be configured.");
 
@@ -114,13 +98,7 @@ public sealed class SharpLinkCompressionOptions
     internal SharpLinkCompressionOptions CloneValidated()
     {
         var bindings = _providerBindings ?? ValidateAndCreateBindings();
-        var clone = new SharpLinkCompressionOptions
-        {
-            MinimumPayloadBytes = MinimumPayloadBytes,
-            MinimumSavingsBytes = MinimumSavingsBytes,
-            MinimumSavingsRatio = MinimumSavingsRatio,
-            _providerBindings = bindings
-        };
+        var clone = new SharpLinkCompressionOptions { _providerBindings = bindings };
         foreach (var provider in Providers)
             clone.Providers.Add(provider);
         return clone;
@@ -132,20 +110,9 @@ public sealed class SharpLinkCompressionOptions
 
     internal void CopyValidatedSnapshotTo(SharpLinkCompressionOptions destination)
     {
-        destination.MinimumPayloadBytes = MinimumPayloadBytes;
-        destination.MinimumSavingsBytes = MinimumSavingsBytes;
-        destination.MinimumSavingsRatio = MinimumSavingsRatio;
         foreach (var provider in Providers)
             destination.Providers.Add(provider);
         destination._providerBindings = ProviderBindings;
-    }
-
-    internal bool IsBeneficial(int originalBytes, int compressedBytes)
-    {
-        if (originalBytes < MinimumPayloadBytes || compressedBytes >= originalBytes)
-            return false;
-        var savings = originalBytes - compressedBytes;
-        return savings >= MinimumSavingsBytes && savings >= originalBytes * MinimumSavingsRatio;
     }
 
     internal SharpLinkCompressionProviderBinding? FindProviderBinding(string wireProfile)

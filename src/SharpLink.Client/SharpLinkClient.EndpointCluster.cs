@@ -9,6 +9,7 @@ internal sealed partial class SharpLinkClient
         int PendingCallCount { get; }
         int ActiveCallCount { get; }
         int ActiveStreamCount { get; }
+        ClientConnection[] CaptureReadyConnections();
         ValueTask ConnectAsync(CancellationToken cancellationToken);
         void BeginStop();
         ClientConnection GetReadyConnection(

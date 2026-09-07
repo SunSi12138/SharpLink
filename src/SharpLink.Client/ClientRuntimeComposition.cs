@@ -168,6 +168,8 @@ internal sealed class ClientRuntimeComposition
         ClientRuntimeTopologyComposition topology,
         ClientReadinessConfiguration readiness,
         SharpLinkRuntimeContext runtimeContext,
+        SharpLinkCompressionSendPolicy requestCompressionPolicy,
+        Func<CancellationToken, ValueTask>? beforeReadyPublicationTestHook,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
         FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> staticProxies,
         TimeSpan heartbeatInterval,
@@ -200,6 +202,9 @@ internal sealed class ClientRuntimeComposition
         }
         Readiness = readiness;
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
+        RequestCompressionPolicy = requestCompressionPolicy ?? throw new ArgumentNullException(nameof(requestCompressionPolicy));
+        _ = CompressionSendPolicySnapshot.CreateValidated(RequestCompressionPolicy);
+        BeforeReadyPublicationTestHook = beforeReadyPublicationTestHook;
         ArgumentNullException.ThrowIfNull(staticManifests);
         ArgumentNullException.ThrowIfNull(staticProxies);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
@@ -241,6 +246,10 @@ internal sealed class ClientRuntimeComposition
     internal ClientReadinessConfiguration Readiness { get; }
 
     internal SharpLinkRuntimeContext RuntimeContext { get; }
+
+    internal SharpLinkCompressionSendPolicy RequestCompressionPolicy { get; }
+
+    internal Func<CancellationToken, ValueTask>? BeforeReadyPublicationTestHook { get; }
 
     internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> StaticProxies { get; }
 

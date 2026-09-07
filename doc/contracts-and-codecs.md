@@ -73,16 +73,67 @@ Generated sidecar 不修改第三方类型，也不要求第三方类型是 `par
 
 ## 协商压缩
 
-Client 与 Server 在各自 `UseRuntime` 中按偏好顺序注册 provider：
+压缩公开模型分成四层，分别承担不同职责：
+
+- **Capability**：`SharpLinkCompressionOptions.Providers` / wire profile，只表示握手时可协商的 wire 能力。它不保存 Request/Response threshold，也不决定运行时是否发送压缩 payload。
+- **RequestPolicy**：Client 本地 outbound Request 与 Client -> Server `StreamData` 的发送策略，通过 `UseRequestCompressionPolicy` 设置初值，运行中通过 `UpdateRequestCompressionPolicy` 原子替换完整 snapshot。
+- **ResponsePolicy**：Server 本地 outbound Response 与 Server -> Client `StreamData` 的发送策略，通过 `UseResponseCompressionPolicy` 设置初值，运行中通过 `UpdateResponseCompressionPolicy` 原子替换完整 snapshot。
+- **ResponsePreference**：Client 对 Server response direction 的远端偏好，通过 `SetResponseCompressionPreferenceAsync` 发布并等待当前固定 Ready cohort 收敛；它不是 Server 本地 ResponsePolicy。
+
+Provider registration 与 directional initial policy 独立配置。例如：
 
 ```csharp
-builder.UseRuntime(options =>
+clientBuilder
+    .UseRuntime(options =>
+    {
+        options.Compression.Providers.Add(myCompressionProvider);
+    })
+    .UseRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
+    {
+        Enabled = true,
+        MinimumPayloadBytes = 2048,
+        MinimumSavingsBytes = 96,
+        MinimumSavingsRatio = 0.08
+    });
+
+serverBuilder
+    .UseRuntime(options =>
+    {
+        options.Compression.Providers.Add(myCompressionProvider);
+    })
+    .UseResponseCompressionPolicy(new SharpLinkCompressionSendPolicy
+    {
+        Enabled = true,
+        MinimumPayloadBytes = 2048,
+        MinimumSavingsBytes = 96,
+        MinimumSavingsRatio = 0.08
+    });
+```
+
+运行中替换本地方向策略不会重新协商 provider，也不会枚举 session；每条后续 outbound business message 在 compression decision point 只读取一次当前 immutable policy snapshot：
+
+```csharp
+client.UpdateRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
 {
-    options.Compression.Providers.Add(myCompressionProvider);
-    options.Compression.MinimumPayloadBytes = 2048;
+    Enabled = false
+});
+
+server.UpdateResponseCompressionPolicy(new SharpLinkCompressionSendPolicy
+{
+    Enabled = false
 });
 ```
 
-只有双方 wire profile 完全匹配才启用压缩；单边配置或无交集会安全退回原始帧。压缩只覆盖业务 payload，协议路由前缀保持可解析。只有同时达到最小 payload、绝对节省和比例节省阈值才发送压缩结果。解压输出仍受协商后的最大 frame payload 限制。
+`SetResponseCompressionPreferenceAsync` 是远端收敛 API：
+
+```csharp
+await client.SetResponseCompressionPreferenceAsync(false, cancellationToken);
+```
+
+调用会先发布 Client-instance desired `(Generation, AllowResponseCompression)`，再捕获当时所有 Ready 且实际协商出 Compression binding 的 session 作为固定 cohort，并等待这些 session 的累计 ACK 达到该 generation。等待期间关闭的 session 会确定性退出本次 cohort；之后新建或 reconnect 的 session 从 handshake 继承最新 desired preference，但不会加入已经开始的等待。`cancellationToken` 只取消当前调用方的 convergence wait，不回滚已经发布的 desired state。
+
+只有双方 wire profile 完全匹配才会产生 Compression binding；单边配置或无交集会安全退回原始帧，也不会创建远端 ResponsePreference control state。本地 Request/Response `Enabled = false` 不影响 provider advertisement，也不影响已协商 compressed inbound payload 的解压。
+
+压缩只覆盖业务 payload，协议路由前缀保持可解析。发送端先序列化业务 payload，再按当前方向 policy 判断 `Enabled`、最小 payload、绝对节省和比例节省阈值；所有条件都满足才发送压缩结果。解压输出仍受协商后的最大 frame payload 限制。
 
 运行证据：`demo/Compression` 使用应用自定义 provider、相同 wire profile 的不同 encode-only tuning 完成双向压缩并统计 provider 调用；Core 本身不携带具体算法。

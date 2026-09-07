@@ -68,6 +68,30 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     }
 
     /// <summary>
+    /// Atomically replaces the client-local Request compression policy. The next Request or
+    /// client-to-server StreamData frame captures the new policy at its compression decision point.
+    /// </summary>
+    /// <param name="policy">The complete replacement policy.</param>
+    void UpdateRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime request compression policy updates.");
+    }
+
+    /// <summary>
+    /// Publishes the desired Server-to-Client response compression preference and waits for the
+    /// fixed cohort of currently eligible Ready sessions to converge to at least that generation.
+    /// </summary>
+    /// <param name="allowResponseCompression">Whether response-direction compression is allowed.</param>
+    /// <param name="cancellationToken">Cancels only this caller's convergence wait; the desired state remains published.</param>
+    ValueTask SetResponseCompressionPreferenceAsync(
+        bool allowResponseCompression,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException(new NotSupportedException(
+            "This ISharpLinkClient implementation does not support response compression preference updates."));
+
+    /// <summary>
     /// Starts the topology-specific connectivity lifecycle and completes according to its existing
     /// connectivity boundary. This method does not wait for multi-endpoint convergence.
     /// </summary>

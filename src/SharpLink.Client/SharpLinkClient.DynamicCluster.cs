@@ -61,6 +61,12 @@ internal sealed partial class SharpLinkClient
         public int ActiveStreamCount => CountConnections(static connection =>
             connection.Session.StreamManager.ActiveStreamCount);
 
+        public ClientConnection[] CaptureReadyConnections()
+        {
+            lock (_gate)
+                return _connections.CaptureReadyConnections();
+        }
+
         public void BeginStop() => _lifecycle.BeginStop();
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken)
@@ -648,11 +654,14 @@ internal sealed partial class SharpLinkClient
                     new RpcSessionCreationOptions(
                         RpcSessionRole.Client,
                         _client._runtimeContext,
-                        _client._rpcSessionFlushOptions));
+                        _client._rpcSessionFlushOptions,
+                        _client._requestCompressionPolicy));
                 transport = null;
 
                 await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
                     .ConfigureAwait(false);
+                if (_client._beforeReadyPublicationTestHook is not null)
+                    await _client._beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);
 
                 var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_client._shutdownCts.Token);
                 var createdConnection = new ClientConnection(
@@ -678,6 +687,16 @@ internal sealed partial class SharpLinkClient
                     }
                     _connections.Add(endpoint, createdConnection);
                     PublishReadySnapshotLocked();
+                    try
+                    {
+                        _client.ReconcileResponseCompressionPreferenceAfterReadyPublication(session);
+                    }
+                    catch
+                    {
+                        _connections.Remove(endpoint, createdConnection);
+                        PublishReadySnapshotLocked();
+                        throw;
+                    }
                     session.NotifyConnected();
                     _lifecycle.TrackTask(
                         _client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token),

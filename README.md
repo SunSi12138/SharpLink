@@ -238,9 +238,6 @@ var server = SharpLinkServerBuilder.Create()
     .UseRuntime(options =>
     {
         options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
-        options.Compression.MinimumPayloadBytes = 2048;
-        options.Compression.MinimumSavingsBytes = 96;
-        options.Compression.MinimumSavingsRatio = 0.08;
     })
     .Build();
 ```

@@ -74,6 +74,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _heartbeatTimeout = composition.HeartbeatTimeout;
         _logger = composition.Logger;
         _runtimeContext = composition.RuntimeContext;
+        _responseCompressionPolicy = CompressionSendPolicyState.CreateInitial(composition.ResponseCompressionPolicy);
         _authentication = composition.Authentication;
         _protocolOptions = composition.ProtocolOptions;
         _rpcSessionFlushOptions = composition.RpcSessionFlushOptions;
