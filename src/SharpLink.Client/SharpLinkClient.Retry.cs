@@ -10,8 +10,15 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        var options = _retryOptions;
-        if (options is null || method.Kind != RpcMethodKind.Unary || !method.IsIdempotent)
+        if (method.Kind != RpcMethodKind.Unary || !method.IsIdempotent)
+        {
+            return InvokeUnaryCoreAsync(
+                method,
+                request, requestCodec, responseCodec, control, cancellationToken);
+        }
+
+        var generation = control.LogicalCall?.RetryGeneration ?? CaptureRetryGeneration();
+        if (!generation.Enabled)
         {
             return InvokeUnaryCoreAsync(
                 method,
@@ -19,7 +26,7 @@ internal sealed partial class SharpLinkClient
         }
 
         return InvokeUnaryWithRetryAsync(
-            method, request, requestCodec, responseCodec, control, options, cancellationToken);
+            method, request, requestCodec, responseCodec, control, generation, cancellationToken);
     }
 
     private async ValueTask<TResponse> InvokeUnaryWithRetryAsync<TRequest, TResponse>(
@@ -28,14 +35,15 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
-        SharpLinkRetryOptions options,
+        ClientRetryGeneration generation,
         CancellationToken cancellationToken)
     {
+        var settings = generation.Settings;
         Exception? lastFailure = null;
         var selection = _cluster is null ? null : new EndpointRetrySelectionState();
-        var requiresAttemptOutcome = _endpointAdmissionPolicy is not null || _retryPolicy is not null;
+        var requiresAttemptOutcome = _endpointAdmissionPolicy is not null || generation.Policy is not null;
         AttemptOutcomeState? outcome = null;
-        for (var attempt = 1; attempt <= options.MaxAttempts; attempt++)
+        for (var attempt = 1; attempt <= settings.MaxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             EnsureLogicalCallProgress(control);
@@ -74,15 +82,15 @@ internal sealed partial class SharpLinkClient
                 EnsureLogicalCallProgress(control);
 
                 lastFailure = exception;
-                if (attempt == options.MaxAttempts)
+                if (attempt == settings.MaxAttempts)
                     throw;
 
                 SharpLinkRetryDecision decision;
                 try
                 {
                     decision = outcome is null
-                        ? EvaluateDefaultRetryDecision(attempt, GetErrorCode(exception), options)
-                        : EvaluateRetryDecision(outcome.CreateRetryContext(attempt, exception), options);
+                        ? EvaluateDefaultRetryDecision(attempt, GetErrorCode(exception), settings)
+                        : EvaluateRetryDecision(outcome.CreateRetryContext(attempt, exception), generation);
                 }
                 catch
                 {
@@ -134,15 +142,15 @@ internal sealed partial class SharpLinkClient
         return exception;
     }
 
-    private SharpLinkRetryDecision EvaluateRetryDecision(
+    private static SharpLinkRetryDecision EvaluateRetryDecision(
         in SharpLinkRetryContext context,
-        SharpLinkRetryOptions options)
+        ClientRetryGeneration generation)
     {
-        if (_retryPolicy is not null)
+        if (generation.Policy is { } policy)
         {
             try
             {
-                return _retryPolicy.Evaluate(context);
+                return policy.Evaluate(context);
             }
             catch (Exception exception)
             {
@@ -153,32 +161,32 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        return EvaluateDefaultRetryDecision(context.Attempt, context.ErrorCode, options);
+        return EvaluateDefaultRetryDecision(context.Attempt, context.ErrorCode, generation.Settings);
     }
 
     private static SharpLinkRetryDecision EvaluateDefaultRetryDecision(
         int attempt,
         SharpLinkErrorCode? errorCode,
-        SharpLinkRetryOptions options)
+        ClientRetrySettings settings)
     {
         var retryable = errorCode is SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed;
         return retryable
-            ? new SharpLinkRetryDecision(true, GetRetryDelay(attempt, options))
+            ? new SharpLinkRetryDecision(true, GetRetryDelay(attempt, settings))
             : default;
     }
 
-    private static TimeSpan GetRetryDelay(int completedAttempt, SharpLinkRetryOptions options)
+    private static TimeSpan GetRetryDelay(int completedAttempt, ClientRetrySettings settings)
     {
-        var ticks = options.InitialBackoff.Ticks;
-        for (var index = 1; index < completedAttempt && ticks < options.MaxBackoff.Ticks; index++)
-            ticks = Math.Min(ticks > long.MaxValue / 2 ? long.MaxValue : ticks * 2, options.MaxBackoff.Ticks);
-        if (ticks == 0 || options.JitterRatio == 0)
+        var ticks = settings.InitialBackoff.Ticks;
+        for (var index = 1; index < completedAttempt && ticks < settings.MaxBackoff.Ticks; index++)
+            ticks = Math.Min(ticks > long.MaxValue / 2 ? long.MaxValue : ticks * 2, settings.MaxBackoff.Ticks);
+        if (ticks == 0 || settings.JitterRatio == 0)
             return TimeSpan.FromTicks(ticks);
 
-        var multiplier = 1 - options.JitterRatio + Random.Shared.NextDouble() * options.JitterRatio * 2;
+        var multiplier = 1 - settings.JitterRatio + Random.Shared.NextDouble() * settings.JitterRatio * 2;
         var jitteredTicks = ticks * multiplier;
-        var clampedTicks = jitteredTicks >= options.MaxBackoff.Ticks
-            ? options.MaxBackoff.Ticks
+        var clampedTicks = jitteredTicks >= settings.MaxBackoff.Ticks
+            ? settings.MaxBackoff.Ticks
             : (long)jitteredTicks;
         return TimeSpan.FromTicks(clampedTicks);
     }
