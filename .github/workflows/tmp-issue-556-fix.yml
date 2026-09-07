@@ -1,4 +1,4 @@
-name: Issue 556 runner probe
+name: Apply issue 556 minimal fix
 
 on:
   push:
@@ -6,10 +6,66 @@ on:
       - tmp/issue-556-fix-runner
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  probe:
+  apply:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
-      - run: echo runner-ok
+      - name: Checkout runner branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: tmp/issue-556-fix-runner
+          path: runner
+          persist-credentials: false
+
+      - name: Checkout validation PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: test/pending-pool-lifecycle-validation
+          path: target
+          fetch-depth: 0
+
+      - name: Apply minimal fix and validation updates
+        run: python3 runner/eng/tmp-issue-556-patch.py target
+
+      - name: Verify patch shape
+        working-directory: target
+        run: |
+          git diff --check
+          git diff --stat
+          test "$(git diff --name-only | wc -l)" -eq 4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build validation workers
+        working-directory: target
+        run: dotnet build test/SharpLink.UnitTests -c Release -v minimal
+
+      - name: Run deterministic issue 556 regression
+        working-directory: target
+        run: >-
+          python3 eng/validate-pending-lifecycle.py --mode regression
+          --scenario deadline-response
+          --scenario deadline-cancel
+          --scenario deadline-disconnect
+          --output artifacts/validation/issue-556-prepublish
+
+      - name: Commit and publish to validation PR
+        working-directory: target
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/SharpLink.Client/PendingRequestTable.cs \
+                  eng/validate-pending-lifecycle.py \
+                  docs/validation/pending-lifecycle.md \
+                  .github/workflows/pending-validation.yml
+          git commit -m "fix(client): bind deadline scan to pending identity"
+          git push origin HEAD:refs/heads/test/pending-pool-lifecycle-validation
