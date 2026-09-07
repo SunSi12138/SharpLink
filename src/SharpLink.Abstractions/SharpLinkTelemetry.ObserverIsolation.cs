@@ -12,14 +12,34 @@ internal static class SharpLinkTelemetryObserverIsolation
     internal static Activity? StartActivity(ActivitySource source, string name, ActivityKind kind)
     {
         var previous = Activity.Current;
+        Activity? activity;
         try
         {
-            return source.StartActivity(name, kind);
+            activity = source.CreateActivity(name, kind);
         }
         catch (Exception)
         {
-            // ActivityStarted callbacks run after the activity becomes current. Restore the
-            // caller's ambient context when an application listener aborts that notification.
+            // Sampling callbacks run during activity creation. They must not disturb the caller's
+            // ambient context even if application-owned sampling code changes it before throwing.
+            Activity.Current = previous;
+            return null;
+        }
+
+        if (activity is null)
+            return null;
+
+        try
+        {
+            activity.Start();
+            return activity;
+        }
+        catch (Exception)
+        {
+            // Activity.Start makes the activity current before synchronously notifying
+            // ActivityStarted listeners. If a later listener throws, earlier listeners may already
+            // have observed the start. Best-effort stop/dispose the activity so those observers can
+            // receive the matching ActivityStopped notification, then restore the original ambient.
+            DisposeActivity(activity);
             Activity.Current = previous;
             return null;
         }
