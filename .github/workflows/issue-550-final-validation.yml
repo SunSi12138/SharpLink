@@ -1,4 +1,4 @@
-# trigger: final-review-acceptance-20260907
+# trigger: second-review-followup-20260907
 name: Issue 550 Final Validation
 
 permissions:
@@ -21,10 +21,10 @@ jobs:
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
-      - name: Checkout review candidate
+      - name: Checkout second-review candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: tmp/issue-550-review-candidate
+          ref: tmp/issue-550-review2-candidate
           fetch-depth: 0
 
       - name: Rebase and squash onto current dev
@@ -38,7 +38,7 @@ jobs:
           BASE_SHA="$(git rev-parse origin/dev)"
           echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
 
-          git checkout -B issue-550-final tmp/issue-550-review-candidate
+          git checkout -B issue-550-final tmp/issue-550-review2-candidate
           git rebase origin/dev
           git reset --soft origin/dev
           git commit -m "feat(compression): add dynamic runtime policy control"
