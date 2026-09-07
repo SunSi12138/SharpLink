@@ -28,7 +28,9 @@ The real `RpcCodecProvider` resolves scalar, nullable, array, List, Memory, Read
 
 Regression mode requires every DateTime route to preserve the producer's `ticks + Kind`. It records UTC ticks as evidence but deliberately does not require Local/Unspecified UTC ticks to remain equal across zones. This catches any future reintroduction of instant-preserving scalar semantics while collections remain raw.
 
-The test input is January 15, 2026, away from DST transitions. DST ambiguity/invalid local times, cross-runtime layout compatibility and big-endian compatibility are outside this #558 regression. Generated DTO DateTime fields already use `RpcGeneratedCodecWire.WriteDateTime` / `ReadDateTime` raw fixed-value semantics and are source-audited here rather than being routed through the runtime scalar codec.
+A dedicated boundary regression also produces a valid `Local` value one hour below `DateTime.MaxValue` in UTC and decodes the exact scalar/nullable/collection payloads in Tokyo (UTC+9). Every route must accept the value and preserve its raw ticks + Kind. This specifically prevents collection validation from reusing `DateTime.FromBinary`, whose local-time adjustment can overflow near `DateTime.MaxValue` even though the raw `DateTime` itself is valid.
+
+The ordinary matrix input is January 15, 2026, away from DST transitions. DST ambiguity/invalid local times, cross-runtime layout compatibility and big-endian compatibility are outside this #558 regression. Generated DTO DateTime fields already use `RpcGeneratedCodecWire.WriteDateTime` / `ReadDateTime` raw fixed-value semantics and are source-audited here rather than being routed through the runtime scalar codec.
 
 ### Original evidence
 

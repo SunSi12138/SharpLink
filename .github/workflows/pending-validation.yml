@@ -7,6 +7,7 @@ on:
       - 'src/SharpLink.Abstractions/SharpLinkTelemetry.cs'
       - 'src/SharpLink.Client/PendingRequestTable.cs'
       - 'src/SharpLink.Client/SharpLinkClient.Attempts.cs'
+      - 'src/SharpLink.Runtime/Codec/CodecHelpers.cs'
       - 'src/SharpLink.Runtime/Codec/DateTimeCodec.cs'
       - 'test/SharpLink.UnitTests/Validation/**'
       - 'eng/validate-pending-lifecycle.py'

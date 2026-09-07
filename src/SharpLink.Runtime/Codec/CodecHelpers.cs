@@ -152,18 +152,6 @@ internal static class CodecHelpers
         }
     }
 
-    public static DateTime CreateDateTime(long binaryData)
-    {
-        try
-        {
-            return DateTime.FromBinary(binaryData);
-        }
-        catch (ArgumentException ex)
-        {
-            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Invalid DateTime payload.", ex);
-        }
-    }
-
     public static DateTimeOffset CreateDateTimeOffset(long ticks, short offsetMinutes)
     {
         try
@@ -255,10 +243,7 @@ internal static class CodecHelpers
         {
             var typed = MemoryMarshal.Cast<T, DateTime>(values);
             for (var index = 0; index < typed.Length; index++)
-            {
-                var value = typed[index];
-                _ = CreateDateTime(Unsafe.As<DateTime, long>(ref value));
-            }
+                _ = DateTimeCodec.ValidateRaw(typed[index]);
             return;
         }
         if (typeof(T) == typeof(TimeOnly))

@@ -23,10 +23,17 @@ public sealed class CodecValidationProbe
         var readOnlyMemoryCodec = provider.GetCodec<ReadOnlyMemory<DateTime>>();
         var immutableArrayCodec = provider.GetCodec<ImmutableArray<DateTime>>();
         var input = Environment.GetEnvironmentVariable("SHARPLINK_CODEC_INPUT");
+        var dateCase = Environment.GetEnvironmentVariable("SHARPLINK_DATE_CASE") ?? "normal";
         if (string.IsNullOrEmpty(input))
         {
             var kind = Enum.Parse<DateTimeKind>(Environment.GetEnvironmentVariable("SHARPLINK_DATE_KIND")!);
-            var value = new DateTime(2026, 1, 15, 12, 34, 56, kind);
+            var value = dateCase switch
+            {
+                "normal" => new DateTime(2026, 1, 15, 12, 34, 56, kind),
+                "max-local" when kind == DateTimeKind.Local =>
+                    new DateTime(DateTime.MaxValue.Ticks - TimeSpan.TicksPerHour, DateTimeKind.Local),
+                _ => throw new InvalidOperationException($"Unsupported DateTime validation case '{dateCase}' for {kind}.")
+            };
             var scalar = Encode(scalarCodec, value);
             var nullable = Encode(nullableCodec, (DateTime?)value);
             var array = Encode(arrayCodec, new[] { value });
@@ -46,6 +53,7 @@ public sealed class CodecValidationProbe
             {
                 phase = "complete",
                 operation = "write",
+                dateCase,
                 zone = TimeZoneInfo.Local.Id,
                 offsetTicks = TimeZoneInfo.Local.GetUtcOffset(value).Ticks,
                 source = Snapshot(value),
@@ -82,9 +90,10 @@ public sealed class CodecValidationProbe
         {
             phase = "complete",
             operation = "read",
+            dateCase,
             sourceZone = root.GetProperty("zone").GetString(),
             zone = TimeZoneInfo.Local.Id,
-            offsetTicks = TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 1, 15)).Ticks,
+            offsetTicks = TimeZoneInfo.Local.GetUtcOffset(decodedScalar).Ticks,
             source = root.GetProperty("source"),
             scalar = Snapshot(decodedScalar),
             nullable = Snapshot(decodedNullable),
@@ -225,8 +234,7 @@ public sealed class CodecValidationProbe
     }
 
     private static bool Same(DateTime left, DateTime right)
-        => left.Ticks == right.Ticks && left.Kind == right.Kind &&
-           left.ToUniversalTime().Ticks == right.ToUniversalTime().Ticks;
+        => left.Ticks == right.Ticks && left.Kind == right.Kind;
 
     private static object Snapshot(DateTime value)
         => new { ticks = value.Ticks, kind = value.Kind.ToString(), utcTicks = value.ToUniversalTime().Ticks };

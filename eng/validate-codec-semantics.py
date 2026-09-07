@@ -20,11 +20,11 @@ DATE_PATHS = ("scalar", "nullable", "array", "list", "memory", "readOnlyMemory",
 COLLECTION_PATHS = ("array", "list", "memory", "readOnlyMemory", "immutableArray")
 
 
-def worker(name, method, directory, zone="Etc/UTC", kind="Local", source=None):
+def worker(name, method, directory, zone="Etc/UTC", kind="Local", source=None, date_case="normal"):
     result = directory / (name + ".json")
     result.unlink(missing_ok=True)
     environment = dict(os.environ, TZ=zone, SHARPLINK_DATE_KIND=kind,
-                       SHARPLINK_VALIDATION_OUTPUT=str(result))
+                       SHARPLINK_DATE_CASE=date_case, SHARPLINK_VALIDATION_OUTPUT=str(result))
     environment.pop("SHARPLINK_CODEC_INPUT", None)
     if source is not None:
         environment["SHARPLINK_CODEC_INPUT"] = str(source)
@@ -117,6 +117,28 @@ def main():
                 failed = True
                 errors.append(str(error))
                 print(f"INFRASTRUCTURE FAILURE: {error}", file=sys.stderr, flush=True)
+    boundary_rows = []
+    if args.mode == "regression":
+        try:
+            produced, source = worker(
+                "boundary-max-local-write", "DateTimeCrossZone", directory,
+                "Etc/UTC", "Local", date_case="max-local")
+            if not produced["invariant"]:
+                raise RuntimeError("max-local: same-process roundtrip control failed")
+            report, _ = worker(
+                "boundary-max-local-to-Asia-Tokyo", "DateTimeCrossZone", directory,
+                "Asia/Tokyo", "Local", source, date_case="max-local")
+            raw_matched = matches_raw_contract(report)
+            report.update(boundaryCase="max-local", rawContractMatched=raw_matched,
+                          selectedModePassed=raw_matched)
+            failed |= not raw_matched
+            boundary_rows.append(report)
+            print(json.dumps(report), flush=True)
+        except Exception as error:
+            failed = True
+            errors.append(str(error))
+            print(f"INFRASTRUCTURE FAILURE: {error}", file=sys.stderr, flush=True)
+
     performance = None
     try:
         performance, _ = worker("datetimeoffset-fragmentation", "DateTimeOffsetFragmentation", directory)
@@ -130,9 +152,11 @@ def main():
         errors.append(str(error))
         print(f"INFRASTRUCTURE FAILURE: {error}", file=sys.stderr, flush=True)
     summary = dict(mode=args.mode, originalBaseline="acb160faa72a07835b01d049a2fbcf9070b061df",
-                   dateTime=rows, performance=performance, infrastructureErrors=errors,
+                   dateTime=rows, dateTimeBoundary=boundary_rows, performance=performance,
+                   infrastructureErrors=errors,
                    note=("Green regression means DateTime scalar, nullable and built-in collection paths preserve "
-                         "raw ticks + Kind across zones; DateTimeOffset timings remain measurement evidence only."))
+                         "raw ticks + Kind across zones, including a Local value one hour below DateTime.MaxValue "
+                         "decoded in UTC+9; DateTimeOffset timings remain measurement evidence only."))
     (directory / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return int(failed)
 
