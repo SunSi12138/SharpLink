@@ -68,6 +68,40 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     }
 
     /// <summary>
+    /// Gets the currently published client-wide request-timeout fallback generation.
+    /// Method-level timeout policy and inherited deadlines can still impose a different effective call lifetime.
+    /// </summary>
+    SharpLinkRequestTimeoutPolicySnapshot GetRequestTimeoutPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime request-timeout policy state.");
+
+    /// <summary>
+    /// Atomically publishes a custom client-wide request-timeout fallback for future logical RPCs.
+    /// A logical RPC that already captured an earlier generation keeps its frozen deadline across
+    /// interceptor suspension, retry attempts, and streaming lifetime.
+    /// </summary>
+    /// <param name="timeout">The positive timeout to publish.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="timeout"/> is not positive.</exception>
+    /// <exception cref="InvalidOperationException">The client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime request-timeout updates.</exception>
+    void UpdateRequestTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime request-timeout updates.");
+    }
+
+    /// <summary>
+    /// Atomically disables the client-wide request-timeout fallback for future logical RPCs.
+    /// Calls that already captured a timeout generation keep their existing deadline.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime request-timeout updates.</exception>
+    void DisableRequestTimeout()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime request-timeout updates.");
+
+    /// <summary>
     /// Atomically replaces the client-local Request compression policy. The next Request or
     /// client-to-server StreamData frame captures the new policy at its compression decision point.
     /// </summary>
