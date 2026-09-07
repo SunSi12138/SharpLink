@@ -10,12 +10,13 @@ internal sealed partial class SharpLinkClient
         var lifetimeSource = ClientCallLifetimeSource.None;
         try
         {
-            return ResolveCallControl(
+            var control = ResolveCallControl(
                 metadata,
                 includeClientDefault,
                 method.HasMethodTimeout,
                 method.MethodTimeout,
                 ref lifetimeSource);
+            return CaptureRetryGenerationForInvocation(method, control);
         }
         catch (SharpLinkException exception)
         {

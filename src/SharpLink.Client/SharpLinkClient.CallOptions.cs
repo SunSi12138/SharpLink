@@ -159,7 +159,8 @@ internal sealed partial class SharpLinkClient
     internal sealed class ClientLogicalCallState
     {
         private readonly RpcDeadline _deadline;
-        private readonly TimeProvider _timeProvider;
+        private readonly TimeProvider? _timeProvider;
+        private ClientRetryGeneration? _retryGeneration;
         private int _deadlineClaimed;
 
         internal ClientLogicalCallState(
@@ -170,11 +171,21 @@ internal sealed partial class SharpLinkClient
             _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         }
 
+        internal ClientLogicalCallState(ClientRetryGeneration retryGeneration)
+            => _retryGeneration = retryGeneration ?? throw new ArgumentNullException(nameof(retryGeneration));
+
+        internal ClientRetryGeneration? RetryGeneration => _retryGeneration;
+
+        internal void AttachRetryGeneration(ClientRetryGeneration retryGeneration)
+            => _retryGeneration = retryGeneration ?? throw new ArgumentNullException(nameof(retryGeneration));
+
         internal bool TryEnterProgress()
         {
+            if (!_deadline.HasValue)
+                return true;
             if (Volatile.Read(ref _deadlineClaimed) != 0)
                 return false;
-            if (_deadline.IsExpired(_timeProvider))
+            if (_deadline.IsExpired(_timeProvider!))
             {
                 _ = TryClaimDeadline();
                 return false;
@@ -183,7 +194,11 @@ internal sealed partial class SharpLinkClient
         }
 
         internal bool TryClaimDeadline()
-            => Interlocked.CompareExchange(ref _deadlineClaimed, 1, 0) == 0;
+        {
+            if (!_deadline.HasValue)
+                return false;
+            return Interlocked.CompareExchange(ref _deadlineClaimed, 1, 0) == 0;
+        }
     }
 
     internal readonly record struct ResolvedCallControl(
