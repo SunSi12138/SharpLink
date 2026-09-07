@@ -67,6 +67,57 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
             "This ISharpLinkClient implementation does not support runtime interceptor replacement.");
     }
 
+    /// <summary>Gets the currently published retry-policy generation.</summary>
+    SharpLinkRetryPolicySnapshot GetRetryPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime retry policy state.");
+
+    /// <summary>
+    /// Atomically publishes a built-in retry-policy generation for future logical RPCs.
+    /// The supplied values are copied and validated before publication.
+    /// </summary>
+    /// <param name="options">The complete bounded built-in retry settings.</param>
+    void UpdateRetryPolicy(ISharpLinkRetryOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+    }
+
+    /// <summary>
+    /// Atomically publishes a custom retry-policy generation for future logical RPCs using the same
+    /// default attempt bounds as <c>UseRetry(ISharpLinkRetryPolicy)</c>.
+    /// </summary>
+    /// <param name="policy">The application-owned synchronous retry decision policy.</param>
+    void UpdateRetryPolicy(ISharpLinkRetryPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+    }
+
+    /// <summary>
+    /// Atomically publishes a custom retry-policy generation and explicit bounded attempt settings
+    /// for future logical RPCs. The options are copied before publication.
+    /// </summary>
+    /// <param name="policy">The application-owned synchronous retry decision policy.</param>
+    /// <param name="limits">The complete bounded attempt settings captured with the custom policy.</param>
+    void UpdateRetryPolicy(ISharpLinkRetryPolicy policy, ISharpLinkRetryOptions limits)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(limits);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+    }
+
+    /// <summary>
+    /// Atomically disables retries for future logical RPCs. Calls already in progress retain their
+    /// captured retry generation through interceptor suspension, backoff and subsequent attempts.
+    /// </summary>
+    void DisableRetry()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+
     /// <summary>
     /// Atomically replaces the client-local Request compression policy. The next Request or
     /// client-to-server StreamData frame captures the new policy at its compression decision point.
