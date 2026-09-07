@@ -27,6 +27,10 @@ internal sealed partial class SharpLinkClient
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
 
+        // Capture exactly one client fallback generation at the logical-call creation boundary.
+        // Later runtime updates cannot alter this call's selected timeout or frozen deadline.
+        var requestTimeoutPolicy = CaptureRequestTimeoutGeneration().Policy;
+
         // Method policy overrides the client-wide fallback. These are policy-selection layers,
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
         // the client-wide value even on call shapes that do not otherwise use the client default.
@@ -36,10 +40,10 @@ internal sealed partial class SharpLinkClient
             selectedTimeout = explicitMethodTimeout;
             lifetimeSource = ClientCallLifetimeSource.MethodTimeout;
         }
-        else if ((hasMethodTimeout || includeClientDefault) && _hasRequestTimeout)
+        else if ((hasMethodTimeout || includeClientDefault) && requestTimeoutPolicy.HasTimeout)
         {
-            selectedTimeout = _requestTimeoutValue;
-            lifetimeSource = _requestTimeoutSource.ToLifetimeSource();
+            selectedTimeout = requestTimeoutPolicy.Timeout;
+            lifetimeSource = requestTimeoutPolicy.Source.ToLifetimeSource();
         }
         else
         {
