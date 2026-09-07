@@ -11,9 +11,13 @@ on:
       - 'src/SharpLink.Runtime/Codec/DateTimeCodec.cs'
       - 'src/SharpLink.Runtime/Codec/StructCodec.cs'
       - 'test/SharpLink.UnitTests/Validation/**'
+      - 'test/SharpLink.Benchmarks/PendingRequestMatrix*.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
       - 'eng/validate-pending-lifecycle.py'
       - 'eng/validate-codec-semantics.py'
       - 'eng/validate-datetimeoffset-performance.py'
+      - 'eng/run-pending-request-matrix.sh'
+      - 'doc/pending-request-matrix.md'
       - '.github/workflows/pending-validation.yml'
   workflow_dispatch:
 
@@ -100,4 +104,32 @@ jobs:
         with:
           name: pending-and-codec-evidence
           path: artifacts/validation
+          if-no-files-found: warn
+
+  issue-571-pending-request-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record issue 571 evidence provenance
+        run: |
+          mkdir -p artifacts/validation/issue-571
+          git rev-parse HEAD | tee artifacts/validation/issue-571/commit.txt
+          dotnet --info > artifacts/validation/issue-571/dotnet-info.txt
+          uname -a > artifacts/validation/issue-571/uname.txt
+          lscpu > artifacts/validation/issue-571/lscpu.txt
+      - name: Run issue 571 deterministic matrix smoke
+        run: bash eng/run-pending-request-matrix.sh ci artifacts/validation/issue-571/matrix
+      - name: Upload issue 571 matrix evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-571-pending-request-matrix
+          path: artifacts/validation/issue-571
           if-no-files-found: warn
