@@ -4,8 +4,10 @@ namespace SharpLink.Client;
 /// <remarks>
 /// <see cref="MaxAttempts"/> is the total number of attempts, including the first attempt. Retry is
 /// disabled until <see cref="SharpClientBuilder.UseRetry()"/> or an overload is called.
+/// Runtime updates copy these values before publication; subsequent mutation of this object does not
+/// alter an already published client generation.
 /// </remarks>
-public sealed class SharpLinkRetryOptions
+public sealed class SharpLinkRetryOptions : ISharpLinkRetryOptions
 {
     /// <summary>Gets or sets the total attempt limit from one through ten. The default is three.</summary>
     public int MaxAttempts { get; set; } = 3;
