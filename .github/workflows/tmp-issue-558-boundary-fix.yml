@@ -1,0 +1,44 @@
+name: Temporary issue 558 boundary fix
+
+on:
+  push:
+    branches: [tmp/issue-558-boundary-fix]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Preserve patcher and switch to validation PR branch
+        run: |
+          cp eng/tmp-issue-558-boundary-fix.py /tmp/issue-558-boundary-fix.py
+          git fetch origin test/pending-pool-lifecycle-validation
+          git checkout -B test/pending-pool-lifecycle-validation origin/test/pending-pool-lifecycle-validation
+      - uses: ./.github/actions/setup-dotnet
+      - name: Apply boundary fix
+        run: python3 /tmp/issue-558-boundary-fix.py
+      - name: Verify patch shape
+        run: |
+          git diff --check
+          git status --short
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = ".github/workflows/pending-validation.yml docs/validation/codec-semantics.md eng/validate-codec-semantics.py src/SharpLink.Runtime/Codec/CodecHelpers.cs test/SharpLink.UnitTests/Validation/CodecValidationProbe.cs " || \
+            test "$(git diff --name-only | sort | tr '\n' ' ')" = "docs/validation/codec-semantics.md eng/validate-codec-semantics.py src/SharpLink.Runtime/Codec/CodecHelpers.cs test/SharpLink.UnitTests/Validation/CodecValidationProbe.cs "
+      - name: Build validation worker
+        run: dotnet build test/SharpLink.UnitTests -c Release -v minimal
+      - name: Run issue 558 regression
+        run: python3 eng/validate-codec-semantics.py --mode regression --output artifacts/validation/issue-558-boundary
+      - name: Commit and publish production/test/docs patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/SharpLink.Runtime/Codec/CodecHelpers.cs test/SharpLink.UnitTests/Validation/CodecValidationProbe.cs eng/validate-codec-semantics.py docs/validation/codec-semantics.md
+          git commit -m "fix(codec): validate DateTime collections as raw values"
+          git push origin HEAD:test/pending-pool-lifecycle-validation
