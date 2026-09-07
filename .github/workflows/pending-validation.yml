@@ -7,6 +7,7 @@ on:
       - 'src/SharpLink.Abstractions/SharpLinkTelemetry.cs'
       - 'src/SharpLink.Client/PendingRequestTable.cs'
       - 'src/SharpLink.Client/SharpLinkClient.Attempts.cs'
+      - 'src/SharpLink.Runtime/Codec/DateTimeCodec.cs'
       - 'test/SharpLink.UnitTests/Validation/**'
       - 'eng/validate-pending-lifecycle.py'
       - 'eng/validate-codec-semantics.py'
@@ -53,7 +54,7 @@ jobs:
           path: artifacts/validation/issue-556
           if-no-files-found: warn
 
-  issue-557-regression-and-codec-characterization:
+  issue-557-and-558-regression-plus-559-characterization:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -82,9 +83,9 @@ jobs:
           --scenario logger-control
           --scenario logger-throw
           --output artifacts/validation/pending
-      - name: Validate DateTime semantics and measure fragmented DateTimeOffset collections
+      - name: Validate issue 558 raw DateTime semantics and measure issue 559 DateTimeOffset fragmentation
         if: ${{ !cancelled() && steps.pending.outcome != 'skipped' }}
-        run: python3 eng/validate-codec-semantics.py --mode characterize
+        run: python3 eng/validate-codec-semantics.py --mode regression
       - name: Upload complete validation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
