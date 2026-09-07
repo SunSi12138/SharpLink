@@ -54,8 +54,6 @@ internal sealed class ExtensionFaultHarness : IAsyncDisposable
                 .ReplaceService<IExtensionFaultService>(options.ServiceFactory, options.ServiceLifetime);
         }
 
-        if (options.ServerCodec is not null)
-            serverBuilder.UseCodec(options.ServerCodec);
         foreach (var interceptor in options.ServerInterceptors)
             serverBuilder.AddInterceptor(interceptor);
         if (options.EnableAdmissionControl)
@@ -87,8 +85,6 @@ internal sealed class ExtensionFaultHarness : IAsyncDisposable
                     Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
                 },
                 SharpLinkTransportFactories.Sockets());
-        if (options.ClientCodec is not null)
-            clientBuilder.UseCodec(options.ClientCodec);
         foreach (var interceptor in options.ClientInterceptors)
             clientBuilder.AddInterceptor(interceptor);
         if (options.EndpointAdmissionPolicy is not null)
@@ -182,8 +178,6 @@ internal sealed class ExtensionFaultHarnessOptions
     internal IExtensionFaultService? ServiceInstance { get; init; }
     internal Func<IServiceProvider, IExtensionFaultService>? ServiceFactory { get; init; }
     internal SharpLinkServiceLifetime ServiceLifetime { get; init; } = SharpLinkServiceLifetime.Call;
-    internal IRpcCodec<ExtensionFaultPayload>? ClientCodec { get; init; }
-    internal IRpcCodec<ExtensionFaultPayload>? ServerCodec { get; init; }
     internal IReadOnlyList<ISharpLinkClientInterceptor> ClientInterceptors { get; init; } = [];
     internal IReadOnlyList<ISharpLinkServerInterceptor> ServerInterceptors { get; init; } = [];
     internal ISharpLinkEndpointAdmissionPolicy? EndpointAdmissionPolicy { get; init; }
@@ -208,7 +202,16 @@ public interface IExtensionFaultService : IService
     ValueTask<string> GetSessionIdAsync();
 
     [NonCancellable]
-    ValueTask<ExtensionFaultPayload> EchoPayloadAsync(ExtensionFaultPayload value);
+    ValueTask<int> ConsumeClientSerializeFaultAsync(ClientSerializeFaultPayload value);
+
+    [NonCancellable]
+    ValueTask<int> ConsumeServerDeserializeFaultAsync(ServerDeserializeFaultPayload value);
+
+    [NonCancellable]
+    ValueTask<ServerSerializeFaultPayload> ProduceServerSerializeFaultAsync(int value);
+
+    [NonCancellable]
+    ValueTask<ClientDeserializeFaultPayload> ProduceClientDeserializeFaultAsync(int value);
 
     ValueTask<int> UploadAsync(
         IAsyncEnumerable<int> values,
@@ -226,7 +229,11 @@ public sealed class ExtensionFaultService : IExtensionFaultService, IAsyncDispos
     private int _failOnce = 1;
     private int _invocations;
 
-    internal ExtensionFaultService(bool throwOnDispose = false, bool failStreamAfterFirst = false)
+    public ExtensionFaultService()
+    {
+    }
+
+    internal ExtensionFaultService(bool throwOnDispose, bool failStreamAfterFirst = false)
     {
         _throwOnDispose = throwOnDispose;
         _failStreamAfterFirst = failStreamAfterFirst;
@@ -257,10 +264,28 @@ public sealed class ExtensionFaultService : IExtensionFaultService, IAsyncDispos
             SharpLinkCallContext.Current?.SessionId ?? "missing-session");
     }
 
-    public ValueTask<ExtensionFaultPayload> EchoPayloadAsync(ExtensionFaultPayload value)
+    public ValueTask<int> ConsumeClientSerializeFaultAsync(ClientSerializeFaultPayload value)
     {
         Interlocked.Increment(ref _invocations);
-        return ValueTask.FromResult(new ExtensionFaultPayload { Value = value.Value + 1 });
+        return ValueTask.FromResult(value.Value + 1);
+    }
+
+    public ValueTask<int> ConsumeServerDeserializeFaultAsync(ServerDeserializeFaultPayload value)
+    {
+        Interlocked.Increment(ref _invocations);
+        return ValueTask.FromResult(value.Value + 1);
+    }
+
+    public ValueTask<ServerSerializeFaultPayload> ProduceServerSerializeFaultAsync(int value)
+    {
+        Interlocked.Increment(ref _invocations);
+        return ValueTask.FromResult(new ServerSerializeFaultPayload { Value = value + 1 });
+    }
+
+    public ValueTask<ClientDeserializeFaultPayload> ProduceClientDeserializeFaultAsync(int value)
+    {
+        Interlocked.Increment(ref _invocations);
+        return ValueTask.FromResult(new ClientDeserializeFaultPayload { Value = value + 1 });
     }
 
     public async ValueTask<int> UploadAsync(
@@ -292,42 +317,108 @@ public sealed class ExtensionFaultService : IExtensionFaultService, IAsyncDispos
             : ValueTask.CompletedTask;
 }
 
-[SharpPackable]
-public partial class ExtensionFaultPayload
+[RpcCodec(typeof(ClientSerializeFaultPayloadCodec))]
+public sealed class ClientSerializeFaultPayload
 {
     public int Value { get; set; }
 }
 
-internal enum CodecFaultStage
+[RpcCodec(typeof(ServerDeserializeFaultPayloadCodec))]
+public sealed class ServerDeserializeFaultPayload
 {
-    None,
-    Serialize,
-    Deserialize
+    public int Value { get; set; }
 }
 
-internal sealed class OneShotFaultCodec(CodecFaultStage stage) : IRpcCodec<ExtensionFaultPayload>
+[RpcCodec(typeof(ServerSerializeFaultPayloadCodec))]
+public sealed class ServerSerializeFaultPayload
 {
-    private int _remaining = stage == CodecFaultStage.None ? 0 : 1;
+    public int Value { get; set; }
+}
 
-    public void Serialize(in ExtensionFaultPayload value, IBufferWriter<byte> writer)
+[RpcCodec(typeof(ClientDeserializeFaultPayloadCodec))]
+public sealed class ClientDeserializeFaultPayload
+{
+    public int Value { get; set; }
+}
+
+[RpcCodecSemanticIdentity(0x5760000000000001UL, 0xA11CE00000000001UL)]
+public sealed class ClientSerializeFaultPayloadCodec : IRpcCodec<ClientSerializeFaultPayload>
+{
+    private int _remaining = 1;
+
+    public void Serialize(in ClientSerializeFaultPayload value, IBufferWriter<byte> writer)
     {
-        if (stage == CodecFaultStage.Serialize && Interlocked.Exchange(ref _remaining, 0) != 0)
-            throw new InvalidOperationException("injected codec serialization failure");
+        if (Interlocked.Exchange(ref _remaining, 0) != 0)
+            throw new InvalidOperationException("injected client request serialization failure");
+        FaultCodecWire.Write(value.Value, writer);
+    }
+
+    public ClientSerializeFaultPayload Deserialize(in ReadOnlySequence<byte> buffer)
+        => new() { Value = FaultCodecWire.Read(buffer) };
+}
+
+[RpcCodecSemanticIdentity(0x5760000000000002UL, 0xA11CE00000000002UL)]
+public sealed class ServerDeserializeFaultPayloadCodec : IRpcCodec<ServerDeserializeFaultPayload>
+{
+    private int _remaining = 1;
+
+    public void Serialize(in ServerDeserializeFaultPayload value, IBufferWriter<byte> writer)
+        => FaultCodecWire.Write(value.Value, writer);
+
+    public ServerDeserializeFaultPayload Deserialize(in ReadOnlySequence<byte> buffer)
+    {
+        if (Interlocked.Exchange(ref _remaining, 0) != 0)
+            throw new InvalidOperationException("injected server request deserialization failure");
+        return new ServerDeserializeFaultPayload { Value = FaultCodecWire.Read(buffer) };
+    }
+}
+
+[RpcCodecSemanticIdentity(0x5760000000000003UL, 0xA11CE00000000003UL)]
+public sealed class ServerSerializeFaultPayloadCodec : IRpcCodec<ServerSerializeFaultPayload>
+{
+    private int _remaining = 1;
+
+    public void Serialize(in ServerSerializeFaultPayload value, IBufferWriter<byte> writer)
+    {
+        if (Interlocked.Exchange(ref _remaining, 0) != 0)
+            throw new InvalidOperationException("injected server response serialization failure");
+        FaultCodecWire.Write(value.Value, writer);
+    }
+
+    public ServerSerializeFaultPayload Deserialize(in ReadOnlySequence<byte> buffer)
+        => new() { Value = FaultCodecWire.Read(buffer) };
+}
+
+[RpcCodecSemanticIdentity(0x5760000000000004UL, 0xA11CE00000000004UL)]
+public sealed class ClientDeserializeFaultPayloadCodec : IRpcCodec<ClientDeserializeFaultPayload>
+{
+    private int _remaining = 1;
+
+    public void Serialize(in ClientDeserializeFaultPayload value, IBufferWriter<byte> writer)
+        => FaultCodecWire.Write(value.Value, writer);
+
+    public ClientDeserializeFaultPayload Deserialize(in ReadOnlySequence<byte> buffer)
+    {
+        if (Interlocked.Exchange(ref _remaining, 0) != 0)
+            throw new InvalidOperationException("injected client response deserialization failure");
+        return new ClientDeserializeFaultPayload { Value = FaultCodecWire.Read(buffer) };
+    }
+}
+
+internal static class FaultCodecWire
+{
+    internal static void Write(int value, IBufferWriter<byte> writer)
+    {
         var span = writer.GetSpan(sizeof(int));
-        BinaryPrimitives.WriteInt32LittleEndian(span, value.Value);
+        BinaryPrimitives.WriteInt32LittleEndian(span, value);
         writer.Advance(sizeof(int));
     }
 
-    public ExtensionFaultPayload Deserialize(in ReadOnlySequence<byte> buffer)
+    internal static int Read(in ReadOnlySequence<byte> buffer)
     {
-        if (stage == CodecFaultStage.Deserialize && Interlocked.Exchange(ref _remaining, 0) != 0)
-            throw new InvalidOperationException("injected codec deserialization failure");
         Span<byte> bytes = stackalloc byte[sizeof(int)];
         buffer.CopyTo(bytes);
-        return new ExtensionFaultPayload
-        {
-            Value = BinaryPrimitives.ReadInt32LittleEndian(bytes)
-        };
+        return BinaryPrimitives.ReadInt32LittleEndian(bytes);
     }
 }
 
@@ -447,13 +538,24 @@ internal sealed class ThrowingLoggerFactory : ILoggerFactory
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(
             LogLevel logLevel,
             EventId eventId,
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter)
-            => throw new InvalidOperationException("injected logger failure");
+        {
+            _ = logLevel;
+            _ = eventId;
+            var message = formatter(state, exception);
+            if (message.Contains(
+                    "endpoint admission policy report failed",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("injected logger failure");
+            }
+        }
     }
 
     private static readonly ILogger Logger = new ThrowingLogger();

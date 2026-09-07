@@ -148,34 +148,45 @@ public sealed class ExtensionFaultContainmentTests
     [Test]
     public async Task CodecFaultsShouldReleasePendingStateAndKeepProtocolConnectionReusable()
     {
-        var cases = new[]
-        {
-            new CodecCase("client request serialization", new OneShotFaultCodec(CodecFaultStage.Serialize), new OneShotFaultCodec(CodecFaultStage.None)),
-            new CodecCase("server request deserialization", new OneShotFaultCodec(CodecFaultStage.None), new OneShotFaultCodec(CodecFaultStage.Deserialize)),
-            new CodecCase("server response serialization", new OneShotFaultCodec(CodecFaultStage.None), new OneShotFaultCodec(CodecFaultStage.Serialize)),
-            new CodecCase("client response deserialization", new OneShotFaultCodec(CodecFaultStage.Deserialize), new OneShotFaultCodec(CodecFaultStage.None))
-        };
-
-        foreach (var testCase in cases)
-        {
-            await using var harness = await ExtensionFaultHarness.CreateAsync(new ExtensionFaultHarnessOptions
+        await RunCodecFaultCaseAsync(
+            "client request serialization",
+            service => service.ConsumeClientSerializeFaultAsync(
+                new ClientSerializeFaultPayload { Value = 10 }).AsTask(),
+            async service =>
             {
-                ClientCodec = testCase.ClientCodec,
-                ServerCodec = testCase.ServerCodec
+                var value = await service.ConsumeClientSerializeFaultAsync(
+                    new ClientSerializeFaultPayload { Value = 20 }).ConfigureAwait(false);
+                Ensure(value == 21, "client request serialization recovery result");
             });
 
-            var failure = await CaptureFailureAsync(harness.Service
-                .EchoPayloadAsync(new ExtensionFaultPayload { Value = 10 })
-                .AsTask());
-            Ensure(failure is not null, $"{testCase.Name} should fail the injected RPC");
-            await harness.AssertClientIdleAsync(testCase.Name);
+        await RunCodecFaultCaseAsync(
+            "server request deserialization",
+            service => service.ConsumeServerDeserializeFaultAsync(
+                new ServerDeserializeFaultPayload { Value = 10 }).AsTask(),
+            async service =>
+            {
+                var value = await service.ConsumeServerDeserializeFaultAsync(
+                    new ServerDeserializeFaultPayload { Value = 20 }).ConfigureAwait(false);
+                Ensure(value == 21, "server request deserialization recovery result");
+            });
 
-            var recovered = await harness.Service
-                .EchoPayloadAsync(new ExtensionFaultPayload { Value = 20 })
-                .ConfigureAwait(false);
-            Ensure(recovered.Value == 21, $"{testCase.Name} should not contaminate the next codec lifecycle");
-            await harness.AssertReusableAsync(testCase.Name);
-        }
+        await RunCodecFaultCaseAsync(
+            "server response serialization",
+            service => service.ProduceServerSerializeFaultAsync(10).AsTask(),
+            async service =>
+            {
+                var value = await service.ProduceServerSerializeFaultAsync(20).ConfigureAwait(false);
+                Ensure(value.Value == 21, "server response serialization recovery result");
+            });
+
+        await RunCodecFaultCaseAsync(
+            "client response deserialization",
+            service => service.ProduceClientDeserializeFaultAsync(10).AsTask(),
+            async service =>
+            {
+                var value = await service.ProduceClientDeserializeFaultAsync(20).ConfigureAwait(false);
+                Ensure(value.Value == 21, "client response deserialization recovery result");
+            });
     }
 
     [Test]
@@ -199,7 +210,9 @@ public sealed class ExtensionFaultContainmentTests
     {
         await using var harness = await ExtensionFaultHarness.CreateAsync(new ExtensionFaultHarnessOptions
         {
-            ServiceInstance = new ExtensionFaultService(failStreamAfterFirst: true)
+            ServiceInstance = new ExtensionFaultService(
+                throwOnDispose: false,
+                failStreamAfterFirst: true)
         });
         var stream = harness.Service.StreamAsync(3);
         await using var enumerator = stream.GetAsyncEnumerator();
@@ -301,6 +314,19 @@ public sealed class ExtensionFaultContainmentTests
         await harness.AssertReusableAsync("100-cycle repeated fault reuse");
     }
 
+    private static async Task RunCodecFaultCaseAsync(
+        string name,
+        Func<IExtensionFaultService, Task> failCall,
+        Func<IExtensionFaultService, Task> recoveredCall)
+    {
+        await using var harness = await ExtensionFaultHarness.CreateAsync();
+        var failure = await CaptureFailureAsync(failCall(harness.Service));
+        Ensure(failure is not null, $"{name} should fail the injected RPC");
+        await harness.AssertClientIdleAsync(name);
+        await recoveredCall(harness.Service).ConfigureAwait(false);
+        await harness.AssertReusableAsync(name);
+    }
+
     private static async Task<Exception?> CaptureFailureAsync(Task task)
     {
         try
@@ -319,11 +345,6 @@ public sealed class ExtensionFaultContainmentTests
         if (!condition)
             throw new Exception($"assert failed: {name}");
     }
-
-    private readonly record struct CodecCase(
-        string Name,
-        IRpcCodec<ExtensionFaultPayload> ClientCodec,
-        IRpcCodec<ExtensionFaultPayload> ServerCodec);
 
     private sealed class AlternatingClientInterceptorFault : ISharpLinkClientInterceptor
     {
