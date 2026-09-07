@@ -1,0 +1,91 @@
+name: Extension fault containment
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'src/SharpLink.Abstractions/SharpLinkEndpointAdmission.cs'
+      - 'src/SharpLink.Abstractions/SharpLinkInterceptors.cs'
+      - 'src/SharpLink.Abstractions/SharpLinkRetry.cs'
+      - 'src/SharpLink.Abstractions/SharpLinkTelemetry.cs'
+      - 'src/SharpLink.Client/SharpLinkClient.Attempts.cs'
+      - 'src/SharpLink.Client/SharpLinkClient.Interceptors.cs'
+      - 'src/SharpLink.Client/SharpLinkClient.Invokers.cs'
+      - 'src/SharpLink.Client/SharpLinkClient.Retry.cs'
+      - 'src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs'
+      - 'src/SharpLink.Server/ServiceRegistration.cs'
+      - 'src/SharpLink.Server/SharpLinkServer.Interceptors.cs'
+      - 'test/SharpLink.IntegrationTests/ExtensionFaultContainment*.cs'
+      - 'doc/extension-fault-containment.md'
+      - '.github/workflows/extension-fault-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-fault-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  p0-extension-fault-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record issue 576 provenance
+        run: |
+          mkdir -p artifacts/validation/issue-576
+          git rev-parse HEAD | tee artifacts/validation/issue-576/commit.txt
+          dotnet --info > artifacts/validation/issue-576/dotnet-info.txt
+          uname -a > artifacts/validation/issue-576/uname.txt
+          lscpu > artifacts/validation/issue-576/lscpu.txt
+
+      - name: Build integration fault matrix
+        run: dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
+
+      - name: Run P0 extension fault matrix
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet run \
+            -c Release --no-build \
+            --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj \
+            -- \
+            --treenode-filter '/*/*/ExtensionFaultContainmentTests/*' \
+            --maximum-parallel-tests 1 \
+            --timeout 120s \
+            2>&1 | tee artifacts/validation/issue-576/p0.log
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('artifacts/validation/issue-576')
+          commit = (root / 'commit.txt').read_text(encoding='utf-8').strip()
+          (root / 'summary.json').write_text(json.dumps({
+              'phase': 'complete',
+              'invariant': True,
+              'issue': 576,
+              'tier': 'p0',
+              'commit': commit,
+              'suite': 'ExtensionFaultContainmentTests',
+          }, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Upload issue 576 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-576-extension-fault-containment
+          path: artifacts/validation/issue-576
+          if-no-files-found: warn
+          retention-days: 90
