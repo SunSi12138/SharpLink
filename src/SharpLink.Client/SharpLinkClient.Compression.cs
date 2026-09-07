@@ -70,6 +70,10 @@ internal sealed partial class SharpLinkClient
                     desired.Generation,
                     cancellationToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)
             {
             }
