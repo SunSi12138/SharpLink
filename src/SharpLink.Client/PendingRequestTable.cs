@@ -995,6 +995,36 @@ internal sealed class PendingRequestTable : IDisposable
         return id != 0 ? id : Interlocked.Increment(ref _nextId);
     }
 
+    private bool TryTakeExpiredCallAtIndex(
+        PendingCall?[] slots,
+        int index,
+        PendingCall expected,
+        long expectedId,
+        out PendingCall? call)
+    {
+        lock (expected.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), expected) ||
+                expected.Id != expectedId ||
+                !expected.Deadline.HasValue ||
+                !expected.Deadline.IsExpired(_timeProvider))
+            {
+                call = null;
+                return false;
+            }
+
+            if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, expected), expected))
+            {
+                call = null;
+                return false;
+            }
+
+            expected.WaitUntilRegistered();
+            call = expected;
+            return true;
+        }
+    }
+
     private void ScanExpiredDeadlines()
     {
         if (Volatile.Read(ref _disposed) != 0)
@@ -1007,15 +1037,27 @@ internal sealed class PendingRequestTable : IDisposable
         for (var index = 0; index < slots.Length; index++)
         {
             var call = Volatile.Read(ref slots[index]);
-            if (call is null || !call.Deadline.HasValue)
+            if (call is null)
                 continue;
-            if (call.Deadline.IsExpired(_timeProvider))
+
+            // This first sample is only a cheap candidate filter. The request identity,
+            // authoritative deadline check and slot removal are revalidated together below.
+            var expectedId = call.Id;
+            var deadline = call.Deadline;
+            if (!deadline.HasValue)
+                continue;
+            if (deadline.IsExpired(_timeProvider))
             {
-                TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
+                if (!TryTakeExpiredCallAtIndex(slots, index, call, expectedId, out var expiredCall))
+                    continue;
+
+                var emptyPayload = ReadOnlySequence<byte>.Empty;
+                CompleteTakenCall(
+                    expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
             }
             else
             {
-                _deadlineScheduler.Observe(call.Deadline);
+                _deadlineScheduler.Observe(deadline);
             }
         }
     }
