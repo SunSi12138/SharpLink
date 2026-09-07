@@ -153,7 +153,10 @@ public static class SharpLinkTelemetry
         if (!ClientActivitySource.HasListeners())
             return default;
 
-        var activity = ClientActivitySource.StartActivity("sharplink.rpc.attempt", ActivityKind.Client);
+        var activity = SharpLinkTelemetryObserverIsolation.StartActivity(
+            ClientActivitySource,
+            "sharplink.rpc.attempt",
+            ActivityKind.Client);
         if (activity is null)
             return default;
         if (activity.IsAllDataRequested)
@@ -179,93 +182,80 @@ public static class SharpLinkTelemetry
         if (side == "client")
             Interlocked.Increment(ref _clientActiveConnectionCount);
     }
+
     internal static void ConnectionClosed(string side)
     {
         RecordDelta(ActiveConnections, -1, side);
         if (side == "client")
             Interlocked.Decrement(ref _clientActiveConnectionCount);
     }
+
     internal static void AddAdmittedConnections(long count) => RecordDelta(AdmittedConnections, count, "server");
     internal static void AddActiveHandshakes(long count) => RecordDelta(ActiveHandshakes, count, "server");
+
     internal static void RecordConnectionRejected(string reason)
-    {
-        if (!RejectedConnections.Enabled)
-            return;
-        RejectedConnections.Add(
+        => SharpLinkTelemetryObserverIsolation.Add(
+            RejectedConnections,
             1,
             new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
-    }
+
     internal static void AddClientActiveEndpoints(long count)
     {
         if (count != 0)
             Interlocked.Add(ref _clientActiveEndpointCount, count);
     }
+
     internal static void AddClientReadyEndpoints(long count)
     {
         if (count != 0)
             Interlocked.Add(ref _clientReadyEndpointCount, count);
     }
+
     internal static void AddClientDrainingEndpoints(long count)
     {
         if (count != 0)
             Interlocked.Add(ref _clientDrainingEndpointCount, count);
     }
+
     internal static void RecordClientResolverUpdate()
-    {
-        if (ClientResolverUpdates.Enabled)
-            ClientResolverUpdates.Add(1);
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(ClientResolverUpdates, 1);
+
     internal static void RecordClientResolverFailure()
-    {
-        if (ClientResolverFailures.Enabled)
-            ClientResolverFailures.Add(1);
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(ClientResolverFailures, 1);
+
     internal static void AddClientRetiringConnections(long count)
     {
         if (count != 0)
             Interlocked.Add(ref _clientRetiringConnectionCount, count);
     }
+
     internal static void ReconnectAttempt() => Record(Reconnects, 1, "client");
     internal static void RecordSentBytes(long bytes) => RecordPositive(SentBytes, bytes);
     internal static void RecordReceivedBytes(long bytes) => RecordPositive(ReceivedBytes, bytes);
     internal static void AddSendQueueBytes(long bytes) => RecordDelta(SendQueueBytes, bytes);
-    internal static void AddPendingRequests(long count)
-    {
-        try
-        {
-            RecordDelta(PendingRequests, count, "client");
-        }
-        catch (Exception)
-        {
-            // MeterListener callbacks are application-owned diagnostics. Pending registration,
-            // completion, and capacity accounting must never depend on them succeeding.
-        }
-    }
+    internal static void AddPendingRequests(long count) => RecordDelta(PendingRequests, count, "client");
     internal static void AddActiveStreams(long count) => RecordDelta(ActiveStreams, count);
     internal static void RecordProtocolFailure(string side) => Record(ProtocolFailures, 1, side);
     internal static void RecordAuthenticationFailure(string side) => Record(AuthenticationFailures, 1, side);
+
     internal static void RecordResourceExhausted(
         string side,
         string reason = SharpLinkResourceExhaustion.Unspecified)
-    {
-        if (!ResourceExhausted.Enabled)
-            return;
-        ResourceExhausted.Add(
+        => SharpLinkTelemetryObserverIsolation.Add(
+            ResourceExhausted,
             1,
             new KeyValuePair<string, object?>("rpc.side", side),
             new KeyValuePair<string, object?>("rpc.sharplink.resource_exhaustion_reason", reason));
-    }
+
     internal static void RecordAbandonedCall(string side, string terminationReason)
-    {
-        if (!AbandonedCalls.Enabled)
-            return;
-        AbandonedCalls.Add(
+        => SharpLinkTelemetryObserverIsolation.Add(
+            AbandonedCalls,
             1,
             new KeyValuePair<string, object?>("rpc.side", side),
             new KeyValuePair<string, object?>(
                 "rpc.sharplink.termination_reason",
                 terminationReason));
-    }
+
     internal static void RecordLateResponseDropped(string side)
         => Record(LateDroppedResponses, 1, side);
     internal static void RecordForcedStopCalls(long count) => RecordPositive(ForcedStopCalls, count);
@@ -275,54 +265,50 @@ public static class SharpLinkTelemetry
         => RecordDelta(AdmissionQueuedCalls, count);
     internal static void AddAdmissionActivePartitions(long count)
         => RecordDelta(AdmissionActivePartitions, count);
+
     internal static void RecordAdmissionQueueDuration(TimeSpan duration)
     {
-        if (duration >= TimeSpan.Zero && AdmissionQueueDuration.Enabled)
-            AdmissionQueueDuration.Record(duration.TotalSeconds);
+        if (duration >= TimeSpan.Zero)
+            SharpLinkTelemetryObserverIsolation.Record(
+                AdmissionQueueDuration,
+                duration.TotalSeconds);
     }
+
     internal static void RecordAdmissionRejected(string scope, string reason)
-    {
-        if (!AdmissionRejectedCalls.Enabled)
-            return;
-        AdmissionRejectedCalls.Add(
+        => SharpLinkTelemetryObserverIsolation.Add(
+            AdmissionRejectedCalls,
             1,
             new KeyValuePair<string, object?>("sharplink.admission.scope", scope),
             new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
-    }
+
     internal static void RecordAdmissionOneWayDropped(string scope, string reason)
-    {
-        if (!AdmissionOneWayDropped.Enabled)
-            return;
-        AdmissionOneWayDropped.Add(
+        => SharpLinkTelemetryObserverIsolation.Add(
+            AdmissionOneWayDropped,
             1,
             new KeyValuePair<string, object?>("sharplink.admission.scope", scope),
             new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
-    }
+
     internal static void RecordClientAttempt()
-    {
-        if (ClientAttempts.Enabled)
-            ClientAttempts.Add(1);
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(ClientAttempts, 1);
+
     internal static void RecordClientRetry()
-    {
-        if (ClientRetries.Enabled)
-            ClientRetries.Add(1);
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(ClientRetries, 1);
+
     internal static void RecordEndpointAdmissionRejected(string reason)
-    {
-        if (EndpointAdmissionRejected.Enabled)
-            EndpointAdmissionRejected.Add(1, new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(
+            EndpointAdmissionRejected,
+            1,
+            new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
+
     internal static void RecordSelectionFailure(string reason)
-    {
-        if (SelectionFailures.Enabled)
-            SelectionFailures.Add(1, new KeyValuePair<string, object?>("sharplink.selection.reason", reason));
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(
+            SelectionFailures,
+            1,
+            new KeyValuePair<string, object?>("sharplink.selection.reason", reason));
+
     internal static void RecordBreakerOpen()
-    {
-        if (BreakerOpen.Enabled)
-            BreakerOpen.Add(1);
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(BreakerOpen, 1);
+
     internal static void RecordMultiClusterMutation(string operation, string result, TimeSpan duration)
     {
         var tags = new TagList
@@ -330,63 +316,69 @@ public static class SharpLinkTelemetry
             { "sharplink.multicluster.operation", operation },
             { "sharplink.multicluster.result", result }
         };
-        if (MultiClusterMutations.Enabled)
-            MultiClusterMutations.Add(1, tags);
-        if (duration >= TimeSpan.Zero && MultiClusterMutationDuration.Enabled)
-            MultiClusterMutationDuration.Record(duration.TotalMilliseconds, tags);
+        SharpLinkTelemetryObserverIsolation.Add(MultiClusterMutations, 1, tags);
+        if (duration >= TimeSpan.Zero)
+        {
+            SharpLinkTelemetryObserverIsolation.Record(
+                MultiClusterMutationDuration,
+                duration.TotalMilliseconds,
+                tags);
+        }
     }
+
     internal static void RecordSharedMemoryConnection(string side, int capacity)
-    {
-        if (!SharedMemoryConnections.Enabled)
-            return;
-        SharedMemoryConnections.Add(
+        => SharpLinkTelemetryObserverIsolation.Add(
+            SharedMemoryConnections,
             1,
             new KeyValuePair<string, object?>("rpc.side", side),
             new KeyValuePair<string, object?>("sharplink.shared_memory.capacity", capacity),
             new KeyValuePair<string, object?>("sharplink.shared_memory.notification_backend", "named-pipe-control"));
-    }
+
     internal static void RecordSharedMemoryDirectWriteBytes(long bytes)
         => RecordPositive(SharedMemoryDirectWriteBytes, bytes);
+
     internal static void RecordSharedMemorySpillBytes(long bytes, string reason)
     {
-        if (bytes <= 0 || !SharedMemorySpillBytes.Enabled)
-            return;
-        SharedMemorySpillBytes.Add(
-            bytes,
-            new KeyValuePair<string, object?>("sharplink.shared_memory.spill_reason", reason));
+        if (bytes > 0)
+        {
+            SharpLinkTelemetryObserverIsolation.Add(
+                SharedMemorySpillBytes,
+                bytes,
+                new KeyValuePair<string, object?>("sharplink.shared_memory.spill_reason", reason));
+        }
     }
+
     internal static void RecordSharedMemorySpillCopyBytes(long bytes)
         => RecordPositive(SharedMemorySpillCopyBytes, bytes);
     internal static void RecordSharedMemoryStagingBytes(long bytes)
         => RecordPositive(SharedMemoryStagingBytes, bytes);
     internal static void RecordSharedMemoryStagingCopyBytes(long bytes)
         => RecordPositive(SharedMemoryStagingCopyBytes, bytes);
+
     internal static void RecordSharedMemoryWait(string kind)
-    {
-        if (SharedMemoryWaits.Enabled)
-            SharedMemoryWaits.Add(1, new KeyValuePair<string, object?>("sharplink.shared_memory.wait_kind", kind));
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(
+            SharedMemoryWaits,
+            1,
+            new KeyValuePair<string, object?>("sharplink.shared_memory.wait_kind", kind));
+
     internal static void RecordSharedMemoryNotificationRequest(string kind)
         => RecordSharedMemoryNotificationMetric(SharedMemoryNotificationRequests, kind);
     internal static void RecordSharedMemoryNotificationCoalesced(string kind)
         => RecordSharedMemoryNotificationMetric(SharedMemoryNotificationCoalesced, kind);
     internal static void RecordSharedMemoryNotification(string kind)
         => RecordSharedMemoryNotificationMetric(SharedMemoryNotifications, kind);
+
     internal static void RecordSharedMemoryCursorRefresh(string kind)
-    {
-        if (SharedMemoryCursorRefreshes.Enabled)
-            SharedMemoryCursorRefreshes.Add(
-                1,
-                new KeyValuePair<string, object?>("sharplink.shared_memory.cursor_kind", kind));
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(
+            SharedMemoryCursorRefreshes,
+            1,
+            new KeyValuePair<string, object?>("sharplink.shared_memory.cursor_kind", kind));
 
     private static void RecordSharedMemoryNotificationMetric(Counter<long> instrument, string kind)
-    {
-        if (instrument.Enabled)
-            instrument.Add(
-                1,
-                new KeyValuePair<string, object?>("sharplink.shared_memory.notification_kind", kind));
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(
+            instrument,
+            1,
+            new KeyValuePair<string, object?>("sharplink.shared_memory.notification_kind", kind));
 
     private static bool CallMetricsEnabled =>
         StartedCalls.Enabled || CompletedCalls.Enabled || FailedCalls.Enabled ||
@@ -405,18 +397,18 @@ public static class SharpLinkTelemetry
         Activity? activity = null;
         if (source.HasListeners())
         {
-            activity = source.StartActivity("sharplink.rpc", kind);
-            if (activity is not null)
+            activity = SharpLinkTelemetryObserverIsolation.StartActivity(
+                source,
+                "sharplink.rpc",
+                kind);
+            if (activity is not null && activity.IsAllDataRequested)
             {
-                if (activity.IsAllDataRequested)
-                {
-                    activity.SetTag("rpc.system", "sharplink");
-                    activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
-                    activity.SetTag("rpc.sharplink.method_id", method.MethodId);
-                    activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
-                    if (requestId != 0)
-                        activity.SetTag("rpc.sharplink.request_id", requestId);
-                }
+                activity.SetTag("rpc.system", "sharplink");
+                activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
+                activity.SetTag("rpc.sharplink.method_id", method.MethodId);
+                activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
+                if (requestId != 0)
+                    activity.SetTag("rpc.sharplink.request_id", requestId);
             }
         }
 
@@ -426,29 +418,32 @@ public static class SharpLinkTelemetry
     }
 
     private static void Record(Counter<long> instrument, long value, string side)
-    {
-        if (!instrument.Enabled)
-            return;
-        instrument.Add(value, new KeyValuePair<string, object?>("rpc.side", side));
-    }
+        => SharpLinkTelemetryObserverIsolation.Add(
+            instrument,
+            value,
+            new KeyValuePair<string, object?>("rpc.side", side));
 
     private static void RecordPositive(Counter<long> instrument, long value)
     {
-        if (value > 0 && instrument.Enabled)
-            instrument.Add(value);
+        if (value > 0)
+            SharpLinkTelemetryObserverIsolation.Add(instrument, value);
     }
 
     private static void RecordDelta(UpDownCounter<long> instrument, long value)
     {
-        if (value != 0 && instrument.Enabled)
-            instrument.Add(value);
+        if (value != 0)
+            SharpLinkTelemetryObserverIsolation.Add(instrument, value);
     }
 
     private static void RecordDelta(UpDownCounter<long> instrument, long value, string side)
     {
-        if (value == 0 || !instrument.Enabled)
-            return;
-        instrument.Add(value, new KeyValuePair<string, object?>("rpc.side", side));
+        if (value != 0)
+        {
+            SharpLinkTelemetryObserverIsolation.Add(
+                instrument,
+                value,
+                new KeyValuePair<string, object?>("rpc.side", side));
+        }
     }
 
     private static void RecordCallMetric(
@@ -468,7 +463,7 @@ public static class SharpLinkTelemetry
         };
         if (status is { } code)
             tags.Add("rpc.sharplink.status", code.ToString());
-        instrument.Add(value, tags);
+        SharpLinkTelemetryObserverIsolation.Add(instrument, value, tags);
     }
 
     private static void RecordCallDelta(
@@ -476,15 +471,12 @@ public static class SharpLinkTelemetry
         long value,
         string side,
         RpcMethodDescriptor method)
-    {
-        if (!instrument.Enabled)
-            return;
-        instrument.Add(
+        => SharpLinkTelemetryObserverIsolation.Add(
+            instrument,
             value,
             new KeyValuePair<string, object?>("rpc.side", side),
             new KeyValuePair<string, object?>("rpc.sharplink.contract_id", method.ContractId),
             new KeyValuePair<string, object?>("rpc.sharplink.method_id", method.MethodId));
-    }
 
     internal struct CallScope
     {
@@ -555,9 +547,12 @@ public static class SharpLinkTelemetry
                     { "rpc.sharplink.method_id", _method.MethodId },
                     { "rpc.sharplink.status", status?.ToString() ?? "Ok" }
                 };
-                RequestDuration.Record(Stopwatch.GetElapsedTime(_started).TotalMilliseconds, tags);
+                SharpLinkTelemetryObserverIsolation.Record(
+                    RequestDuration,
+                    Stopwatch.GetElapsedTime(_started).TotalMilliseconds,
+                    tags);
             }
-            _activity?.Dispose();
+            SharpLinkTelemetryObserverIsolation.DisposeActivity(_activity);
         }
     }
 
@@ -591,7 +586,7 @@ public static class SharpLinkTelemetry
                 _activity?.SetStatus(ActivityStatusCode.Error, status);
                 _activity?.SetTag("error.type", exception.GetType().FullName);
             }
-            _activity?.Dispose();
+            SharpLinkTelemetryObserverIsolation.DisposeActivity(_activity);
         }
     }
 }
