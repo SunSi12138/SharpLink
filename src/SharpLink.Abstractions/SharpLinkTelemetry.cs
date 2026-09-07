@@ -229,7 +229,18 @@ public static class SharpLinkTelemetry
     internal static void RecordSentBytes(long bytes) => RecordPositive(SentBytes, bytes);
     internal static void RecordReceivedBytes(long bytes) => RecordPositive(ReceivedBytes, bytes);
     internal static void AddSendQueueBytes(long bytes) => RecordDelta(SendQueueBytes, bytes);
-    internal static void AddPendingRequests(long count) => RecordDelta(PendingRequests, count, "client");
+    internal static void AddPendingRequests(long count)
+    {
+        try
+        {
+            RecordDelta(PendingRequests, count, "client");
+        }
+        catch (Exception)
+        {
+            // MeterListener callbacks are application-owned diagnostics. Pending registration,
+            // completion, and capacity accounting must never depend on them succeeding.
+        }
+    }
     internal static void AddActiveStreams(long count) => RecordDelta(ActiveStreams, count);
     internal static void RecordProtocolFailure(string side) => Record(ProtocolFailures, 1, side);
     internal static void RecordAuthenticationFailure(string side) => Record(AuthenticationFailures, 1, side);

@@ -148,7 +148,15 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception reportException)
             {
-                _client._logger.LogError(reportException, "SharpLink endpoint admission policy report failed.");
+                try
+                {
+                    _client._logger.LogError(reportException, "SharpLink endpoint admission policy report failed.");
+                }
+                catch (Exception)
+                {
+                    // Reporting the admission diagnostic already failed. A secondary logger
+                    // failure must not escape into the authoritative pending-call completion.
+                }
             }
         }
     }

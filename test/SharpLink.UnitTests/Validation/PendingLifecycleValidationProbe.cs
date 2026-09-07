@@ -163,8 +163,8 @@ public sealed class PendingLifecycleValidationProbe
             var call = table.Count == 0 ? null : Slot(table);
             var registered = call is null ? -1 : (int)call.GetType().GetField("_registered",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(call)!;
-            // This file is written atomically BEFORE Dispose. The outer process must
-            // see this exact state before treating a timeout as evidence of the bug.
+            // This file is written atomically BEFORE Dispose. On a broken baseline the outer
+            // watchdog still uses it to distinguish the known published/unregistered hang.
             Write(new
             {
                 phase = "dispose-enter",
@@ -179,16 +179,37 @@ public sealed class PendingLifecycleValidationProbe
                 ownerRegistered = owner.Registered
             });
             table.Dispose();
-            Write(new { phase = "dispose-returned", scenario });
-            if (operation is not null)
-                _ = await Observe(operation.AsValueTask().AsTask());
-            Write(new { phase = "complete", scenario, invariant = table.ActiveCount == 0 && table.Count == 0 });
+            var operationError = operation is null
+                ? null
+                : await Observe(operation.AsValueTask().AsTask());
+            var active = table.ActiveCount;
+            var count = table.Count;
+            Write(new
+            {
+                phase = "complete",
+                scenario,
+                countBefore,
+                activeBefore,
+                registered,
+                hits,
+                positiveHits,
+                negativeHits,
+                escaped = escaped?.GetType().Name,
+                ownerRegistered = owner.Registered,
+                operationError,
+                active,
+                count,
+                invariant = escaped is null && registered == 1 && owner.Registered == 1 &&
+                    operationError == SharpLinkErrorCode.ConnectionClosed.ToString() &&
+                    active == 0 && count == 0
+            });
             return;
         }
 
         string? operationError = null;
         if (operation is not null)
             operationError = await Observe(operation.AsValueTask().AsTask());
+        var ownerRegisteredBeforeNext = owner.Registered;
         var nextSucceeded = false;
         string? nextError = null;
         try
@@ -216,9 +237,12 @@ public sealed class PendingLifecycleValidationProbe
             negativeHits,
             escaped = escaped?.GetType().Name,
             operationError,
+            ownerRegisteredBeforeNext,
             nextSucceeded,
             nextError,
-            invariant = nextSucceeded && table.ActiveCount == 0 && table.Count == 0
+            invariant = escaped is null && operationError is null &&
+                ownerRegisteredBeforeNext == 1 && nextSucceeded &&
+                table.ActiveCount == 0 && table.Count == 0
         });
     }
 
