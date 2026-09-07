@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated baseline characterization OR correct-invariant checks. No production fixes.
+"""Isolated baseline characterization or selected correct-invariant regression checks.
 
 Build first: dotnet build test/SharpLink.UnitTests -c Release
 Run: python3 eng/validate-pending-lifecycle.py --mode characterize
@@ -104,15 +104,18 @@ def baseline_matches(name, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("characterize", "regression"), default="regression")
+    parser.add_argument("--scenario", action="append", choices=SCENARIOS,
+                        help="Run only the selected scenario; may be repeated.")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/validation/pending")
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("The process-tree watchdog currently requires POSIX; use the Linux CI job.")
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
+    selected_scenarios = tuple(args.scenario) if args.scenario else SCENARIOS
     reports = []
     failed = False
-    for scenario in SCENARIOS:
+    for scenario in selected_scenarios:
         try:
             report = run_probe(scenario, args.output)
             matched = baseline_matches(scenario, report)
@@ -126,6 +129,7 @@ def main():
             reports.append(dict(scenario=scenario, infrastructureError=str(error)))
             print(f"INFRASTRUCTURE FAILURE: {error}", file=sys.stderr, flush=True)
     summary = dict(mode=args.mode, baseline="acb160faa72a07835b01d049a2fbcf9070b061df",
+                   scenarios=selected_scenarios,
                    note="Characterization PASS means exact baseline bugs reproduced, NOT correctness PASS.",
                    reports=reports)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

@@ -1,18 +1,23 @@
-# Pending lifecycle validation — tests only
+# Pending lifecycle validation — #556 fix + #557 evidence
 
-Issues: #556, #557. Production baseline: `dev@acb160faa72a07835b01d049a2fbcf9070b061df`.
+Issues: #556, #557. Characterization baseline: `dev@acb160faa72a07835b01d049a2fbcf9070b061df`.
 
-No production source, public API, wire format, or policy is changed. This PR does not close the issues and must not be described as a fix.
+#556 now carries its minimal production fix in this validation PR. #557 remains characterization/evidence only. No public API, wire format, pool topology, or global synchronization policy is changed; neither issue is auto-closed by this PR.
 
 ## Run and interpretation
 
 ```sh
 dotnet build test/SharpLink.UnitTests -c Release
-python3 eng/validate-pending-lifecycle.py --mode characterize
-python3 eng/validate-pending-lifecycle.py --mode regression
+# #556: the three deterministic deadline-reuse scenarios must now satisfy the correct invariant.
+python3 eng/validate-pending-lifecycle.py --mode regression \
+  --scenario deadline-response --scenario deadline-cancel --scenario deadline-disconnect
+# #557 and controls remain characterization evidence in this PR.
+python3 eng/validate-pending-lifecycle.py --mode characterize \
+  --scenario no-listener --scenario metric-control --scenario metric-minus \
+  --scenario metric-plus --scenario logger-control --scenario logger-throw
 ```
 
-The default is **regression**, checking correct invariants. The CI step explicitly selects **characterize**: green means healthy controls pass AND each precise suspected baseline failure is observed. It does NOT mean the invariants pass. Every scenario's `invariant` is recorded in `artifacts/validation/pending/summary.json`. Startup, build, filtering, worker exceptions, and unarmed timeouts are infrastructure failures, never positive reproductions. The characterization gate will fail after a fix until its expectations are intentionally updated.
+The default is **regression**, checking correct invariants. CI now runs #556's three deadline scenarios in regression mode while the remaining #557 scenarios stay in characterize mode. Every scenario's `invariant` is recorded in its evidence directory. Startup, build, filtering, worker exceptions, and unarmed timeouts are infrastructure failures, never positive reproductions.
 
 The evidence workflow checks out the PR head SHA, not the moving merge ref, and archives `commit.txt` and `dotnet-info.txt`. PR Fast separately checks the normal merge ref against current dev. Do not attribute head-baseline experiments to a newer untested production commit.
 
@@ -22,7 +27,7 @@ Each scenario runs in a fresh filtered TUnit process, so no unrelated test can a
 
 B must rent the **same object reference** with a distinct ID and a future deadline. Releasing the scanner lets the old deadline check finish before it reads the recycled object's ID. The assertions distinguish fixture setup failure from a successful premature timeout. Correct behavior is that B remains pending, then completes only from its own response. No sleeps, stress loops, production hooks, pool clearing, or simulated replacement implementation are used to produce the interleaving.
 
-This is an investigation harness tied to the existing synchronization boundary. A later fix that moves IsExpired under CompletionGate can legitimately prevent the competing completion from progressing while this gate is held. Such a change requires adapting the coordination to the new boundary, not interpreting a fixture timeout as another reproduction. The driver rejects unarmed timeouts.
+The #556 fix intentionally keeps the first deadline sample as a non-authoritative candidate filter, so this deterministic barrier still forces the original A -> B object-reuse interleaving. Before a timeout is actually committed, the scanner enters the existing CompletionGate, revalidates the slot reference and captured request ID, rechecks the current deadline, and only then removes the slot. Therefore the same fixture now proves the ABA is rejected: B stays pending and completes from its own response. The driver still rejects unarmed timeouts.
 
 ## Metric experiments
 
