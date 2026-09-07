@@ -49,6 +49,23 @@ internal sealed partial class SharpLinkClient
         public int ActiveStreamCount => CountConnections(static connection =>
             connection.Session.StreamManager.ActiveStreamCount);
 
+        public ClientConnection[] CaptureReadyConnections()
+        {
+            lock (_gate)
+            {
+                var ready = new List<ClientConnection>();
+                for (var index = 0; index < _endpoints.Length; index++)
+                {
+                    foreach (var connection in _endpoints[index].Connections)
+                    {
+                        if (connection.CanAcceptCalls)
+                            ready.Add(connection);
+                    }
+                }
+                return ready.Count == 0 ? [] : ready.ToArray();
+            }
+        }
+
         public void BeginStop()
         {
             lock (_gate)
@@ -437,11 +454,14 @@ internal sealed partial class SharpLinkClient
                     new RpcSessionCreationOptions(
                         RpcSessionRole.Client,
                         _client._runtimeContext,
-                        _client._rpcSessionFlushOptions));
+                        _client._rpcSessionFlushOptions,
+                        _client._requestCompressionPolicy));
                 transport = null;
 
                 await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
                     .ConfigureAwait(false);
+                if (_client._beforeReadyPublicationTestHook is not null)
+                    await _client._beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);
 
                 var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_client._shutdownCts.Token);
                 var createdConnection = new ClientConnection(
@@ -463,6 +483,16 @@ internal sealed partial class SharpLinkClient
                         throw CreateConnectionClosedException("Client stopped while connecting.");
                     endpoint.Connections.Add(createdConnection);
                     PublishReadySnapshotLocked();
+                    try
+                    {
+                        _client.ReconcileResponseCompressionPreferenceAfterReadyPublication(session);
+                    }
+                    catch
+                    {
+                        endpoint.Connections.Remove(createdConnection);
+                        PublishReadySnapshotLocked();
+                        throw;
+                    }
                     session.NotifyConnected();
                     _client.TrackFrameworkTask(
                         _client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token),

@@ -78,6 +78,8 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.HealthCheck => ProtocolV2FrameType.HealthCheck,
         (byte)ProtocolV2FrameType.HealthResponse => ProtocolV2FrameType.HealthResponse,
         (byte)ProtocolV2FrameType.ContractManifest => ProtocolV2FrameType.ContractManifest,
+        (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
+        (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -99,7 +101,9 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.Ping or
             ProtocolV2FrameType.Pong or
             ProtocolV2FrameType.GoAway or
-            ProtocolV2FrameType.ContractManifest;
+            ProtocolV2FrameType.ContractManifest or
+            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
         if (!controlFrame && requestId == 0)
@@ -128,6 +132,8 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.HealthCheck => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.HealthResponse => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameFlags.None,
             _ => ProtocolV2FrameFlags.None
         };
         if ((flags & ~allowed) != 0)
@@ -156,8 +162,8 @@ public static class ProtocolV2FrameParser
         switch (type)
         {
             case ProtocolV2FrameType.HandshakeRequest:
-                if (payload.Length < 32 || payload.Length >
-                    36L + limits.MaxMetadataBytes +
+                if (payload.Length < 41 || payload.Length >
+                    45L + limits.MaxMetadataBytes +
                     SharpLinkCompressionOptions.MaxProviders * (1 + SharpLinkCompressionProfile.MaxAsciiBytes))
                     throw Violation("HandshakeRequest payload has an invalid bounded length.");
                 break;
@@ -238,6 +244,12 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.ContractManifest:
                 ProtocolV2ContractManifestCodec.ValidatePayloadShape(payload, limits);
+                break;
+            case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
+                _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
+                break;
+            case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
+                _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload);
                 break;
         }
     }

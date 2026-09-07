@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using SharpLink.Abstractions;
 using SharpLink.Compression.Zstd;
 using SharpLink.Runtime;
 
@@ -16,6 +17,12 @@ namespace SharpLink.Benchmarks;
 /// <summary>Issue #430 feasibility and performance evidence for the official Zstandard profile.</summary>
 public static class CompressionZstdEvidenceRunner
 {
+    private static readonly SharpLinkCompressionSendPolicy CompressionEvidencePolicy = new()
+    {
+        MinimumPayloadBytes = 0,
+        MinimumSavingsBytes = 0,
+        MinimumSavingsRatio = 0
+    };
     private static readonly int[] SFullPayloadSizes = [4 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024];
     private static readonly int[] SWanPayloadSizes = [64 * 1024, 256 * 1024, 1024 * 1024];
     private static readonly int[] SFullConcurrency = [1, 8, 32, 128];
@@ -199,7 +206,9 @@ public static class CompressionZstdEvidenceRunner
             await using var compressed = await CreateEnvironmentAsync(
                 transport,
                 options => ConfigureCompression(options, serverCompression),
-                options => ConfigureCompression(options, clientCompression)).ConfigureAwait(false);
+                options => ConfigureCompression(options, clientCompression),
+                configureBuiltServer: static server => server.UpdateResponseCompressionPolicy(CompressionEvidencePolicy),
+                configureBuiltClient: static client => client.UpdateRequestCompressionPolicy(CompressionEvidencePolicy)).ConfigureAwait(false);
             foreach (var size in sizes)
             {
                 foreach (var pattern in SPatterns)
@@ -226,15 +235,21 @@ public static class CompressionZstdEvidenceRunner
     private static Task<BenchmarkEnvironment> CreateEnvironmentAsync(
         string transport,
         Action<SharpLinkRuntimeOptions>? configureServerRuntime,
-        Action<SharpLinkRuntimeOptions>? configureClientRuntime)
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime,
+        Action<ISharpLinkServer>? configureBuiltServer = null,
+        Action<ISharpLinkClient>? configureBuiltClient = null)
         => transport switch
         {
             "tcp" => BenchmarkEnvironment.CreateAsync(
                 configureServerRuntime: configureServerRuntime,
-                configureClientRuntime: configureClientRuntime),
+                configureClientRuntime: configureClientRuntime,
+                configureBuiltServer: configureBuiltServer,
+                configureBuiltClient: configureBuiltClient),
             "sharedmemory" => BenchmarkEnvironment.CreateSharedMemoryAsync(
                 configureServerRuntime,
-                configureClientRuntime),
+                configureClientRuntime,
+                configureBuiltServer,
+                configureBuiltClient),
             _ => throw new ArgumentOutOfRangeException(nameof(transport), transport, null)
         };
 
@@ -242,9 +257,6 @@ public static class CompressionZstdEvidenceRunner
         SharpLinkRuntimeOptions options,
         ISharpLinkCompressionProvider provider)
     {
-        options.Compression.MinimumPayloadBytes = 0;
-        options.Compression.MinimumSavingsBytes = 0;
-        options.Compression.MinimumSavingsRatio = 0;
         options.Compression.Providers.Add(provider);
     }
 

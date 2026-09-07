@@ -49,7 +49,11 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Returns the endpoint's health status.</summary>
     HealthResponse = 12,
     /// <summary>Publishes the server's current contract-to-assembly wire identities.</summary>
-    ContractManifest = 13
+    ContractManifest = 13,
+    /// <summary>Updates the client's desired server-to-client response compression preference.</summary>
+    ResponseCompressionPreferenceUpdate = 14,
+    /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
+    ResponseCompressionPreferenceAck = 15
 }
 
 /// <summary>Protocol v2 frame flags.</summary>
@@ -128,6 +132,8 @@ public readonly record struct ProtocolV2FrameHeader(
 /// <param name="ConnectionReceiveWindowBytes">The client's initial aggregate receive window for the connection.</param>
 /// <param name="AuthenticationPayload">Opaque credentials supplied to the server authentication provider.</param>
 /// <param name="CompressionProfiles">Compression profiles supported by the client, in preference order.</param>
+/// <param name="ResponseCompressionPreferenceGeneration">The client-instance desired response-compression state generation.</param>
+/// <param name="AllowResponseCompression">Whether the client currently allows the server to compress response-direction business payloads.</param>
 public readonly record struct ProtocolV2HandshakeRequest(
     ushort MinorVersion,
     ProtocolV2Capabilities SupportedCapabilities,
@@ -136,7 +142,9 @@ public readonly record struct ProtocolV2HandshakeRequest(
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
     ReadOnlyMemory<byte> AuthenticationPayload,
-    ReadOnlyMemory<string> CompressionProfiles = default);
+    ReadOnlyMemory<string> CompressionProfiles = default,
+    ulong ResponseCompressionPreferenceGeneration = 0,
+    bool AllowResponseCompression = true);
 
 /// <summary>Protocol v2 negotiated handshake response values.</summary>
 /// <param name="MinorVersion">The protocol minor version selected by the server.</param>
@@ -152,6 +160,18 @@ public readonly record struct ProtocolV2HandshakeResponse(
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
     string? CompressionProfile = null);
+
+/// <summary>Updates the client preference governing future server response-compression decisions.</summary>
+/// <param name="Generation">The monotonic desired-state generation.</param>
+/// <param name="AllowResponseCompression">Whether response-direction compression is allowed.</param>
+public readonly record struct ProtocolV2ResponseCompressionPreferenceUpdate(
+    ulong Generation,
+    bool AllowResponseCompression);
+
+/// <summary>Acknowledges the cumulative response-compression preference generation applied by the server.</summary>
+/// <param name="AppliedGeneration">The greatest preference generation published by the server for this session.</param>
+public readonly record struct ProtocolV2ResponseCompressionPreferenceAck(
+    ulong AppliedGeneration);
 
 /// <summary>Returns consumed byte credit for one request stream.</summary>
 /// <param name="StreamId">The request-local stream identifier, or zero for connection-level credit.</param>

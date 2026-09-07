@@ -37,9 +37,6 @@ finally
 
 static void ConfigureCompression(SharpLinkRuntimeOptions options, ISharpLinkCompressionProvider provider)
 {
-    options.Compression.MinimumPayloadBytes = 64;
-    options.Compression.MinimumSavingsBytes = 8;
-    options.Compression.MinimumSavingsRatio = 0;
     options.Compression.Providers.Add(provider);
 }
 

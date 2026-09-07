@@ -71,7 +71,9 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.GoAway or
                     ProtocolV2FrameType.HealthCheck or
                     ProtocolV2FrameType.HealthResponse or
-                    ProtocolV2FrameType.ContractManifest,
+                    ProtocolV2FrameType.ContractManifest or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceAck,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or
@@ -81,7 +83,9 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.StreamComplete or
                     ProtocolV2FrameType.WindowUpdate or
                     ProtocolV2FrameType.GoAway or
-                    ProtocolV2FrameType.HealthResponse,
+                    ProtocolV2FrameType.HealthResponse or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceAck,
             RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal => false,
             _ => false
         };

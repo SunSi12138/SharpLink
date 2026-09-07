@@ -360,7 +360,7 @@ public class ClientStreamingResultStressTests
                 .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             if (enableCompression)
-                serverBuilder.UseRuntime(ConfigureCompression);
+                serverBuilder.UseRuntime(ConfigureCompression).UseResponseCompressionPolicy(CreateCompressionPolicy());
             serverConfigure?.Invoke(serverBuilder);
 
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -373,18 +373,23 @@ public class ClientStreamingResultStressTests
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             if (enableCompression)
-                clientBuilder.UseRuntime(ConfigureCompression);
+                clientBuilder.UseRuntime(ConfigureCompression).UseRequestCompressionPolicy(CreateCompressionPolicy());
 
             var client = clientBuilder.Build();
             await client.ConnectAsync(cts.Token);
             return new Harness(cts, serverTask, server, client);
         }
 
+        private static SharpLinkCompressionSendPolicy CreateCompressionPolicy()
+            => new()
+            {
+                MinimumPayloadBytes = 1,
+                MinimumSavingsBytes = 1,
+                MinimumSavingsRatio = 0
+            };
+
         private static void ConfigureCompression(SharpLinkRuntimeOptions options)
         {
-            options.Compression.MinimumPayloadBytes = 1;
-            options.Compression.MinimumSavingsBytes = 1;
-            options.Compression.MinimumSavingsRatio = 0;
             options.Compression.Providers.Add(new TestCompressionProvider());
         }
 

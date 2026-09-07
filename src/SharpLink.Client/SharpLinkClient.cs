@@ -50,6 +50,7 @@ internal sealed partial class SharpLinkClient :
     private readonly ISharpLinkRetryPolicy? _retryPolicy;
     private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
     private readonly ISharpLinkReconnectJitter _reconnectJitter;
+    private readonly Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;
 
     /// <summary>
     /// Initializes a Client from the explicit composition materialized by <see cref="SharpClientBuilder"/>.
@@ -70,6 +71,8 @@ internal sealed partial class SharpLinkClient :
             CreateReadinessSnapshotLocked());
         transportFactory = composition.TransportFactory;
         _runtimeContext = composition.RuntimeContext;
+        _requestCompressionPolicy = CompressionSendPolicyState.CreateInitial(composition.RequestCompressionPolicy);
+        _beforeReadyPublicationTestHook = composition.BeforeReadyPublicationTestHook;
         _proxies = new ClientProxyLookup(composition.StaticProxies);
         _heartbeatInterval = composition.HeartbeatInterval;
         _heartbeatTimeout = composition.HeartbeatTimeout;

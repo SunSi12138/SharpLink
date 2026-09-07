@@ -47,7 +47,8 @@ internal sealed partial class SharpLinkServer
                 new RpcSessionCreationOptions(
                     RpcSessionRole.Server,
                     _runtimeContext,
-                    _rpcSessionFlushOptions));
+                    _rpcSessionFlushOptions,
+                    _responseCompressionPolicy));
             var generatedBridge = new ServerGeneratedBridge(this, session, callCancellations);
             connectionState = new ServerConnectionState(
                 session,
