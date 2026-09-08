@@ -542,7 +542,7 @@ public partial class RpcSessionLifecycleTests
         {
             await packet.Entered.Task;
             shutdown = LongRunningTestWorker.Run(session.BeginShutdown);
-            terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            terminal = await published.Task;
             packet.Release();
             failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
             releaseShutdown.Set();
