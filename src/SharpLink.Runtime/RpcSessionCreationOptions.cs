@@ -13,8 +13,7 @@ internal sealed class RpcSessionCreationOptions
         RpcSessionRole role,
         SharpLinkRuntimeContext runtimeContext,
         RpcSessionFlushOptions? flushOptions = null,
-        CompressionSendPolicyState? compressionSendPolicyState = null,
-        RpcSessionFlushPolicyState? flushPolicyState = null)
+        CompressionSendPolicyState? compressionSendPolicyState = null)
     {
         if (!Enum.IsDefined(role))
             throw new ArgumentOutOfRangeException(nameof(role));
@@ -31,8 +30,9 @@ internal sealed class RpcSessionCreationOptions
         FlushOptions = flushOptions;
         CompressionSendPolicyState = compressionSendPolicyState ??
             SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
-        FlushPolicyState = flushPolicyState ??
-            RpcSessionFlushPolicyState.Create(flushOptions, runtimeContext.PerformanceProfile);
+        FlushPolicyState = CompressionSendPolicyState.GetOrCreateSessionFlushPolicyState(
+            flushOptions,
+            runtimeContext.PerformanceProfile);
     }
 
     internal RpcSessionRole Role { get; }
