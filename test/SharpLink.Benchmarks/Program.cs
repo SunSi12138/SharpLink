@@ -21,6 +21,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--rpc-session-flush-policy-evidence", StringComparison.Ordinal))
+        {
+            await RpcSessionFlushPolicyEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--allocation-gate", StringComparison.Ordinal))
         {
             await AllocationGateRunner.RunAsync(args[1..]);

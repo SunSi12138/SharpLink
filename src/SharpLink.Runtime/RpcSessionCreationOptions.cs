@@ -30,6 +30,9 @@ internal sealed class RpcSessionCreationOptions
         FlushOptions = flushOptions;
         CompressionSendPolicyState = compressionSendPolicyState ??
             SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
+        FlushPolicyState = CompressionSendPolicyState.GetOrCreateSessionFlushPolicyState(
+            flushOptions,
+            runtimeContext.PerformanceProfile);
     }
 
     internal RpcSessionRole Role { get; }
@@ -39,6 +42,8 @@ internal sealed class RpcSessionCreationOptions
     internal RpcSessionFlushOptions? FlushOptions { get; }
 
     internal CompressionSendPolicyState CompressionSendPolicyState { get; }
+
+    internal RpcSessionFlushPolicyState FlushPolicyState { get; }
 
     internal string TelemetrySide => Role == RpcSessionRole.Client ? "client" : "server";
 }

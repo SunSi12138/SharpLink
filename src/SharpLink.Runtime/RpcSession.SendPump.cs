@@ -20,17 +20,9 @@ internal sealed partial class RpcSession
         private const int ProgressReserveMaximumBytes = 64 * 1024;
         private const int ProgressReserveDivisor = 512;
 
-        private enum FlushMode
-        {
-            LowLatency,
-            Balanced,
-            TimedBatch
-        }
-
         private readonly PipeWriter _output;
-        private readonly FlushMode _flushMode;
-        private readonly int _flushSizeThreshold;
-        private readonly TimeSpan _maxLatency;
+        private readonly RpcSessionFlushPolicyState _flushPolicyState;
+        private readonly Action _flushPolicyChanged;
         private readonly int _maxQueuedBytes;
         private readonly int _normalQueueLimit;
         private readonly TimeProvider _timeProvider;
@@ -42,13 +34,6 @@ internal sealed partial class RpcSession
         private readonly Lock _admissionGate = new();
         private readonly WakeupSignal _wakeup = new();
         private readonly Task _pumpTask;
-        // When the caller configured an explicit MaxLatency through RpcSessionFlushOptions the
-        // pump batches until that deadline even while frames keep arriving. The profile-default
-        // TimedBatch deliberately skips the deadline wait instead: it flushes as soon as the
-        // queue drains (like Balanced, with a larger threshold), because waiting out a batching
-        // window on every drain pass interlocks the two peers' windows into a low-throughput
-        // ping-pong under continuous RPC load (measured: ~1/3 of the balanced QPS at c128).
-        private readonly bool _deadlineBatchingEnabled;
         private TaskCompletionSource<bool>? _capacityChanged;
         private long _queuedBytes;
         private int _stopped;
@@ -58,58 +43,26 @@ internal sealed partial class RpcSession
 
         public SendPump(
             PipeWriter output,
-            SharpLinkPerformanceProfile performanceProfile,
+            RpcSessionFlushPolicyState flushPolicyState,
             int maxQueuedBytes,
-            RpcSessionFlushOptions? flushOptions,
             TimeProvider timeProvider,
             CancellationToken sessionCancellation,
             Action<IRpcByteBufferWriter> returnBuffer,
             Action<Exception> onTransportFaulted)
         {
             ArgumentNullException.ThrowIfNull(output);
+            ArgumentNullException.ThrowIfNull(flushPolicyState);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxQueuedBytes);
             _output = output;
+            _flushPolicyState = flushPolicyState;
             _maxQueuedBytes = maxQueuedBytes;
             _normalQueueLimit = maxQueuedBytes - ComputeProgressReserveBytes(maxQueuedBytes);
             _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
             _sessionCancellation = sessionCancellation;
             _returnBuffer = returnBuffer ?? throw new ArgumentNullException(nameof(returnBuffer));
             _onTransportFaulted = onTransportFaulted ?? throw new ArgumentNullException(nameof(onTransportFaulted));
-
-            if (flushOptions is { } custom)
-            {
-                _flushMode = FlushMode.TimedBatch;
-                _flushSizeThreshold = custom.FlushSizeThreshold;
-                _maxLatency = custom.MaxLatency;
-                _deadlineBatchingEnabled = true;
-            }
-            else
-            {
-                _deadlineBatchingEnabled = false;
-                switch (performanceProfile)
-                {
-                    case SharpLinkPerformanceProfile.LowLatency:
-                        _flushMode = FlushMode.LowLatency;
-                        _flushSizeThreshold = 1;
-                        _maxLatency = TimeSpan.Zero;
-                        break;
-                    case SharpLinkPerformanceProfile.Throughput:
-                        // Throughput keeps the large coalescing threshold but flushes the
-                        // moment the queue drains: frames of an active RPC pipeline leave
-                        // immediately, and only a genuinely idle queue would ever want the
-                        // MaxLatency deadline (which is therefore reserved for callers that
-                        // configure RpcSessionFlushOptions explicitly).
-                        _flushMode = FlushMode.TimedBatch;
-                        _flushSizeThreshold = 64 * 1024;
-                        _maxLatency = TimeSpan.FromMilliseconds(1);
-                        break;
-                    default:
-                        _flushMode = FlushMode.Balanced;
-                        _flushSizeThreshold = 16 * 1024;
-                        _maxLatency = TimeSpan.Zero;
-                        break;
-                }
-            }
+            _flushPolicyChanged = _wakeup.Signal;
+            _flushPolicyState.RegisterChanged(_flushPolicyChanged);
 
             _progressQueue = CreateFrameQueue();
             _normalQueue = CreateFrameQueue();
@@ -209,7 +162,7 @@ internal sealed partial class RpcSession
             var pending = new List<OwnedFrame>(32);
             Exception terminalException = CreateTransportClosedException();
             var bytesAccumulated = 0;
-            var batchDeadline = 0L;
+            var batchStartTimestamp = 0L;
             var writtenCount = 0;
             var deferWrites = false;
 
@@ -246,19 +199,14 @@ internal sealed partial class RpcSession
                             writtenCount = 0;
                             deferWrites = false;
                         }
-                        batchDeadline = 0;
+                        batchStartTimestamp = 0;
                     }
 
                     var normalFramesSinceInterleave = 0;
                     while (_normalQueue.Reader.TryRead(out var frame))
                     {
                         if (pending.Count == 0)
-                        {
-                            batchDeadline = SharpLinkTime.AddDuration(
-                                _timeProvider.GetTimestamp(),
-                                _maxLatency,
-                                _timeProvider.TimestampFrequency);
-                        }
+                            batchStartTimestamp = _timeProvider.GetTimestamp();
 
                         // Take ownership of the frame before any write can fail: a fault during
                         // WriteFrame/FlushAsync must still release the frame and complete its
@@ -281,14 +229,15 @@ internal sealed partial class RpcSession
                         // process-local deadline is sampled only after output span/copy has
                         // completed, and no later frame may perform local work before the flush
                         // that publishes that budget snapshot.
+                        var flushPolicy = _flushPolicyState.Capture();
                         if (hasTimeBudget ||
                             frame.ForceFlush ||
-                            _flushMode == FlushMode.LowLatency ||
-                            bytesAccumulated >= _flushSizeThreshold)
+                            flushPolicy.FlushEveryFrame ||
+                            bytesAccumulated >= flushPolicy.FlushSizeThreshold)
                         {
                             await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                             bytesAccumulated = 0;
-                            batchDeadline = 0;
+                            batchStartTimestamp = 0;
                             writtenCount = 0;
                             deferWrites = false;
                         }
@@ -313,7 +262,7 @@ internal sealed partial class RpcSession
                                     writtenCount = 0;
                                     deferWrites = false;
                                 }
-                                batchDeadline = 0;
+                                batchStartTimestamp = 0;
                             }
                         }
                     }
@@ -321,13 +270,14 @@ internal sealed partial class RpcSession
                     if (pending.Count == 0)
                         continue;
 
-                    // Profile-default TimedBatch treats the queue drain as the flush point
-                    // (see _deadlineBatchingEnabled): only an explicitly configured
-                    // MaxLatency enters the deadline wait, keeping the public
-                    // RpcSessionFlushOptions contract for latency-bounded batching.
-                    if (_flushMode == FlushMode.TimedBatch &&
-                        _deadlineBatchingEnabled &&
-                        await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false) &&
+                    // Profile-default batching still flushes when the queue drains. Only an
+                    // explicitly timed generation waits; runtime updates publish such a generation
+                    // and wake this same pump so the active batch is re-evaluated from its original
+                    // start timestamp.
+                    if (_flushPolicyState.Capture().DeadlineBatchingEnabled &&
+                        await WaitForMoreUntilFlushBoundaryAsync(
+                            batchStartTimestamp,
+                            bytesAccumulated).ConfigureAwait(false) &&
                         (HasProgressFrames() || HasNormalFrames()))
                     {
                         continue;
@@ -335,7 +285,7 @@ internal sealed partial class RpcSession
 
                     await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
                     bytesAccumulated = 0;
-                    batchDeadline = 0;
+                    batchStartTimestamp = 0;
                     writtenCount = 0;
                     deferWrites = false;
                 }
@@ -350,6 +300,7 @@ internal sealed partial class RpcSession
             }
             finally
             {
+                _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
                 ReleaseBatch(pending, terminalException);
                 DrainQueuedFrames(terminalException);
                 PulseCapacityWaiters();
@@ -374,7 +325,7 @@ internal sealed partial class RpcSession
                     WriteFrame(frame);
                 drained = true;
                 drainedCount++;
-                if (_flushMode == FlushMode.LowLatency)
+                if (_flushPolicyState.Capture().FlushEveryFrame)
                 {
                     await FlushAndReleaseAsync(
                         pending,
@@ -473,43 +424,62 @@ internal sealed partial class RpcSession
             ReleaseBatch(pending, exception: null);
         }
 
-        private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
+        private async ValueTask<bool> WaitForMoreUntilFlushBoundaryAsync(
+            long batchStartTimestamp,
+            int bytesAccumulated)
         {
-            // The queue and the explicit batching deadline now share one readiness authority:
-            // producers signal WakeupSignal, and the deadline timer competes for that same arm.
-            // No Channel read is registered here, so there is nothing to retain, abandon, or
-            // observe during teardown.
+            // Queue publication and policy publication share one wake authority. A policy
+            // generation change is the only wake that is consumed internally: it restarts the
+            // decision from the original batch start. An ordinary data wake keeps the static
+            // pump's established behavior and returns to the outer control loop immediately.
             while (true)
             {
                 if (HasProgressFrames() || HasNormalFrames())
                     return true;
 
-                // Signals coalesce while the pump is busy, so the frames just drained can leave
-                // a latch behind. That latch is already accounted for and must not terminate the
-                // explicit MaxLatency window. Consume it, then re-check both queues before
-                // arming: a producer whose signal crosses this CAS has already published its
-                // frame, so the re-check preserves the no-lost-wakeup guarantee.
-                _wakeup.ConsumeLatched();
-                if (Volatile.Read(ref _stopped) != 0)
+                var policy = _flushPolicyState.Capture();
+                if (policy.FlushEveryFrame || bytesAccumulated >= policy.FlushSizeThreshold)
                     return false;
-                if (HasProgressFrames() || HasNormalFrames())
-                    return true;
+                if (!policy.DeadlineBatchingEnabled)
+                    return false;
 
+                var deadline = SharpLinkTime.AddDuration(
+                    batchStartTimestamp,
+                    policy.MaxLatency,
+                    _timeProvider.TimestampFrequency);
                 var remaining = SharpLinkTime.GetRemaining(
-                    batchDeadline,
+                    deadline,
                     _timeProvider.GetTimestamp(),
                     _timeProvider.TimestampFrequency);
                 if (remaining == TimeSpan.Zero)
                     return false;
 
+                _wakeup.ConsumeLatched();
+                if (Volatile.Read(ref _stopped) != 0)
+                    return false;
+                if (HasProgressFrames() || HasNormalFrames())
+                    return true;
+                if (!ReferenceEquals(policy, _flushPolicyState.Capture()))
+                    continue;
+
                 var delay = remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
-                if (await _wakeup.WaitAsync(_timeProvider, delay).ConfigureAwait(false))
+                var woke = await _wakeup.WaitAsync(_timeProvider, delay).ConfigureAwait(false);
+
+                // A concurrent policy replacement wins over either a stale data wake or a stale
+                // timer completion. Recompute threshold/latency from the original batch start.
+                if (!ReferenceEquals(policy, _flushPolicyState.Capture()))
+                    continue;
+
+                // Preserve the pre-runtime static pump contract: a data wake returns to the outer
+                // loop. If the queue was already drained by the time it is observed, the outer
+                // queue check falls through to the same immediate flush behavior as before #590.
+                if (woke)
                     return true;
 
                 if (remaining <= MaximumTimerDelay)
                     return false;
-                // A chunk of a very long deadline expired. Re-evaluate queue visibility and
-                // remaining time before arming the next generation of the same wake authority.
+                // One chunk of a very long MaxLatency expired without a policy change. Recompute
+                // the remaining part of the same deadline before arming the next chunk.
             }
         }
 

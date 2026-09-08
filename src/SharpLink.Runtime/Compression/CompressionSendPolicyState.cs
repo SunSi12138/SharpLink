@@ -60,7 +60,9 @@ internal sealed class CompressionSendPolicySnapshot
 
 internal sealed class CompressionSendPolicyState
 {
+    private readonly Lock _sessionPolicyGate = new();
     private CompressionSendPolicySnapshot _current;
+    private RpcSessionFlushPolicyState? _sessionFlushPolicyState;
 
     private CompressionSendPolicyState(CompressionSendPolicySnapshot initial)
         => _current = initial;
@@ -69,6 +71,25 @@ internal sealed class CompressionSendPolicyState
         => new(CompressionSendPolicySnapshot.CreateInitial(policy));
 
     internal CompressionSendPolicySnapshot Current => Volatile.Read(ref _current);
+
+    internal RpcSessionFlushPolicyState GetOrCreateSessionFlushPolicyState(
+        RpcSessionFlushOptions? flushOptions,
+        SharpLinkPerformanceProfile performanceProfile)
+    {
+        var state = Volatile.Read(ref _sessionFlushPolicyState);
+        if (state is not null)
+            return state;
+
+        lock (_sessionPolicyGate)
+        {
+            state = _sessionFlushPolicyState;
+            if (state is not null)
+                return state;
+            state = RpcSessionFlushPolicyState.Create(flushOptions, performanceProfile);
+            Volatile.Write(ref _sessionFlushPolicyState, state);
+            return state;
+        }
+    }
 
     internal void Update(SharpLinkCompressionSendPolicy policy)
     {
