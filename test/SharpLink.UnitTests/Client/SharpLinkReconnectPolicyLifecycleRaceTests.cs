@@ -230,6 +230,8 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
         var implementation = (SharpLinkClient)client;
         var reconciliationAttempt = 0;
         var timerCountAtLastRollback = 0;
+        var thirdReconciliationEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         implementation.BeforeResponseCompressionReadyReconciliationTestHook = () =>
         {
             var attempt = Interlocked.Increment(ref reconciliationAttempt);
@@ -238,6 +240,7 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
                 Volatile.Write(ref timerCountAtLastRollback, time.CreatedTimerCount);
                 throw new IOException($"forced Ready reconciliation rollback {attempt}");
             }
+            thirdReconciliationEntered.TrySetResult();
         };
 
         try
@@ -265,6 +268,7 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
 
             time.Advance(TimeSpan.FromSeconds(2));
             await transport.WaitForConnectCountAsync(3);
+            await thirdReconciliationEntered.Task;
             await WaitUntilAsync(
                 () => client.ReadyConnectionCount == 1,
                 () => $"third Ready publication did not succeed; ready={client.ReadyConnectionCount}, connects={transport.ConnectCount}, attempts={Volatile.Read(ref reconciliationAttempt)}");
