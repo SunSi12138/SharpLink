@@ -8,7 +8,8 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SharpLinkTelemetryDetailMode telemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed)
     {
         if (method.Kind != RpcMethodKind.Unary || !method.IsIdempotent)
         {
@@ -26,7 +27,14 @@ internal sealed partial class SharpLinkClient
         }
 
         return InvokeUnaryWithRetryAsync(
-            method, request, requestCodec, responseCodec, control, generation, cancellationToken);
+            method,
+            request,
+            requestCodec,
+            responseCodec,
+            control,
+            generation,
+            cancellationToken,
+            telemetryDetailMode);
     }
 
     private async ValueTask<TResponse> InvokeUnaryWithRetryAsync<TRequest, TResponse>(
@@ -36,7 +44,8 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
         ClientRetryGeneration generation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SharpLinkTelemetryDetailMode telemetryDetailMode)
     {
         var settings = generation.Settings;
         Exception? lastFailure = null;
@@ -59,7 +68,10 @@ internal sealed partial class SharpLinkClient
             {
                 SharpLinkTelemetry.RecordClientAttempt();
             }
-            var attemptScope = SharpLinkTelemetry.StartClientAttempt(method, attempt);
+
+            var attemptScope = telemetryDetailMode == SharpLinkTelemetryDetailMode.Detailed
+                ? SharpLinkTelemetry.StartClientAttempt(method, attempt)
+                : default;
             try
             {
                 var response = await InvokeUnaryRetryAttemptAsync(
@@ -238,5 +250,4 @@ internal sealed partial class SharpLinkClient
             return ValueTask.FromException<TResponse>(exception);
         }
     }
-
 }
