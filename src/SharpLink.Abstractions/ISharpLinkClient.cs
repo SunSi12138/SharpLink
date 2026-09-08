@@ -67,6 +67,24 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
             "This ISharpLinkClient implementation does not support runtime interceptor replacement.");
     }
 
+    /// <summary>Gets the currently published immutable reconnect policy.</summary>
+    SharpLinkReconnectPolicy GetReconnectPolicy()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime reconnect policy state.");
+
+    /// <summary>
+    /// Atomically publishes a reconnect policy for future reconnect waits. An armed reconnect delay
+    /// is explicitly woken and rescheduled against the new generation; a connection attempt that has
+    /// already started is allowed to finish under its captured lifecycle.
+    /// </summary>
+    /// <param name="policy">The complete immutable reconnect timing policy.</param>
+    void UpdateReconnectPolicy(SharpLinkReconnectPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime reconnect policy updates.");
+    }
+
     /// <summary>Gets the currently published heartbeat scheduling and liveness configuration.</summary>
     SharpLinkHeartbeatConfigurationSnapshot GetHeartbeatConfigurationSnapshot()
         => throw new NotSupportedException(

@@ -30,6 +30,12 @@
     },
     {
       "domain": "source",
+      "path": "src/SharpLink.Client/SharpLinkClient.StaticCluster.cs",
+      "maxLoc": 850,
+      "reason": "Issue #592 keeps reconnect scheduling inside StaticClusterRuntime's existing single-gate topology/lifecycle owner; a mechanical partial split would fragment that lock invariant. Broader Client topology decomposition remains tracked by issue #350."
+    },
+    {
+      "domain": "source",
       "path": "src/SharpLink.Client/PendingRequestTable.cs",
       "maxLoc": 1305,
       "reason": "Existing dev debt captured by issue #350."

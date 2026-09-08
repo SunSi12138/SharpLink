@@ -202,6 +202,7 @@ internal static class ClientRuntimeMaterializer
             plan.Retry?.CreateOptions(),
             plan.RetryPolicy,
             CreateEndpointAdmissionPolicy(plan, runtimeContext),
+            plan.ReconnectPolicy,
             plan.ReconnectJitter,
             logger,
             SharpLinkClient.CreateFrameworkTaskSupervisor(logger));
