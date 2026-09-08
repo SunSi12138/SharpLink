@@ -42,8 +42,6 @@ public static class SharpLinkServerRpcSessionFlushExtensions
 
 internal sealed partial class SharpLinkServer : ISharpLinkServerRpcSessionFlushRuntime
 {
-    private readonly Lock _rpcSessionFlushPolicyGate = new();
-
     SharpLinkRpcSessionFlushPolicySnapshot ISharpLinkServerRpcSessionFlushRuntime.GetRpcSessionFlushPolicySnapshot()
     {
         var current = GetRpcSessionFlushPolicyState().Capture();
@@ -58,13 +56,17 @@ internal sealed partial class SharpLinkServer : ISharpLinkServerRpcSessionFlushR
         TimeSpan maxLatency)
     {
         RpcSessionFlushOptions.Validate(flushSizeThreshold, maxLatency);
-        lock (_rpcSessionFlushPolicyGate)
+        lock (_stateGate)
         {
-            var state = (ServerState)Volatile.Read(ref _state);
-            if (state is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            if (_lifecycle.HasStopStarted)
             {
                 throw new InvalidOperationException(
-                    $"RPC session flush configuration cannot be updated while the server is {state}.");
+                    $"RPC session flush configuration cannot be updated while the server is {CurrentState}.");
+            }
+            if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            {
+                throw new InvalidOperationException(
+                    $"RPC session flush configuration cannot be updated while the server is {CurrentState}.");
             }
             GetRpcSessionFlushPolicyState().Publish(flushSizeThreshold, maxLatency);
         }
