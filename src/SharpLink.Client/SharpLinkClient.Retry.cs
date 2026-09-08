@@ -51,7 +51,7 @@ internal sealed partial class SharpLinkClient
             {
                 outcome.ResetForRetryAttempt();
             }
-            else if (requiresRetryOutcome || Volatile.Read(ref _endpointAdmissionPolicy) is not null)
+            else if (requiresRetryOutcome || _endpointAdmissionPolicy is not null)
             {
                 outcome = new AttemptOutcomeState(this, method);
             }
