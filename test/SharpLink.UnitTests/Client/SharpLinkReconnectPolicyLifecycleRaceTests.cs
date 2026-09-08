@@ -13,7 +13,7 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
     public async Task FixedReconnectSuccessShouldResetTheNextFailureSequenceAfterPolicyUpdate()
     {
         var time = new ManualTimeProvider();
-        var transport = new SequenceClientTransportFactory(failedConnectsAfterInitial: 1);
+        var transport = new SignalingSequenceClientTransportFactory(failedConnectsAfterInitial: 1);
         var client = ClientBuilderTestHelper.Build(transport, builder =>
         {
             builder.UseTimeProvider(time);
@@ -32,9 +32,7 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
 
             var beforeFirstFailure = time.CreatedTimerCount;
             time.Advance(TimeSpan.FromSeconds(1));
-            await WaitUntilAsync(
-                () => transport.ConnectCount == 2,
-                () => $"first fixed reconnect attempt did not run; connects={transport.ConnectCount}");
+            await transport.WaitForConnectCountAsync(2);
             await time.WaitForCreatedTimerCountAsync(beforeFirstFailure + 1);
 
             // Publish a genuinely different generation while the two-second live backoff is armed.
@@ -45,8 +43,9 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
             await time.WaitForCreatedTimerCountAsync(beforePolicyWake + 1);
 
             time.Advance(TimeSpan.FromSeconds(2));
+            await transport.WaitForConnectCountAsync(3);
             await WaitUntilAsync(
-                () => client.ReadyConnectionCount == 1 && transport.ConnectCount == 3,
+                () => client.ReadyConnectionCount == 1,
                 () => $"fixed reconnect did not recover; ready={client.ReadyConnectionCount}, connects={transport.ConnectCount}");
 
             var recovered = await transport.WaitForConnectionAsync(1);
@@ -61,9 +60,10 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
                 "a successful reconnect with zero StableResetWindow must reset the next sequence to InitialDelay");
 
             time.Advance(TimeSpan.FromMilliseconds(1));
+            await transport.WaitForConnectCountAsync(4);
             await WaitUntilAsync(
-                () => client.ReadyConnectionCount == 1 && transport.ConnectCount == 4,
-                () => $"next fixed reconnect did not use the reset one-second delay; ready={client.ReadyConnectionCount}, connects={transport.ConnectCount}");
+                () => client.ReadyConnectionCount == 1,
+                () => $"next fixed reconnect did not publish Ready after the reset one-second delay; ready={client.ReadyConnectionCount}, connects={transport.ConnectCount}");
         }
         finally
         {
@@ -211,7 +211,7 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
     public async Task FailedReadyPublicationShouldNotStartDynamicStableResetWindow()
     {
         var time = new ManualTimeProvider();
-        var transport = new SequenceClientTransportFactory();
+        var transport = new SignalingSequenceClientTransportFactory();
         var resolver = new ControllableResolver(
             new SharpLinkEndpointSnapshot(1, [CreateEndpoint("rollback", 5703)]));
         var client = ClientBuilderTestHelper.BuildDynamic(
@@ -247,6 +247,7 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
             await time.WaitForCreatedTimerCountAsync(firstRollbackTimerBaseline + 1);
 
             time.Advance(TimeSpan.FromSeconds(1));
+            await transport.WaitForConnectCountAsync(2);
             await WaitUntilAsync(
                 () => Volatile.Read(ref reconciliationAttempt) >= 2,
                 () => $"second Ready reconciliation did not run; attempts={Volatile.Read(ref reconciliationAttempt)}, connects={transport.ConnectCount}");
@@ -259,8 +260,9 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
             await time.WaitForCreatedTimerCountAsync(secondRollbackTimerBaseline + 1);
 
             time.Advance(TimeSpan.FromSeconds(2));
+            await transport.WaitForConnectCountAsync(3);
             await WaitUntilAsync(
-                () => transport.ConnectCount == 3 && client.ReadyConnectionCount == 1,
+                () => client.ReadyConnectionCount == 1,
                 () => $"third Ready publication did not succeed; ready={client.ReadyConnectionCount}, connects={transport.ConnectCount}, attempts={Volatile.Read(ref reconciliationAttempt)}");
             Ensure(reconciliationAttempt == 3,
                 "exactly two Ready reconciliation attempts must roll back before the successful publication");
@@ -282,9 +284,7 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
                 "failed Ready publications must not fabricate stability and reset the two-second live backoff");
 
             time.Advance(TimeSpan.FromMilliseconds(1));
-            await WaitUntilAsync(
-                () => transport.ConnectCount == 4,
-                () => $"preserved two-second reconnect delay did not fire; connects={transport.ConnectCount}");
+            await transport.WaitForConnectCountAsync(4);
         }
         finally
         {
@@ -329,6 +329,40 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
     {
         for (var index = 0; index < 8; index++)
             await Task.Yield();
+    }
+
+    private sealed class SignalingSequenceClientTransportFactory : IClientTransportFactory
+    {
+        private readonly SequenceClientTransportFactory _inner;
+        private readonly SemaphoreSlim _connectStarted = new(0);
+        private int _connectCount;
+
+        internal SignalingSequenceClientTransportFactory(
+            int immediatelyDrainedReconnects = 0,
+            int failedConnectsAfterInitial = 0)
+            => _inner = new SequenceClientTransportFactory(
+                immediatelyDrainedReconnects,
+                failedConnectsAfterInitial);
+
+        public int ConnectCount => Volatile.Read(ref _connectCount);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _connectCount);
+            _connectStarted.Release();
+            return await _inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task WaitForConnectCountAsync(int target)
+        {
+            while (Volatile.Read(ref _connectCount) < target)
+                await _connectStarted.WaitAsync().ConfigureAwait(false);
+        }
+
+        public Task<TestTransportConnection> WaitForConnectionAsync(int index)
+            => _inner.WaitForConnectionAsync(index);
+
+        public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 
     private sealed class CountingFailFactory : IClientTransportFactory
