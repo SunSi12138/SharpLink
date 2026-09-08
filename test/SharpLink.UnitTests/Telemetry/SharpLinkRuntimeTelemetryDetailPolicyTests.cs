@@ -82,8 +82,8 @@ public sealed class SharpLinkRuntimeTelemetryDetailPolicyTests
                 "logical call must capture Basic at its creation boundary");
 
             runtime.UpdateTelemetryDetailPolicy(SharpLinkTelemetryDetailMode.Detailed);
-+            Ensure(basicControl.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Basic,
-+                "publishing Detailed must not rewrite an existing logical call");
+            Ensure(basicControl.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Basic,
+                "publishing Detailed must not rewrite an existing logical call");
             var oldAttempt = SharpLinkClient.StartClientAttemptTelemetry(basicControl, method, attempt: 1);
             Ensure(Activity.Current is null,
                 "a Basic logical call must not start a retry-attempt Activity after the live policy becomes Detailed");
