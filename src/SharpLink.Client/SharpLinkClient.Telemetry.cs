@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        var detailMode = CaptureTelemetryDetailGeneration().Mode;
+        var detailMode = control.TelemetryDetailMode;
         var scope = SharpLinkTelemetry.StartClientCall(method);
         TagLifetimeSource(scope, control.LifetimeSource, detailMode);
         try
@@ -46,7 +46,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var detailMode = CaptureTelemetryDetailGeneration().Mode;
+        var detailMode = control.TelemetryDetailMode;
         var scope = SharpLinkTelemetry.StartClientCall(method);
         TagLifetimeSource(scope, control.LifetimeSource, detailMode);
         try
@@ -83,7 +83,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var detailMode = CaptureTelemetryDetailGeneration().Mode;
+        var detailMode = control.TelemetryDetailMode;
         var scope = SharpLinkTelemetry.StartClientCall(method);
         TagLifetimeSource(scope, control.LifetimeSource, detailMode);
         try
@@ -117,7 +117,7 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        var detailMode = CaptureTelemetryDetailGeneration().Mode;
+        var detailMode = control.TelemetryDetailMode;
         var stream = interceptors.Count != 0
             ? InvokeServerStreamingIntercepted(
                 method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
@@ -137,7 +137,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var detailMode = CaptureTelemetryDetailGeneration().Mode;
+        var detailMode = control.TelemetryDetailMode;
         var stream = interceptors.Count != 0
             ? InvokeDuplexStreamingIntercepted(
                 method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
