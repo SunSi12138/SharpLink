@@ -7,7 +7,7 @@ public sealed class SharpLinkClientRuntimeRpcSessionFlushTests
     [Test]
     public async Task InvalidNoOpAndStoppedUpdatesShouldPreserveGeneration()
     {
-        var client = ClientBuilderTestHelper.Build(new SequenceClientTransportFactory());
+        var client = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
         try
         {
             var initial = client.GetRpcSessionFlushPolicySnapshot();
