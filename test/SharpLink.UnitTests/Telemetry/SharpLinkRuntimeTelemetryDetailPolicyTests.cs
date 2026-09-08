@@ -84,10 +84,13 @@ public sealed class SharpLinkRuntimeTelemetryDetailPolicyTests
             runtime.UpdateTelemetryDetailPolicy(SharpLinkTelemetryDetailMode.Detailed);
             Ensure(basicControl.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Basic,
                 "publishing Detailed must not rewrite an existing logical call");
+            var previous = Activity.Current;
             var oldAttempt = SharpLinkClient.StartClientAttemptTelemetry(basicControl, method, attempt: 1);
-            Ensure(Activity.Current is null,
+            Ensure(ReferenceEquals(Activity.Current, previous),
                 "a Basic logical call must not start a retry-attempt Activity after the live policy becomes Detailed");
             oldAttempt.Complete();
+            Ensure(ReferenceEquals(Activity.Current, previous),
+                "a Basic attempt no-op must preserve ambient Activity.Current");
 
             var detailedControl = client.ResolveCallControl(
                 metadata: null,
@@ -97,10 +100,12 @@ public sealed class SharpLinkRuntimeTelemetryDetailPolicyTests
             Ensure(detailedControl.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Detailed,
                 "future logical calls must capture the newly published Detailed mode");
             var newAttempt = SharpLinkClient.StartClientAttemptTelemetry(detailedControl, method, attempt: 2);
-            Ensure(Activity.Current?.OperationName == "sharplink.rpc.attempt",
+            Ensure(!ReferenceEquals(Activity.Current, previous) &&
+                   Activity.Current?.OperationName == "sharplink.rpc.attempt",
                 "a Detailed logical call must retain retry-attempt trace detail");
             newAttempt.Complete();
-            Ensure(Activity.Current is null, "retry-attempt Activity must restore ambient context after completion");
+            Ensure(ReferenceEquals(Activity.Current, previous),
+                "retry-attempt Activity must restore the previous ambient context after completion");
         }
         finally
         {
