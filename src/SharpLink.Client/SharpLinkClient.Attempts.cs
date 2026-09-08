@@ -49,7 +49,7 @@ internal sealed partial class SharpLinkClient
 
         public bool TryAcquire(in SharpLinkEndpointCandidate endpoint)
         {
-            var policy = Volatile.Read(ref _client._endpointAdmissionPolicy);
+            var policy = _client._endpointAdmissionPolicy;
             if (policy is null)
                 return true;
 
