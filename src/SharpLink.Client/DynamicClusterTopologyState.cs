@@ -9,8 +9,7 @@ internal sealed partial class SharpLinkClient
     /// </summary>
     private sealed class DynamicClusterTopologyState : System.Collections.IEnumerable
     {
-        private readonly SharpLinkLoadBalancingStrategy _strategy;
-        private readonly ISharpLinkEndpointSelector? _selector;
+        private readonly EndpointSelectionPolicyState _selectionPolicy;
         private readonly Dictionary<string, DynamicEndpointState> _currentById = new(StringComparer.Ordinal);
         private readonly List<DynamicEndpointState> _allStates = [];
         private DynamicEndpointState[] _current = [];
@@ -25,8 +24,7 @@ internal sealed partial class SharpLinkClient
             SharpLinkLoadBalancingStrategy strategy,
             ISharpLinkEndpointSelector? selector)
         {
-            _strategy = strategy;
-            _selector = selector;
+            _selectionPolicy = new EndpointSelectionPolicyState(strategy, selector);
         }
 
         public DynamicEndpointState[] Current => _current;
@@ -35,7 +33,19 @@ internal sealed partial class SharpLinkClient
         public int ReadyEndpointCount => Volatile.Read(ref _readyEndpoints).Length;
         public DynamicEndpointSelectionSnapshot SelectionSnapshot => Volatile.Read(ref _selectionSnapshot);
         public bool HasAcceptedEmptyTopology => _lastAcceptedVersion >= 0 && _current.Length == 0;
-        public bool HasCustomSelector => _selector is not null;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public EndpointSelectionPolicyGeneration CaptureSelectionPolicy()
+            => _selectionPolicy.Capture();
+
+        public SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot()
+            => _selectionPolicy.GetSnapshot();
+
+        public void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy)
+            => _selectionPolicy.PublishBuiltIn(strategy);
+
+        public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
+            => _selectionPolicy.PublishCustom(selector);
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
             => _current.GetEnumerator();
@@ -146,7 +156,15 @@ internal sealed partial class SharpLinkClient
                 changed);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public int SelectEndpoint(DynamicEndpointSelectionSnapshot snapshot, ulong excluded)
+            => SelectEndpoint(snapshot, _selectionPolicy.Capture(), excluded);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int SelectEndpoint(
+            DynamicEndpointSelectionSnapshot snapshot,
+            EndpointSelectionPolicyGeneration policy,
+            ulong excluded)
         {
             var endpoints = snapshot.Endpoints;
             var availableCount = 0;
@@ -154,15 +172,15 @@ internal sealed partial class SharpLinkClient
                 availableCount += (excluded & (1UL << index)) == 0 ? 1 : 0;
             if (availableCount == 0)
                 return -1;
-            if (availableCount == 1 && _selector is null)
+            if (availableCount == 1 && !policy.HasCustomSelector)
             {
                 for (var index = 0; index < endpoints.Length; index++)
                     if ((excluded & (1UL << index)) == 0)
                         return index;
             }
-            if (_selector is not null)
-                return _selector.Select(new SharpLinkEndpointSelectionContext(snapshot.Candidates, excluded));
-            return _strategy switch
+            if (policy.Selector is { } selector)
+                return selector.Select(new SharpLinkEndpointSelectionContext(snapshot.Candidates, excluded));
+            return policy.Strategy switch
             {
                 SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
                 SharpLinkLoadBalancingStrategy.RoundRobin => EndpointSelectionKernel.SelectRoundRobinIndex(

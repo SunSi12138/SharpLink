@@ -61,6 +61,15 @@ internal sealed partial class SharpLinkClient
         public int ActiveStreamCount => CountConnections(static connection =>
             connection.Session.StreamManager.ActiveStreamCount);
 
+        public SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot()
+            => _current.GetEndpointSelectionPolicySnapshot();
+
+        public void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy)
+            => _current.UpdateLoadBalancing(strategy);
+
+        public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
+            => _current.UpdateEndpointSelector(selector);
+
         public ClientConnection[] CaptureReadyConnections()
         {
             lock (_gate)
@@ -83,6 +92,7 @@ internal sealed partial class SharpLinkClient
             AttemptOutcomeState? attemptOutcome)
         {
             var snapshot = _current.SelectionSnapshot;
+            var selectionPolicy = _current.CaptureSelectionPolicy();
             var endpoints = snapshot.Endpoints;
             if (endpoints.Length == 0)
             {
@@ -94,11 +104,11 @@ internal sealed partial class SharpLinkClient
             for (var attempt = 0; attempt < endpoints.Length; attempt++)
             {
                 int selectedIndex;
-                if (_current.HasCustomSelector)
+                if (selectionPolicy.HasCustomSelector)
                 {
                     try
                     {
-                        selectedIndex = _current.SelectEndpoint(snapshot, excluded);
+                        selectedIndex = _current.SelectEndpoint(snapshot, selectionPolicy, excluded);
                     }
                     catch (Exception exception)
                     {
@@ -111,7 +121,7 @@ internal sealed partial class SharpLinkClient
                 }
                 else
                 {
-                    selectedIndex = _current.SelectEndpoint(snapshot, excluded);
+                    selectedIndex = _current.SelectEndpoint(snapshot, selectionPolicy, excluded);
                 }
                 if ((uint)selectedIndex >= (uint)endpoints.Length || (excluded & (1UL << selectedIndex)) != 0)
                 {

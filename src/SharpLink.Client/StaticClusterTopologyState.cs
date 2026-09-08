@@ -9,8 +9,7 @@ internal sealed partial class SharpLinkClient
     /// </summary>
     internal sealed class StaticClusterTopologyState
     {
-        private readonly SharpLinkLoadBalancingStrategy _strategy;
-        private readonly ISharpLinkEndpointSelector? _selector;
+        private readonly EndpointSelectionPolicyState _selectionPolicy;
         private readonly ILogger? _logger;
         private StaticClientRuntimeEndpointState[] _readyEndpoints = [];
         private StaticEndpointSelectionSnapshot _selectionSnapshot = StaticEndpointSelectionSnapshot.Empty;
@@ -22,8 +21,7 @@ internal sealed partial class SharpLinkClient
             ISharpLinkEndpointSelector? selector,
             ILogger? logger = null)
         {
-            _strategy = strategy;
-            _selector = selector;
+            _selectionPolicy = new EndpointSelectionPolicyState(strategy, selector);
             _logger = logger;
         }
 
@@ -43,6 +41,19 @@ internal sealed partial class SharpLinkClient
 
         public StaticEndpointSelectionSnapshot SelectionSnapshot
             => Volatile.Read(ref _selectionSnapshot);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public EndpointSelectionPolicyGeneration CaptureSelectionPolicy()
+            => _selectionPolicy.Capture();
+
+        public SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot()
+            => _selectionPolicy.GetSnapshot();
+
+        public void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy)
+            => _selectionPolicy.PublishBuiltIn(strategy);
+
+        public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
+            => _selectionPolicy.PublishCustom(selector);
 
         public StaticClusterReadinessSnapshot PublishReadySnapshot(
             IReadOnlyList<StaticClientRuntimeEndpointState> endpointStates)
@@ -95,9 +106,15 @@ internal sealed partial class SharpLinkClient
             return previousReadyEndpointCount;
         }
 
-        [System.Runtime.CompilerServices.MethodImpl(
-            System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public int SelectEndpoint(StaticEndpointSelectionSnapshot snapshot, ulong excluded)
+            => SelectEndpoint(snapshot, _selectionPolicy.Capture(), excluded);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int SelectEndpoint(
+            StaticEndpointSelectionSnapshot snapshot,
+            EndpointSelectionPolicyGeneration policy,
+            ulong excluded)
         {
             var endpoints = snapshot.Endpoints;
             var availableCount = 0;
@@ -105,15 +122,15 @@ internal sealed partial class SharpLinkClient
                 availableCount += (excluded & (1UL << index)) == 0 ? 1 : 0;
             if (availableCount == 0)
                 return -1;
-            if (availableCount == 1 && _selector is null)
+            if (availableCount == 1 && !policy.HasCustomSelector)
             {
                 for (var index = 0; index < endpoints.Length; index++)
                     if ((excluded & (1UL << index)) == 0)
                         return index;
             }
-            if (_selector is not null)
-                return SelectCustomEndpoint(snapshot.Candidates, excluded);
-            return _strategy switch
+            if (policy.Selector is { } selector)
+                return SelectCustomEndpoint(snapshot.Candidates, excluded, selector);
+            return policy.Strategy switch
             {
                 SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
                 SharpLinkLoadBalancingStrategy.RoundRobin => EndpointSelectionKernel.SelectRoundRobinIndex(
@@ -123,11 +140,14 @@ internal sealed partial class SharpLinkClient
             };
         }
 
-        private int SelectCustomEndpoint(SharpLinkEndpointCandidate[] candidates, ulong excluded)
+        private int SelectCustomEndpoint(
+            SharpLinkEndpointCandidate[] candidates,
+            ulong excluded,
+            ISharpLinkEndpointSelector selector)
         {
             try
             {
-                return _selector!.Select(new SharpLinkEndpointSelectionContext(candidates, excluded));
+                return selector.Select(new SharpLinkEndpointSelectionContext(candidates, excluded));
             }
             catch (Exception exception)
             {

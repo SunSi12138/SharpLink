@@ -9,6 +9,9 @@ internal sealed partial class SharpLinkClient
         int PendingCallCount { get; }
         int ActiveCallCount { get; }
         int ActiveStreamCount { get; }
+        SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot();
+        void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy);
+        void UpdateEndpointSelector(ISharpLinkEndpointSelector selector);
         ClientConnection[] CaptureReadyConnections();
         ValueTask ConnectAsync(CancellationToken cancellationToken);
         void BeginStop();
