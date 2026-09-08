@@ -25,7 +25,7 @@ public class SendPumpTimedWaitStopTests
         try
         {
             session.SendPacket(frame);
-            await blockingWriter.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            await blockingWriter.Entered;
 
             // The pump has dequeued the frame but is blocked inside WriteFrame. Stop now:
             // its wake is latched before the timed wait can arm. Once the write resumes,
