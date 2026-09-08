@@ -21,21 +21,41 @@ public partial class SharpLinkServerInvocationTests
         var initial = server.GetRpcSessionFlushPolicySnapshot();
         var registryGate = GetPrivateServerLock(server, "_registryGate");
         var lifecycleGate = GetPrivateServerLock(server, "_stateGate");
-        var updateStarted = new TaskCompletionSource(
+        var registryHeld = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseRegistry = new ManualResetEventSlim(initialState: false);
+        var registryOwner = Task.Factory.StartNew(
+            () =>
+            {
+                registryGate.Enter();
+                try
+                {
+                    registryHeld.TrySetResult();
+                    releaseRegistry.Wait();
+                }
+                finally
+                {
+                    registryGate.Exit();
+                }
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
         Task? stopTask = null;
         Task? updateTask = null;
-
-        registryGate.Enter();
         try
         {
+            await registryHeld.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
             stopTask = Task.Run(async () =>
                 await server.StopAsync(TimeSpan.Zero).ConfigureAwait(false));
-
             await WaitUntilServerLockHeldAsync(
                 () => IsHeldByAnotherThread(lifecycleGate),
                 "StopAsync did not acquire the lifecycle gate while waiting for the registry gate");
 
+            var updateStarted = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             updateTask = Task.Run(() =>
             {
                 updateStarted.TrySetResult();
@@ -51,7 +71,8 @@ public partial class SharpLinkServerInvocationTests
         }
         finally
         {
-            registryGate.Exit();
+            releaseRegistry.Set();
+            await registryOwner.WaitAsync(TimeSpan.FromSeconds(2));
         }
 
         var rejected = false;
