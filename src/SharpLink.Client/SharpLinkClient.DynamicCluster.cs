@@ -697,6 +697,8 @@ internal sealed partial class SharpLinkClient
                         PublishReadySnapshotLocked();
                         throw;
                     }
+                    if (endpoint.ReadyConnections.Length != 0)
+                        endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
                     session.NotifyConnected();
                     _lifecycle.TrackTask(
                         _client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token),
@@ -741,6 +743,18 @@ internal sealed partial class SharpLinkClient
                     return;
                 retired = endpoint.Retiring;
                 PublishReadySnapshotLocked();
+                if (!retired && endpoint.ReadyConnections.Length == 0)
+                {
+                    var reconnectPolicy = _client.CaptureReconnectPolicy().Policy;
+                    if (_client.HasReachedReconnectStableWindow(
+                            endpoint.ReadyTimestamp,
+                            endpoint.HasReadyTimestamp,
+                            reconnectPolicy))
+                    {
+                        endpoint.ReconnectDelayTicks = reconnectPolicy.InitialDelay.Ticks;
+                    }
+                    endpoint.ClearReadyTimestamp();
+                }
                 connection.Fail(exception);
                 _lifecycle.TrackTask(
                     DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connection),

@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkClient
     private readonly CompressionSendPolicyState _requestCompressionPolicy;
     private ResponseCompressionPreferenceSnapshot _responseCompressionPreference =
         ResponseCompressionPreferenceSnapshot.InitialAllowed;
+    internal Action? BeforeResponseCompressionReadyReconciliationTestHook { get; set; }
 
     public void UpdateRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)
     {
@@ -94,6 +95,7 @@ internal sealed partial class SharpLinkClient
 
     private void ReconcileResponseCompressionPreferenceAfterReadyPublication(RpcSession session)
     {
+        BeforeResponseCompressionReadyReconciliationTestHook?.Invoke();
         if (!session.HasNegotiatedCompression)
             return;
         session.ReconcileResponseCompressionPreference(CaptureResponseCompressionPreference());

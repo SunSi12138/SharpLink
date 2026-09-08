@@ -493,6 +493,8 @@ internal sealed partial class SharpLinkClient
                         PublishReadySnapshotLocked();
                         throw;
                     }
+                    if (endpoint.ReadyConnections.Length != 0)
+                        endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
                     session.NotifyConnected();
                     _client.TrackFrameworkTask(
                         _client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token),
@@ -530,6 +532,18 @@ internal sealed partial class SharpLinkClient
                     return;
                 _retiringConnections.Remove(connection);
                 PublishReadySnapshotLocked();
+                if (endpoint.ReadyConnections.Length == 0)
+                {
+                    var reconnectPolicy = _client.CaptureReconnectPolicy().Policy;
+                    if (_client.HasReachedReconnectStableWindow(
+                            endpoint.ReadyTimestamp,
+                            endpoint.HasReadyTimestamp,
+                            reconnectPolicy))
+                    {
+                        endpoint.ReconnectDelayTicks = reconnectPolicy.InitialDelay.Ticks;
+                    }
+                    endpoint.ClearReadyTimestamp();
+                }
                 connection.Fail(exception);
                 _client.TrackFrameworkTask(
                     DisposeConnectionAsync(connection),
@@ -630,35 +644,71 @@ internal sealed partial class SharpLinkClient
 
         private async Task ReconnectAsync(EndpointState endpoint)
         {
-            int delayMilliseconds;
-            lock (_gate)
-                delayMilliseconds = endpoint.ReconnectDelayMilliseconds;
             try
             {
-                await Task.Delay(
-                    _client._reconnectJitter.AddQuarterWindow(delayMilliseconds),
-                    _client._runtimeContext.TimeProvider,
-                    _client._shutdownCts.Token).ConfigureAwait(false);
-                var shouldConnect = false;
-                lock (_gate)
-                    shouldConnect = NeedsReconnectLocked(endpoint);
-                if (shouldConnect)
+                var complete = false;
+                while (!complete)
                 {
-                    SharpLinkTelemetry.ReconnectAttempt();
-                    await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
+                    ReconnectPolicyGeneration generation;
+                    TimeSpan baseDelay;
                     lock (_gate)
-                        endpoint.ReconnectDelayMilliseconds = endpoint.ReadyConnections.Length != 0 ? 100 : NextReconnectDelay(delayMilliseconds);
+                    {
+                        if (!NeedsReconnectLocked(endpoint))
+                            break;
+                        generation = _client.CaptureReconnectPolicy();
+                        baseDelay = ResolveReconnectDelay(endpoint.ReconnectDelayTicks, generation.Policy);
+                    }
+
+                    try
+                    {
+                        if (!await _client.WaitForReconnectDelayAsync(
+                                baseDelay, generation, _client._shutdownCts.Token).ConfigureAwait(false))
+                        {
+                            continue;
+                        }
+
+                        bool shouldConnect;
+                        lock (_gate)
+                            shouldConnect = NeedsReconnectLocked(endpoint);
+                        if (!shouldConnect)
+                            break;
+
+                        SharpLinkTelemetry.ReconnectAttempt();
+                        await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
+                        var completionPolicy = generation.Policy;
+                        lock (_gate)
+                        {
+                            if (_client.IsCurrentReconnectPolicyGeneration(generation))
+                            {
+                                endpoint.ReconnectDelayTicks = ResolveReconnectCompletionDelay(
+                                    baseDelay,
+                                    endpoint.ReadyConnections.Length != 0,
+                                    completionPolicy).Ticks;
+                            }
+                        }
+                        complete = true;
+                    }
+                    catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception exception)
+                    {
+                        LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
+                        var completionPolicy = generation.Policy;
+                        lock (_gate)
+                        {
+                            if (_client.IsCurrentReconnectPolicyGeneration(generation))
+                            {
+                                endpoint.ReconnectDelayTicks = ResolveReconnectCompletionDelay(
+                                    baseDelay,
+                                    reconnected: false,
+                                    completionPolicy).Ticks;
+                            }
+                        }
+                        complete = true;
+                    }
                 }
-            }
-            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception exception)
-            {
-                LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
-                lock (_gate)
-                    endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
             }
             finally
             {
@@ -668,8 +718,6 @@ internal sealed partial class SharpLinkClient
             if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
                 EnsureMinimumReadyEndpoints();
         }
-
-        private static int NextReconnectDelay(int delayMilliseconds) => Math.Min(delayMilliseconds * 2, 5000);
 
         private void PublishClientReadiness()
         {

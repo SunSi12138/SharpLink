@@ -33,8 +33,9 @@ internal sealed partial class SharpLinkClient :
     private TaskCompletionSource<bool> _readySignal = CreateReadySignal();
     private int _activeLogicalInvocations;
     private int _state = (int)SharpLinkConnectionState.Created;
-    private int _reconnectDelayMilliseconds = 100;
+    private long _reconnectDelayTicks;
     private long _readyTimestamp;
+    private bool _hasReconnectReadyTimestamp;
     private readonly TimeSpan _heartbeatInterval;
     private readonly TimeSpan _heartbeatTimeout;
     private readonly bool _hasRequestTimeout;
@@ -87,6 +88,8 @@ internal sealed partial class SharpLinkClient :
         _retryOptions = composition.RetryOptions;
         _retryPolicy = composition.RetryPolicy;
         _endpointAdmissionPolicy = composition.EndpointAdmissionPolicy;
+        _reconnectPolicyConfiguration = new ReconnectPolicyGeneration(0, composition.ReconnectPolicy);
+        _reconnectDelayTicks = composition.ReconnectPolicy.InitialDelay.Ticks;
         _reconnectJitter = composition.ReconnectJitter;
         _logger = composition.Logger;
         _frameworkTasks = composition.FrameworkTasks;

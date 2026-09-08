@@ -167,10 +167,19 @@ internal sealed partial class SharpLinkClient
             return;
         }
 
-        var stableDuration = _runtimeContext.TimeProvider.GetElapsedTime(
-            Volatile.Read(ref _readyTimestamp));
-        if (stableDuration >= TimeSpan.FromSeconds(30))
-            Volatile.Write(ref _reconnectDelayMilliseconds, 100);
+        SharpLinkReconnectPolicy reconnectPolicy;
+        long readyTimestamp;
+        bool hasReadyTimestamp;
+        lock (_stateGate)
+        {
+            reconnectPolicy = CaptureReconnectPolicy().Policy;
+            readyTimestamp = _readyTimestamp;
+            hasReadyTimestamp = _hasReconnectReadyTimestamp;
+            _readyTimestamp = default;
+            _hasReconnectReadyTimestamp = false;
+        }
+        if (HasReachedReconnectStableWindow(readyTimestamp, hasReadyTimestamp, reconnectPolicy))
+            Volatile.Write(ref _reconnectDelayTicks, reconnectPolicy.InitialDelay.Ticks);
         TransitionTo(SharpLinkConnectionState.Reconnecting);
         EnsureReconnectLoop();
     }
@@ -220,17 +229,22 @@ internal sealed partial class SharpLinkClient
             while (!_shutdownCts.IsCancellationRequested &&
                    ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
-                var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
-                var delay = _reconnectJitter.ScaleTwentyPercent(baseDelay);
+                var generation = CaptureReconnectPolicy();
+                var baseDelay = ResolveReconnectDelay(Volatile.Read(ref _reconnectDelayTicks), generation.Policy);
                 try
                 {
-                    await Task.Delay(
-                        delay,
-                        _runtimeContext.TimeProvider,
-                        _shutdownCts.Token).ConfigureAwait(false);
+                    if (!await WaitForReconnectDelayAsync(baseDelay, generation, _shutdownCts.Token).ConfigureAwait(false))
+                        continue;
                     SharpLinkTelemetry.ReconnectAttempt();
                     await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
                     PublishReadyState();
+                    var completionPolicy = generation.Policy;
+                    if (IsCurrentReconnectPolicyGeneration(generation))
+                    {
+                        Volatile.Write(
+                            ref _reconnectDelayTicks,
+                            ResolveReconnectCompletionDelay(baseDelay, reconnected: true, completionPolicy).Ticks);
+                    }
                 }
                 catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
                 {
@@ -240,8 +254,13 @@ internal sealed partial class SharpLinkClient
                 {
                     using var scope = BeginSessionLogScope(_logger, "reconnect");
                     LogClientConnectionAttemptFailed(_logger, nameof(ReconnectLoopAsync), ex);
-                    var nextDelay = Math.Min(baseDelay * 2, 5000);
-                    Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
+                    var completionPolicy = generation.Policy;
+                    if (IsCurrentReconnectPolicyGeneration(generation))
+                    {
+                        Volatile.Write(
+                            ref _reconnectDelayTicks,
+                            ResolveReconnectCompletionDelay(baseDelay, reconnected: false, completionPolicy).Ticks);
+                    }
                     TransitionTo(SharpLinkConnectionState.Reconnecting);
                 }
             }
