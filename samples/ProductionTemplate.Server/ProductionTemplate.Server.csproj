@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <UseSharpLinkPackages Condition="'$(UseSharpLinkPackages)' == ''">false</UseSharpLinkPackages>
+    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == ''">2.0.0</SharpLinkPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProductionTemplate.Contracts\ProductionTemplate.Contracts.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseSharpLinkPackages)' == 'true'">
+    <PackageReference Include="SharpLink.Sdk" Version="$(SharpLinkPackageVersion)" />
+    <PackageReference Include="SharpLink.Server" Version="$(SharpLinkPackageVersion)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseSharpLinkPackages)' != 'true'">
+    <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>
