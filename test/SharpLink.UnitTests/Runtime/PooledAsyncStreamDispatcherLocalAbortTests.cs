@@ -136,7 +136,7 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         dispatcher.SetBeforeProducerOperationAcquireForTests(
             () => abortEnteringDispatcher.TrySetResult());
-        var abort = Task.Run(() => localAbort.CompleteLocalAbort(terminal));
+        var abort = LongRunningTestWorker.Run(() => localAbort.CompleteLocalAbort(terminal));
 
         // Wait for CompleteLocalAbort to enter the dispatch-acquire path while the delivery
         // callback still owns publication. This replaces a wall-clock sleep that only guessed
