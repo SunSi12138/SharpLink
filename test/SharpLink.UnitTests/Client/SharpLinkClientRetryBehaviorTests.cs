@@ -179,8 +179,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
                 await Task.Yield();
 
             var stop = client.StopAsync().AsTask();
-            var exception = await EnsureThrows<SharpLinkException>(
-                invocation.WaitAsync(TimeSpan.FromSeconds(2)));
+            var exception = await EnsureThrows<SharpLinkException>(invocation);
             await stop.WaitAsync(TimeSpan.FromSeconds(2));
             Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed,
                 $"huge jittered retry delay cancellation iteration {iteration}");
