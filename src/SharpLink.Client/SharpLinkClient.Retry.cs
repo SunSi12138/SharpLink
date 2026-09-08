@@ -59,10 +59,7 @@ internal sealed partial class SharpLinkClient
             {
                 SharpLinkTelemetry.RecordClientAttempt();
             }
-            SharpLinkTelemetry.AttemptScope attemptScope =
-                control.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Detailed
-                    ? SharpLinkTelemetry.StartClientAttempt(method, attempt)
-                    : default;
+            var attemptScope = StartClientAttemptTelemetry(control, method, attempt);
             try
             {
                 var response = await InvokeUnaryRetryAttemptAsync(
@@ -128,6 +125,14 @@ internal sealed partial class SharpLinkClient
 
         throw lastFailure ?? new SharpLinkException(SharpLinkErrorCode.Internal, "Retry exhausted without an attempt result.");
     }
+
+    internal static SharpLinkTelemetry.AttemptScope StartClientAttemptTelemetry(
+        in ResolvedCallControl control,
+        RpcMethodDescriptor method,
+        int attempt)
+        => control.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Detailed
+            ? SharpLinkTelemetry.StartClientAttempt(method, attempt)
+            : default;
 
     internal static void EnsureLogicalCallProgress(in ResolvedCallControl control)
     {
