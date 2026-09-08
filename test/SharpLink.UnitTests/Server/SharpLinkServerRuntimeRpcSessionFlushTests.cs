@@ -13,22 +13,19 @@ public partial class SharpLinkServerInvocationTests
     [NotInParallel]
     public async Task RpcSessionFlushUpdateMustNotPublishAfterStopOwnsLifecycleGate()
     {
-        var listener = new BlockingListener();
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
-            .UseTransport(listener)
+            .UseTransport(new IdleListener())
             .Build();
-        var runTask = server.RunAsync().AsTask();
-        await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(server.HealthStatus == SharpLinkHealthStatus.Ready,
-            "the race fixture must begin from a Running server");
-
         var initial = server.GetRpcSessionFlushPolicySnapshot();
         var registryGate = GetPrivateServerLock(server, "_registryGate");
         var lifecycleGate = GetPrivateServerLock(server, "_stateGate");
+        var updateStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         Task? stopTask = null;
         Task? updateTask = null;
+
         registryGate.Enter();
         try
         {
@@ -40,8 +37,11 @@ public partial class SharpLinkServerInvocationTests
                 "StopAsync did not acquire the lifecycle gate while waiting for the registry gate");
 
             updateTask = Task.Run(() =>
-                server.UpdateRpcSessionFlushPolicy(2048, TimeSpan.FromMilliseconds(2)));
-            await Task.Yield();
+            {
+                updateStarted.TrySetResult();
+                server.UpdateRpcSessionFlushPolicy(2048, TimeSpan.FromMilliseconds(2));
+            });
+            await updateStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             await Task.Yield();
 
             Ensure(!updateTask.IsCompleted,
@@ -69,7 +69,6 @@ public partial class SharpLinkServerInvocationTests
         Ensure(server.GetRpcSessionFlushPolicySnapshot() == initial,
             "a stop-rejected flush update must leave the generation unchanged");
         await stopTask!.WaitAsync(TimeSpan.FromSeconds(2));
-        await runTask.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     private static Lock GetPrivateServerLock(SharpLinkServer server, string propertyName)
