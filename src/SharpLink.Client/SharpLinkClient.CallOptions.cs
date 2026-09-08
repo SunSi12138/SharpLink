@@ -30,6 +30,10 @@ internal sealed partial class SharpLinkClient
         // Capture exactly one client fallback generation at the logical-call creation boundary.
         // Later runtime updates cannot alter this call's selected timeout or frozen deadline.
         var requestTimeoutPolicy = CaptureRequestTimeoutGeneration().Policy;
+        // Telemetry detail follows the same next-logical-call boundary. This keeps the logical
+        // activity, optional enrichments, delayed stream enumeration, and retry attempts on one
+        // immutable detail generation even if the control plane publishes a replacement mid-call.
+        var telemetryDetailMode = CaptureTelemetryDetailGeneration().Mode;
 
         // Method policy overrides the client-wide fallback. These are policy-selection layers,
         // not independent lifetime caps. A parameterless [Timeout] deliberately falls back to
@@ -122,7 +126,8 @@ internal sealed partial class SharpLinkClient
             deadline,
             metadata is { Count: > 0 } ? metadata : null,
             deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null,
-            lifetimeSource);
+            lifetimeSource,
+            telemetryDetailMode);
     }
 
     private async ValueTask DelayForRetryOrAdmissionAsync(
@@ -205,5 +210,6 @@ internal sealed partial class SharpLinkClient
         RpcDeadline Deadline,
         SharpLinkMetadata? Metadata,
         ClientLogicalCallState? LogicalCall,
-        ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None);
+        ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None,
+        SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed);
 }
