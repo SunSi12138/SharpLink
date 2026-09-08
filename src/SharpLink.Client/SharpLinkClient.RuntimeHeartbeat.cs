@@ -84,6 +84,30 @@ internal sealed partial class SharpLinkClient
         return current;
     }
 
+    private async ValueTask<bool> WaitForHeartbeatScheduleAsync(
+        TimeSpan delay,
+        HeartbeatConfigurationGeneration generation,
+        CancellationToken cancellationToken)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            generation.ChangedToken);
+        try
+        {
+            await SharpLinkTimer.DelayAsync(
+                delay,
+                _runtimeContext.TimeProvider,
+                linkedCancellation.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (
+            generation.ChangedToken.IsCancellationRequested &&
+            !cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
     private void EnsureHeartbeatPublicationAllowed()
     {
         var state = State;
