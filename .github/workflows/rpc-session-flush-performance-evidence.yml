@@ -1,0 +1,211 @@
+name: RPC Session Flush Performance Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'src/SharpLink.Runtime/RpcSession.SendPump.cs'
+      - 'src/SharpLink.Runtime/RpcSession.cs'
+      - 'src/SharpLink.Runtime/RpcSessionCreationOptions.cs'
+      - 'src/SharpLink.Runtime/RpcSessionFlushPolicyState.cs'
+      - 'src/SharpLink.Client/SharpLinkClient.RuntimeRpcSessionFlush.cs'
+      - 'src/SharpLink.Server/SharpLinkServer.RuntimeRpcSessionFlush.cs'
+      - 'test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - '.github/workflows/rpc-session-flush-performance-evidence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  same-machine-ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/performance/rpc-session-flush
+          dotnet --info > artifacts/performance/rpc-session-flush/dotnet-info.txt
+          uname -a > artifacts/performance/rpc-session-flush/uname.txt
+          lscpu > artifacts/performance/rpc-session-flush/cpu.txt
+          printf 'base=%s\nhead=%s\n' \
+            '${{ github.event.pull_request.base.sha }}' \
+            '${{ github.event.pull_request.head.sha }}' \
+            > artifacts/performance/rpc-session-flush/provenance.txt
+
+      - name: Prepare exact base worktree with identical evidence harness
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BASE_WORKTREE="$RUNNER_TEMP/sharplink-rpc-flush-base"
+          git worktree add --detach "$BASE_WORKTREE" "$BASE_SHA"
+          cp test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs \
+            "$BASE_WORKTREE/test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs"
+          cp test/SharpLink.Benchmarks/Program.cs \
+            "$BASE_WORKTREE/test/SharpLink.Benchmarks/Program.cs"
+          echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
+
+      - name: Build exact base benchmark harness
+        shell: bash
+        run: dotnet build "$BASE_WORKTREE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
+
+      - name: Build exact PR-head benchmark harness
+        shell: bash
+        run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -v minimal
+
+      - name: Measure static base implementation
+        shell: bash
+        env:
+          SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          dotnet run -c Release --no-build \
+            --project "$BASE_WORKTREE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -- \
+            --rpc-session-flush-policy-evidence static-baseline \
+            "$GITHUB_WORKSPACE/artifacts/performance/rpc-session-flush/static-baseline.json"
+
+      - name: Measure runtime-capable no-update steady state
+        shell: bash
+        env:
+          SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          dotnet run -c Release --no-build \
+            --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+            --rpc-session-flush-policy-evidence runtime-no-update \
+            artifacts/performance/rpc-session-flush/runtime-no-update.json
+
+      - name: Measure post-update steady state
+        shell: bash
+        env:
+          SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          dotnet run -c Release --no-build \
+            --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+            --rpc-session-flush-policy-evidence post-update \
+            artifacts/performance/rpc-session-flush/post-update.json
+
+      - name: Summarize A/B evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path('artifacts/performance/rpc-session-flush')
+          docs = {
+              name: json.loads((root / f'{name}.json').read_text())
+              for name in ('static-baseline', 'runtime-no-update', 'post-update')
+          }
+
+          def index(doc):
+              return {
+                  (row['profile'], row['payloadBytes'], row['concurrency']): row
+                  for row in doc['measurements']
+              }
+
+          base = index(docs['static-baseline'])
+          no_update = index(docs['runtime-no-update'])
+          post = index(docs['post-update'])
+
+          def delta(value, baseline):
+              return 0.0 if baseline == 0 else (value - baseline) * 100.0 / baseline
+
+          rows = []
+          for key in sorted(base):
+              b = base[key]
+              n = no_update[key]
+              p = post[key]
+              rows.append({
+                  'profile': key[0],
+                  'payloadBytes': key[1],
+                  'concurrency': key[2],
+                  'noUpdateQpsDeltaPct': delta(n['qps'], b['qps']),
+                  'postUpdateQpsDeltaPct': delta(p['qps'], b['qps']),
+                  'noUpdateP50DeltaPct': delta(n['p50Microseconds'], b['p50Microseconds']),
+                  'postUpdateP50DeltaPct': delta(p['p50Microseconds'], b['p50Microseconds']),
+                  'noUpdateP99DeltaPct': delta(n['p99Microseconds'], b['p99Microseconds']),
+                  'postUpdateP99DeltaPct': delta(p['p99Microseconds'], b['p99Microseconds']),
+                  'noUpdateAllocationDeltaPct': delta(n['allocatedBytesPerOperation'], b['allocatedBytesPerOperation']),
+                  'postUpdateAllocationDeltaPct': delta(p['allocatedBytesPerOperation'], b['allocatedBytesPerOperation']),
+                  'baseQps': b['qps'],
+                  'noUpdateQps': n['qps'],
+                  'postUpdateQps': p['qps'],
+                  'baseP99Us': b['p99Microseconds'],
+                  'noUpdateP99Us': n['p99Microseconds'],
+                  'postUpdateP99Us': p['p99Microseconds'],
+                  'baseAllocatedBOp': b['allocatedBytesPerOperation'],
+                  'noUpdateAllocatedBOp': n['allocatedBytesPerOperation'],
+                  'postUpdateAllocatedBOp': p['allocatedBytesPerOperation'],
+              })
+
+          comparison = {
+              'baseCommit': docs['static-baseline']['commit'],
+              'headCommit': docs['runtime-no-update']['commit'],
+              'rows': rows,
+              'medians': {
+                  'noUpdateQpsDeltaPct': statistics.median(r['noUpdateQpsDeltaPct'] for r in rows),
+                  'postUpdateQpsDeltaPct': statistics.median(r['postUpdateQpsDeltaPct'] for r in rows),
+                  'noUpdateP99DeltaPct': statistics.median(r['noUpdateP99DeltaPct'] for r in rows),
+                  'postUpdateP99DeltaPct': statistics.median(r['postUpdateP99DeltaPct'] for r in rows),
+                  'noUpdateAllocationDeltaPct': statistics.median(r['noUpdateAllocationDeltaPct'] for r in rows),
+                  'postUpdateAllocationDeltaPct': statistics.median(r['postUpdateAllocationDeltaPct'] for r in rows),
+              },
+          }
+          (root / 'comparison.json').write_text(json.dumps(comparison, indent=2) + '\n')
+
+          lines = [
+              '# RPC session flush policy same-machine A/B',
+              '',
+              f"- base: `{comparison['baseCommit']}`",
+              f"- head: `{comparison['headCommit']}`",
+              '- each cell is the median of five rounds after warmup; base/head/post-update use the same loopback unary RPC harness and explicit effective flush policy',
+              '',
+              '| Profile | Payload | C | QPS base | QPS no-update Δ | QPS post-update Δ | P99 base (us) | P99 no-update Δ | P99 post-update Δ | B/op base | B/op no-update Δ | B/op post-update Δ |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+          ]
+          for r in rows:
+              lines.append(
+                  f"| {r['profile']} | {r['payloadBytes']} | {r['concurrency']} | "
+                  f"{r['baseQps']:.0f} | {r['noUpdateQpsDeltaPct']:+.2f}% | {r['postUpdateQpsDeltaPct']:+.2f}% | "
+                  f"{r['baseP99Us']:.2f} | {r['noUpdateP99DeltaPct']:+.2f}% | {r['postUpdateP99DeltaPct']:+.2f}% | "
+                  f"{r['baseAllocatedBOp']:.1f} | {r['noUpdateAllocationDeltaPct']:+.2f}% | {r['postUpdateAllocationDeltaPct']:+.2f}% |"
+              )
+          lines += [
+              '',
+              '## Median relative deltas across the 12 scenarios',
+              '',
+              f"- runtime-capable no-update QPS: {comparison['medians']['noUpdateQpsDeltaPct']:+.2f}%",
+              f"- post-update QPS: {comparison['medians']['postUpdateQpsDeltaPct']:+.2f}%",
+              f"- runtime-capable no-update P99: {comparison['medians']['noUpdateP99DeltaPct']:+.2f}%",
+              f"- post-update P99: {comparison['medians']['postUpdateP99DeltaPct']:+.2f}%",
+              f"- runtime-capable no-update B/op: {comparison['medians']['noUpdateAllocationDeltaPct']:+.2f}%",
+              f"- post-update B/op: {comparison['medians']['postUpdateAllocationDeltaPct']:+.2f}%",
+          ]
+          (root / 'comparison.md').write_text('\n'.join(lines) + '\n')
+          print('\n'.join(lines))
+          PY
+
+      - name: Publish comparison summary
+        shell: bash
+        run: cat artifacts/performance/rpc-session-flush/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload RPC flush performance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rpc-session-flush-performance-${{ github.event.pull_request.head.sha }}
+          path: artifacts/performance/rpc-session-flush
+          if-no-files-found: error
+          retention-days: 30
