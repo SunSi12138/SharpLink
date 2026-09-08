@@ -665,22 +665,45 @@ internal sealed partial class SharpLinkClient
     private async Task HeartbeatSendLoop(ClientConnection connection, CancellationToken ct)
     {
         var session = connection.Session;
+        var timeProvider = _runtimeContext.TimeProvider;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
+        var lastPingTimestamp = timeProvider.GetTimestamp();
+        var sendImmediately = true;
+
         while (!ct.IsCancellationRequested)
         {
+            var configuration = CaptureHeartbeatConfiguration();
+            if (!sendImmediately)
+            {
+                if (session.TimeSinceLastActivity > configuration.Timeout || !session.IsConnected)
+                {
+                    LogServerHeartbeatTimeout(_logger);
+                    await session.DisposeAsync();
+                    HandleDisconnected(connection, CreateHeartbeatTimeoutException("Server heartbeat timeout."));
+                    break;
+                }
+
+                var elapsedSincePing = timeProvider.GetElapsedTime(lastPingTimestamp);
+                if (elapsedSincePing < configuration.Interval)
+                {
+                    var remaining = configuration.Interval - elapsedSincePing;
+                    if (!await WaitForHeartbeatScheduleAsync(
+                            remaining,
+                            configuration,
+                            ct).ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+
+                    // Re-enter through the generation/liveness checks before emitting a Ping. This
+                    // prevents a lengthened interval from allowing an old timer to send early.
+                    continue;
+                }
+            }
+
             await session.SendPingWithBackpressureAsync(ct).ConfigureAwait(false);
-            await SharpLinkTimer.DelayAsync(
-                _heartbeatInterval,
-                _runtimeContext.TimeProvider,
-                ct).ConfigureAwait(false);
-            if (session.TimeSinceLastActivity <= _heartbeatTimeout && session.IsConnected)
-                continue;
-
-            LogServerHeartbeatTimeout(_logger);
-
-            await session.DisposeAsync();
-            HandleDisconnected(connection, CreateHeartbeatTimeoutException("Server heartbeat timeout."));
-            break;
+            lastPingTimestamp = timeProvider.GetTimestamp();
+            sendImmediately = false;
         }
     }
 
