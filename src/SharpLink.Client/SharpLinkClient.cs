@@ -48,7 +48,7 @@ internal sealed partial class SharpLinkClient :
     private ClientInterceptorGeneration _clientInterceptorGeneration;
     private readonly SharpLinkRetryOptions? _retryOptions;
     private readonly ISharpLinkRetryPolicy? _retryPolicy;
-    private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
+    private volatile ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
     private readonly ISharpLinkReconnectJitter _reconnectJitter;
     private readonly Func<CancellationToken, ValueTask>? _beforeReadyPublicationTestHook;
 

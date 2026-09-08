@@ -197,6 +197,70 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
         => throw new NotSupportedException(
             "This ISharpLinkClient implementation does not support runtime retry policy updates.");
 
+    /// <summary>Gets the currently published endpoint-admission generation and mode.</summary>
+    SharpLinkEndpointAdmissionPolicySnapshot GetEndpointAdmissionPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime endpoint admission policy state.");
+
+    /// <summary>
+    /// Atomically publishes an application-owned endpoint admission policy for future endpoint attempts.
+    /// An attempt that has already been admitted remains permanently paired with the exact policy and
+    /// opaque token that admitted it until its terminal report completes.
+    /// </summary>
+    /// <param name="policy">The application-owned synchronous endpoint admission policy.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="policy"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="policy"/> is the built-in circuit-breaker implementation.</exception>
+    /// <exception cref="InvalidOperationException">The built-in circuit breaker is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime endpoint admission updates.</exception>
+    void UpdateEndpointAdmissionPolicy(ISharpLinkEndpointAdmissionPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime endpoint admission updates.");
+    }
+
+    /// <summary>
+    /// Disables the application-owned endpoint admission policy for future endpoint attempts.
+    /// Already admitted attempts retain their exact policy/token lease through terminal reporting.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The built-in circuit breaker is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime endpoint admission updates.</exception>
+    void DisableEndpointAdmissionPolicy()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime endpoint admission updates.");
+
+    /// <summary>Gets the currently published built-in endpoint circuit-breaker configuration.</summary>
+    SharpLinkCircuitBreakerPolicySnapshot GetCircuitBreakerPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime circuit-breaker state.");
+
+    /// <summary>
+    /// Enables or atomically replaces the built-in endpoint-generation circuit-breaker settings.
+    /// Ordinary option updates preserve live Closed/Open/HalfOpen state and retained sample history;
+    /// enabling from disabled starts with a fresh Closed breaker.
+    /// </summary>
+    /// <param name="options">The complete circuit-breaker settings copied before publication.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">One or more option values are invalid.</exception>
+    /// <exception cref="InvalidOperationException">Custom endpoint admission is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime circuit-breaker updates.</exception>
+    void UpdateCircuitBreaker(ISharpLinkCircuitBreakerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime circuit-breaker updates.");
+    }
+
+    /// <summary>
+    /// Disables the built-in circuit breaker for future endpoint attempts. Re-enabling later creates
+    /// fresh endpoint-generation breaker state rather than reviving retired Open/HalfOpen history.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Custom endpoint admission is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime circuit-breaker updates.</exception>
+    void DisableCircuitBreaker()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime circuit-breaker updates.");
+
     /// <summary>
     /// Atomically replaces the client-local Request compression policy. The next Request or
     /// client-to-server StreamData frame captures the new policy at its compression decision point.
@@ -208,7 +272,6 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
         throw new NotSupportedException(
             "This ISharpLinkClient implementation does not support runtime request compression policy updates.");
     }
-
     /// <summary>
     /// Publishes the desired Server-to-Client response compression preference and waits for the
     /// fixed cohort of currently eligible Ready sessions to converge to at least that generation.

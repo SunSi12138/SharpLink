@@ -15,6 +15,7 @@ internal sealed partial class SharpLinkClient
         private long _endpointStarted;
         private int _responseObserved;
         private SharpLinkEndpointCandidate _admissionEndpoint;
+        private ISharpLinkEndpointAdmissionPolicy? _admissionPolicy;
         private long _admissionToken;
         private int _hasAdmissionLease;
         private TimeSpan? _retryAfter;
@@ -40,6 +41,7 @@ internal sealed partial class SharpLinkClient
             Volatile.Write(ref _endpointStarted, 0);
             Volatile.Write(ref _responseObserved, 0);
             _admissionEndpoint = default;
+            _admissionPolicy = null;
             _admissionToken = 0;
             _retryAfter = null;
             SharpLinkTelemetry.RecordClientAttempt();
@@ -80,6 +82,7 @@ internal sealed partial class SharpLinkClient
             }
 
             _admissionEndpoint = endpoint;
+            _admissionPolicy = policy;
             _admissionToken = decision.Token;
             _retryAfter = null;
             Volatile.Write(ref _responseObserved, 0);
@@ -131,7 +134,8 @@ internal sealed partial class SharpLinkClient
             if (Interlocked.Exchange(ref _hasAdmissionLease, 0) == 0)
                 return;
 
-            var policy = _client._endpointAdmissionPolicy;
+            var policy = _admissionPolicy;
+            _admissionPolicy = null;
             if (policy is null)
                 return;
             var outcome = new SharpLinkEndpointOutcome(

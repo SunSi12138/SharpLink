@@ -1,7 +1,7 @@
 namespace SharpLink.Client;
 
 /// <summary>Configures the built-in endpoint circuit breaker.</summary>
-public sealed class SharpLinkCircuitBreakerOptions
+public sealed class SharpLinkCircuitBreakerOptions : ISharpLinkCircuitBreakerOptions
 {
     /// <summary>Gets or sets the minimum samples required before a Closed breaker can open. The default is 20.</summary>
     public int MinimumThroughput { get; set; } = 20;
@@ -19,25 +19,36 @@ public sealed class SharpLinkCircuitBreakerOptions
     public int HalfOpenMaxCalls { get; set; } = 1;
 
     internal SharpLinkCircuitBreakerOptions CloneValidated()
+        => CopyValidated(this);
+
+    internal static SharpLinkCircuitBreakerOptions CopyValidated(ISharpLinkCircuitBreakerOptions options)
     {
-        if (MinimumThroughput is < 1 or > 1024)
-            throw new ArgumentOutOfRangeException(nameof(MinimumThroughput));
-        if (FailureRatio is <= 0 or > 1 || double.IsNaN(FailureRatio))
-            throw new ArgumentOutOfRangeException(nameof(FailureRatio));
-        if (SamplingDuration <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(SamplingDuration));
-        if (BreakDuration <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(BreakDuration));
-        if (HalfOpenMaxCalls <= 0)
-            throw new ArgumentOutOfRangeException(nameof(HalfOpenMaxCalls));
+        ArgumentNullException.ThrowIfNull(options);
+
+        var minimumThroughput = options.MinimumThroughput;
+        var failureRatio = options.FailureRatio;
+        var samplingDuration = options.SamplingDuration;
+        var breakDuration = options.BreakDuration;
+        var halfOpenMaxCalls = options.HalfOpenMaxCalls;
+
+        if (minimumThroughput is < 1 or > 1024)
+            throw new ArgumentOutOfRangeException(nameof(options), "MinimumThroughput must be from one through 1024.");
+        if (failureRatio is <= 0 or > 1 || double.IsNaN(failureRatio))
+            throw new ArgumentOutOfRangeException(nameof(options), "FailureRatio must be greater than zero through one.");
+        if (samplingDuration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options), "SamplingDuration must be positive.");
+        if (breakDuration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options), "BreakDuration must be positive.");
+        if (halfOpenMaxCalls <= 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "HalfOpenMaxCalls must be positive.");
 
         return new SharpLinkCircuitBreakerOptions
         {
-            MinimumThroughput = MinimumThroughput,
-            FailureRatio = FailureRatio,
-            SamplingDuration = SamplingDuration,
-            BreakDuration = BreakDuration,
-            HalfOpenMaxCalls = HalfOpenMaxCalls
+            MinimumThroughput = minimumThroughput,
+            FailureRatio = failureRatio,
+            SamplingDuration = samplingDuration,
+            BreakDuration = breakDuration,
+            HalfOpenMaxCalls = halfOpenMaxCalls
         };
     }
 }
