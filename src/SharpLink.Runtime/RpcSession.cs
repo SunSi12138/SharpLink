@@ -702,11 +702,13 @@ internal sealed partial class RpcSession
             if (Volatile.Read(ref _terminal) is not null)
                 throw GetTerminalException();
 
+            var flushPolicyState = _compressionSendPolicyState.GetOrCreateSessionFlushPolicyState(
+                _flushOptions,
+                RuntimeContext.PerformanceProfile);
             pump = new SendPump(
                 Output,
-                RuntimeContext.PerformanceProfile,
+                flushPolicyState,
                 RuntimeContext.FlowControl.MaxSendQueueBytes,
-                _flushOptions,
                 RuntimeContext.TimeProvider,
                 _cts.Token,
                 ReturnBuffer,
