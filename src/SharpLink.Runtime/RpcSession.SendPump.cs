@@ -428,10 +428,10 @@ internal sealed partial class RpcSession
             long batchStartTimestamp,
             int bytesAccumulated)
         {
-            // Queue publication and policy publication share this one wake authority. A policy
-            // wake never means "flush" by itself: every wake recaptures the immutable generation
-            // and recomputes the boundary from the original batch start, so both decreases and
-            // increases are applied to an already armed batch.
+            // Queue publication and policy publication share one wake authority. A policy
+            // generation change is the only wake that is consumed internally: it restarts the
+            // decision from the original batch start. An ordinary data wake keeps the static
+            // pump's established behavior and returns to the outer control loop immediately.
             while (true)
             {
                 if (HasProgressFrames() || HasNormalFrames())
@@ -463,9 +463,23 @@ internal sealed partial class RpcSession
                     continue;
 
                 var delay = remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
-                _ = await _wakeup.WaitAsync(_timeProvider, delay).ConfigureAwait(false);
-                // A frame, policy update, or timer completion all return here. The next loop
-                // iteration is the single decision point and always observes the latest generation.
+                var woke = await _wakeup.WaitAsync(_timeProvider, delay).ConfigureAwait(false);
+
+                // A concurrent policy replacement wins over either a stale data wake or a stale
+                // timer completion. Recompute threshold/latency from the original batch start.
+                if (!ReferenceEquals(policy, _flushPolicyState.Capture()))
+                    continue;
+
+                // Preserve the pre-runtime static pump contract: a data wake returns to the outer
+                // loop. If the queue was already drained by the time it is observed, the outer
+                // queue check falls through to the same immediate flush behavior as before #590.
+                if (woke)
+                    return true;
+
+                if (remaining <= MaximumTimerDelay)
+                    return false;
+                // One chunk of a very long MaxLatency expired without a policy change. Recompute
+                // the remaining part of the same deadline before arming the next chunk.
             }
         }
 
