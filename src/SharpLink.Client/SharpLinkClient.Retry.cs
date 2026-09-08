@@ -8,8 +8,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
-        CancellationToken cancellationToken,
-        SharpLinkTelemetryDetailMode telemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed)
+        CancellationToken cancellationToken)
     {
         if (method.Kind != RpcMethodKind.Unary || !method.IsIdempotent)
         {
@@ -27,14 +26,7 @@ internal sealed partial class SharpLinkClient
         }
 
         return InvokeUnaryWithRetryAsync(
-            method,
-            request,
-            requestCodec,
-            responseCodec,
-            control,
-            generation,
-            cancellationToken,
-            telemetryDetailMode);
+            method, request, requestCodec, responseCodec, control, generation, cancellationToken);
     }
 
     private async ValueTask<TResponse> InvokeUnaryWithRetryAsync<TRequest, TResponse>(
@@ -44,8 +36,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
         ClientRetryGeneration generation,
-        CancellationToken cancellationToken,
-        SharpLinkTelemetryDetailMode telemetryDetailMode)
+        CancellationToken cancellationToken)
     {
         var settings = generation.Settings;
         Exception? lastFailure = null;
@@ -68,10 +59,7 @@ internal sealed partial class SharpLinkClient
             {
                 SharpLinkTelemetry.RecordClientAttempt();
             }
-
-            var attemptScope = telemetryDetailMode == SharpLinkTelemetryDetailMode.Detailed
-                ? SharpLinkTelemetry.StartClientAttempt(method, attempt)
-                : default;
+            var attemptScope = SharpLinkTelemetry.StartClientAttempt(method, attempt);
             try
             {
                 var response = await InvokeUnaryRetryAttemptAsync(
