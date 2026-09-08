@@ -6,7 +6,7 @@ public enum SharpLinkTelemetryDetailMode : byte
     /// <summary>Emits stable baseline RPC telemetry only.</summary>
     Basic = 0,
 
-    /// <summary>Adds SharpLink diagnostic trace detail such as request identity, lifetime-source and retry-attempt activities.</summary>
+    /// <summary>Adds SharpLink diagnostic trace detail such as request identity and lifetime-source enrichment.</summary>
     Detailed = 1
 }
 
@@ -28,6 +28,7 @@ internal interface ISharpLinkTelemetryDetailRuntime
 /// <summary>Runtime helpers for replacing SharpLink-owned optional telemetry detail.</summary>
 public static class SharpLinkTelemetryDetailExtensions
 {
+    /// <summary>Gets the currently published Client telemetry-detail generation.</summary>
     public static SharpLinkTelemetryDetailPolicySnapshot GetTelemetryDetailPolicySnapshot(this ISharpLinkClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -36,6 +37,7 @@ public static class SharpLinkTelemetryDetailExtensions
             : throw new NotSupportedException("This ISharpLinkClient implementation does not support runtime telemetry-detail policy updates.");
     }
 
+    /// <summary>Publishes the telemetry-detail mode captured by future Client logical calls.</summary>
     public static void UpdateTelemetryDetailPolicy(this ISharpLinkClient client, SharpLinkTelemetryDetailMode mode)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -45,6 +47,7 @@ public static class SharpLinkTelemetryDetailExtensions
         runtime.UpdateTelemetryDetailPolicy(mode);
     }
 
+    /// <summary>Gets the currently published Server telemetry-detail generation.</summary>
     public static SharpLinkTelemetryDetailPolicySnapshot GetTelemetryDetailPolicySnapshot(this ISharpLinkServer server)
     {
         ArgumentNullException.ThrowIfNull(server);
@@ -53,6 +56,7 @@ public static class SharpLinkTelemetryDetailExtensions
             : throw new NotSupportedException("This ISharpLinkServer implementation does not support runtime telemetry-detail policy updates.");
     }
 
+    /// <summary>Publishes the telemetry-detail mode captured by future Server call dispatches.</summary>
     public static void UpdateTelemetryDetailPolicy(this ISharpLinkServer server, SharpLinkTelemetryDetailMode mode)
     {
         ArgumentNullException.ThrowIfNull(server);
