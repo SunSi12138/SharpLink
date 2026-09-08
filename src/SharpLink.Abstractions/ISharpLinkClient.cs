@@ -67,6 +67,51 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
             "This ISharpLinkClient implementation does not support runtime interceptor replacement.");
     }
 
+    /// <summary>Gets the currently published heartbeat scheduling and liveness configuration.</summary>
+    SharpLinkHeartbeatConfigurationSnapshot GetHeartbeatConfigurationSnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime heartbeat configuration state.");
+
+    /// <summary>
+    /// Atomically publishes a complete heartbeat interval/timeout pair and explicitly wakes active
+    /// heartbeat loops so they can reschedule against the new generation without reconnecting.
+    /// </summary>
+    /// <param name="interval">The positive heartbeat scheduling interval.</param>
+    /// <param name="timeout">The liveness timeout, which must be greater than <paramref name="interval"/>.</param>
+    void UpdateHeartbeat(TimeSpan interval, TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        if (timeout <= interval)
+            throw new ArgumentException("Heartbeat timeout must be greater than interval.");
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime heartbeat configuration updates.");
+    }
+
+    /// <summary>
+    /// Atomically updates the heartbeat interval while retaining the current timeout. Active heartbeat
+    /// loops are woken and rescheduled from the last actual Ping scheduling anchor.
+    /// </summary>
+    /// <param name="interval">The positive interval, which must remain smaller than the current timeout.</param>
+    void UpdateHeartbeatInterval(TimeSpan interval)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime heartbeat configuration updates.");
+    }
+
+    /// <summary>
+    /// Atomically updates the heartbeat liveness timeout while retaining the current interval. The
+    /// existing peer-activity timestamp is preserved, so shortening can immediately expire an idle session.
+    /// </summary>
+    /// <param name="timeout">The positive timeout, which must remain greater than the current interval.</param>
+    void UpdateHeartbeatTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime heartbeat configuration updates.");
+    }
+
     /// <summary>
     /// Gets the currently published client-wide request-timeout fallback generation.
     /// Method-level timeout policy and inherited deadlines can still impose a different effective call lifetime.
