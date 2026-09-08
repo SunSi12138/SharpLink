@@ -73,7 +73,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = SharpLinkTelemetry.StartServerCall(
+            var failedTelemetry = StartServerTelemetryCall(
                 GetMethodDescriptor(registration.Stub, methodId), requestId);
             failedTelemetry.Complete(exception);
             return CompleteDynamicSingletonInvocationAsync(
@@ -95,7 +95,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = SharpLinkTelemetry.StartServerCall(
+            var failedTelemetry = StartServerTelemetryCall(
                 GetMethodDescriptor(registration.Stub, methodId), requestId);
             failedTelemetry.Complete(exception);
             throw;
@@ -184,7 +184,6 @@ internal sealed partial class SharpLinkServer
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams)
     {
-
         if (!lease.RequiresDisposal)
         {
             return InvokeServiceTrackedAsync(
@@ -234,7 +233,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = SharpLinkTelemetry.StartServerCall(
+            var failedTelemetry = StartServerTelemetryCall(
                 GetMethodDescriptor(stub, methodId), requestId);
             failedTelemetry.Complete(exception);
             throw;
@@ -266,7 +265,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
-        var telemetry = SharpLinkTelemetry.StartServerCall(
+        var telemetry = StartServerTelemetryCall(
             GetMethodDescriptor(stub, methodId), requestId);
         try
         {
