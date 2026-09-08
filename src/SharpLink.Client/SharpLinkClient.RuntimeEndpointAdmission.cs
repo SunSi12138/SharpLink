@@ -27,7 +27,7 @@ internal sealed partial class SharpLinkClient
         lock (_stateGate)
         {
             EnsureEndpointAdmissionPublicationAllowed();
-            var current = Volatile.Read(ref _endpointAdmissionPolicy);
+            var current = _endpointAdmissionPolicy;
             if (current is SharpLinkCircuitBreaker)
             {
                 throw new InvalidOperationException(
@@ -39,7 +39,7 @@ internal sealed partial class SharpLinkClient
                 throw new InvalidOperationException("The endpoint admission policy generation is exhausted.");
 
             _endpointAdmissionPolicyGeneration++;
-            Volatile.Write(ref _endpointAdmissionPolicy, policy);
+            _endpointAdmissionPolicy = policy;
         }
     }
 
@@ -48,7 +48,7 @@ internal sealed partial class SharpLinkClient
         lock (_stateGate)
         {
             EnsureEndpointAdmissionPublicationAllowed();
-            var current = Volatile.Read(ref _endpointAdmissionPolicy);
+            var current = _endpointAdmissionPolicy;
             if (current is SharpLinkCircuitBreaker)
             {
                 throw new InvalidOperationException(
@@ -60,7 +60,7 @@ internal sealed partial class SharpLinkClient
                 throw new InvalidOperationException("The endpoint admission policy generation is exhausted.");
 
             _endpointAdmissionPolicyGeneration++;
-            Volatile.Write(ref _endpointAdmissionPolicy, null);
+            _endpointAdmissionPolicy = null;
         }
     }
 
