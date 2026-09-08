@@ -13,7 +13,8 @@ internal sealed class RpcSessionCreationOptions
         RpcSessionRole role,
         SharpLinkRuntimeContext runtimeContext,
         RpcSessionFlushOptions? flushOptions = null,
-        CompressionSendPolicyState? compressionSendPolicyState = null)
+        CompressionSendPolicyState? compressionSendPolicyState = null,
+        RpcSessionFlushPolicyState? flushPolicyState = null)
     {
         if (!Enum.IsDefined(role))
             throw new ArgumentOutOfRangeException(nameof(role));
@@ -30,6 +31,8 @@ internal sealed class RpcSessionCreationOptions
         FlushOptions = flushOptions;
         CompressionSendPolicyState = compressionSendPolicyState ??
             SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
+        FlushPolicyState = flushPolicyState ??
+            RpcSessionFlushPolicyState.Create(flushOptions, runtimeContext.PerformanceProfile);
     }
 
     internal RpcSessionRole Role { get; }
@@ -39,6 +42,8 @@ internal sealed class RpcSessionCreationOptions
     internal RpcSessionFlushOptions? FlushOptions { get; }
 
     internal CompressionSendPolicyState CompressionSendPolicyState { get; }
+
+    internal RpcSessionFlushPolicyState FlushPolicyState { get; }
 
     internal string TelemetrySide => Role == RpcSessionRole.Client ? "client" : "server";
 }
