@@ -53,6 +53,10 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
             await InjectGoAwayAsync(recovered);
             await WaitUntilAsync(() => client.ReadyConnectionCount == 0);
             await time.WaitForCreatedTimerCountAsync(beforeSecondDisconnect + 1);
+            // A just-ready connection can finish its initial heartbeat send after this baseline and
+            // create an unrelated heartbeat timer. The aggregate count is therefore not evidence
+            // that this reconnect owner's one-second delay is actually armed.
+            await time.WaitForPendingTimerAsync(TimeSpan.FromSeconds(1));
 
             time.Advance(TimeSpan.FromMilliseconds(999));
             await YieldAsync();
@@ -516,6 +520,27 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
             }
         }
 
+        public async Task WaitForPendingTimerAsync(TimeSpan remaining)
+        {
+            long expected;
+            lock (_gate)
+                expected = checked(_timestamp + remaining.Ticks);
+
+            while (true)
+            {
+                lock (_gate)
+                {
+                    foreach (var timer in _timers)
+                    {
+                        if (timer.IsPendingAtLocked(expected))
+                            return;
+                    }
+                }
+
+                await _timerCreated.WaitAsync().ConfigureAwait(false);
+            }
+        }
+
         public async Task WaitForCreatedTimerCountAsync(int target)
         {
             while (Volatile.Read(ref _createdTimerCount) < target)
@@ -559,6 +584,9 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
                     ? long.MaxValue
                     : checked(_owner._timestamp + Math.Max(0L, dueTime.Ticks));
             }
+
+            internal bool IsPendingAtLocked(long timestamp)
+                => !_disposed && _dueTimestamp == timestamp;
 
             internal bool TryClaimLocked(long now, out TimerCallback callback, out object? state)
             {
