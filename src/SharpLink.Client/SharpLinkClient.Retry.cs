@@ -41,18 +41,19 @@ internal sealed partial class SharpLinkClient
         var settings = generation.Settings;
         Exception? lastFailure = null;
         var selection = _cluster is null ? null : new EndpointRetrySelectionState();
-        var requiresAttemptOutcome = _endpointAdmissionPolicy is not null || generation.Policy is not null;
+        var requiresRetryOutcome = generation.Policy is not null;
         AttemptOutcomeState? outcome = null;
         for (var attempt = 1; attempt <= settings.MaxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             EnsureLogicalCallProgress(control);
-            if (requiresAttemptOutcome)
+            if (outcome is not null)
             {
-                if (outcome is null)
-                    outcome = new AttemptOutcomeState(this, method);
-                else
-                    outcome.ResetForRetryAttempt();
+                outcome.ResetForRetryAttempt();
+            }
+            else if (requiresRetryOutcome || Volatile.Read(ref _endpointAdmissionPolicy) is not null)
+            {
+                outcome = new AttemptOutcomeState(this, method);
             }
             else
             {
