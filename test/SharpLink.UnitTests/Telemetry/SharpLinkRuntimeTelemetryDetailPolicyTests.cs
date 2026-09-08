@@ -50,6 +50,65 @@ public sealed class SharpLinkRuntimeTelemetryDetailPolicyTests
     }
 
     [Test]
+    public async Task ClientLogicalCallShouldKeepCapturedDetailModeAcrossPolicyUpdateAndRetryAttempt()
+    {
+        var client = ClientBuilderTestHelper.Build(new NonConnectingFactory());
+        var runtime = (ISharpLinkClient)client;
+        var method = new RpcMethodDescriptor(
+            31,
+            41,
+            RpcMethodKind.Unary,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: false,
+            MethodTimeout: null);
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "SharpLink.Client",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        try
+        {
+            runtime.UpdateTelemetryDetailPolicy(SharpLinkTelemetryDetailMode.Basic);
+            var basicControl = client.ResolveCallControl(
+                metadata: null,
+                includeClientDefault: false,
+                hasMethodTimeout: false,
+                methodTimeout: null);
+            Ensure(basicControl.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Basic,
+                "logical call must capture Basic at its creation boundary");
+
+            runtime.UpdateTelemetryDetailPolicy(SharpLinkTelemetryDetailMode.Detailed);
++            Ensure(basicControl.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Basic,
++                "publishing Detailed must not rewrite an existing logical call");
+            var oldAttempt = SharpLinkClient.StartClientAttemptTelemetry(basicControl, method, attempt: 1);
+            Ensure(Activity.Current is null,
+                "a Basic logical call must not start a retry-attempt Activity after the live policy becomes Detailed");
+            oldAttempt.Complete();
+
+            var detailedControl = client.ResolveCallControl(
+                metadata: null,
+                includeClientDefault: false,
+                hasMethodTimeout: false,
+                methodTimeout: null);
+            Ensure(detailedControl.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Detailed,
+                "future logical calls must capture the newly published Detailed mode");
+            var newAttempt = SharpLinkClient.StartClientAttemptTelemetry(detailedControl, method, attempt: 2);
+            Ensure(Activity.Current?.OperationName == "sharplink.rpc.attempt",
+                "a Detailed logical call must retain retry-attempt trace detail");
+            newAttempt.Complete();
+            Ensure(Activity.Current is null, "retry-attempt Activity must restore ambient context after completion");
+        }
+        finally
+        {
+            await client.StopAsync();
+        }
+    }
+
+    [Test]
     public async Task ServerTelemetryDetailShouldRemoveOnlyRequestIdentityInBasicMode()
     {
         var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
