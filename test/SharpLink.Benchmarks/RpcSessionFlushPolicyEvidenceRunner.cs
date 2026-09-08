@@ -16,8 +16,6 @@ namespace SharpLink.Benchmarks;
 /// <summary>Issue #590 same-machine steady-state evidence for runtime RPC flush policy support.</summary>
 public static class RpcSessionFlushPolicyEvidenceRunner
 {
-    private const int WarmupOperations = 256;
-    private const int OperationsPerRound = 1024;
     private const int Rounds = 5;
     private static readonly int[] PayloadSizes = [32, 4096];
     private static readonly int[] ConcurrencyLevels = [1, 8, 32];
@@ -86,8 +84,6 @@ public static class RpcSessionFlushPolicyEvidenceRunner
             Os = RuntimeInformation.OSDescription,
             Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
             ProcessorCount = Environment.ProcessorCount,
-            WarmupOperations = WarmupOperations,
-            OperationsPerRound = OperationsPerRound,
             Rounds = Rounds,
             Measurements = measurements,
             Notes =
@@ -95,8 +91,9 @@ public static class RpcSessionFlushPolicyEvidenceRunner
                 "All rows use the same generated unary byte[] EchoBytes RPC over loopback TCP and the same benchmark harness source copied into both the base and PR worktrees.",
                 "Both base and PR-head measurements use explicit timed flush policies so the effective batching semantics are identical while the implementation changes from static pump fields to runtime-capable immutable generations.",
                 "post-update performs eight alternate->original policy replacement cycles on the same live Client and Server before measurement, ending on the exact original threshold/latency without reconnecting.",
+                "Operations per round scale with profile and concurrency so fast small-payload scenarios still measure roughly a half-second or more instead of a scheduler-sensitive 10-20ms burst; each row records its actual operation count.",
                 "Allocated bytes are process-wide GC allocations divided by logical RPCs and therefore include the full loopback Client/Server path and harness; compare states for the same profile/payload/concurrency rather than treating them as the isolated cost of Capture().",
-                "P50/P99 are per-RPC wall-clock samples recorded with Stopwatch.GetTimestamp. QPS, CPU/op, allocation, P50 and P99 are the median of five rounds after warmup and full GC."
+                "P50/P99 are per-RPC wall-clock samples recorded with Stopwatch.GetTimestamp. QPS, CPU/op, allocation, P50 and P99 are the median of five rounds after a scenario-scaled warmup and full GC."
             ]
         };
 
@@ -118,12 +115,14 @@ public static class RpcSessionFlushPolicyEvidenceRunner
         int concurrency,
         IBenchmarkRpc rpc)
     {
-        await RunOperationsAsync(rpc, payload, concurrency, WarmupOperations, null).ConfigureAwait(false);
+        var operationsPerRound = GetOperationsPerRound(profile, concurrency);
+        var warmupOperations = Math.Max(128, operationsPerRound / 4);
+        await RunOperationsAsync(rpc, payload, concurrency, warmupOperations, null).ConfigureAwait(false);
 
         var samples = new List<RpcSessionFlushPolicyRound>(Rounds);
         for (var round = 0; round < Rounds; round++)
         {
-            var latencyTicks = new long[OperationsPerRound];
+            var latencyTicks = new long[operationsPerRound];
             var workerTasks = new Task[concurrency];
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -139,7 +138,7 @@ public static class RpcSessionFlushPolicyEvidenceRunner
                 rpc,
                 payload,
                 concurrency,
-                OperationsPerRound,
+                operationsPerRound,
                 latencyTicks,
                 workerTasks).ConfigureAwait(false);
 
@@ -149,9 +148,9 @@ public static class RpcSessionFlushPolicyEvidenceRunner
             var cpuAfter = process.TotalProcessorTime;
             Array.Sort(latencyTicks);
             samples.Add(new RpcSessionFlushPolicyRound(
-                Qps: OperationsPerRound / Math.Max(watch.Elapsed.TotalSeconds, double.Epsilon),
-                AllocatedBytesPerOperation: (allocatedAfter - allocatedBefore) / (double)OperationsPerRound,
-                CpuMicrosecondsPerOperation: (cpuAfter - cpuBefore).TotalMilliseconds * 1000d / OperationsPerRound,
+                Qps: operationsPerRound / Math.Max(watch.Elapsed.TotalSeconds, double.Epsilon),
+                AllocatedBytesPerOperation: (allocatedAfter - allocatedBefore) / (double)operationsPerRound,
+                CpuMicrosecondsPerOperation: (cpuAfter - cpuBefore).TotalMilliseconds * 1000d / operationsPerRound,
                 P50Microseconds: ToMicroseconds(Percentile(latencyTicks, 0.50)),
                 P99Microseconds: ToMicroseconds(Percentile(latencyTicks, 0.99))));
         }
@@ -164,6 +163,7 @@ public static class RpcSessionFlushPolicyEvidenceRunner
             MaxLatencyMicroseconds = latency.TotalMilliseconds * 1000d,
             PayloadBytes = payload.Length,
             Concurrency = concurrency,
+            OperationsPerRound = operationsPerRound,
             Qps = Median(samples.Select(static sample => sample.Qps)),
             AllocatedBytesPerOperation = Median(samples.Select(static sample => sample.AllocatedBytesPerOperation)),
             CpuMicrosecondsPerOperation = Median(samples.Select(static sample => sample.CpuMicrosecondsPerOperation)),
@@ -235,6 +235,25 @@ public static class RpcSessionFlushPolicyEvidenceRunner
                 method.Name == "UpdateRpcSessionFlushPolicy" && method.GetParameters().Length == 3);
     }
 
+    private static int GetOperationsPerRound(
+        SharpLinkPerformanceProfile profile,
+        int concurrency)
+        => profile switch
+        {
+            SharpLinkPerformanceProfile.Throughput => concurrency switch
+            {
+                1 => 512,
+                8 => 4096,
+                _ => 16384
+            },
+            _ => concurrency switch
+            {
+                1 => 4096,
+                8 => 16384,
+                _ => 32768
+            }
+        };
+
     private static (int Threshold, TimeSpan Latency) GetPolicy(SharpLinkPerformanceProfile profile)
         => profile switch
         {
@@ -283,8 +302,6 @@ public static class RpcSessionFlushPolicyEvidenceRunner
         public string Os { get; init; } = string.Empty;
         public string Architecture { get; init; } = string.Empty;
         public int ProcessorCount { get; init; }
-        public int WarmupOperations { get; init; }
-        public int OperationsPerRound { get; init; }
         public int Rounds { get; init; }
         public List<RpcSessionFlushPolicyMeasurement> Measurements { get; init; } = [];
         public List<string> Notes { get; init; } = [];
@@ -298,6 +315,7 @@ public static class RpcSessionFlushPolicyEvidenceRunner
         public double MaxLatencyMicroseconds { get; init; }
         public int PayloadBytes { get; init; }
         public int Concurrency { get; init; }
+        public int OperationsPerRound { get; init; }
         public double Qps { get; init; }
         public double AllocatedBytesPerOperation { get; init; }
         public double CpuMicrosecondsPerOperation { get; init; }
