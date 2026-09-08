@@ -4,6 +4,20 @@ permissions:
   contents: read
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'README.md'
+      - 'samples/**'
+      - '.github/actions/package-smoke/**'
+      - 'eng/run-quickstart-package-smoke.sh'
+      - 'src/SharpLink.Sdk/**'
+      - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.Client/**'
+      - 'src/SharpLink.Server/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'Sharplink.slnx'
   workflow_dispatch:
 
 concurrency:
@@ -97,7 +111,7 @@ jobs:
 
       - name: Upload Chaos Report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93b77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: chaos-pr-smoke
           path: |
