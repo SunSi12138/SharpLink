@@ -3,6 +3,7 @@ using System.Net;
 using System.Reflection;
 using SharpLink.Client;
 using SharpLink.Server;
+using SharpLink.UnitTests.Client;
 using static SharpLink.UnitTests.Client.SharpLinkClientLifecycleSharedSupport;
 
 namespace SharpLink.UnitTests.Telemetry;
