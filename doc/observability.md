@@ -28,7 +28,15 @@ ActivitySource：
 - `SharpLink.Client`
 - `SharpLink.Server`
 
-逻辑调用生成 `sharplink.rpc` activity；retry 的物理 attempt 生成独立 attempt activity，但不会重复逻辑调用计数。标签使用 contract/method id、kind、side、attempt 和低基数终止原因；不要把完整 endpoint、用户 id 或异常文本变成高基数指标标签。
+逻辑调用生成 `sharplink.rpc` activity；retry 的物理 attempt 在 `Detailed` telemetry detail 模式下生成独立 attempt activity，但不会重复逻辑调用计数。稳定基础标签使用 contract/method id、kind 等 RPC identity；不要把完整 endpoint、用户 id 或异常文本变成高基数指标标签。
+
+### Runtime telemetry detail
+
+Client 和 Server 都可以通过 `UpdateTelemetryDetailPolicy(SharpLinkTelemetryDetailMode)` 原子发布 SharpLink 自己拥有的可选 trace detail。默认 `Detailed` 保持历史行为；`Basic` 保留逻辑调用 activity、稳定 RPC identity 和全部核心 metrics，但省略现有的诊断性 detail，例如 Server request id、Client lifetime-source enrichment 和 retry-attempt 子 activity。
+
+Client 在逻辑调用创建边界捕获一次 detail generation，因此 interceptor suspension、延迟开始的流式枚举和 retry attempts 不会在同一 logical RPC 中混用不同 generation。Server 在 call telemetry 启动边界捕获当前 generation。更新只影响后续调用/事件；`GetTelemetryDetailPolicySnapshot()` 可读取当前 generation 和 mode。
+
+这套 API **不**替代 OpenTelemetry 配置。采样率/`Sampler`、exporter、processor/provider、resource、listener 生命周期仍由应用的 OpenTelemetry / Hosting 配置负责；SharpLink 不动态替换或重命名 `ActivitySource`、`Meter` 或 metric instrument。当前代码没有 SharpLink 自有的可选 `ActivityEvent` 发射点，因此 detail policy 不人为创建新的事件流。
 
 ## Meter
 
