@@ -22,8 +22,9 @@ internal sealed partial class SharpLinkClient
         {
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
+                var detailMode = CaptureTelemetryDetailGeneration().Mode;
                 var scope = SharpLinkTelemetry.StartClientCall(method);
-                TagLifetimeSource(scope, lifetimeSource);
+                TagLifetimeSource(scope, lifetimeSource, detailMode);
                 scope.Complete(exception);
             }
             throw;
