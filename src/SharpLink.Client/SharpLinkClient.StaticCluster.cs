@@ -49,6 +49,15 @@ internal sealed partial class SharpLinkClient
         public int ActiveStreamCount => CountConnections(static connection =>
             connection.Session.StreamManager.ActiveStreamCount);
 
+        public SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot()
+            => _topology.GetEndpointSelectionPolicySnapshot();
+
+        public void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy)
+            => _topology.UpdateLoadBalancing(strategy);
+
+        public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
+            => _topology.UpdateEndpointSelector(selector);
+
         public ClientConnection[] CaptureReadyConnections()
         {
             lock (_gate)
@@ -113,6 +122,7 @@ internal sealed partial class SharpLinkClient
             AttemptOutcomeState? attemptOutcome)
         {
             var snapshot = _topology.SelectionSnapshot;
+            var selectionPolicy = _topology.CaptureSelectionPolicy();
             var endpoints = snapshot.Endpoints;
             if (endpoints.Length == 0)
             {
@@ -123,7 +133,7 @@ internal sealed partial class SharpLinkClient
             var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
             for (var attempt = 0; attempt < endpoints.Length; attempt++)
             {
-                var selectedIndex = _topology.SelectEndpoint(snapshot, excluded);
+                var selectedIndex = _topology.SelectEndpoint(snapshot, selectionPolicy, excluded);
                 if ((uint)selectedIndex >= (uint)endpoints.Length || (excluded & (1UL << selectedIndex)) != 0)
                 {
                     throw new SharpLinkException(
