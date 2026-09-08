@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Sdk;
@@ -34,7 +35,7 @@ public partial class SharpLinkServerInvocationTests
             stopTask = Task.Run(async () =>
                 await server.StopAsync(TimeSpan.Zero).ConfigureAwait(false));
 
-            await WaitUntilAsync(
+            await WaitUntilServerLockHeldAsync(
                 () => IsHeldByAnotherThread(lifecycleGate),
                 "StopAsync did not acquire the lifecycle gate while waiting for the registry gate");
 
@@ -85,7 +86,7 @@ public partial class SharpLinkServerInvocationTests
         return false;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, string failureMessage)
+    private static async Task WaitUntilServerLockHeldAsync(Func<bool> condition, string failureMessage)
     {
         var deadline = Stopwatch.GetTimestamp() + 2 * Stopwatch.Frequency;
         while (!condition())
