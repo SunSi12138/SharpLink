@@ -76,7 +76,7 @@ public class WakeupSignalTests
             releaseWriter.Wait();
         };
 
-        var writer = Task.Run(signal.Signal);
+        var writer = LongRunningTestWorker.Run(signal.Signal);
         Ensure(observedIdle.Wait(TimeSpan.FromSeconds(5)), "the writer must reach the latch path");
 
         var wait = signal.WaitAsync();
