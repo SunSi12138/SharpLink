@@ -59,7 +59,10 @@ internal sealed partial class SharpLinkClient
             {
                 SharpLinkTelemetry.RecordClientAttempt();
             }
-            var attemptScope = SharpLinkTelemetry.StartClientAttempt(method, attempt);
+            SharpLinkTelemetry.AttemptScope attemptScope =
+                control.TelemetryDetailMode == SharpLinkTelemetryDetailMode.Detailed
+                    ? SharpLinkTelemetry.StartClientAttempt(method, attempt)
+                    : default;
             try
             {
                 var response = await InvokeUnaryRetryAttemptAsync(
