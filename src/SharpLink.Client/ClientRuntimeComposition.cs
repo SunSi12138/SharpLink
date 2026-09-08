@@ -229,7 +229,8 @@ internal sealed class ClientRuntimeComposition
         RequestTimeoutSource = requestTimeoutSource;
         Authenticator = authenticator;
         ProtocolOptions = protocolOptions;
-        RpcSessionFlushOptions = rpcSessionFlushOptions;
+        RpcSessionFlushOptions = rpcSessionFlushOptions ??
+            SharpLink.Runtime.RpcSessionFlushOptions.CreateProfileDefault(RuntimeContext.PerformanceProfile);
         ConnectionPoolOptions = connectionPoolOptions;
         RetryOptions = retryOptions;
         RetryPolicy = retryPolicy;
