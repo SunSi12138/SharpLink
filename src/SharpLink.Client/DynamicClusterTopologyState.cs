@@ -254,13 +254,29 @@ internal sealed partial class SharpLinkClient
         public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
         public int ConnectingCount { get; set; }
         public int InitialDialReservations { get; set; }
-        public int ReconnectDelayMilliseconds { get; set; } = 100;
+        public long ReconnectDelayTicks { get; set; }
+        public long ReadyTimestamp { get; private set; }
+        public bool HasReadyTimestamp { get; private set; }
         public bool Retiring { get; set; }
         public bool FactoryReleased { get; set; }
         public Task? ReconnectTask { get; set; }
         public Task? ExpansionTask { get; set; }
 
         public int ActiveCallCount => GetActiveCallCount();
+
+        public void MarkReadyTimestamp(long timestamp)
+        {
+            if (HasReadyTimestamp)
+                return;
+            ReadyTimestamp = timestamp;
+            HasReadyTimestamp = true;
+        }
+
+        public void ClearReadyTimestamp()
+        {
+            ReadyTimestamp = default;
+            HasReadyTimestamp = false;
+        }
 
         private int GetReadyConnectionCount() => ReadyConnections.Length;
 

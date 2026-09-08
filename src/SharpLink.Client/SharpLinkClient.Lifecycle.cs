@@ -235,7 +235,11 @@ internal sealed partial class SharpLinkClient
         {
             if (_shutdownCts.IsCancellationRequested || ReadyConnectionCount == 0)
                 return;
-            _readyTimestamp = _runtimeContext.TimeProvider.GetTimestamp();
+            if (!_hasReconnectReadyTimestamp)
+            {
+                _readyTimestamp = _runtimeContext.TimeProvider.GetTimestamp();
+                _hasReconnectReadyTimestamp = true;
+            }
             TransitionTo(SharpLinkConnectionState.Ready);
         }
     }

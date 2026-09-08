@@ -33,6 +33,7 @@ public partial class SharpClientBuilder
     private ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
     private bool _circuitBreakerConfigured;
     private ISharpLinkReconnectJitter _reconnectJitter = RandomSharpLinkReconnectJitter.Instance;
+    private SharpLinkReconnectPolicy? _reconnectPolicy;
 
     /// <summary>Creates a client builder. A request-timeout policy must be selected before Build.</summary>
     public static SharpClientBuilder Create() => new();
@@ -427,6 +428,13 @@ public partial class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Configures one explicit reconnect timing policy for every endpoint mode.</summary>
+    public SharpClientBuilder UseReconnectPolicy(SharpLinkReconnectPolicy policy)
+    {
+        Configure(() => _reconnectPolicy = policy ?? throw new ArgumentNullException(nameof(policy)));
+        return this;
+    }
+
     /// <summary>
     /// Sets the reconnect-jitter strategy for deterministic internal lifecycle tests. Production
     /// callers use the process-safe random strategy selected by the Builder default.
@@ -530,6 +538,7 @@ public partial class SharpClientBuilder
         var topology = CompileTopology(draft, runtimeContext, out var connectionPool, out var cluster);
         var retry = CreateRetryPlan();
         var circuitBreaker = CreateCircuitBreakerPlan();
+        var reconnectPolicy = _reconnectPolicy ?? CreateLegacyReconnectPolicy(topology);
 
         return new ClientBuildPlan(
             topology,
@@ -553,7 +562,29 @@ public partial class SharpClientBuilder
             _authenticator,
             _loggerFactory ?? NullLoggerFactory.Instance,
             [.. _interceptors],
+            reconnectPolicy,
             _reconnectJitter);
+    }
+
+    private static SharpLinkReconnectPolicy CreateLegacyReconnectPolicy(ClientTopologyPlan topology)
+    {
+        var cluster = topology is DynamicResolverTopologyPlan or
+            StaticEndpointsTopologyPlan { EndpointCount: > 1 };
+        return cluster
+            ? new SharpLinkReconnectPolicy(
+                TimeSpan.FromMilliseconds(100),
+                TimeSpan.FromSeconds(5),
+                2d,
+                1d,
+                1.25d,
+                TimeSpan.Zero)
+            : new SharpLinkReconnectPolicy(
+                TimeSpan.FromMilliseconds(100),
+                TimeSpan.FromSeconds(5),
+                2d,
+                0.8d,
+                1.2d,
+                TimeSpan.FromSeconds(30));
     }
 
     private ClientTopologyPlan CompileTopology(

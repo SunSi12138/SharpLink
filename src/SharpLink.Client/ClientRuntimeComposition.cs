@@ -92,7 +92,25 @@ internal sealed class StaticClientRuntimeEndpointState
 
     internal int ConnectingCount { get; set; }
 
-    internal int ReconnectDelayMilliseconds { get; set; } = 100;
+    internal long ReconnectDelayTicks { get; set; }
+
+    internal long ReadyTimestamp { get; private set; }
+
+    internal bool HasReadyTimestamp { get; private set; }
+
+    internal void MarkReadyTimestamp(long timestamp)
+    {
+        if (HasReadyTimestamp)
+            return;
+        ReadyTimestamp = timestamp;
+        HasReadyTimestamp = true;
+    }
+
+    internal void ClearReadyTimestamp()
+    {
+        ReadyTimestamp = default;
+        HasReadyTimestamp = false;
+    }
 
     public Task? ReconnectTask { get; set; }
 
@@ -185,6 +203,7 @@ internal sealed class ClientRuntimeComposition
         SharpLinkRetryOptions? retryOptions,
         ISharpLinkRetryPolicy? retryPolicy,
         ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy,
+        SharpLinkReconnectPolicy reconnectPolicy,
         ISharpLinkReconnectJitter reconnectJitter,
         ILogger logger,
         FrameworkTaskSupervisor frameworkTasks)
@@ -234,6 +253,7 @@ internal sealed class ClientRuntimeComposition
         RetryOptions = retryOptions;
         RetryPolicy = retryPolicy;
         EndpointAdmissionPolicy = endpointAdmissionPolicy;
+        ReconnectPolicy = reconnectPolicy ?? throw new ArgumentNullException(nameof(reconnectPolicy));
         ReconnectJitter = reconnectJitter ?? throw new ArgumentNullException(nameof(reconnectJitter));
         Logger = logger ?? throw new ArgumentNullException(nameof(logger));
         FrameworkTasks = frameworkTasks ?? throw new ArgumentNullException(nameof(frameworkTasks));
@@ -276,6 +296,8 @@ internal sealed class ClientRuntimeComposition
     internal ISharpLinkRetryPolicy? RetryPolicy { get; }
 
     internal ISharpLinkEndpointAdmissionPolicy? EndpointAdmissionPolicy { get; }
+
+    internal SharpLinkReconnectPolicy ReconnectPolicy { get; }
 
     internal ISharpLinkReconnectJitter ReconnectJitter { get; }
 

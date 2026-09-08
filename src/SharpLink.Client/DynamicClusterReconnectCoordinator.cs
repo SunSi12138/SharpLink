@@ -8,8 +8,6 @@ internal sealed partial class SharpLinkClient
     /// </summary>
     private sealed class DynamicClusterReconnectCoordinator
     {
-        private const int MaximumReconnectDelayMilliseconds = 5_000;
-
         private readonly SharpLinkClient _client;
         private readonly Lock _gate;
         private readonly SharpLinkClusterOptions _options;
@@ -100,41 +98,71 @@ internal sealed partial class SharpLinkClient
 
         private async Task ReconnectAsync(DynamicEndpointState endpoint)
         {
-            int delayMilliseconds;
-            lock (_gate)
-                delayMilliseconds = endpoint.ReconnectDelayMilliseconds;
-
             try
             {
-                await Task.Delay(
-                    _client._reconnectJitter.AddQuarterWindow(delayMilliseconds),
-                    _client._runtimeContext.TimeProvider,
-                    _client._shutdownCts.Token).ConfigureAwait(false);
-
-                bool shouldConnect;
-                lock (_gate)
-                    shouldConnect = NeedsReconnectLocked(endpoint);
-                if (shouldConnect)
+                var complete = false;
+                while (!complete)
                 {
-                    SharpLinkTelemetry.ReconnectAttempt();
-                    await _connectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
+                    ReconnectPolicyGeneration generation;
+                    TimeSpan baseDelay;
                     lock (_gate)
                     {
-                        endpoint.ReconnectDelayMilliseconds = endpoint.ReadyConnections.Length != 0
-                            ? 100
-                            : NextReconnectDelay(delayMilliseconds);
+                        if (!NeedsReconnectLocked(endpoint))
+                            break;
+                        generation = _client.CaptureReconnectPolicy();
+                        baseDelay = ResolveReconnectDelay(endpoint.ReconnectDelayTicks, generation.Policy);
+                    }
+
+                    try
+                    {
+                        if (!await _client.WaitForReconnectDelayAsync(
+                                baseDelay, generation, _client._shutdownCts.Token).ConfigureAwait(false))
+                        {
+                            continue;
+                        }
+
+                        bool shouldConnect;
+                        lock (_gate)
+                            shouldConnect = NeedsReconnectLocked(endpoint);
+                        if (!shouldConnect)
+                            break;
+
+                        SharpLinkTelemetry.ReconnectAttempt();
+                        await _connectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
+                        var completionPolicy = generation.Policy;
+                        lock (_gate)
+                        {
+                            if (_client.IsCurrentReconnectPolicyGeneration(generation))
+                            {
+                                endpoint.ReconnectDelayTicks = ResolveReconnectCompletionDelay(
+                                    baseDelay,
+                                    endpoint.ReadyConnections.Length != 0,
+                                    completionPolicy).Ticks;
+                            }
+                        }
+                        complete = true;
+                    }
+                    catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception exception)
+                    {
+                        LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
+                        var completionPolicy = generation.Policy;
+                        lock (_gate)
+                        {
+                            if (_client.IsCurrentReconnectPolicyGeneration(generation))
+                            {
+                                endpoint.ReconnectDelayTicks = ResolveReconnectCompletionDelay(
+                                    baseDelay,
+                                    reconnected: false,
+                                    completionPolicy).Ticks;
+                            }
+                        }
+                        complete = true;
                     }
                 }
-            }
-            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception exception)
-            {
-                LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
-                lock (_gate)
-                    endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
             }
             finally
             {
@@ -156,8 +184,5 @@ internal sealed partial class SharpLinkClient
 
         private int TotalActiveConnectionsLocked()
             => _connections.TotalActiveConnections(_current.States);
-
-        private static int NextReconnectDelay(int delayMilliseconds)
-            => Math.Min(delayMilliseconds * 2, MaximumReconnectDelayMilliseconds);
     }
 }

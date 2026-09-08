@@ -192,6 +192,7 @@ internal sealed class ClientBuildPlan
         ISharpLinkClientAuthenticator? authenticator,
         ILoggerFactory loggerFactory,
         ISharpLinkClientInterceptor[] interceptors,
+        SharpLinkReconnectPolicy reconnectPolicy,
         ISharpLinkReconnectJitter reconnectJitter)
     {
         Topology = topology ?? throw new ArgumentNullException(nameof(topology));
@@ -229,6 +230,7 @@ internal sealed class ClientBuildPlan
         Authenticator = authenticator;
         LoggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         _interceptors = interceptors is { Length: > 0 } ? [.. interceptors] : [];
+        ReconnectPolicy = reconnectPolicy ?? throw new ArgumentNullException(nameof(reconnectPolicy));
         ReconnectJitter = reconnectJitter ?? throw new ArgumentNullException(nameof(reconnectJitter));
     }
 
@@ -252,6 +254,7 @@ internal sealed class ClientBuildPlan
     internal ISharpLinkEndpointAdmissionPolicy? EndpointAdmissionPolicy { get; }
     internal ISharpLinkClientAuthenticator? Authenticator { get; }
     internal ILoggerFactory LoggerFactory { get; }
+    internal SharpLinkReconnectPolicy ReconnectPolicy { get; }
     internal ISharpLinkReconnectJitter ReconnectJitter { get; }
 
     internal int MaximumConnections => Topology switch
