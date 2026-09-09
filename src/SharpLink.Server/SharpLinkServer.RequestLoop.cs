@@ -74,7 +74,7 @@ internal sealed partial class SharpLinkServer
                     // 2. 循环解析 buffer 中的数据包 (可能包含多个包)
                     while (session.IsConnected &&
                            !ct.IsCancellationRequested &&
-                           ProtocolV2FrameParser.TryReadFrame(
+                           session.TryReadInboundFrame(
                                ref buffer, _protocolOptions, out var header, out var payload))
                     {
                         SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);

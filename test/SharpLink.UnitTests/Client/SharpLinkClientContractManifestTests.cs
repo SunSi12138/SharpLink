@@ -72,6 +72,28 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
     }
 
     [Test]
+    public async Task HandshakeContractManifestShouldHonorNegotiatedFrameLimit()
+    {
+        var transport = new OversizedManifestHandshakeTransportFactory();
+        await using var client = SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(new FixedGeneratedManifestSource([Manifest.Instance]))
+            .DisableRequestTimeout()
+            .UseProtocol(static options => options.MaxFramePayloadBytes = 4096)
+            .UseTransport(transport)
+            .Build();
+
+        var failure = await CaptureExceptionAsync(client.ConnectAsync().AsTask());
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "a ContractManifest above the negotiated frame maximum must fail the client handshake");
+        Ensure(failure is not null &&
+               failure.Message.Contains("negotiated maximum of 2048 bytes", StringComparison.Ordinal),
+            "the handshake failure must identify the negotiated frame boundary");
+        Ensure(client.State != SharpLinkConnectionState.Ready,
+            "an oversized handshake ContractManifest must not publish a Ready client");
+    }
+
+    [Test]
     public async Task ManifestRefreshShouldRevalidateFutureGetWithoutRebindingHeldProxy()
     {
         var transport = CreateTransport(Manifest.Instance.RpcAssemblyHash);
@@ -141,5 +163,40 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
         {
             return exception;
         }
+    }
+
+    private sealed class OversizedManifestHandshakeTransportFactory : IClientTransportFactory
+    {
+        private readonly TestTransportConnection _connection = new();
+
+        public async ValueTask<ITransportConnection> ConnectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            using var responsePayload = new PooledByteBufferWriter();
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(
+                responsePayload,
+                new ProtocolV2HandshakeResponse(
+                    ProtocolV2Constants.MinorVersion,
+                    ProtocolV2Capabilities.ContractManifest,
+                    2048,
+                    1024 * 1024,
+                    16 * 1024 * 1024));
+            await _connection.InjectFrameAsync(
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0,
+                responsePayload.WrittenMemory,
+                cancellationToken);
+
+            await _connection.InjectFrameAsync(
+                ProtocolV2FrameType.ContractManifest,
+                ProtocolV2FrameFlags.None,
+                0,
+                new byte[3072],
+                cancellationToken);
+            return _connection;
+        }
+
+        public ValueTask DisposeAsync() => _connection.DisposeAsync();
     }
 }
