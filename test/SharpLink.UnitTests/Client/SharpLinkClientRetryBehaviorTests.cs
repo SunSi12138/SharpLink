@@ -15,8 +15,12 @@ public sealed class SharpLinkClientRetryBehaviorTests
     {
         var transport = new TestClientTransportFactory();
         var policy = new RecordingRetryPolicy();
-        await using var client = CreateRetryClient(
-            transport, policy, maxAttempts: 2, requestTimeout: TimeSpan.FromSeconds(1));
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
+            builder.UseRetry(policy);
+            builder.DisableRequestTimeout();
+        });
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
