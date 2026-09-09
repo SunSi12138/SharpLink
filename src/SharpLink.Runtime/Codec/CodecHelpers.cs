@@ -193,8 +193,22 @@ internal static class CodecHelpers
         return value;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static decimal ValidateDecimal(decimal value)
     {
+        // Inspect the public decimal bit representation, not its native field layout.
+        Span<int> bits = stackalloc int[4];
+        decimal.GetBits(value, bits);
+        var flags = bits[3];
+        if ((flags & 0x7F00FFFF) == 0 && (uint)(flags & 0x00FF0000) <= (28u << 16))
+            return value;
+        return ValidateInvalidDecimal(value);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static decimal ValidateInvalidDecimal(decimal value)
+    {
+        // Retain the framework constructor's exception and the existing DataLoss wrapper.
         try
         {
             Span<int> bits = stackalloc int[4];
