@@ -1064,18 +1064,18 @@ internal sealed partial class SharpLinkClient
                        flags,
                        unchecked((ulong)requestId)))
             {
-                var span = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+                var prefixLength = ProtocolV2Constants.RequestPrefixBytes +
+                    (deadline.HasValue ? sizeof(long) : 0);
+                var span = writer.GetSpan(prefixLength);
                 BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
-                writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
                 if (deadline.HasValue)
                 {
-                    var timeBudgetSpan = writer.GetSpan(sizeof(long));
+                    // Placeholder only; the send pump stamps the remaining budget at emission.
                     BinaryPrimitives.WriteInt64LittleEndian(
-                        timeBudgetSpan,
-                        0L);
-                    writer.Advance(sizeof(long));
+                        span[ProtocolV2Constants.RequestPrefixBytes..], 0L);
                 }
+                writer.Advance(prefixLength);
                 if (hasMetadata)
                 {
                     ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));
