@@ -562,6 +562,12 @@ public static partial class ProtocolV2PayloadCodec
     {
         try
         {
+            if (bytes.IsSingleSegment)
+            {
+                // Strict validation without a stateful Decoder or temporary chars.
+                _ = SStrictUtf8.GetCharCount(bytes.FirstSpan);
+                return;
+            }
             var decoder = SStrictUtf8.GetDecoder();
             Span<char> characters = stackalloc char[256];
             foreach (var segment in bytes)
