@@ -62,13 +62,33 @@ public static class ProtocolV2FrameParser
         if (buffer.Length < ProtocolV2Constants.HeaderBytes)
             return false;
 
-        var reader = new SequenceReader<byte>(buffer);
-        if (!reader.TryRead(out var magic))
-            return false;
+        byte magic, typeRaw, flagsRaw;
+        int payloadLength;
+        long requestIdBits;
+        var first = buffer.FirstSpan;
+        if (first.Length >= ProtocolV2Constants.HeaderBytes)
+        {
+            // Only the fixed header must be contiguous; payload may cross segments.
+            magic = first[0];
+            payloadLength = BinaryPrimitives.ReadInt32LittleEndian(first[1..5]);
+            typeRaw = first[5];
+            flagsRaw = first[6];
+            requestIdBits = BinaryPrimitives.ReadInt64LittleEndian(first[7..15]);
+        }
+        else
+        {
+            var reader = new SequenceReader<byte>(buffer);
+            if (!reader.TryRead(out magic) ||
+                !reader.TryReadLittleEndian(out payloadLength) ||
+                !reader.TryRead(out typeRaw) || !reader.TryRead(out flagsRaw) ||
+                !reader.TryReadLittleEndian(out requestIdBits))
+            {
+                return false;
+            }
+        }
+
         if (magic != ProtocolV2Constants.Magic)
             throw Violation(ProtocolViolationReason.InvalidMagic, CreateInvalidMagicMessage(buffer, magic));
-        if (!reader.TryReadLittleEndian(out int payloadLength))
-            return false;
         if (payloadLength < 0)
             throw Violation("Frame payload length cannot be negative.");
         if (payloadLength > maxFramePayloadBytes)
@@ -77,17 +97,12 @@ public static class ProtocolV2FrameParser
             throw Violation(
                 $"Frame payload length {payloadLength} exceeds the {limitKind} maximum of {maxFramePayloadBytes} bytes.");
         }
-        if (!reader.TryRead(out var typeRaw) || !reader.TryRead(out var flagsRaw) ||
-            !reader.TryReadLittleEndian(out long requestIdBits))
-        {
-            return false;
-        }
 
         var type = ParseType(typeRaw);
         var flags = ParseFlags(flagsRaw);
         var requestId = unchecked((ulong)requestIdBits);
         ValidateHeader(type, flags, requestId);
-        if (reader.Remaining < payloadLength)
+        if (buffer.Length - ProtocolV2Constants.HeaderBytes < payloadLength)
             return false;
 
         payload = buffer.Slice(ProtocolV2Constants.HeaderBytes, payloadLength);
