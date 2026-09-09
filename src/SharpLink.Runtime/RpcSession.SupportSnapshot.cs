@@ -6,15 +6,6 @@ internal sealed partial class RpcSession
     {
         var protocolState = Volatile.Read(ref _protocolState);
         var negotiated = protocolState.Options;
-        int queuedBytes;
-        int queueLimitBytes;
-        lock (_pumpGate)
-        {
-            var pump = _pump;
-            queuedBytes = pump is null ? 0 : Volatile.Read(ref pump._queuedBytes);
-            queueLimitBytes = pump is null ? _runtimeContext.FlowControl.MaxSendQueueBytes : pump._maxQueuedBytes;
-        }
-
         var security = _transport as ITransportSecurityInfo;
         return new RpcSessionSupportSnapshot(
             protocolState.Phase,
@@ -24,8 +15,8 @@ internal sealed partial class RpcSession
             negotiated?.MaxFramePayloadBytes,
             negotiated?.StreamReceiveWindowBytes,
             negotiated?.ConnectionReceiveWindowBytes,
-            queuedBytes,
-            queueLimitBytes,
+            checked((int)Math.Min(QueuedSendBytes, int.MaxValue)),
+            RuntimeContext.FlowControl.MaxSendQueueBytes,
             StreamManager.ActiveStreamCount,
             security is not null,
             security?.Protocol.ToString(),
