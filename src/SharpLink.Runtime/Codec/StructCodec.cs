@@ -368,6 +368,7 @@ internal sealed class DateTimeOffsetImmutableArrayCodec : IRpcCodec<ImmutableArr
     public ImmutableArray<DateTimeOffset> Deserialize(in ReadOnlySequence<byte> buffer)
     {
         var array = CodecHelpers.ReadDateTimeOffsetCollection(buffer);
-        return array is null ? default : ImmutableArray.Create(array);
+        // This freshly decoded array has no mutable owner outside this call.
+        return ImmutableCollectionsMarshal.AsImmutableArray(array);
     }
 }
