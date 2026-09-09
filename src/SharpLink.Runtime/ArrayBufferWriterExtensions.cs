@@ -9,7 +9,7 @@ internal static class RpcBufferWriterExtensions
         {
             var startOffset = writer.WrittenCount;
 
-            var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes);
+            var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes)[..ProtocolV2Constants.HeaderBytes];
             span.Clear();
             span[0] = ProtocolV2Constants.Magic;
             span[5] = (byte)frameType;
@@ -22,7 +22,7 @@ internal static class RpcBufferWriterExtensions
 
         public void WritePacket(ProtocolV2FrameType frameType, ProtocolV2FrameFlags flags, ulong requestId)
         {
-            var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes);
+            var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes)[..ProtocolV2Constants.HeaderBytes];
             span.Clear();
             span[0] = ProtocolV2Constants.Magic;
             span[5] = (byte)frameType;
