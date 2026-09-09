@@ -44,7 +44,12 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         _calls = calls ?? throw new ArgumentNullException(nameof(calls));
         if (maxCalls is < 1 or > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerConnection)
             throw new ArgumentOutOfRangeException(nameof(maxCalls));
-        _maxCalls = maxCalls;
+
+        // Runtime call-capacity growth may admit more calls than the startup target. This field is
+        // only the scheduler's bounded snapshot ceiling, not an admission target, so use the hard
+        // supported maximum. Snapshot rentals still scale from the live call count rather than this
+        // ceiling and therefore do not allocate the maximum-sized buffer in steady state.
+        _maxCalls = SharpLinkFlowControlOptions.MaximumConcurrentCallsPerConnection;
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _snapshotPool = snapshotPool ?? throw new ArgumentNullException(nameof(snapshotPool));
         _calls.EnableCountTracking();
