@@ -68,6 +68,7 @@ internal sealed class ServerCallAdmission
             // One immutable snapshot is the acquisition linearization point relative to capacity
             // updates. Both independent limits are therefore evaluated from the same generation.
             var limits = Volatile.Read(ref _limits);
+            connection.DeadlineScheduler.EnsureMaxCalls(limits.MaxConcurrentCallsPerConnection);
             if (!connection.TryAcquireCall(limits.MaxConcurrentCallsPerConnection))
             {
                 return connection.LifecycleState == ServerConnectionLifecycleState.Ready
