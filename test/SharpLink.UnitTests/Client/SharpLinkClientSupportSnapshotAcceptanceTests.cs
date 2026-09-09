@@ -108,7 +108,7 @@ public sealed class SharpLinkClientSupportSnapshotAcceptanceTests
     public async Task PendingNearCapacityShouldUseExistingOwnerCountsAndNeverExportMetadata()
     {
         const string metadataSecret = "metadata-secret-tenant-token";
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.Metadata);
         await using var client = ClientBuilderTestHelper.Build(transport, builder =>
             builder.UseProtocol(options => options.MaxPendingRequestsPerConnection = 2));
         await client.ConnectAsync();
