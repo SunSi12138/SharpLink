@@ -613,12 +613,19 @@ public static partial class ProtocolV2PayloadCodec
     private static void WriteUtf8(IBufferWriter<byte> writer, string value)
     {
         var byteCount = SStrictUtf8.GetByteCount(value);
-        WriteVarUInt32(writer, checked((uint)byteCount));
-        if (byteCount == 0)
-            return;
-        var destination = writer.GetSpan(byteCount);
-        var written = SStrictUtf8.GetBytes(value.AsSpan(), destination);
-        writer.Advance(written);
+        var prefixBytes = GetVarUInt32Length(checked((uint)byteCount));
+        var destination = writer.GetSpan(checked(prefixBytes + byteCount));
+        var remaining = (uint)byteCount;
+        var offset = 0;
+        while (remaining >= 0x80)
+        {
+            destination[offset++] = (byte)(remaining | 0x80);
+            remaining >>= 7;
+        }
+        destination[offset++] = (byte)remaining;
+        if (byteCount != 0)
+            offset += SStrictUtf8.GetBytes(value.AsSpan(), destination[offset..]);
+        writer.Advance(offset);
     }
 
     private static string ReadUtf8(ref SequenceReader<byte> reader, string field)
