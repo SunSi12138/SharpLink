@@ -42,8 +42,9 @@ public sealed class AdmissionDynamicUpdateReviewRegressionTests
             var requests = new Task<AdmissionDecision>[requestCount];
             for (var index = 0; index < requests.Length; index++)
             {
-                requests[index] = Task.Run(async () => await source.Controller.AcquireAsync(
-                    CreateContext(), 1, false, CancellationToken.None));
+                requests[index] = SharpLink.UnitTests.LongRunningTestWorker.RunAsync(() =>
+                    source.Controller.AcquireAsync(
+                        CreateContext(), 1, false, CancellationToken.None).AsTask());
             }
 
             Ensure(allAtContract.Wait(TimeSpan.FromSeconds(5)),
