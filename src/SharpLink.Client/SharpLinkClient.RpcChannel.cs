@@ -44,18 +44,18 @@ internal sealed partial class SharpLinkClient
             using (writer.BeginPacketScope(
                        ProtocolV2FrameType.Request, flags, unchecked((ulong)requestId)))
             {
-                var span = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+                var prefixLength = ProtocolV2Constants.RequestPrefixBytes +
+                    (deadline.HasValue ? sizeof(long) : 0);
+                var span = writer.GetSpan(prefixLength);
                 BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
-                writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
                 if (deadline.HasValue)
                 {
-                    // Placeholder only. RpcSession stamps the remaining TimeBudget immediately
-                    // before the batch is flushed to the transport.
-                    var timeBudgetSpan = writer.GetSpan(sizeof(long));
-                    BinaryPrimitives.WriteInt64LittleEndian(timeBudgetSpan, 0L);
-                    writer.Advance(sizeof(long));
+                    // Placeholder only; the send pump stamps the remaining budget at emission.
+                    BinaryPrimitives.WriteInt64LittleEndian(
+                        span[ProtocolV2Constants.RequestPrefixBytes..], 0L);
                 }
+                writer.Advance(prefixLength);
                 if (hasMetadata)
                 {
                     ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));

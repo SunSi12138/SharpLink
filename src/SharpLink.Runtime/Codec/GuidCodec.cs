@@ -41,7 +41,7 @@ internal sealed class NullableGuidCodec : IRpcCodec<Guid?>
         }
         else
         {
-            span.Clear();
+            span[..Size].Clear();
         }
         writer.Advance(Size);
     }

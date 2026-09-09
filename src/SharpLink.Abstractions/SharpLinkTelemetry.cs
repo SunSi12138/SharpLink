@@ -471,12 +471,16 @@ public static class SharpLinkTelemetry
         long value,
         string side,
         RpcMethodDescriptor method)
-        => SharpLinkTelemetryObserverIsolation.Add(
+    {
+        if (!instrument.Enabled)
+            return;
+        SharpLinkTelemetryObserverIsolation.Add(
             instrument,
             value,
             new KeyValuePair<string, object?>("rpc.side", side),
             new KeyValuePair<string, object?>("rpc.sharplink.contract_id", method.ContractId),
             new KeyValuePair<string, object?>("rpc.sharplink.method_id", method.MethodId));
+    }
 
     internal struct CallScope
     {

@@ -41,7 +41,7 @@ internal sealed class NullableFloatCodec : IRpcCodec<float?>
         }
         else
         {
-            span.Clear();
+            span[..Size].Clear();
         }
         writer.Advance(Size);
     }

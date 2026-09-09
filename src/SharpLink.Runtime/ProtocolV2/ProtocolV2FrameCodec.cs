@@ -62,13 +62,33 @@ public static class ProtocolV2FrameParser
         if (buffer.Length < ProtocolV2Constants.HeaderBytes)
             return false;
 
-        var reader = new SequenceReader<byte>(buffer);
-        if (!reader.TryRead(out var magic))
-            return false;
+        byte magic, typeRaw, flagsRaw;
+        int payloadLength;
+        long requestIdBits;
+        var first = buffer.FirstSpan;
+        if (first.Length >= ProtocolV2Constants.HeaderBytes)
+        {
+            // Only the fixed header must be contiguous; payload may cross segments.
+            magic = first[0];
+            payloadLength = BinaryPrimitives.ReadInt32LittleEndian(first[1..5]);
+            typeRaw = first[5];
+            flagsRaw = first[6];
+            requestIdBits = BinaryPrimitives.ReadInt64LittleEndian(first[7..15]);
+        }
+        else
+        {
+            var reader = new SequenceReader<byte>(buffer);
+            if (!reader.TryRead(out magic) ||
+                !reader.TryReadLittleEndian(out payloadLength) ||
+                !reader.TryRead(out typeRaw) || !reader.TryRead(out flagsRaw) ||
+                !reader.TryReadLittleEndian(out requestIdBits))
+            {
+                return false;
+            }
+        }
+
         if (magic != ProtocolV2Constants.Magic)
             throw Violation(ProtocolViolationReason.InvalidMagic, CreateInvalidMagicMessage(buffer, magic));
-        if (!reader.TryReadLittleEndian(out int payloadLength))
-            return false;
         if (payloadLength < 0)
             throw Violation("Frame payload length cannot be negative.");
         if (payloadLength > maxFramePayloadBytes)
@@ -77,17 +97,12 @@ public static class ProtocolV2FrameParser
             throw Violation(
                 $"Frame payload length {payloadLength} exceeds the {limitKind} maximum of {maxFramePayloadBytes} bytes.");
         }
-        if (!reader.TryRead(out var typeRaw) || !reader.TryRead(out var flagsRaw) ||
-            !reader.TryReadLittleEndian(out long requestIdBits))
-        {
-            return false;
-        }
 
         var type = ParseType(typeRaw);
         var flags = ParseFlags(flagsRaw);
         var requestId = unchecked((ulong)requestIdBits);
         ValidateHeader(type, flags, requestId);
-        if (reader.Remaining < payloadLength)
+        if (buffer.Length - ProtocolV2Constants.HeaderBytes < payloadLength)
             return false;
 
         payload = buffer.Slice(ProtocolV2Constants.HeaderBytes, payloadLength);
@@ -296,12 +311,20 @@ public static class ProtocolV2FrameParser
     {
         if (payload.Length < ProtocolV2Constants.RequestPrefixBytes)
             throw Violation("Request payload is shorter than its routing prefix.");
-        var reader = new SequenceReader<byte>(payload);
-        reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
-        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0 && !reader.TryReadLittleEndian(out long _))
-            throw Violation("Request deadline field is truncated.");
+        var prefixBytes = ProtocolV2Constants.RequestPrefixBytes;
+        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
+        {
+            prefixBytes += sizeof(long);
+            if (payload.Length < prefixBytes)
+                throw Violation("Request deadline field is truncated.");
+        }
         if ((flags & ProtocolV2FrameFlags.HasMetadata) == 0)
             return;
+
+        // Fixed routing and time-budget fields need availability checks only.
+        // Construct a reader only when a variable-length metadata field is present.
+        var reader = new SequenceReader<byte>(payload);
+        reader.Advance(prefixBytes);
         if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var metadataLength))
             throw Violation("Request metadata length is truncated or invalid.");
         if (metadataLength > maxMetadataBytes)
@@ -352,7 +375,7 @@ internal static class ProtocolV2FrameWriter
     {
         ArgumentNullException.ThrowIfNull(writer);
         var start = writer.WrittenCount;
-        var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes);
+        var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes)[..ProtocolV2Constants.HeaderBytes];
         span.Clear();
         span[0] = ProtocolV2Constants.Magic;
         span[5] = (byte)type;
