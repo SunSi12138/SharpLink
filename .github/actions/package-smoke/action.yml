@@ -1,5 +1,5 @@
 name: Run NuGet package smoke
-description: Restore and run the package smoke project against packages in artifacts/nuget.
+description: Restore and run package consumers against packages in artifacts/nuget.
 
 runs:
   using: composite
@@ -15,3 +15,7 @@ runs:
       env:
         NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
       run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+
+    - name: Run Quick Start Package Smoke
+      shell: bash
+      run: ./eng/run-quickstart-package-smoke.sh artifacts/nuget

@@ -4,6 +4,20 @@ permissions:
   contents: read
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'README.md'
+      - 'samples/**'
+      - '.github/actions/package-smoke/**'
+      - 'eng/run-quickstart-package-smoke.sh'
+      - 'src/SharpLink.Sdk/**'
+      - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.Client/**'
+      - 'src/SharpLink.Server/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'Sharplink.slnx'
   workflow_dispatch:
 
 concurrency:
@@ -12,6 +26,7 @@ concurrency:
 
 jobs:
   codec-compatibility:
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/codec-compatibility.yml
 
   quick:
