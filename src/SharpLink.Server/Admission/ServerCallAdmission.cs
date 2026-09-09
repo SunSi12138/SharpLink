@@ -17,8 +17,7 @@ internal enum ServerCallAdmissionResult : byte
 internal sealed class ServerCallAdmission
 {
     private readonly SharpLinkServer _server;
-    private readonly int _maxConcurrentCallsPerConnection;
-    private readonly int _maxConcurrentCallsPerServer;
+    private ServerCallCapacityLimits _limits;
     private int _globalActiveCalls;
     private int _pendingCallAdmissions;
 
@@ -28,22 +27,29 @@ internal sealed class ServerCallAdmission
         int maxConcurrentCallsPerServer)
     {
         ArgumentNullException.ThrowIfNull(server);
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerConnection, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentCallsPerServer, 1);
         _server = server;
-        _maxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection;
-        _maxConcurrentCallsPerServer = maxConcurrentCallsPerServer;
+        _limits = ServerCallCapacityLimits.CreateValidated(
+            maxConcurrentCallsPerConnection,
+            maxConcurrentCallsPerServer);
     }
 
     internal int ActiveCallCount => Volatile.Read(ref _globalActiveCalls);
 
     internal int PendingCallAdmissions => Volatile.Read(ref _pendingCallAdmissions);
 
-    internal int MaxConcurrentCallsPerConnection => _maxConcurrentCallsPerConnection;
+    internal int MaxConcurrentCallsPerConnection
+        => Volatile.Read(ref _limits).MaxConcurrentCallsPerConnection;
 
-    internal int MaxConcurrentCallsPerServer => _maxConcurrentCallsPerServer;
+    internal int MaxConcurrentCallsPerServer
+        => Volatile.Read(ref _limits).MaxConcurrentCallsPerServer;
 
     internal ServerResourceGovernor ResourceGovernor => _server.ResourceGovernorForCallAdmission;
+
+    internal void UpdateLimits(ServerCallCapacityLimits limits)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        Volatile.Write(ref _limits, limits);
+    }
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
     {
@@ -59,7 +65,10 @@ internal sealed class ServerCallAdmission
             if (!_server.IsRunningForCallAdmission)
                 return ServerCallAdmissionResult.Unavailable;
 
-            if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
+            // One immutable snapshot is the acquisition linearization point relative to capacity
+            // updates. Both independent limits are therefore evaluated from the same generation.
+            var limits = Volatile.Read(ref _limits);
+            if (!connection.TryAcquireCall(limits.MaxConcurrentCallsPerConnection))
             {
                 return connection.LifecycleState == ServerConnectionLifecycleState.Ready
                     ? ServerCallAdmissionResult.PerConnectionCapacityExhausted
@@ -70,7 +79,7 @@ internal sealed class ServerCallAdmission
             connection.NotifyAfterLocalCallAdmissionForTesting();
 #endif
 
-            if (!TryAcquireGlobalCall())
+            if (!TryAcquireGlobalCall(limits.MaxConcurrentCallsPerServer))
             {
                 // The provisional global increment remains owned until the paired local slot is
                 // released so drain cannot observe zero global calls while local ownership remains.
@@ -131,9 +140,9 @@ internal sealed class ServerCallAdmission
             _server.TrySignalCallsDrainedForCallAdmission(connection);
     }
 
-    private bool TryAcquireGlobalCall()
+    private bool TryAcquireGlobalCall(int maxConcurrentCallsPerServer)
     {
-        if (Interlocked.Increment(ref _globalActiveCalls) <= _maxConcurrentCallsPerServer)
+        if (Interlocked.Increment(ref _globalActiveCalls) <= maxConcurrentCallsPerServer)
             return true;
 
         // The caller owns both provisional slots at this point. It must release the connection slot
