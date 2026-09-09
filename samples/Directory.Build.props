@@ -1,0 +1,8 @@
+<Project>
+  <Import Project="../Directory.Build.props" />
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- Repository builds use source projects; copied sample projects default to NuGet packages. -->
+    <UseSharpLinkPackages>false</UseSharpLinkPackages>
+  </PropertyGroup>
+</Project>

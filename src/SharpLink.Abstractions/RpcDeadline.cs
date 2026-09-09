@@ -14,7 +14,7 @@ internal readonly struct RpcDeadline
 
     private RpcDeadline(long timestamp)
     {
-        Timestamp = timestamp;
+        _timestampUnits = unchecked((ulong)timestamp);
         HasValue = true;
         _timestampOrigin = 0;
         _timestampFrequency = 0;
@@ -23,12 +23,12 @@ internal readonly struct RpcDeadline
     }
 
     private RpcDeadline(
-        long timestamp,
+        ulong timestampUnits,
         long timestampOrigin,
         long timestampFrequency,
         TimeSpan timeBudget)
     {
-        Timestamp = timestamp;
+        _timestampUnits = timestampUnits;
         HasValue = true;
         _timestampOrigin = timestampOrigin;
         _timestampFrequency = timestampFrequency;
@@ -42,7 +42,18 @@ internal readonly struct RpcDeadline
     /// Saturating projection retained for diagnostics and legacy internal tests. Expiry and ordering
     /// for deadlines created from a TimeBudget never depend on this signed absolute value.
     /// </summary>
-    internal long Timestamp { get; }
+    private readonly ulong _timestampUnits;
+
+    internal long Timestamp
+    {
+        get
+        {
+            if (!_usesTimeBudget)
+                return unchecked((long)_timestampUnits);
+            var projected = (Int128)_timestampOrigin + _timestampUnits;
+            return projected >= long.MaxValue ? long.MaxValue : (long)projected;
+        }
+    }
 
     internal static RpcDeadline Create(TimeSpan timeBudget, TimeProvider timeProvider)
     {
@@ -60,10 +71,11 @@ internal readonly struct RpcDeadline
         ArgumentOutOfRangeException.ThrowIfLessThan(timeBudget, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timestampFrequency, 0);
         timeBudget = NormalizeFiniteBudget(timeBudget, timestampFrequency);
-        var timestamp = timeBudget == TimeSpan.Zero
-            ? timestampNow
-            : SharpLinkTime.AddDuration(timestampNow, timeBudget, timestampFrequency);
-        return new RpcDeadline(timestamp, timestampNow, timestampFrequency, timeBudget);
+        // NormalizeFiniteBudget guarantees that this exact ceiling fits inside half a ring.
+        var numerator = (UInt128)(ulong)timeBudget.Ticks * (ulong)timestampFrequency;
+        var timestampUnits = (ulong)((numerator + (uint)TimeSpan.TicksPerSecond - 1) /
+            (uint)TimeSpan.TicksPerSecond);
+        return new RpcDeadline(timestampUnits, timestampNow, timestampFrequency, timeBudget);
     }
 
     internal static RpcDeadline FromTimestamp(long timestamp)
@@ -75,7 +87,7 @@ internal readonly struct RpcDeadline
         if (!HasValue)
             return false;
         return _usesTimeBudget
-            ? GetBudgetRemaining(timeProvider.GetTimestamp()) <= TimeSpan.Zero
+            ? unchecked((ulong)(timeProvider.GetTimestamp() - _timestampOrigin)) >= _timestampUnits
             : Timestamp <= timeProvider.GetTimestamp();
     }
 
@@ -84,7 +96,7 @@ internal readonly struct RpcDeadline
         if (!HasValue)
             return false;
         return _usesTimeBudget
-            ? GetBudgetRemaining(timestamp) <= TimeSpan.Zero
+            ? unchecked((ulong)(timestamp - _timestampOrigin)) >= _timestampUnits
             : Timestamp <= timestamp;
     }
 

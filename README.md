@@ -8,64 +8,190 @@
 [![Nightly Regression](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-一个面向 .NET 的高性能 RPC 框架（当前主目标框架为 `net10.0`），支持：
+SharpLink 是一个面向 .NET 10 的高性能 RPC 框架。契约、代理、Stub 和 DTO Codec 由 Source Generator 在编译期生成；运行时支持 Unary/Streaming、TLS、deadline、取消、背压、服务发现、韧性、OpenTelemetry 和优雅排空。
 
-- Source Generator 自动生成 `Proxy/Stub/Codec/Assembly Manifest`
-- Unary、`[Oneway]`、客户端流、服务端流、双向流、多流参数
-- Protocol v2 协议级取消（`ProtocolV2FrameType.Cancel`）
-- TLS/mTLS、认证、Interceptor、deadline、背压、健康检查与 OpenTelemetry
-- 自动服务注册、`Singleton/Connection/Call` 生命周期、运行时程序集安全注册/注销
-- `Microsoft.Extensions.Hosting`、DI、readiness 与优雅排空
-- `Socket / NamedPipe / AnonymousPipe / UDS` 传输，以及实验性的同用户共享内存传输
-- 内置无反射 DTO Codec，并通过通用 Codec Adapter 接入 `SharpPack` 等复杂图序列化器
+## 安装与 package map
 
-## 项目结构
+当前 `dev` 的发布版本线为 `2.0.0`。第一次使用时按项目职责安装包：
 
-核心项目（`src/`）：
+| Project role | Install | Why |
+| --- | --- | --- |
+| Contracts | `SharpLink.Sdk` | 契约 Attribute/类型、`SharpLink.Abstractions` 依赖，以及随 SDK 分发的 Analyzer/Generator |
+| Server | `SharpLink.Server` + `SharpLink.Sdk` | Server runtime，以及当前 Server 编译中的 service/bootstrap 生成 |
+| Client | `SharpLink.Client` + `SharpLink.Sdk` | Client runtime，以及当前 Client 编译中的静态 manifest/bootstrap 生成 |
+| Host/DI（可选） | `SharpLink.Hosting` | `Microsoft.Extensions.Hosting` / DI 集成 |
 
-- `SharpLink.Abstractions`：契约标记、Protocol v2 公共模型、公共接口、通道与传输抽象
-- `SharpLink.Runtime`：内部 `RpcSession`、`StreamManager`、实例级 Codec Provider、传输实现与底层收发逻辑（业务代码不直接控制 Session 或 raw stream dispatcher）
-- `SharpLink.Sdk`：契约项目的单一引用入口，依赖 Abstractions 并携带分析器与源生成器，不再传递引入 Runtime
-- `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
-- `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
-- `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
-- `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成
-- `SharpLink.Serializer.SharpPack`：精确依赖 SharpPack `[1.1.0]` 的 Codec Adapter（`memorypack-binary/v1`）
-- `SharpLink.Compression.Zstd`：官方 Zstandard compression provider；当前稳定目标为 .NET 10，wire profile 为 `zstd-rfc8878-w23-checksum/v1`
+`SharpLink.Sdk` 的 NuGet 包会把 `SharpLink.Generator.dll` 放在 `analyzers/dotnet/cs`，所以通常**不要**再单独安装 `SharpLink.Generator`。SDK 传递依赖 `SharpLink.Abstractions`，**不依赖 `SharpLink.Runtime`**；纯 Contracts 项目不需要为了定义 RPC contract 引入完整 Runtime。
 
-示例（`demo/`）：
+## Quick Start：Contracts → Server → Client
 
-- `HelloWorld`：基础调用与多类型参数
-- `Streaming`：客户端流、服务端流、双向流、多流参数
-- `HostApplication`：Host 模式完整示例
-- `Cancel`：协议级取消示例
-- `Timeout`：Client fallback 与方法超时示例
-- `Oneway`：单向调用示例
-- `Log`：日志配置示例
-- `Security`：TLS 身份、认证、授权和调用上下文
-- `Compression`：双向协商压缩
-- `AdmissionControl`：并发接入和拒绝行为
-- `InterceptorsTelemetry`：Client/Server Interceptor、Activity 与 Meter
-- `Resilience`：静态端点、Retry 与 Circuit Breaker
-- `TransportMatrix`：TCP、NamedPipe、UDS、SharedMemory 与 AnonymousPipe
-- `MultiCluster`：两个独立契约程序集与物理集群路由
-- `SeparatedContracts / SeparatedServer / SeparatedClient`：分离式契约与多进程示例
+要求：.NET 10 SDK。
 
-测试与基准（`test/`）：
+从空目录创建三个项目：
 
-- `SharpLink.UnitTests`：快速单元测试
-- `SharpLink.IntegrationTests`：真实传输与生成代码集成测试
-- `SharpLink.Generator.Tests`：分析器与生成器规则测试
-- `SharpLink.AotSmoke`：AOT/生成器/编解码链路冒烟验证
-- `SharpLink.LoadTest*`、`SharpLink.Benchmarks`：压测与基准
+```bash
+mkdir SharpLinkQuickStart
+cd SharpLinkQuickStart
 
-## 快速开始
+dotnet new classlib -n QuickStart.Contracts -f net10.0
+dotnet new console -n QuickStart.Server -f net10.0
+dotnet new console -n QuickStart.Client -f net10.0
 
-环境要求：
+dotnet add QuickStart.Contracts package SharpLink.Sdk --version 2.0.0
 
-- .NET SDK `10.0.102` 或兼容的 `10.0` SDK
+dotnet add QuickStart.Server reference QuickStart.Contracts/QuickStart.Contracts.csproj
+dotnet add QuickStart.Server package SharpLink.Sdk --version 2.0.0
+dotnet add QuickStart.Server package SharpLink.Server --version 2.0.0
 
-构建与测试：
+dotnet add QuickStart.Client reference QuickStart.Contracts/QuickStart.Contracts.csproj
+dotnet add QuickStart.Client package SharpLink.Sdk --version 2.0.0
+dotnet add QuickStart.Client package SharpLink.Client --version 2.0.0
+```
+
+### 1. Contracts
+
+Canonical source: [`samples/QuickStart.Contracts/GreetingContracts.cs`](samples/QuickStart.Contracts/GreetingContracts.cs)
+
+最小契约只需要业务接口、DTO 和协作取消 token：
+
+```csharp
+[RpcContract]
+public interface IGreetingService : IService
+{
+    ValueTask<GreetingReply> GreetAsync(
+        GreetingRequest request,
+        CancellationToken cancellationToken);
+}
+```
+
+把 canonical source 复制到 Contracts 项目即可。这里不需要理解 `RuntimeContext`、Manifest、Assembly Catalog 或 generated ABI；这些属于架构/高级章节。
+
+### 2. Server
+
+Canonical source: [`samples/QuickStart.Server/Program.cs`](samples/QuickStart.Server/Program.cs)
+
+Server 项目引用 Contracts，`[RpcService]` 实现业务接口，然后配置 listener 并运行：
+
+```csharp
+await using var server = SharpLinkServerBuilder.Create()
+    .UseTcp(50051, IPAddress.Loopback)
+    .Build();
+
+var runTask = server.RunAsync(runCancellation.Token).AsTask();
+```
+
+canonical sample 同时包含 Ctrl+C 停机：先 `StopAsync(TimeSpan.FromSeconds(5))` 发送 GoAway 并排空活动调用，再取消 `RunAsync`，最后通过 `await using` 完成释放。
+
+### 3. Client
+
+Canonical source: [`samples/QuickStart.Client/Program.cs`](samples/QuickStart.Client/Program.cs)
+
+Client 建连、等待 Ready、获取生成代理并发起一次真实 Unary RPC：
+
+```csharp
+await using var client = SharpClientBuilder.Create()
+    .UseRequestTimeout(TimeSpan.FromSeconds(5))
+    .UseTcp("127.0.0.1", 50051)
+    .Build();
+
+await client.ConnectAsync(timeout.Token);
+await client.WaitForReadinessAsync(1, timeout.Token);
+
+var greeting = client.Get<IGreetingService>();
+var reply = await greeting.GreetAsync(
+    new GreetingRequest { Name = "SharpLink" },
+    timeout.Token);
+```
+
+先在终端 1 启动 Server，再在终端 2 启动 Client：
+
+```bash
+dotnet run --project QuickStart.Server
+dotnet run --project QuickStart.Client
+```
+
+Client 应输出：
+
+```text
+QUICKSTART_CLIENT_PASS response=Hello, SharpLink!
+```
+
+Client sample 在退出前显式 `StopAsync()`，并继续由 `await using` 做幂等释放。Server 用 Ctrl+C 进入 5 秒优雅排空。
+
+仓库中的三个 [`samples/QuickStart.*`](samples/) 项目是这段入门的事实源。Release package smoke 会把它们复制到临时空目录，只使用本地 `.nupkg` + `PackageReference` + fresh NuGet cache 构建三项目，并实际启动 Server/Client 完成上述 RPC；README 不维护另一份完整 sample。
+
+## Production-shaped template
+
+最小 Quick Start 刻意不塞生产选项。可复制作为真实服务起点的完整模板位于：
+
+- [`samples/ProductionTemplate.Contracts`](samples/ProductionTemplate.Contracts/)
+- [`samples/ProductionTemplate.Server`](samples/ProductionTemplate.Server/)
+- [`samples/ProductionTemplate.Client`](samples/ProductionTemplate.Client/)
+
+Server 模板覆盖 TLS、连接/调用 admission、pending/stream 上限、结构化日志、SharpLink ActivitySource 观测和 30 秒 graceful drain；Client 模板覆盖 TLS hostname 校验、请求 timeout、pending 上限、日志/trace、Ready 与显式 Stop。
+
+模板不会生成或信任测试证书。Server 从 deployment 提供的 PKCS#12 读取证书：
+
+```bash
+export SHARPLINK_TLS_CERT_PATH=/run/secrets/rpc-server.pfx
+export SHARPLINK_TLS_CERT_PASSWORD='...'
+dotnet run --project samples/ProductionTemplate.Server
+```
+
+Client 默认连接 `127.0.0.1:50052`，TLS `TargetHost` 默认是 `localhost`；部署环境可以显式提供：
+
+```bash
+export SHARPLINK_SERVER_IP=10.0.0.12
+export SHARPLINK_TLS_TARGET_HOST=rpc.example.internal
+dotnet run --project samples/ProductionTemplate.Client
+```
+
+没有设置自定义证书 callback 时，SharpLink/.NET 保持平台证书链和 hostname 校验。模板故意不提供“接受所有证书”的捷径。
+
+下面区分模板值、framework default 和必须由 deployment 决定的值：
+
+| Concern | Template value | Framework default | Deployment decision |
+| --- | ---: | ---: | --- |
+| Unary fallback timeout | 5 s | `UseRequestTimeout()` 推荐 30 s；Client Build 前需显式选择 timeout policy | 按服务 SLO/上游 deadline 调整 |
+| TLS handshake timeout | 5 s | 10 s | 按网络与证书基础设施调整 |
+| Client/server pending requests / connection | 1,024 | 65,536 | 按内存预算、并发和排队策略调整 |
+| Concurrent server calls | 256 | active call admission 默认关闭 | 按 CPU/下游容量调整 |
+| Queued calls | 512，最长 2 s | admission/queue 默认关闭 | 明确容量、字节预算和 deadline |
+| Live connections / handshakes | 512 / 32 | 1,024 / 64 | 按连接风暴与资源预算调整 |
+| Graceful drain | 30 s | 无统一部署默认值 | 必须覆盖典型最长正常请求，同时受平台终止窗口约束 |
+| Logging/telemetry | Console + SharpLink ActivitySource listener | 框架只暴露结构化日志、`SharpLink.Client`/`SharpLink.Server` ActivitySource 与 `SharpLink` Meter | exporter、采样、日志后端由部署决定 |
+
+如果应用已经使用 OpenTelemetry，可以直接把 SharpLink 接入现有 pipeline：
+
+```csharp
+tracerProviderBuilder.AddSource("SharpLink.Client", "SharpLink.Server");
+meterProviderBuilder.AddMeter("SharpLink");
+```
+
+生产模板当前绑定 loopback，只为避免示例替用户决定网络暴露面和认证方案。真正跨主机部署时，应同时明确 listen address、TLS 证书/SNI、认证授权、网络策略和 readiness；见 [`doc/security.md`](doc/security.md) 与 [`doc/transports.md`](doc/transports.md)。
+
+## 语义与功能文档
+
+README 只负责把第一次 RPC 跑通。完整语义以这些文档为准：
+
+- 文档首页：[`doc/index.md`](doc/index.md)
+- 入门与核心模型：[`doc/getting-started.md`](doc/getting-started.md)
+- 契约、DTO、Codec：[`doc/contracts-and-codecs.md`](doc/contracts-and-codecs.md)
+- Unary/Streaming、取消与 deadline：[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md)
+- TCP/TLS 与其他传输：[`doc/transports.md`](doc/transports.md)
+- 安全、认证与授权：[`doc/security.md`](doc/security.md)
+- 服务发现、Retry 与 Circuit Breaker：[`doc/resilience.md`](doc/resilience.md)
+- Server admission：[`doc/admission-control.md`](doc/admission-control.md)
+- Hosting / DI / service lifecycle：[`doc/hosting-and-services.md`](doc/hosting-and-services.md)
+- 日志、Activity 与 Meter：[`doc/observability.md`](doc/observability.md)
+- 多集群与动态模块：[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md)
+- 资源限制与调优：[`doc/limits-and-tuning.md`](doc/limits-and-tuning.md)
+- 故障排查 / 迁移：[`doc/troubleshooting.md`](doc/troubleshooting.md)、[`doc/migration.md`](doc/migration.md)
+- 架构 / Protocol v2：[`doc/architecture.md`](doc/architecture.md)、[`doc/protocol-v2.md`](doc/protocol-v2.md)
+
+## Developer / repository build
+
+下面是**贡献 SharpLink 本身**的路径，不是 NuGet consumer 的入门前置条件。
 
 ```bash
 dotnet build Sharplink.slnx -c Release
@@ -74,555 +200,15 @@ dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.c
 dotnet run --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -- --timeout 120s
 ```
 
-运行示例：
+常用 runnable demos 在 `demo/`：`HelloWorld`、`Streaming`、`HostApplication`、`Security`、`Compression`、`AdmissionControl`、`InterceptorsTelemetry`、`Resilience`、`TransportMatrix`、`MultiCluster` 等。面向用户文档应优先引用 `samples/QuickStart.*` / `samples/ProductionTemplate.*`；demo 可以继续展示单项高级能力。
 
-```bash
-dotnet run --project demo/HelloWorld/HelloWorld.csproj
-dotnet run --project demo/Streaming/Streaming.csproj
-dotnet run --project demo/HostApplication/HostApplication.csproj
-dotnet run --project demo/Cancel/Cancel.csproj
-dotnet run --project demo/Timeout/Timeout.csproj
-dotnet run --project demo/Oneway/Oneway.csproj
-dotnet run --project demo/Log/Log.csproj
-dotnet run --project demo/SeparatedServer/SeparatedServer.csproj
-dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
-```
+发布链路会 pack 当前 NuGet artifacts、验证 package graph/Generator 分发，并在 fresh cache 中执行 package smoke。流程说明见 [`doc/releasing.md`](doc/releasing.md)。
 
-## 契约发现
+## Contributing / release
 
-- RPC 契约接口必须标记 `[RpcContract]`
-- RPC 服务实现必须标记 `[RpcService]`
-- 契约接口必须继承 `IService`
-- 契约及其 containing type 必须 public；公开 nested contract 受支持并获得确定性唯一生成类型名
-- RPC route 必须是普通 instance method；`ref/out/in`、by-ref return、static method 与 abstract property/indexer/event 会在编译期报告错误
-- Contract 所在程序集生成 Descriptor、Proxy、contract-based Stub 和 Codec；Service 所在程序集生成 Activator、生命周期与显式依赖
-- 每个生成程序集只有一个可由程序集特性直接定位的 Manifest，不使用 `Assembly.GetTypes()` 扫描
-- Generator 会为静态引用的 generated Manifest 发出确定性 bootstrap；应用模块初始化时先注册这些 Manifest，Server `Build()` 再快照并自动注册 `[RpcService]`。Build 后加载的插件仍需显式 `RegisterAssembly`
-- 可以通过程序集级特性缩小扫描范围：
-
-```csharp
-[assembly: SharpLinkRpcContracts(typeof(MyContract1), typeof(MyContract2))]
-```
-
-## 多集群客户端
-
-`SharpLinkMultiClusterClientBuilder` 管理多个彼此隔离的子客户端。创建代理时，每个契约只映射到一个子客户端；之后通过该代理发起 RPC 调用时，不会再查询协调器、集群名称或逐调用路由上下文。
-
-静态契约程序集路由应声明在应用或宿主程序集中，不要写入可复用的契约包：
-
-```csharp
-[assembly: SharpLinkClusterContractAssembly("orders", typeof(OrderContractsMarker))]
-[assembly: SharpLinkClusterContractAssembly("payments", typeof(PaymentContractsMarker))]
-```
-
-每个槽位继续使用现有的子 Builder API 配置。委托内的 `UseCluster` 仍然只负责该槽位自身的端点拓扑，并不是多集群协调器 API。
-
-```csharp
-var client = SharpLinkMultiClusterClientBuilder.Create()
-    .UseRequestTimeout()
-    .AddCluster("orders", child => child.UseTcp("127.0.0.1", 5101))
-    .AddCluster("payments", child => child.UseTcp("127.0.0.1", 5102))
-    .Build();
-
-await client.ConnectAsync();
-var orders = client.Get<IOrderService>();
-var payments = client.Get<IPaymentService>();
-```
-
-Coordinator 必须显式选择 child Client 的 request-timeout policy。`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 fallback；slot 配置仍可覆盖 coordinator policy。
-
-默认情况下，每个槽位都必须具有契约。专门预留给插件的槽位必须显式启用动态契约：
-
-```csharp
-.AddCluster("plugins", child => child.UseTcp("127.0.0.1", 5103),
-    slot => slot.AllowDynamicContracts = true)
-```
-
-动态契约必须注册到明确指定的槽位，相关 API 为 `RegisterAssembly(cluster, assembly)`、`UnregisterAssemblyAsync(cluster, assembly, timeout)` 和 `ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`。构建完成的协调器也可以原子地新增、替换和移除完整槽位：
-
-```csharp
-await client.AddClusterAsync("search",
-    child => child.UseTcp("127.0.0.1", 5201).UseRetry(),
-    slot => slot.AllowDynamicContracts = true);
-
-await client.ReplaceClusterAsync("search",
-    child => child.UseDnsEndpoints(
-        "search.internal", 5201, SharpLinkTransportFactories.Sockets()),
-    TimeSpan.FromSeconds(30));
-
-var removal = await client.RemoveClusterAsync("search", TimeSpan.FromSeconds(30));
-```
-
-协调器处于 Ready 状态时，候选槽位会在发布前建立连接。替换只影响之后的 `Get<T>()` 调用；已经创建的代理仍绑定到退役子客户端，不会被静默重绑。当前不存在默认集群、逐调用集群覆盖、跨集群重试，线上协议也不携带集群标识。生命周期与迁移细节见 [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md)。
-
-## 契约 Manifest 与兼容性基线
-
-`SharpLink.Sdk` 包会把当前契约写到 `obj/<configuration>/<tfm>/SharpLink.Contracts.sharplink.json`。JSON 按 Contract、Method、DTO member、enum、union 与 Service route 的稳定 ID 排序，不包含时间戳或源码路径；`schemaFingerprint` 覆盖规范化后的完整内容，可直接作为 CI 构建产物保存。
-
-把上一个已发布版本的文件保存到仓库，并在项目中指定基线：
-
-```xml
-<PropertyGroup>
-  <SharpLinkContractBaseline>contracts/previous.sharplink.json</SharpLinkContractBaseline>
-  <!-- 可选：覆盖当前 Manifest 的输出位置 -->
-  <SharpLinkContractManifestOutput>artifacts/contracts/current.sharplink.json</SharpLinkContractManifestOutput>
-</PropertyGroup>
-```
-
-没有基线时只生成当前 Manifest。存在基线时，`SHARPLINK024`–`SHARPLINK035` 与 `SHARPLINK037` 会在可用的 Contract、Method、DTO member 或 Service 位置报告格式错误和破坏性变化，并在消息中给出修复方式。例如 DTO 成员重命名应显式保留旧 ID：
-
-```csharp
-public sealed class Customer
-{
-    [RpcMember(7)] // 重命名前后都保留 7
-    public string DisplayName { get; init; } = string.Empty;
-}
-```
-
-新增 Contract、Method 和 optional DTO member 是兼容变化。多态契约可用 `[RpcUnionCase(tag, typeof(CaseType))]` 固定 union tag；已发布的 tag 不能改派给其他类型。分析全部发生在编译期，不进入运行时路由或 RPC 热路径，NativeAOT 继续使用生成代码而不做反射扫描。
-
-## 序列化与 AOT
-
-RPC 可达的常规 DTO 会自动生成无反射 Codec，不需要注册序列化器：
-
-```csharp
-public sealed record Address([property: RpcMember(1)] string City);
-
-public sealed class WorkOrder
-{
-    [RpcRequired]
-    public string Number { get; init; } = string.Empty;
-    public Address Address { get; init; } = new("");
-    public List<string> Tags { get; init; } = [];
-    [RpcIgnore]
-    public string LocalCacheKey { get; init; } = string.Empty;
-}
-```
-
-原生子集包含 primitive、enum、nullable、string、数组、`List`、`Dictionary`、`Memory`、`ReadOnlyMemory`、`ImmutableArray`、class/struct/record 及无环嵌套。未直接出现在 RPC 签名中的入口可标记 `[RpcSerializable]`。默认成员 ID 来自稳定成员名 hash；重命名同时要求 wire 兼容时，应保留显式 `[RpcMember(id)]`。
-
-循环/多态对象图和第三方运行时类型可以交给编译期选择的 Codec Adapter。引用 `SharpLink.Serializer.SharpPack` 后，`[SharpPackable]` 会自动选择 SharpPack Adapter；普通 DTO 仍优先使用 SharpLink 原生 Codec：
-
-```csharp
-using SharpPack;
-
-[SharpPackable]
-public partial class PluginGraph
-{
-    public PluginGraph? Parent { get; set; }
-    public List<PluginGraph> Children { get; set; } = [];
-}
-```
-
-没有框架自带 Attribute 的第三方类型使用通用显式绑定：
-
-```csharp
-[assembly: RpcCodecAdapter(
-    typeof(ThirdPartyGraph),
-    typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]
-```
-
-Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpLink.Serializer.SharpPack.SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
-
-每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。当前设计和迁移约束见 [`doc/contracts-and-codecs.md`](doc/contracts-and-codecs.md) 与 [`doc/migration.md`](doc/migration.md)。
-
-## 协商压缩
-
-压缩默认完全关闭，Core 不内置具体压缩算法。官方 `SharpLink.Compression.Zstd` 包当前面向稳定的 .NET 10，使用标准 Zstandard frame、标准 frame checksum、8 MiB 最大 window，并禁止 dictionary、trailing bytes 和拼接第二帧；Client 与 Server 仍可按本地偏好注册任意符合公开 SPI 的 Provider。握手有交集时 Server 选择自身列表中的第一个 wire profile，没有交集或只有一端启用时自动发送原始帧：
-
-```csharp
-using SharpLink.Compression.Zstd;
-
-var server = SharpLinkServerBuilder.Create()
-    .UseTcp(5000)
-    .UseRuntime(options =>
-    {
-        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
-    })
-    .Build();
-```
-
-`WireProfile` 是完整的 decode-compatible wire identity。Provider 必须线程安全，不保留调用方 buffer；`TryCompress` 只有在完整 representation 无法放入给定上限时才返回 `false`，收益判断仍由 Core 负责。`Decompress` 正常返回表示完整消费输入并拒绝 trailing bytes；格式完整性属于 profile/provider，不由 Core 添加算法专属 framing 或 checksum。官方 Zstd profile 为 `zstd-rfc8878-w23-checksum/v1`，compression level 只影响编码成本/压缩比，不改变 wire identity。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)，Zstd 平台、NativeAOT、.NET 11 BCL 互操作和性能证据见 [`doc/issue-430-zstd-evidence.md`](doc/issue-430-zstd-evidence.md)。
-
-压缩在连接握手后按每个方向自动应用，不存在 per-call 强制开关；需要控制是否尝试压缩时，应在对应 Client/Server Runtime Context 配置 Provider 或调整 payload/收益阈值。
-
-## 连接接入资源边界
-
-服务端默认对 accept 后、Ready 前的资源建立独立硬边界：最多同时保留 1024 个 live accepted connection，并最多允许 64 个连接同时处于 TLS / Protocol v2 / application authentication handshake。handshake slot 覆盖完整的 pre-auth 阶段，并在连接 Ready 时立即释放；connection slot 一直持有到 terminal cleanup。超过任一边界时连接立即关闭，不排队，也不会进入更多握手工作。
-
-```csharp
-var server = SharpLinkServerBuilder.Create()
-    .UseTcp(5000)
-    .UseConnectionAdmission(options =>
-    {
-        options.MaxConcurrentConnections = 1024;
-        options.MaxConcurrentHandshakes = 64;
-    })
-    .Build();
-```
-
-`MaxConcurrentHandshakes` 的默认值为固定 64；如果只把 `MaxConcurrentConnections` 配到 64 以下且没有显式设置 handshake 上限，默认会自动 clamp 到更低的 connection bound。显式 `MaxConcurrentHandshakes = 0` 是保留的 opt-out：它关闭独立 handshake 上限，让握手并发只受 `MaxConcurrentConnections` 约束。启动日志会输出最终生效的 `max_connections` / `max_handshakes`。迁移与滚动重连注意事项见 [`doc/migration.md`](doc/migration.md)，完整接入说明见 [`doc/admission-control.md`](doc/admission-control.md)。
-
-## 主动接入控制
-
-服务端可在创建 Service、DI Scope、Codec 调用状态和执行 Interceptor 之前启用累计 admission 规则。默认完全关闭；启用后依次取得 `Global → Contract → Method → Partition` 中所有已配置的 permit，现有每连接和进程硬并发上限仍作为最后安全边界：
-
-```csharp
-var server = SharpLinkServerBuilder.Create()
-    .UseTcp(5000)
-    .UseAdmissionControl(options =>
-    {
-        options.Global.UseConcurrency(256);
-        options.MaxQueuedCalls = 512;
-        options.MaxQueuedBytes = 16 * 1024 * 1024;
-        options.MaxQueueDelay = TimeSpan.FromSeconds(2);
-        options.AddMethod<IOrders>(nameof(IOrders.SubmitAsync), method =>
-            method.UseTokenBucket(rate =>
-            {
-                rate.TokenLimit = 1_000;
-                rate.TokensPerPeriod = 1_000;
-                rate.ReplenishmentPeriod = TimeSpan.FromSeconds(1);
-            }));
-        options.UsePartition(
-            context => context.Metadata is { Count: > 0 } metadata ? metadata[0].Value : null,
-            partition =>
-            {
-                partition.MaxPartitions = 1_024;
-                partition.IdleTimeout = TimeSpan.FromMinutes(5);
-                partition.UseConcurrency(8);
-            });
-    })
-    .Build();
-```
-
-速率策略可选 TokenBucket、FixedWindow 或 SlidingWindow，公共 API 不暴露底层 `System.Threading.RateLimiting` 类型。所有自动计时周期最多为 2,147,483,647 ms；SlidingWindow 的每个 segment 必须至少覆盖一个 `TimeSpan` tick。等待队列同时受调用数、保留字节、最长等待、调用 deadline、取消、断连和 Server Draining 限制；任一容量不足立即返回 `ResourceExhausted`。分区键为空时进入明确的默认分区，池满且没有安全可回收的空闲项时按 `partition_capacity` 拒绝，不记录真实分区键。
-
-OneWay 默认不排队；被过载策略拒绝时服务方法不会执行，只记录 dropped/resource-exhausted 指标和限频日志。`QueueOneWayCalls=true` 才允许它进入相同有界队列。客户端本地 `await` OneWay 成功只表示 SendPump 接受了帧，不代表服务端已经执行。
-
-Admission 指标为 `sharplink.admission.permits.active`、`calls.queued`、`calls.rejected`、`queue.duration`、`oneway.dropped` 与 `partitions.active`；拒绝只使用低基数 `scope`/`reason`。功能未启用时普通调用不创建 admission 状态、Task、TagList 或后台任务。
-
-## 传输说明
-
-- `NamedPipe` 在 Unix/macOS 下最终会映射到 Unix Domain Socket 路径
-- 当前运行时会对超长 pipe name 做确定性缩短，避免触发平台路径长度限制
-- NamedPipe 的未定义 `PipeOptions` bit 或 `PipeTransmissionMode` 会在 factory/listener 构造时立即拒绝；client 也拒绝仅供 server 使用的 `FirstPipeInstance`
-- TCP keep-alive time/interval 的最大值为 2,147,483,647 秒，配置会在创建 socket 前冻结并校验
-- `AnonymousPipe` 当前已覆盖本机连接、断连与本机压测回归；仓库内置 LoadTest 仅支持 `--mode local`
-- 每组 AnonymousPipe handle 从首次连接尝试开始即为已消费；失败重试必须申请新 offer
-- 若自行基于 `IAnonymousPipeAllocator` 将句柄转交外部子进程，应在子进程继承两个 handle 后立即调用 `offer.CompleteHandleTransfer()`（或释放 offer），让 Server 能观察子进程断连；同进程直接包装这些 handle 时不要提前完成交接
-
-平台能力矩阵：
-
-| 传输 | Windows | Linux | macOS | 使用范围 |
-| --- | --- | --- | --- | --- |
-| TCP | 支持 | 支持 | 支持 | 本机或跨主机 |
-| UDS | 不承诺 | 支持 | 支持 | 本机 |
-| NamedPipe | 支持 | 支持（映射到 UDS） | 支持（映射到 UDS） | 本机 |
-| AnonymousPipe | 支持 | 支持 | 支持 | 本机协同进程 |
-| SharedMemory（实验） | CI 目标，待门禁 | CI 目标，待门禁 | arm64 本机已验证 | 同机、同一用户 |
-
-### 实验性共享内存传输
-
-共享内存传输必须在 Client 与 Server 两端显式选择；创建、映射或握手失败会直接报错，绝不静默降级到其他传输。它只允许同机、同一操作系统用户的进程连接，数据通过每连接双向 SPSC 环传输，命名管道只承载握手、合并唤醒、关闭和存活信号。
-
-```csharp
-var server = SharpLinkServerBuilder.Create()
-    .UseSharedMemory("orders", options =>
-    {
-        options.CapacityPerDirectionBytes = 8 * 1024 * 1024;
-        options.SpinCount = 8;
-        options.HandshakeTimeout = TimeSpan.FromSeconds(10);
-    })
-    .Build();
-
-var client = SharpClientBuilder.Create()
-    .UseSharedMemory("orders")
-    .UseRequestTimeout()
-    .Build();
-```
-
-容量必须是 64 KiB–256 MiB 的 2 的幂；双方不一致时取较小值。显式配置优先于运行时 profile，默认值如下：
-
-| Profile | 每方向容量 | SpinCount |
-| --- | ---: | ---: |
-| LowLatency | 1 MiB | 64 |
-| Balanced | 8 MiB | 8 |
-| Throughput | 32 MiB | 0 |
-
-该传输不提供 TLS；同用户隔离依赖命名管道权限、用户私有映射目录、随机 nonce 和映射头校验。SharpLink RPC 认证、授权、deadline、流控和心跳照常生效。普通日志和性能报告不会记录映射路径、nonce 或 payload。正式支持状态以三平台 JIT/NativeAOT、性能与长稳门禁为准；当前安全边界、容量和调优规则见 [`doc/transports.md`](doc/transports.md) 与 [`doc/limits-and-tuning.md`](doc/limits-and-tuning.md)。
-
-正式 NuGet 包中，`SharpLink.Sdk` 会携带 `SharpLink.Generator` Analyzer。通过 NuGet 使用时只需引用 SDK，无需再手工添加 Generator DLL 或 Analyzer 项目引用。
-
-从 2.0 起，`SharpLink.Sdk` 只传递引入 `SharpLink.Abstractions`。纯契约项目不需要 Runtime；Client、Server 或 Hosting 应用应显式引用自身对应的应用包。1.1.x 生成程序集使用 Generated API 3，不能在 2.0 进程内加载，升级时必须清理 `bin/obj` 并重新构建全部契约、服务和插件程序集。2.0 同时把 Protocol v2 的 RPC lifetime baseline 提升到 minor 4，并以剩余 `TimeBudget` 取代旧 absolute deadline；pre-2.0 peer 不属于 2.0 的互操作承诺。完整步骤见 [`doc/migration.md`](doc/migration.md)。
-
-## Host 模式
-
-`SharpLink.Hosting` 提供：
-
-- `services.AddSharpLinkServer(...)`
-- `services.AddSharpLinkClient(...)`
-
-`SharpClientBuilder` 定义于 `SharpLink.Client`，`SharpLinkServerBuilder` 定义于 `SharpLink.Server`。
-
-## 错误模型
-
-- 运行时失败使用 `SharpLinkException` 和 `SharpLinkErrorCode` 区分认证、deadline、资源耗尽、断连和协议错误
-- `await client.ConnectAsync(ct)` 保持 topology-specific connectivity 语义且不等待多 endpoint 收敛；连接或握手失败直接抛结构化异常，不再返回 `bool`
-- 多 endpoint 收敛使用 `GetReadinessSnapshot()` 或 `WaitForReadinessAsync(minimumReadyEndpoints, ct)`；等待可启动/加入既有 Connect 生命周期，但不会提高配置目标或为 caller threshold 额外扩容
-- 用户 `CancellationToken` 取消保留为本地 `OperationCanceledException`；deadline 到期为 `SharpLinkException(DeadlineExceeded)`
-
-## 认证
-
-- 默认模式明确为 Anonymous，不存在默认密码。`RequireAuthentication()` 后没有注册服务端 provider 会在 Build 阶段失败。
-- client provider 会为每次连接/重连重新创建有界二进制 payload，适合刷新短期 token：
-
-```csharp
-var clientAuthenticator = SharpLinkAuthenticator.CreateClient(async cancellationToken =>
-    await tokenProvider.GetPayloadAsync(cancellationToken));
-
-var serverAuthenticator = SharpLinkAuthenticator.CreateServer(async (request, cancellationToken) =>
-{
-    var identity = await tokenValidator.ValidateAsync(request.Payload, cancellationToken);
-    return identity is null
-        ? SharpLinkAuthenticationResult.Reject()
-        : SharpLinkAuthenticationResult.Authenticate(
-            new SharpLinkAuthenticationContext(
-                subject: identity.Subject,
-                tenantId: identity.TenantId,
-                scopes: identity.Scopes,
-                expiresAt: identity.ExpiresAt));
-});
-
-var client = SharpClientBuilder.Create()
-    .UseAuthenticator(clientAuthenticator)
-    .UseRequestTimeout();
-
-var server = SharpLinkServerBuilder.Create()
-    .UseAuthenticator(serverAuthenticator)
-    .RequireAuthentication();
-```
-
-认证 payload 受 handshake/metadata 上限约束，provider 异常只向客户端公开通用认证失败。payload、token 和证书内容不会写入普通日志。认证上下文如果在 handshake 时已经过期会直接返回 `AuthenticationExpired`。
-
-如果你还需要在服务方法内部读取当前身份上下文，可以直接访问：
-
-```csharp
-var subject = SharpLinkCallContext.Current?.Authentication?.Subject;
-var tenantId = SharpLinkCallContext.Current?.Authentication?.TenantId;
-var role = SharpLinkCallContext.Current?.Authentication?.GetClaim("role");
-var canRead = SharpLinkCallContext.Current?.Authentication?.HasScope("rpc.read") ?? false;
-var expiresAt = SharpLinkCallContext.Current?.Authentication?.ExpiresAt;
-```
-
-`SharpLinkCallContext.Current` 仅在服务端 RPC 调用处理期间有值。
-
-## TCP TLS
-
-TLS 在 TCP 建连后、SharpLink Protocol v2 handshake 前完成，并拥有独立的 10 秒默认超时。客户端默认使用平台证书链和 hostname 校验；框架不提供“接受所有证书”的默认 helper。
-
-`UseTcp(port)` 默认只监听 loopback。需要向其他网卡暴露服务时，使用
-`.ListenOnAnyAddress()` 或 `.ListenOn(IPAddress)`；非 loopback 且无 TLS 的 TCP 会在
-`Build()` 时拒绝启动，必须在可信网络等受控场景显式调用 `AllowUnencrypted()` 和
-`AllowUnauthenticated()`。
-
-```csharp
-var server = SharpLinkServerBuilder.Create()
-    .UseTcp(5000, new SslServerAuthenticationOptions
-    {
-        ServerCertificate = serverCertificate,
-        ClientCertificateRequired = true
-    })
-    .Build();
-
-var client = SharpClientBuilder.Create()
-    .UseTcp("127.0.0.1", 5000, new SslClientAuthenticationOptions
-    {
-        TargetHost = "rpc.example.internal",
-        ClientCertificates = new X509CertificateCollection { clientCertificate }
-    })
-    .UseRequestTimeout()
-    .Build();
-```
-
-UDS、NamedPipe、AnonymousPipe 与 SharedMemory 默认依赖操作系统权限，不叠加 TLS。TLS 建立日志只记录协商协议与 cipher suite，不记录证书私钥、token 或 payload。
-
-RPC 业务契约只声明业务 payload、流参数以及用于协作取消的 `CancellationToken`；通用调用控制不进入方法签名。Metadata 等 envelope state 可由 Client interceptor 的 `SharpLinkClientInvocationContext.Metadata` 提供，Server 从 `SharpLinkCallContext` 读取。
-
-请求 lifetime 使用分层语义：Client 在 Build 前必须显式选择 fallback policy；`UseRequestTimeout()` 选择推荐 30 秒，`UseRequestTimeout(timeout)` 选择自定义值，`DisableRequestTimeout()` 明确关闭 Client-wide fallback。方法 `[Timeout]` 可覆盖 Client fallback；Runtime 把选中的 policy 解析为本地 monotonic `RpcDeadline`，并在真正发送 Request 前写入剩余 `TimeBudget`。Server 根据该 duration 创建自己的本地 deadline，跨机器不比较绝对墙钟。已有父 RPC 的剩余 `TimeBudget` 会限制下游调用，避免中间 hop 重启 lifetime。方法 `[Timeout]` 和继承的父 lifetime 不因 `DisableRequestTimeout()` 而失效。
-
-建议所有可能等待、访问 I/O 或占用昂贵资源的契约方法都把 `CancellationToken` 放在参数末尾。Unary 没有 token 时产生 `SHARPLINK004` Warning；Streaming 没有 token 时产生 `SHARPLINK014` Error。确认业务工作不可取消时可用 `[NonCancellable]` 显式说明，但不能同时声明该特性和 `CancellationToken`，否则产生 `SHARPLINK015` Error。此时客户端仍会按 deadline 停止等待，服务端会把调用标记为 abandoned、丢弃迟到响应并继续观察业务任务，直到任务结束后才释放该调用的 admission 与 DI scope。Streaming 的框架流泵、dispatcher 和窗口等待仍会被终止，不会因为 `[NonCancellable]` 保留连接资源。团队可以在 `.editorconfig` 中将 `dotnet_diagnostic.SHARPLINK004.severity = error` 提升为编译错误。
-
-服务端可从 `SharpLinkCallContext.Current` 读取协商后的 deadline 与 metadata。
-
-如果你希望直接在服务方法里做常见授权校验，可以使用：
-
-```csharp
-SharpLinkAuthorization.RequireScope("rpc.read");
-SharpLinkAuthorization.RequireTenant("tenant-a");
-SharpLinkAuthorization.RequireActiveToken();
-```
-
-这些 helper 失败时会抛出带正确 `SharpLinkErrorCode` 的 `SharpLinkException`，客户端会收到对应结构化错误，而不是退化成普通字符串异常。
-
-## Interceptor 与业务异常
-
-Client/Server interceptor 按注册顺序冻结到实例。没有注册 interceptor 时，调用仍直接进入生成的泛型 invoker/stub，不构建 delegate 链：
-
-```csharp
-var client = SharpClientBuilder.Create()
-    .UseTcp("rpc.example.internal", 5000)
-    .UseRequestTimeout()
-    .AddInterceptor(clientInterceptor)
-    .Build();
-
-var server = SharpLinkServerBuilder.Create()
-    .UseTcp(5000)
-    .AddInterceptor(serverInterceptor)
-    .UseExceptionMapper(exceptionMapper)
-    .Build();
-```
-
-客户端 interceptor 可通过 `SharpLinkClientInvocationContext.Options` 增加 metadata，也可以直接返回 `SharpLinkClientInvocationResult` 短路调用。服务端 context 包含 method descriptor、request ID、deadline、metadata、peer、auth、status 和 elapsed，可用于授权、限流与审计。
-
-默认异常 mapper 会保留显式的 `SharpLinkException`；其他业务异常只向客户端返回 `Internal` 与通用消息，Unary 和 stream 使用同一规则。仅在受控开发环境中可显式调用 `EnableDetailedErrors()`。生产环境建议实现 `IRpcExceptionMapper`，只公开经过审核的业务状态与消息。
-
-`[Idempotent]` 只把重试资格写入生成的 `RpcMethodDescriptor`，核心不会自动重试；后续 Resilience 扩展也只允许显式标记的 Unary 方法参与重试。
-
-## OpenTelemetry
-
-`SharpLinkTelemetry` 暴露两个 ActivitySource 和一个 Meter，可直接加入现有 OpenTelemetry pipeline：
-
-```csharp
-tracerProviderBuilder
-    .AddSource("SharpLink.Client", "SharpLink.Server");
-
-meterProviderBuilder
-    .AddMeter("SharpLink");
-```
-
-内置指标覆盖 active connections、reconnect、started/completed/failed/active/abandoned calls、duration、sent/received bytes、send queue bytes、pending requests、active streams、迟到响应，以及 protocol/auth/resource-exhausted failures。`sharplink.calls.abandoned` 使用 `rpc.sharplink.termination_reason` 区分 deadline、远端取消、consumer abandoned、停机与断连；`sharplink.responses.late_dropped` 逐次记录被安全丢弃的迟到响应。Activity 和指标不记录完整 payload、token、证书或未审核的业务异常消息。没有 listener 时不会创建 TagList、Activity、Stopwatch 对象或额外调用 observer。
-
-## 自动服务注册、DI 与生命周期
-
-服务实现只需标记 `[RpcService]`。Server 对 Service 项目的普通 `ProjectReference` 会在编译期生成静态 Manifest bootstrap，不需要 marker type、`Assembly.Load` 或手动程序集注册；bootstrap 只引用 Service 程序集拥有的 generated public infrastructure，因此实现类型可以是 `internal`，且 trimming/NativeAOT 不需要运行时扫描。默认 `Singleton` 保留无调用 Scope 的快速路径；`Connection` 按认证成功的物理连接惰性创建，`Call` 为每次调用创建，并在完整 Unary、OneWay 或 Streaming 调用真正结束后释放：
-
-```csharp
-[RpcService(Lifetime = SharpLinkServiceLifetime.Connection)]
-public sealed class MyService(Dependency dependency) : IMyService
-{
-    // Generated activator resolves Dependency from the current scope provider.
-}
-
-var server = SharpLinkServerBuilder.Create()
-    .UseServiceProvider(provider)
-    .UseTcp(5000)
-    .Build();
-```
-
-可以按 Builder 排除、重新启用或只启用白名单服务。调用方传入的实例始终是 caller-owned Singleton；factory 产物由 SharpLink 按指定生命周期释放：
-
-```csharp
-serverBuilder
-    .ExcludeService<IMyService>()
-    .EnableService<IMyService>()
-    .ReplaceService<IMyService>(existingInstance)
-    .ReplaceService<IOtherService>(
-        sp => new OtherService(sp.GetRequiredService<Dependency>()),
-        SharpLinkServiceLifetime.Call);
-```
-
-`DisableAutomaticServiceRegistration()` 可切换为 `EnableService<TContract>()` 白名单模式。`EnableService` 找不到生成服务时 Build 失败，`ExcludeService` 找不到目标时无操作。Hosting 与 `UseServiceProvider` 继续管理普通依赖的生命周期，但根 RPC 服务的公共生命周期只由 `SharpLinkServiceLifetime` 定义。
-
-### 运行时程序集注册与注销
-
-Build 后加载的插件需要分别注册到使用其 Artifact 的 Client/Server。注册不会用异常表示预期失败，而是原子返回结构化诊断；只有完整 Manifest 验证通过才会发布：
-
-```csharp
-SharpLinkAssemblyRegistrationResult registration = server.RegisterAssembly(pluginAssembly);
-if (!registration.Succeeded)
-    Console.Error.WriteLine($"{registration.Error!.Code}: {registration.Error.Message}");
-
-SharpLinkAssemblyUnregisterResult drained = await server.UnregisterAssemblyAsync(
-    pluginAssembly,
-    TimeSpan.FromSeconds(10),
-    cancellationToken);
-
-SharpLinkAssemblyReplacementResult replaced = await server.ReplaceAssemblyAsync(
-    pluginAssembly,
-    nextPluginAssembly,
-    TimeSpan.FromSeconds(10),
-    cancellationToken);
-if (!replaced.Succeeded)
-    Console.Error.WriteLine($"{replaced.Error!.Code}: {replaced.Error.Message}");
-```
-
-`ReplaceAssemblyAsync` 在修改线上状态前完成新 Manifest、Codec、Stub、Service 与 route 验证；旧 registration 拥有的 route 可由新程序集接管，但第三方 registration 的 route 仍受冲突保护。提交时只发布一次新不可变路由快照，随后复用注销路径排空旧调用。已进入旧 registration 的 Unary 和 Stream 固定使用旧 Codec、Stub、Service 与 Scope；新请求只读取新快照。
-
-普通注销的排空期间路由继续由原模块占有，新调用得到 `Unavailable: RPC module is draining`。替换和注销超时都会定点取消旧模块调用和流；业务代码不配合取消时 `ReferencesReleased=false`，框架在计数最终归零后后台完成释放。Client API 语义相同。NativeAOT 的运行时注册与替换返回 `PlatformNotSupported`，静态 Manifest 路径不受影响。
-
-客户端可以直接使用协议控制帧检查远端状态，不需要定义业务契约：
-
-```csharp
-var health = await client.CheckHealthAsync(cancellationToken);
-if (health.Status != SharpLinkHealthStatus.Ready)
-    throw new InvalidOperationException($"RPC server is {health.Status}.");
-```
-
-`ISharpLinkServer.HealthStatus` 暴露本地 `Ready/Draining/Unhealthy`。`AddSharpLinkServer` 与 `AddSharpLinkClient` 分别注册 `sharplink_server` 和 `sharplink_remote` Microsoft health checks，并带有 `ready` tag。停机顺序固定为 readiness=false、停止 accept、发送 GoAway、等待 active calls、超时后取消、flush 必要控制帧、释放 session/listener/service scope/provider。
-
-## 可调优配置
-
-- 日志：`UseLoggerFactory(...)`
-- 心跳：`UseHeartbeat(...)`
-- 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
-- 连接资源边界：`UseConnectionAdmission(...)`；默认 `1024` live connections / `64` concurrent handshakes，显式 handshake `0` 关闭独立上限
-- 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
-- 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
-- 服务注册与生命周期：`[RpcService]`、`EnableService` / `ExcludeService` / `ReplaceService`、`UseServiceProvider(...)` 与 `SharpLinkServiceLifetime`
-- 运行时插件：Client/Server `RegisterAssembly(...)` 与 `UnregisterAssemblyAsync(...)`
-- 健康检查：`CheckHealthAsync()`、`ISharpLinkServer.HealthStatus` 与 Hosting health checks
-- Client 拓扑就绪：`GetReadinessSnapshot()` 与 `WaitForReadinessAsync(...)`
-- 请求超时：Build 前必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`
-- `RpcSession` flush：`UseRpcSessionFlush(...)`
-- 实例级 Buffer Writer Pool：`UseBufferWriterPool(...)`
-- 运行时并发容器：`UseStateStoreConcurrency(...)`
-- 性能预设与流控边界：`UseRuntime(options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency)`
-- 客户端连接池：`UseConnectionPool(options => { options.MinConnections = 1; options.MaxConnections = 4; })`
-
-客户端默认使用 `1/1` 单连接池，单连接选择路径不产生随机选择或临时集合。只有在已有连接承载在途请求时，池才会按压力异步扩容；多连接使用 power-of-two choices 比较在途请求数。stream 在创建时固定到同一连接，收到 `GoAway` 的连接停止接收新调用并在在途请求归零后退出。`Throughput` 预设在用户未显式配置连接池时使用 `1/min(Environment.ProcessorCount, 4)`，其他预设保持 `1/1`。
-
-`AnonymousPipe` 的一次句柄 offer 只支持一个客户端连接，因此其 `MaxConnections` 必须为 `1`。
-
-### 实例级配置与已移除的进程级入口
-
-以下会跨 Client/Server 实例互相覆盖状态的旧进程级入口已删除：
-
-- `RpcCodecRegistry` / `RpcCodec`：业务配置迁移到 Client/Server Builder 的 `UseCodec<T>(...)` 或 `UseSerializer(...)`；底层组件从所属 `IRpcRuntimeContext.Codecs` 解析 Codec。
-- `BufferWriterPool`：容量和保留策略迁移到 Builder 的 `UseBufferWriterPool(...)`；框架内部从所属 Context 的 `Buffers` 租借和归还。独立工具代码可直接使用 `PooledByteBufferWriter`。
-- `RuntimeConcurrency`：迁移到每个 Builder 的 `UseStateStoreConcurrency(...)`。
-- 旧的 Client 调用排列组合入口已删除；业务调用只通过 Source Generator 代理，底层扩展只实现 `IRpcChannel` 的五类 invoker。
-
-这些配置在 `Build()` 时冻结；同进程的不同 Client/Server 可以使用不同 Codec、Pool 和并发参数而互不污染。
-
-如果你使用 `UseTcp(0, "127.0.0.1")` 让系统自动分配端口，可以在 `Build()` 前通过 `serverBuilder.Transport.LocalEndPoint` 读取实际监听端口。
-
-## 文档
-
-- 文档首页与特性/Demo 覆盖矩阵：[`doc/index.md`](doc/index.md)
-- 快速开始：[`doc/getting-started.md`](doc/getting-started.md)
-- 契约、Codec 与压缩：[`doc/contracts-and-codecs.md`](doc/contracts-and-codecs.md)
-- 调用、Streaming、取消与 deadline：[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md)
-- 传输与部署：[`doc/transports.md`](doc/transports.md)
-- 安全：[`doc/security.md`](doc/security.md)
-- 服务发现与韧性：[`doc/resilience.md`](doc/resilience.md)
-- 接入控制：[`doc/admission-control.md`](doc/admission-control.md)
-- Hosting 与服务生命周期：[`doc/hosting-and-services.md`](doc/hosting-and-services.md)
-- Interceptor 与可观测性：[`doc/observability.md`](doc/observability.md)
-- 多集群与动态模块：[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md)
-- 限制与调优：[`doc/limits-and-tuning.md`](doc/limits-and-tuning.md)
-- 故障排查与迁移：[`doc/troubleshooting.md`](doc/troubleshooting.md)、[`doc/migration.md`](doc/migration.md)
-- 架构、Protocol、负载和性能：[`doc/architecture.md`](doc/architecture.md)、[`doc/protocol-v2.md`](doc/protocol-v2.md)、[`doc/loadtest.md`](doc/loadtest.md)、[`doc/performance.md`](doc/performance.md)
+- 贡献指南：[`CONTRIBUTING.md`](CONTRIBUTING.md)
 - 发布流程：[`doc/releasing.md`](doc/releasing.md)
-- 贡献与社区：[`CONTRIBUTING.md`](CONTRIBUTING.md)、[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
-- 安全漏洞请按 [`SECURITY.md`](SECURITY.md) 私下报告，不要创建公开 Issue。
-- 更新日志：`CHANGELOG.md`
+- 安全漏洞：请按 [`SECURITY.md`](SECURITY.md) 私下报告，不要创建公开 Issue
+- 更新日志：[`CHANGELOG.md`](CHANGELOG.md)
+
+SharpLink 使用 MIT License。

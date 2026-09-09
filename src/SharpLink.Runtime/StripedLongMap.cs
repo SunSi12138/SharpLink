@@ -61,14 +61,12 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         var stripe = GetStripe(key);
         lock (_locks[stripe])
         {
-            var map = _maps[stripe];
-            if (!map.TryAdd(key, value))
-            {
-                map[key] = value;
-                return;
-            }
-
-            if (_countTrackingEnabled)
+            // The reference is used only under the existing stripe lock. No user
+            // callback or dictionary mutation occurs between lookup and assignment.
+            ref var entry = ref System.Runtime.InteropServices.CollectionsMarshal
+                .GetValueRefOrAddDefault(_maps[stripe], key, out var exists);
+            entry = value;
+            if (!exists && _countTrackingEnabled)
                 Interlocked.Increment(ref _count);
         }
     }

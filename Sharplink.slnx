@@ -23,13 +23,19 @@
     <Project Path="demo/MultiCluster/MultiCluster.csproj" />
     <Project Path="demo/MultiCluster.Orders.Contracts/MultiCluster.Orders.Contracts.csproj" />
     <Project Path="demo/MultiCluster.Payments.Contracts/MultiCluster.Payments.Contracts.csproj" />
+    <Project Path="samples/QuickStart.Contracts/QuickStart.Contracts.csproj" />
+    <Project Path="samples/QuickStart.Server/QuickStart.Server.csproj" />
+    <Project Path="samples/QuickStart.Client/QuickStart.Client.csproj" />
+    <Project Path="samples/ProductionTemplate.Contracts/ProductionTemplate.Contracts.csproj" />
+    <Project Path="samples/ProductionTemplate.Server/ProductionTemplate.Server.csproj" />
+    <Project Path="samples/ProductionTemplate.Client/ProductionTemplate.Client.csproj" />
     <Project Path="src/SharpLink.Client/SharpLink.Client.csproj" />
     <Project Path="src/SharpLink.Server/SharpLink.Server.csproj" />
     <Project Path="src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
     <Project Path="src/SharpLink.Hosting/SharpLink.Hosting.csproj" />
     <Project Path="src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
     <Project Path="eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj" />
-    
+
     <Project Path="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" />
     <Project Path="test/SharpLink.LoadTestBase/SharpLink.LoadTestBase.csproj" />
     <Project Path="test/SharpLink.LoadTest/SharpLink.LoadTest.csproj" />

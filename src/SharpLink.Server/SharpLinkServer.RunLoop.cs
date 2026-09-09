@@ -11,11 +11,10 @@ internal sealed partial class SharpLinkServer
             _logger,
             _maxConcurrentCallsPerConnection,
             _maxConcurrentCallsPerServer);
-        var connectionAdmissionTargets = _connectionAdmission.TargetSnapshot;
         LogServerConnectionAdmissionConfigured(
             _logger,
-            connectionAdmissionTargets.MaxConnections,
-            connectionAdmissionTargets.MaxHandshakes);
+            _connectionAdmission.MaxConnections,
+            _connectionAdmission.MaxHandshakes);
         StartDecodeExecutor();
         TrackFrameworkTask(
             RunHeartbeatCheckLoopAsync(_forceStopCts.Token),
