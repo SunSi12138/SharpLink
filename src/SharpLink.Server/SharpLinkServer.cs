@@ -257,9 +257,11 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     internal void AssertCallAccountingInvariant()
         => _lifecycle.AssertCallAccountingInvariant();
 
-    internal int MaxConcurrentCallsPerConnectionForDiagnostics => _maxConcurrentCallsPerConnection;
+    internal int MaxConcurrentCallsPerConnectionForDiagnostics
+        => _callAdmission.MaxConcurrentCallsPerConnection;
 
-    internal int MaxConcurrentCallsPerServerForDiagnostics => _maxConcurrentCallsPerServer;
+    internal int MaxConcurrentCallsPerServerForDiagnostics
+        => _callAdmission.MaxConcurrentCallsPerServer;
 
     internal ServerStopDiagnosticSnapshot? LastStopDiagnostics
         => _lifecycle.LastStopDiagnostics;
@@ -277,10 +279,12 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     {
         var connections = _connectionRegistry.SnapshotActive();
         var snapshots = new ServerConnectionDiagnosticSnapshot[connections.Length];
+        var configuredPerConnectionLimit = _callAdmission.MaxConcurrentCallsPerConnection;
         for (var index = 0; index < connections.Length; index++)
         {
-            snapshots[index] = connections[index]
-                .CaptureStopDiagnostics(_maxConcurrentCallsPerConnection);
+            var connection = connections[index];
+            snapshots[index] = connection.CaptureStopDiagnostics(
+                Math.Max(configuredPerConnectionLimit, connection.ActiveCalls));
         }
         return new ServerStopDiagnosticSnapshot(
             _runtimeContext.TimeProvider.GetUtcNow(),
