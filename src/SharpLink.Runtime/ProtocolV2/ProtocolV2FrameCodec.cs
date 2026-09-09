@@ -23,6 +23,40 @@ public static class ProtocolV2FrameParser
         out ReadOnlySequence<byte> payload)
     {
         ArgumentNullException.ThrowIfNull(limits);
+        return TryReadFrameCore(
+            ref buffer,
+            limits,
+            limits.MaxFramePayloadBytes,
+            negotiatedLimit: false,
+            out header,
+            out payload);
+    }
+
+    internal static bool TryReadFrame(
+        ref ReadOnlySequence<byte> buffer,
+        SharpLinkProtocolOptions limits,
+        int maxFramePayloadBytes,
+        out ProtocolV2FrameHeader header,
+        out ReadOnlySequence<byte> payload)
+        => TryReadFrameCore(
+            ref buffer,
+            limits,
+            maxFramePayloadBytes,
+            negotiatedLimit: true,
+            out header,
+            out payload);
+
+    private static bool TryReadFrameCore(
+        ref ReadOnlySequence<byte> buffer,
+        SharpLinkProtocolOptions limits,
+        int maxFramePayloadBytes,
+        bool negotiatedLimit,
+        out ProtocolV2FrameHeader header,
+        out ReadOnlySequence<byte> payload)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        Debug.Assert(maxFramePayloadBytes > 0);
+        Debug.Assert(maxFramePayloadBytes <= limits.MaxFramePayloadBytes);
         header = default;
         payload = default;
         if (buffer.Length < ProtocolV2Constants.HeaderBytes)
@@ -37,10 +71,11 @@ public static class ProtocolV2FrameParser
             return false;
         if (payloadLength < 0)
             throw Violation("Frame payload length cannot be negative.");
-        if (payloadLength > limits.MaxFramePayloadBytes)
+        if (payloadLength > maxFramePayloadBytes)
         {
+            var limitKind = negotiatedLimit ? "negotiated" : "configured";
             throw Violation(
-                $"Frame payload length {payloadLength} exceeds the configured maximum of {limits.MaxFramePayloadBytes} bytes.");
+                $"Frame payload length {payloadLength} exceeds the {limitKind} maximum of {maxFramePayloadBytes} bytes.");
         }
         if (!reader.TryRead(out var typeRaw) || !reader.TryRead(out var flagsRaw) ||
             !reader.TryReadLittleEndian(out long requestIdBits))

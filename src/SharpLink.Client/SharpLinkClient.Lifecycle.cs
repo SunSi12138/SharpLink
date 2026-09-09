@@ -403,7 +403,7 @@ internal sealed partial class SharpLinkClient
             {
                 while (session.IsConnected &&
                        !ct.IsCancellationRequested &&
-                       ProtocolV2FrameParser.TryReadFrame(
+                       session.TryReadInboundFrame(
                            ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
@@ -518,7 +518,7 @@ internal sealed partial class SharpLinkClient
             {
                 while (session.IsConnected &&
                        !ct.IsCancellationRequested &&
-                       ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
+                       session.TryReadInboundFrame(ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.MarkActive();
