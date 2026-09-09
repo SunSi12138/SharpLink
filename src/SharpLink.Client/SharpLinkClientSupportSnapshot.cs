@@ -48,62 +48,94 @@ public sealed class SharpLinkClientSupportSnapshotOptions
 /// <summary>Identifies the topology shape without exposing endpoint identities.</summary>
 public enum SharpLinkSupportTopologyKind : byte
 {
+    /// <summary>A single fixed transport or endpoint.</summary>
     Fixed,
+    /// <summary>A configured static endpoint set.</summary>
     Static,
+    /// <summary>A resolver-backed dynamic endpoint set.</summary>
     Dynamic
 }
 
 /// <summary>Identifies a transport category without exposing its address.</summary>
 public enum SharpLinkSupportTransportKind : byte
 {
+    /// <summary>A custom or otherwise unclassified transport.</summary>
     Custom,
+    /// <summary>TCP transport.</summary>
     Tcp,
+    /// <summary>Unix domain socket transport.</summary>
     UnixDomainSocket,
+    /// <summary>Named-pipe transport.</summary>
     NamedPipe,
+    /// <summary>Anonymous-pipe transport.</summary>
     AnonymousPipe,
+    /// <summary>Shared-memory transport.</summary>
     SharedMemory
 }
 
 /// <summary>Describes an endpoint's support-facing lifecycle state.</summary>
 public enum SharpLinkSupportEndpointState : byte
 {
+    /// <summary>The endpoint currently has no ready connection.</summary>
     Unavailable,
+    /// <summary>The endpoint currently has at least one ready connection.</summary>
     Ready,
+    /// <summary>The endpoint is retiring from the active topology.</summary>
     Retiring
 }
 
 /// <summary>Describes a physical client connection without exposing transport endpoints.</summary>
 public enum SharpLinkSupportConnectionState : byte
 {
+    /// <summary>The connection is ready.</summary>
     Ready,
+    /// <summary>The connection is draining and no longer accepts new calls.</summary>
     Draining,
+    /// <summary>The connection is closed.</summary>
     Closed
 }
 
 /// <summary>Identifies the stage of the most recently observed connection failure.</summary>
 public enum SharpLinkConnectionFailureStage : byte
 {
+    /// <summary>Endpoint resolution failed.</summary>
     Resolve,
+    /// <summary>Transport dial or open failed.</summary>
     Dial,
+    /// <summary>TLS establishment failed.</summary>
     Tls,
+    /// <summary>RPC handshake failed.</summary>
     Handshake,
+    /// <summary>Authentication or authorization failed.</summary>
     Authentication,
+    /// <summary>Protocol validation failed.</summary>
     Protocol,
+    /// <summary>Ready publication or readiness transition failed.</summary>
     Readiness,
+    /// <summary>The precise stage was not safely available.</summary>
     Unknown
 }
 
 /// <summary>Provides a coarse, non-secret failure classification suitable for public issue attachments.</summary>
 public enum SharpLinkConnectionFailureClass : byte
 {
+    /// <summary>A timeout expired.</summary>
     Timeout,
+    /// <summary>The operation was cancelled.</summary>
     Cancelled,
+    /// <summary>The peer or local transport refused the connection.</summary>
     Refused,
+    /// <summary>Authentication or authorization failed.</summary>
     Authentication,
+    /// <summary>A protocol rule was violated.</summary>
     Protocol,
+    /// <summary>A version or compatibility check failed.</summary>
     Version,
+    /// <summary>A bounded resource was exhausted.</summary>
     Resource,
+    /// <summary>A transport-level failure occurred.</summary>
     Transport,
+    /// <summary>The failure did not match a safe public category.</summary>
     Internal
 }
 
@@ -191,7 +223,7 @@ public sealed record SharpLinkSupportConnectionSnapshot(
 public sealed record SharpLinkSupportConnectionResourceSnapshot(
     int PendingRequests,
     int PendingRequestCapacity,
-    int PendingRequestWaiters,
+    int? PendingRequestWaiters,
     int SendQueuedBytes,
     int SendQueueLimitBytes,
     int ActiveStreams,
