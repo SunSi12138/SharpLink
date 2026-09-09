@@ -99,6 +99,81 @@ public sealed class ServerCallCapacityRuntimeUpdateTests
     }
 
     [Test]
+    public async Task PerConnectionGrowthKeepsExistingConnectionDeadlineScanningComplete()
+    {
+        await using var server = CreateServer(
+            maxConcurrentCallsPerConnection: 1,
+            maxConcurrentCallsPerServer: 8);
+        await using var session = CreateSession("capacity-deadline-growth");
+        var timeProvider = new ManualTimeProvider();
+        var connection = CreateReadyConnection(
+            session,
+            timeProvider,
+            maxConcurrentCalls: 1);
+
+        server.UpdateCallCapacity(3, 8);
+        Ensure(
+            server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
+            "growth acquisition must raise the existing connection scheduler ceiling before ownership");
+
+        var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(25), timeProvider);
+        var calls = new[]
+        {
+            ServerCallCancellationState.Rent(
+                1001,
+                deadline,
+                timeProvider,
+                CancellationToken.None,
+                CancellationToken.None,
+                supportsCooperativeCancellation: false),
+            ServerCallCancellationState.Rent(
+                1002,
+                deadline,
+                timeProvider,
+                CancellationToken.None,
+                CancellationToken.None,
+                supportsCooperativeCancellation: false),
+            ServerCallCancellationState.Rent(
+                1003,
+                deadline,
+                timeProvider,
+                CancellationToken.None,
+                CancellationToken.None,
+                supportsCooperativeCancellation: false)
+        };
+
+        try
+        {
+            foreach (var call in calls)
+            {
+                connection.CallCancellations.Set(call.RequestId, call);
+                connection.DeadlineScheduler.Register(call);
+            }
+
+            timeProvider.Advance(TimeSpan.FromMilliseconds(25));
+
+            foreach (var call in calls)
+            {
+                Ensure(
+                    call.Reason == ServerCallCancellationReason.DeadlineExceeded,
+                    "runtime growth must not leave calls above the startup scheduler ceiling unscanned");
+            }
+        }
+        finally
+        {
+            foreach (var call in calls)
+            {
+                connection.CallCancellations.TryRemove(call.RequestId, call);
+                call.Dispose();
+            }
+
+            server.ReleaseCall(connection);
+        }
+
+        await Assert.That(connection.ActiveCalls).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task InvalidMultiFieldUpdatePublishesNothing()
     {
         await using var server = CreateServer(
@@ -203,6 +278,25 @@ public sealed class ServerCallCapacityRuntimeUpdateTests
         await Assert.That(server.MaxConcurrentCallsPerServerForDiagnostics).IsEqualTo(4);
     }
 
+    [Test]
+    public async Task StopAsyncSealsFurtherCapacityPublication()
+    {
+        await using var server = CreateServer(
+            maxConcurrentCallsPerConnection: 2,
+            maxConcurrentCallsPerServer: 4);
+
+        await server.StopAsync(TimeSpan.Zero);
+        var failure = await Assert.ThrowsAsync(() =>
+        {
+            server.UpdateCallCapacity(3, 6);
+            return Task.CompletedTask;
+        });
+
+        await Assert.That(failure).IsTypeOf<InvalidOperationException>();
+        await Assert.That(server.MaxConcurrentCallsPerConnectionForDiagnostics).IsEqualTo(2);
+        await Assert.That(server.MaxConcurrentCallsPerServerForDiagnostics).IsEqualTo(4);
+    }
+
     private static SharpLinkServer CreateServer(
         int maxConcurrentCallsPerConnection,
         int maxConcurrentCallsPerServer)
@@ -239,14 +333,23 @@ public sealed class ServerCallCapacityRuntimeUpdateTests
     }
 
     private static ServerConnectionState CreateReadyConnection(RpcSession session)
+        => CreateReadyConnection(
+            session,
+            TimeProvider.System,
+            maxConcurrentCalls: 1);
+
+    private static ServerConnectionState CreateReadyConnection(
+        RpcSession session,
+        TimeProvider timeProvider,
+        int maxConcurrentCalls)
     {
         var connection = new ServerConnectionState(
             session,
             new RpcSessionGeneratedServerBridge(session),
             new StripedLongMap<ServerCallCancellationState>(),
             CancellationToken.None,
-            TimeProvider.System,
-            maxConcurrentCalls: 1);
+            timeProvider,
+            maxConcurrentCalls);
         Ensure(connection.MarkReady(null), "connection ready");
         return connection;
     }
