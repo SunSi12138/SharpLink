@@ -176,7 +176,10 @@ internal static class CodecHelpers
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains a value outside the supported clock range.");
         }
 
-        return CreateDateTimeOffset(utcTicks + offsetTicks, offsetMinutes);
+        // The checks above prove both clock and UTC ticks are in range and
+        // offsetTicks is a whole-minute offset within +/-14 hours. Reuse that value
+        // directly instead of passing through the catch-wrapped public helper.
+        return new DateTimeOffset(utcTicks + offsetTicks, new TimeSpan(offsetTicks));
     }
 
     public static TimeOnly ValidateTimeOnly(TimeOnly value)
