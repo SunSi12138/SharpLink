@@ -17,8 +17,12 @@ internal static class SharpLinkClientLifecycleHeartbeatSupport
 
     internal static async Task YieldUntilAsync(Func<bool> condition, string failureMessage)
     {
-        for (var attempt = 0; attempt < 128 && !condition(); attempt++)
+        var started = TimeProvider.System.GetTimestamp();
+        while (!condition() &&
+               TimeProvider.System.GetElapsedTime(started) < TimeSpan.FromSeconds(5))
+        {
             await Task.Yield();
+        }
         Ensure(condition(), failureMessage);
     }
 
