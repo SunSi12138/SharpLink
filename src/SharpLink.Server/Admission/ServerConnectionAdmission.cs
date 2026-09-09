@@ -25,6 +25,15 @@ internal sealed class ServerConnectionAdmission
     internal ServerConnectionAdmission(int maxConnections, int maxHandshakes)
         => _targets = AdmissionTargets.Create(maxConnections, maxHandshakes);
 
+    internal (int MaxConnections, int MaxHandshakes) TargetSnapshot
+    {
+        get
+        {
+            var targets = Volatile.Read(ref _targets);
+            return (targets.MaxConnections, targets.MaxHandshakes);
+        }
+    }
+
     internal int MaxConnections => Volatile.Read(ref _targets).MaxConnections;
 
     internal int MaxHandshakes => Volatile.Read(ref _targets).MaxHandshakes;
