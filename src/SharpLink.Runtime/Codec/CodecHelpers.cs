@@ -176,7 +176,10 @@ internal static class CodecHelpers
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains a value outside the supported clock range.");
         }
 
-        return CreateDateTimeOffset(utcTicks + offsetTicks, offsetMinutes);
+        // The checks above prove both clock and UTC ticks are in range and
+        // offsetTicks is a whole-minute offset within +/-14 hours. Reuse that value
+        // directly instead of passing through the catch-wrapped public helper.
+        return new DateTimeOffset(utcTicks + offsetTicks, new TimeSpan(offsetTicks));
     }
 
     public static TimeOnly ValidateTimeOnly(TimeOnly value)
@@ -193,8 +196,22 @@ internal static class CodecHelpers
         return value;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static decimal ValidateDecimal(decimal value)
     {
+        // Inspect the public decimal bit representation, not its native field layout.
+        Span<int> bits = stackalloc int[4];
+        decimal.GetBits(value, bits);
+        var flags = bits[3];
+        if ((flags & 0x7F00FFFF) == 0 && (uint)(flags & 0x00FF0000) <= (28u << 16))
+            return value;
+        return ValidateInvalidDecimal(value);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static decimal ValidateInvalidDecimal(decimal value)
+    {
+        // Retain the framework constructor's exception and the existing DataLoss wrapper.
         try
         {
             Span<int> bits = stackalloc int[4];
@@ -213,6 +230,12 @@ internal static class CodecHelpers
         if (typeof(T) == typeof(bool))
         {
             var bytes = MemoryMarshal.AsBytes(values);
+            if (bytes.Length >= 16)
+            {
+                if (bytes.ContainsAnyExceptInRange((byte)0, (byte)1))
+                    throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
+                return;
+            }
             for (var index = 0; index < bytes.Length; index++)
                 if (bytes[index] > 1)
                     throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
