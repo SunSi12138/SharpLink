@@ -21,6 +21,10 @@ internal static class EndpointSelectionKernel
     {
         if (availableCount <= 0 || target < 0 || target >= availableCount)
             return -1;
+        // With no exclusions the available ordinal is already the physical index.
+        // Keep length validation even for direct callers with inconsistent counts.
+        if (excluded == 0)
+            return target < length ? target : -1;
         for (var index = 0; index < length; index++)
         {
             if ((excluded & (1UL << index)) != 0)
