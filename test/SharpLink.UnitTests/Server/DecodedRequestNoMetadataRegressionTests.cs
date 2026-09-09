@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Pipelines;
+using System.Linq;
 using SharpLink.Server;
 using SharpLink.Sdk;
 
