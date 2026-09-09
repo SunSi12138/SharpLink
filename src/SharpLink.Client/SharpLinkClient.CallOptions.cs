@@ -56,9 +56,10 @@ internal sealed partial class SharpLinkClient
         }
 
         var timeProvider = _runtimeContext.TimeProvider;
-        var localAnchor = timeProvider.GetTimestamp();
+        // Untimed calls have no local anchor to preserve. Inherited deadlines below
+        // still observe their own shared-clock or cross-clock projection boundary.
         var deadline = selectedTimeout is { } timeout
-            ? RpcDeadline.Create(timeout, localAnchor, timeProvider.TimestampFrequency)
+            ? RpcDeadline.Create(timeout, timeProvider.GetTimestamp(), timeProvider.TimestampFrequency)
             : default;
 
         var ambientCall = SharpLinkCallContext.Current;
