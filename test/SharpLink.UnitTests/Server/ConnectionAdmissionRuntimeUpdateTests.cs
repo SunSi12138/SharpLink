@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
