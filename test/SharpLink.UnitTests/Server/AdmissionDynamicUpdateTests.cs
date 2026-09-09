@@ -84,8 +84,10 @@ public sealed class AdmissionDynamicUpdateTests
         Ensure(state.ActiveCount == 1 && !queued.IsCompleted,
             "active equal to target still leaves no free capacity");
         third.Lease!.Dispose();
+        Ensure(state.ActiveCount == 1 && state.WaitingCount == 0,
+            "release below the shrunken target must synchronously transfer capacity to the queued waiter");
 
-        var admitted = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+        var admitted = await queued;
         Ensure(admitted.IsAcquired && state.ActiveCount == 1,
             "queued request must survive shrink and enter after natural releases reach capacity");
         admitted.Lease!.Dispose();
@@ -222,7 +224,7 @@ public sealed class AdmissionDynamicUpdateTests
             "retained old-generation rate lease must continue to consume shared rate quota");
 
         blocker.Dispose();
-        var admitted = await queued.WaitAsync(TimeSpan.FromSeconds(2));
+        var admitted = await queued;
         Ensure(admitted.IsAcquired,
             "old queued request must reuse its retained rate lease after the update");
         admitted.Lease!.Dispose();

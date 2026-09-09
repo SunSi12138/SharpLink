@@ -120,6 +120,16 @@ Client sample 在退出前显式 `StopAsync()`，并继续由 `await using` 做�
 
 仓库中的三个 [`samples/QuickStart.*`](samples/) 项目是这段入门的事实源。Release package smoke 会把它们复制到临时空目录，只使用本地 `.nupkg` + `PackageReference` + fresh NuGet cache 构建三项目，并实际启动 Server/Client 完成上述 RPC；README 不维护另一份完整 sample。
 
+### Semantic Quick Reference
+
+| 用户问题 | 简短答案 | 进一步阅读 |
+| --- | --- | --- |
+| timeout/deadline 覆盖什么？ | 一个 RPC logical deadline 从调用创建开始，约束 endpoint admission/reselection、deadline-bearing request emission、response/stream lifetime、retry 与 backoff；generated Unary 的 pending table 满时默认立即本地 `ResourceExhausted`，不会排队等 slot。此前的 `ConnectAsync`、transport dial、handshake、`WaitForReadinessAsync` **不计入这个 RPC deadline**；handshake 有独立 `HandshakeTimeout`。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
+| `ConnectAsync` 成功意味着什么？ | 它完成 topology 自己的 connectivity 边界，不等于所有 endpoint fully ready。启动流量前必须要求 N 个 Ready endpoint 时，显式 `WaitForReadinessAsync(N)`。 | [`doc/resilience.md`](doc/resilience.md) |
+| `await OneWay` 成功意味着什么？ | 只说明本地发送边界成功：无 deadline 的普通 OneWay 到 SendPump admission；带 deadline 的 OneWay 还观察 transport flush。它不证明 Server 收到、handler 执行或副作用已提交；需要远端成功确认时使用 request/response RPC。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
+| replacement 后旧 proxy 怎样？ | `ReplaceClusterAsync` 前取得的 multi-cluster proxy 固定绑定旧 child，要使用新 child 必须重新 `Get<T>()`；server-side module/service replacement 与 endpoint topology/policy 更新不会要求重取普通 client proxy，但已开始的 call/physical attempt 不会中途迁移。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
+| timeout/disconnect 后能直接 retry？ | 自动 retry 仅适用于 `[Idempotent]` Unary，并共享原 logical deadline；默认只重试 `Unavailable` / `ConnectionClosed`。timeout 或 disconnect **不证明 Server 没执行过请求**，因此只有业务上可安全重复的操作才应声明幂等并允许重试。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/resilience.md`](doc/resilience.md) |
+
 ## Production-shaped template
 
 最小 Quick Start 刻意不塞生产选项。可复制作为真实服务起点的完整模板位于：
@@ -174,6 +184,7 @@ meterProviderBuilder.AddMeter("SharpLink");
 
 README 只负责把第一次 RPC 跑通。完整语义以这些文档为准：
 
+- 公开 RPC 语义 / code-review contract：[`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)
 - 文档首页：[`doc/index.md`](doc/index.md)
 - 入门与核心模型：[`doc/getting-started.md`](doc/getting-started.md)
 - 契约、DTO、Codec：[`doc/contracts-and-codecs.md`](doc/contracts-and-codecs.md)
