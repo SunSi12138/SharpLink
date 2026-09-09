@@ -29,6 +29,9 @@ trap cleanup EXIT
 cp -R "$ROOT/samples/QuickStart.Contracts" "$work_dir/QuickStart.Contracts"
 cp -R "$ROOT/samples/QuickStart.Server" "$work_dir/QuickStart.Server"
 cp -R "$ROOT/samples/QuickStart.Client" "$work_dir/QuickStart.Client"
+cp -R "$ROOT/samples/ProductionTemplate.Contracts" "$work_dir/ProductionTemplate.Contracts"
+cp -R "$ROOT/samples/ProductionTemplate.Server" "$work_dir/ProductionTemplate.Server"
+cp -R "$ROOT/samples/ProductionTemplate.Client" "$work_dir/ProductionTemplate.Client"
 
 cat >"$work_dir/NuGet.config" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
@@ -38,6 +41,14 @@ cat >"$work_dir/NuGet.config" <<EOF
     <add key="SharpLink local packages" value="$ARTIFACT_DIR" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
   </packageSources>
+  <packageSourceMapping>
+    <packageSource key="SharpLink local packages">
+      <package pattern="SharpLink.*" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
 </configuration>
 EOF
 
@@ -64,6 +75,9 @@ restore_and_build() {
 restore_and_build "$work_dir/QuickStart.Contracts/QuickStart.Contracts.csproj"
 restore_and_build "$work_dir/QuickStart.Server/QuickStart.Server.csproj"
 restore_and_build "$work_dir/QuickStart.Client/QuickStart.Client.csproj"
+restore_and_build "$work_dir/ProductionTemplate.Contracts/ProductionTemplate.Contracts.csproj"
+restore_and_build "$work_dir/ProductionTemplate.Server/ProductionTemplate.Server.csproj"
+restore_and_build "$work_dir/ProductionTemplate.Client/ProductionTemplate.Client.csproj"
 
 if grep -F '"SharpLink.Runtime/' "$work_dir/QuickStart.Contracts/obj/project.assets.json" >/dev/null; then
   echo "QuickStart.Contracts unexpectedly restored SharpLink.Runtime." >&2

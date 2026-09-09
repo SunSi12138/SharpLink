@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
-    <UseSharpLinkPackages Condition="'$(UseSharpLinkPackages)' == ''">false</UseSharpLinkPackages>
+    <UseSharpLinkPackages Condition="'$(UseSharpLinkPackages)' == ''">true</UseSharpLinkPackages>
     <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == ''">2.0.0</SharpLinkPackageVersion>
   </PropertyGroup>
 

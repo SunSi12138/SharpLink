@@ -52,7 +52,7 @@ await client.WaitForReadinessAsync(1, startupTimeout.Token);
 var greeting = client.Get<IGreetingService>();
 var reply = await greeting.GreetAsync(
     new GreetingRequest { Name = "production" },
-    startupTimeout.Token);
+    CancellationToken.None);
 Console.WriteLine(reply.Message);
 
 await client.StopAsync();
