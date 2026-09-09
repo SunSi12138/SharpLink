@@ -261,6 +261,26 @@ public sealed record SharpLinkConnectionFailureSnapshot(
     DateTimeOffset OccurredAtUtc,
     TimeSpan Age);
 
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true,
+    WriteIndented = true)]
+[JsonSerializable(typeof(SharpLinkClientSupportSnapshot))]
+internal partial class SharpLinkClientSupportIndentedJsonContext : JsonSerializerContext
+{
+}
+
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true,
+    WriteIndented = false)]
+[JsonSerializable(typeof(SharpLinkClientSupportSnapshot))]
+internal partial class SharpLinkClientSupportCompactJsonContext : JsonSerializerContext
+{
+}
+
 /// <summary>Creates bounded support snapshots and JSON attachments from the built-in SharpLink client.</summary>
 public static class SharpLinkClientDiagnosticsExtensions
 {
@@ -283,14 +303,10 @@ public static class SharpLinkClientDiagnosticsExtensions
         ArgumentNullException.ThrowIfNull(client);
         var validated = (options ?? new SharpLinkClientSupportSnapshotOptions()).CloneValidated();
         var snapshot = client.GetDiagnosticSnapshot(validated);
-        var serializerOptions = new JsonSerializerOptions
-        {
-            WriteIndented = validated.WriteIndented,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        };
-        serializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
-        var utf8 = JsonSerializer.SerializeToUtf8Bytes(snapshot, serializerOptions);
+        var typeInfo = validated.WriteIndented
+            ? SharpLinkClientSupportIndentedJsonContext.Default.SharpLinkClientSupportSnapshot
+            : SharpLinkClientSupportCompactJsonContext.Default.SharpLinkClientSupportSnapshot;
+        var utf8 = JsonSerializer.SerializeToUtf8Bytes(snapshot, typeInfo);
         if (utf8.Length > validated.MaxJsonBytes)
         {
             throw new InvalidOperationException(
