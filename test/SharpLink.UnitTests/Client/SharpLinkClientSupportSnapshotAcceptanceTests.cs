@@ -112,13 +112,13 @@ public sealed class SharpLinkClientSupportSnapshotAcceptanceTests
         await using var client = ClientBuilderTestHelper.Build(transport, builder =>
             builder.UseProtocol(options => options.MaxPendingRequestsPerConnection = 2));
         await client.ConnectAsync();
+        var connection = GetSingleFixedConnection(client);
         var metadata = new SharpLinkMetadata(
             new KeyValuePair<string, string>("authorization", metadataSecret));
 
-        var firstInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, metadata).AsTask();
-        var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        var secondInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, metadata).AsTask();
-        var second = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, metadata).AsTask();
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var synthetic = connection.PendingCalls.Rent<int>(out var syntheticId);
 
         try
         {
@@ -133,10 +133,18 @@ public sealed class SharpLinkClientSupportSnapshotAcceptanceTests
         }
         finally
         {
-            await transport.Connection.InjectInt32ResponseAsync(unchecked((long)first.RequestId));
-            await transport.Connection.InjectInt32ResponseAsync(unchecked((long)second.RequestId));
-            _ = await firstInvocation;
-            _ = await secondInvocation;
+            await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
+            _ = await invocation;
+            connection.PendingCalls.DispatchError(
+                syntheticId,
+                new InvalidOperationException("synthetic pending completion"));
+            try
+            {
+                _ = await synthetic.AsValueTask();
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
     }
 
@@ -197,12 +205,7 @@ public sealed class SharpLinkClientSupportSnapshotAcceptanceTests
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(transport);
         await client.ConnectAsync();
-        var connectionsField = typeof(SharpLinkClient).GetField(
-            "_connections",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("cannot find fixed connection owner");
-        var connections = (List<ClientConnection>)connectionsField.GetValue(client)!;
-        var connection = connections.Single();
+        var connection = GetSingleFixedConnection(client);
         connection.MarkDraining();
 
         var snapshot = client.GetDiagnosticSnapshot();
@@ -308,6 +311,16 @@ public sealed class SharpLinkClientSupportSnapshotAcceptanceTests
         Ensure(!json.Contains(uriCredentialSecret, StringComparison.Ordinal), "URI credential redacted");
         Ensure(!json.Contains("business-secret-value", StringComparison.Ordinal), "connection string redacted");
         Ensure(!json.Contains("sentinel-endpoint-id", StringComparison.Ordinal), "endpoint sentinel redacted");
+    }
+
+    private static ClientConnection GetSingleFixedConnection(SharpLinkClient client)
+    {
+        var connectionsField = typeof(SharpLinkClient).GetField(
+            "_connections",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("cannot find fixed connection owner");
+        var connections = (HashSet<ClientConnection>)connectionsField.GetValue(client)!;
+        return connections.Single();
     }
 
     private static SharpLinkEndpoint DynamicEndpoint(string id, string host, int port) => new()
