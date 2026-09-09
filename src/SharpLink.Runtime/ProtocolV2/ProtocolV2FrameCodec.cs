@@ -311,12 +311,20 @@ public static class ProtocolV2FrameParser
     {
         if (payload.Length < ProtocolV2Constants.RequestPrefixBytes)
             throw Violation("Request payload is shorter than its routing prefix.");
-        var reader = new SequenceReader<byte>(payload);
-        reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
-        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0 && !reader.TryReadLittleEndian(out long _))
-            throw Violation("Request deadline field is truncated.");
+        var prefixBytes = ProtocolV2Constants.RequestPrefixBytes;
+        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
+        {
+            prefixBytes += sizeof(long);
+            if (payload.Length < prefixBytes)
+                throw Violation("Request deadline field is truncated.");
+        }
         if ((flags & ProtocolV2FrameFlags.HasMetadata) == 0)
             return;
+
+        // Fixed routing and time-budget fields need availability checks only.
+        // Construct a reader only when a variable-length metadata field is present.
+        var reader = new SequenceReader<byte>(payload);
+        reader.Advance(prefixBytes);
         if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var metadataLength))
             throw Violation("Request metadata length is truncated or invalid.");
         if (metadataLength > maxMetadataBytes)
