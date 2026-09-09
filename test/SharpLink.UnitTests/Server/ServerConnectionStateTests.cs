@@ -106,7 +106,9 @@ public class ServerConnectionStateTests
             "PipeReader and transport completion must wait until the read buffer has been released");
 
         state.MarkSessionLoopCompleted();
-        await close.WaitAsync(TimeSpan.FromSeconds(2));
+        // The ownership invariant ends at the loop-completed publication. Session disposal is a
+        // cleanup tail and must not be turned into a two-second read-buffer ownership deadline.
+        await close;
 
         Ensure(reader.CompleteCount == 1 && transport.DisposeCount == 1,
             "PipeReader and transport completion should resume after the loop releases its buffer");
