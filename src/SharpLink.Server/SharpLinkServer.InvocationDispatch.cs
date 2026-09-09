@@ -258,16 +258,21 @@ internal sealed partial class SharpLinkServer
                             requestOwner);
                     }
 
+                    var encodedPayload = payload;
                     payload = session.DecodeInboundPayload(
                         ProtocolV2FrameType.Request,
                         flags,
                         payload,
                         admittedCallState.InvocationToken,
                         out decodedRequestOwner);
+                    // Compare/rebind before returning the retained encoded owner to its pool.
+                    request = (flags & ProtocolV2FrameFlags.HasMetadata) != 0
+                        ? ServerRequestEnvelopeReader.ReadDecoded(
+                            session, payload, encodedPayload, in request, flags,
+                            _protocolOptions.MaxMetadataBytes, _runtimeContext.TimeProvider)
+                        : ReadRequestEnvelope(session, payload, flags, request.RpcDeadline);
                     retainedAdmissionPayload?.Dispose();
                     decodePermit!.CompleteDecode();
-                    request = ReadRequestEnvelope(
-                        session, payload, flags, request.RpcDeadline);
                 }
             }
             catch (SharpLinkException exception) when (
