@@ -227,6 +227,12 @@ internal static class CodecHelpers
         if (typeof(T) == typeof(bool))
         {
             var bytes = MemoryMarshal.AsBytes(values);
+            if (bytes.Length >= 16)
+            {
+                if (bytes.ContainsAnyExceptInRange((byte)0, (byte)1))
+                    throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
+                return;
+            }
             for (var index = 0; index < bytes.Length; index++)
                 if (bytes[index] > 1)
                     throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
