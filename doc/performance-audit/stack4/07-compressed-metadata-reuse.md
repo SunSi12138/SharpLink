@@ -65,3 +65,39 @@ This remains a review candidate. Real inline dispatch exception, backpressure,
 lease-release and combined no-metadata performance checks remain outstanding.
 The publication workflow checks the complete source tree and only creates the
 new stack branch; it does not modify dev/main, #605, or earlier stack branches.
+
+
+## Follow-up: protect the no-metadata path (2026-09-09)
+
+The historical +5.12% was a two-parse component control, not a measured default
+RPC QPS regression. Both control variants called the unchanged Read parser.
+Repeated measurements, including A/A and thread-CPU-clock diagnostics, were
+non-stationary; they do not establish a fixed 5.12% production penalty.
+
+The conservative revision makes the inline no-metadata branch explicit:
+DecodeInboundPayload -> retained input Dispose -> CompleteDecode -> original
+ReadRequestEnvelope. It does not snapshot encodedPayload, compare prefix bytes,
+or invoke ReadDecoded. Non-compressed requests still bypass this entire block.
+One HasMetadata flag test remains inside the compressed branch; this is not a
+claim that generated assembly or all end-to-end costs are identical to the parent.
+The metadata branch retains its original reuse and live-owner comparison order.
+ServerRequestEnvelopeReader.cs itself is unchanged from the original PR.
+
+A broader no-metadata prefix-rebind experiment was rejected: favorable initial
+samples did not survive all repeated controls, including CPU-clock measurements.
+It is NOT included in this commit, and its best-case figures must not be used as
+performance evidence for this conservative revision.
+
+The final product revision built in Release with zero warnings and errors. A
+focused host compiling repository test sources passed 28/28 tests normally and
+28/28 with hardware intrinsics disabled: 13 existing envelope cases, 9 existing
+compression cases, and 6 new no-metadata cases. These cover timed/untimed inputs,
+mutations, truncation, segmentation, exact deadline retention, and actual session
+decompression with the existing RLE test provider. They are not a complete
+Unary/Oneway admission/lease-release race integration suite.
+
+The local production sources match this commit. Upstream stack changes observed
+before publication affected documentation and unrelated tests, not product code.
+Publication refuses a moved head and uses a normal fast-forward push.
+No final TCP QPS/p99 run or quantified elimination of the historical 5.12% is
+claimed. Default-path end-to-end non-inferiority remains an acceptance condition.
