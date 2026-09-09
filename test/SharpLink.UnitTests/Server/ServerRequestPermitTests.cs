@@ -10,7 +10,9 @@ namespace SharpLink.UnitTests.Server;
 public class ServerRequestPermitTests
 {
     [Test]
-    public async Task ReservedPermitShouldHoldCapacityAndReleaseExactlyOnce()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task ReservedPermitShouldHoldCapacityAndReleaseExactlyOnce(bool mayDecode)
     {
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -29,7 +31,7 @@ public class ServerRequestPermitTests
 
         try
         {
-            var admission = server.TryReserveCall(connection, out var permit);
+            var admission = server.TryReserveCall(connection, mayDecode, out var permit);
             Ensure(admission == ServerCallAdmissionResult.Acquired && permit is not null,
                 "first permit must reserve call capacity");
             var reservedPermit = permit!;
@@ -40,11 +42,16 @@ public class ServerRequestPermitTests
                    connection.ActiveCalls == 1,
                 "Reserved permit must remain visible to the existing drain-safe capacity accounting");
 
-            var rejected = server.TryReserveCall(connection, out var rejectedPermit);
+            var rejected = server.TryReserveCall(connection, mayDecode, out var rejectedPermit);
             Ensure(rejected == ServerCallAdmissionResult.PerConnectionCapacityExhausted &&
                    rejectedPermit is null,
                 "a Reserved permit must consume the configured connection capacity before activation");
 
+            if (!mayDecode)
+            {
+                Ensure(!reservedPermit.TryAcquireDecodePermit(0, out var decodePermit) && decodePermit is null,
+                    "a plain request must not upgrade into decode ownership");
+            }
             var alias = reservedPermit;
             reservedPermit.Activate();
             Ensure(reservedPermit.IsActive && !reservedPermit.IsReserved,
@@ -59,7 +66,7 @@ public class ServerRequestPermitTests
                    connection.ActiveCalls == 0,
                 "aliases must release the backing local/global capacity exactly once");
 
-            var recovered = server.TryReserveCall(connection, out var recoveredPermit);
+            var recovered = server.TryReserveCall(connection, mayDecode, out var recoveredPermit);
             Ensure(recovered == ServerCallAdmissionResult.Acquired &&
                    recoveredPermit is not null,
                 "capacity must be reusable after permit disposal");
@@ -76,7 +83,9 @@ public class ServerRequestPermitTests
     }
 
     [Test]
-    public async Task ConcurrentDisposeShouldWaitUntilBackingCapacityIsReleased()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task ConcurrentDisposeShouldWaitUntilBackingCapacityIsReleased(bool mayDecode)
     {
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -111,10 +120,15 @@ public class ServerRequestPermitTests
                 },
                 DisposeObservedReleasing = () => secondObservedReleasing.Set()
             };
-            var admission = server.TryReserveCall(connection, hooks, out permit);
+            var admission = server.TryReserveCall(connection, hooks, mayDecode, out permit);
             Ensure(admission == ServerCallAdmissionResult.Acquired && permit is not null,
                 "permit reservation");
             var reservedPermit = permit!;
+            if (!mayDecode)
+            {
+                Ensure(!reservedPermit.TryAcquireDecodePermit(0, out var decodePermit) && decodePermit is null,
+                    "a plain request must not upgrade into decode ownership");
+            }
             var alias = reservedPermit;
 
             var firstDisposeTask = Task.Factory.StartNew(
@@ -153,7 +167,7 @@ public class ServerRequestPermitTests
             Ensure(server.ActiveCallCountForDiagnostics == 0 && connection.ActiveCalls == 0,
                 "the release winner must free both capacity scopes exactly once");
 
-            var recovered = server.TryReserveCall(connection, out var recoveredPermit);
+            var recovered = server.TryReserveCall(connection, mayDecode, out var recoveredPermit);
             Ensure(recovered == ServerCallAdmissionResult.Acquired &&
                    recoveredPermit is not null,
                 "capacity must be reusable after both disposal aliases complete");
@@ -174,7 +188,9 @@ public class ServerRequestPermitTests
     }
 
     [Test]
-    public async Task ReservedPermitShouldKeepServerDrainOpenUntilDisposed()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task ReservedPermitShouldKeepServerDrainOpenUntilDisposed(bool mayDecode)
     {
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -191,7 +207,7 @@ public class ServerRequestPermitTests
         Ensure(connection.MarkReady(null), "connection ready");
         SetServerState(server, 2); // Running
 
-        var admission = server.TryReserveCall(connection, out var permit);
+        var admission = server.TryReserveCall(connection, mayDecode, out var permit);
         Ensure(admission == ServerCallAdmissionResult.Acquired && permit is not null,
             "permit reservation");
         var reservedPermit = permit!;
