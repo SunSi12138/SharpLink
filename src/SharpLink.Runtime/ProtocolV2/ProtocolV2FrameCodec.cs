@@ -352,7 +352,7 @@ internal static class ProtocolV2FrameWriter
     {
         ArgumentNullException.ThrowIfNull(writer);
         var start = writer.WrittenCount;
-        var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes);
+        var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes)[..ProtocolV2Constants.HeaderBytes];
         span.Clear();
         span[0] = ProtocolV2Constants.Magic;
         span[5] = (byte)type;
