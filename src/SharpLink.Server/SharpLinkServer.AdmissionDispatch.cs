@@ -155,7 +155,7 @@ internal sealed partial class SharpLinkServer
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
             }
 
-            var admission = TryReserveCall(connection, out var requestPermit);
+            var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);
             if (admission != ServerCallAdmissionResult.Acquired || requestPermit is null)
             {
                 DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);

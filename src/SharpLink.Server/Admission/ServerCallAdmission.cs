@@ -99,6 +99,13 @@ internal sealed class ServerCallAdmission
         ServerConnectionState connection,
         ServerRequestPermitTestHooks? testHooks,
         out ServerRequestPermit? permit)
+        => TryReserveCall(connection, testHooks, mayDecode: true, out permit);
+
+    internal ServerCallAdmissionResult TryReserveCall(
+        ServerConnectionState connection,
+        ServerRequestPermitTestHooks? testHooks,
+        bool mayDecode,
+        out ServerRequestPermit? permit)
     {
         ArgumentNullException.ThrowIfNull(connection);
         var admission = TryAcquireCall(connection);
@@ -110,7 +117,7 @@ internal sealed class ServerCallAdmission
 
         try
         {
-            permit = new ServerRequestPermit(this, connection, testHooks);
+            permit = new ServerRequestPermit(this, connection, testHooks, mayDecode);
             return ServerCallAdmissionResult.Acquired;
         }
         catch
@@ -174,15 +181,19 @@ internal sealed class ServerRequestPermit : IDisposable
     private readonly ServerCallAdmission _admission;
     private readonly ServerConnectionState _connection;
     private readonly ServerRequestPermitTestHooks? _testHooks;
-    private readonly Lock _resourceGate = new();
+    private readonly Lock? _resourceGate;
     private ServerDecodePermit? _decodePermit;
     private int _state = Reserved;
 
     internal ServerRequestPermit(
         ServerCallAdmission admission,
         ServerConnectionState connection,
-        ServerRequestPermitTestHooks? testHooks)
+        ServerRequestPermitTestHooks? testHooks,
+        bool mayDecode = true)
     {
+        // The wire compression flag fixes resource capability before publication. A
+        // plain request cannot later attach decode resources or upgrade this mode.
+        _resourceGate = mayDecode ? new Lock() : null;
         _admission = admission ?? throw new ArgumentNullException(nameof(admission));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _testHooks = testHooks;
@@ -197,6 +208,11 @@ internal sealed class ServerRequestPermit : IDisposable
         out ServerDecodePermit? decodePermit)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(retainedCompressedBytes);
+        if (_resourceGate is null)
+        {
+            decodePermit = null;
+            return false;
+        }
 
         lock (_resourceGate)
         {
@@ -219,6 +235,11 @@ internal sealed class ServerRequestPermit : IDisposable
         out ServerDecodePermit? decodePermit)
     {
         ArgumentNullException.ThrowIfNull(retainedPermit);
+        if (_resourceGate is null)
+        {
+            decodePermit = null;
+            return false;
+        }
 
         lock (_resourceGate)
         {
@@ -238,6 +259,12 @@ internal sealed class ServerRequestPermit : IDisposable
 
     internal void ReleaseDecodeResources()
     {
+        if (_resourceGate is null)
+        {
+            if (Volatile.Read(ref _state) is Activating or Active)
+                throw new InvalidOperationException("Decode resources cannot be detached after call activation.");
+            return;
+        }
         ServerDecodePermit? decodePermit;
         lock (_resourceGate)
         {
@@ -260,6 +287,8 @@ internal sealed class ServerRequestPermit : IDisposable
     internal void TransferDecodedBytesTo(ServerCallCancellationState callState)
     {
         ArgumentNullException.ThrowIfNull(callState);
+        if (_resourceGate is null)
+            return;
 
         ServerDecodedBytesPermit? decodedBytesPermit;
         lock (_resourceGate)
@@ -286,6 +315,15 @@ internal sealed class ServerRequestPermit : IDisposable
 
     internal void Activate()
     {
+        if (_resourceGate is null)
+        {
+            var previous = Interlocked.CompareExchange(ref _state, Active, Reserved);
+            if (previous is Releasing or Disposed)
+                throw new ObjectDisposedException(nameof(ServerRequestPermit));
+            if (previous != Reserved)
+                throw new InvalidOperationException("Only a reserved call permit can be activated.");
+            return;
+        }
         lock (_resourceGate)
         {
             var current = Volatile.Read(ref _state);
@@ -346,6 +384,8 @@ internal sealed class ServerRequestPermit : IDisposable
 
     private bool TryClaimRelease(int expectedState)
     {
+        if (_resourceGate is null)
+            return Interlocked.CompareExchange(ref _state, Releasing, expectedState) == expectedState;
         lock (_resourceGate)
         {
             if (Volatile.Read(ref _state) != expectedState)
@@ -359,11 +399,14 @@ internal sealed class ServerRequestPermit : IDisposable
         try
         {
             _testHooks?.ReleaseClaimed?.Invoke();
-            ServerDecodePermit? decodePermit;
-            lock (_resourceGate)
+            ServerDecodePermit? decodePermit = null;
+            if (_resourceGate is { } resourceGate)
             {
-                decodePermit = _decodePermit;
-                _decodePermit = null;
+                lock (resourceGate)
+                {
+                    decodePermit = _decodePermit;
+                    _decodePermit = null;
+                }
             }
 
             try
