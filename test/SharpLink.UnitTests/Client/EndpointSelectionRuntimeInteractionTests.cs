@@ -66,9 +66,9 @@ public sealed class EndpointSelectionRuntimeInteractionTests
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 3);
 
-        var invocation = Task.Run(async () =>
-            await ClientInvokerTestHelper.InvokeUnaryAsync(client).ConfigureAwait(false));
-        await admission.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+        var invocation = LongRunningTestWorker.RunAsync(
+            async () => await ClientInvokerTestHelper.InvokeUnaryAsync(client).ConfigureAwait(false));
+        await admission.Entered;
 
         client.UpdateEndpointSelector(new FixedIndexSelector(2));
         admission.Release();

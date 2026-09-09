@@ -13,42 +13,46 @@ internal static class ConnectionAdmissionRejectionReason
 /// Owns the two pre-call connection resource bounds of one server: the live accepted
 /// connection set and the concurrently handshaking subset. Acquisition is a single
 /// interlocked increment; every lease releases exactly once, so the counters are the
-/// single source of truth for admission, diagnostics, and tests.
+/// single source of truth for admission, diagnostics, and tests. Runtime limit changes
+/// publish one immutable target pair and never replace this accounting domain.
 /// </summary>
 internal sealed class ServerConnectionAdmission
 {
-    private readonly int _maxConnections;
-    private readonly int _maxHandshakes;
+    private AdmissionTargets _targets;
     private int _activeConnections;
     private int _activeHandshakes;
 
     internal ServerConnectionAdmission(int maxConnections, int maxHandshakes)
+        => _targets = AdmissionTargets.Create(maxConnections, maxHandshakes);
+
+    internal (int MaxConnections, int MaxHandshakes) TargetSnapshot
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
-        ArgumentOutOfRangeException.ThrowIfNegative(maxHandshakes);
-        if (maxHandshakes > maxConnections)
+        get
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxHandshakes),
-                "MaxConcurrentHandshakes must not exceed MaxConcurrentConnections.");
+            var targets = Volatile.Read(ref _targets);
+            return (targets.MaxConnections, targets.MaxHandshakes);
         }
-        _maxConnections = maxConnections;
-        // Zero means "no independent handshake bound": handshake concurrency follows
-        // the connection bound, which always caps the handshaking subset implicitly.
-        _maxHandshakes = maxHandshakes == 0 ? maxConnections : maxHandshakes;
     }
 
-    internal int MaxConnections => _maxConnections;
+    internal int MaxConnections => Volatile.Read(ref _targets).MaxConnections;
 
-    internal int MaxHandshakes => _maxHandshakes;
+    internal int MaxHandshakes => Volatile.Read(ref _targets).MaxHandshakes;
 
     internal int ActiveConnections => Volatile.Read(ref _activeConnections);
 
     internal int ActiveHandshakes => Volatile.Read(ref _activeHandshakes);
 
+    internal void UpdateTargets(int maxConnections, int maxHandshakes)
+    {
+        var candidate = AdmissionTargets.Create(maxConnections, maxHandshakes);
+        Volatile.Write(ref _targets, candidate);
+    }
+
     internal bool TryAcquireConnection(out Lease lease)
     {
-        if (Interlocked.Increment(ref _activeConnections) > _maxConnections)
+        var active = Interlocked.Increment(ref _activeConnections);
+        var target = Volatile.Read(ref _targets).MaxConnections;
+        if (active > target)
         {
             Interlocked.Decrement(ref _activeConnections);
             lease = null!;
@@ -63,7 +67,9 @@ internal sealed class ServerConnectionAdmission
     internal bool TryAcquireHandshake(Lease lease)
     {
         ArgumentNullException.ThrowIfNull(lease);
-        if (Interlocked.Increment(ref _activeHandshakes) > _maxHandshakes)
+        var active = Interlocked.Increment(ref _activeHandshakes);
+        var target = Volatile.Read(ref _targets).MaxHandshakes;
+        if (active > target)
         {
             Interlocked.Decrement(ref _activeHandshakes);
             return false;
@@ -86,6 +92,33 @@ internal sealed class ServerConnectionAdmission
         var remaining = Interlocked.Decrement(ref _activeHandshakes);
         Debug.Assert(remaining >= 0, "Server handshake admission counter underflowed.");
         SharpLinkTelemetry.AddActiveHandshakes(-1);
+    }
+
+    private sealed class AdmissionTargets
+    {
+        private AdmissionTargets(int maxConnections, int maxHandshakes)
+        {
+            MaxConnections = maxConnections;
+            MaxHandshakes = maxHandshakes == 0 ? maxConnections : maxHandshakes;
+        }
+
+        internal int MaxConnections { get; }
+
+        internal int MaxHandshakes { get; }
+
+        internal static AdmissionTargets Create(int maxConnections, int maxHandshakes)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
+            ArgumentOutOfRangeException.ThrowIfNegative(maxHandshakes);
+            if (maxHandshakes > maxConnections)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxHandshakes),
+                    "MaxConcurrentHandshakes must not exceed MaxConcurrentConnections.");
+            }
+
+            return new AdmissionTargets(maxConnections, maxHandshakes);
+        }
     }
 
     /// <summary>
