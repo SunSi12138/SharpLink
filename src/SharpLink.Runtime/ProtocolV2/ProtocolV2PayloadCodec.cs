@@ -639,7 +639,9 @@ public static partial class ProtocolV2PayloadCodec
         {
             var value = length == 0
                 ? string.Empty
-                : SStrictUtf8.GetString(reader.Sequence.Slice(reader.Position, length));
+                : length <= reader.UnreadSpan.Length
+                    ? SStrictUtf8.GetString(reader.UnreadSpan[..length])
+                    : SStrictUtf8.GetString(reader.Sequence.Slice(reader.Position, length));
             reader.Advance(length);
             return value;
         }
