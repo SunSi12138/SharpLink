@@ -211,16 +211,37 @@ internal sealed partial class SharpLinkServer
                         return ValueTask.CompletedTask;
                     }
 
-                    payload = session.DecodeInboundPayload(
-                        ProtocolV2FrameType.Request,
-                        flags,
-                        payload,
-                        admittedCallState.InvocationToken,
-                        out decodedRequestOwner);
-                    retainedAdmissionPayload?.Dispose();
-                    decodePermit!.CompleteDecode();
-                    request = ReadRequestEnvelope(
-                        session, payload, flags, request.RpcDeadline);
+                    if ((flags & ProtocolV2FrameFlags.HasMetadata) == 0)
+                    {
+                        // Preserve the original no-metadata decode/release/parse path.
+                        // Do not snapshot the encoded sequence or compare its prefix.
+                        payload = session.DecodeInboundPayload(
+                            ProtocolV2FrameType.Request,
+                            flags,
+                            payload,
+                            admittedCallState.InvocationToken,
+                            out decodedRequestOwner);
+                        retainedAdmissionPayload?.Dispose();
+                        decodePermit!.CompleteDecode();
+                        request = ReadRequestEnvelope(
+                            session, payload, flags, request.RpcDeadline);
+                    }
+                    else
+                    {
+                        var encodedPayload = payload;
+                        payload = session.DecodeInboundPayload(
+                            ProtocolV2FrameType.Request,
+                            flags,
+                            payload,
+                            admittedCallState.InvocationToken,
+                            out decodedRequestOwner);
+                        // Only metadata reuse needs both owners alive while comparing.
+                        request = ServerRequestEnvelopeReader.ReadDecoded(
+                            session, payload, encodedPayload, in request, flags,
+                            _protocolOptions.MaxMetadataBytes, _runtimeContext.TimeProvider);
+                        retainedAdmissionPayload?.Dispose();
+                        decodePermit!.CompleteDecode();
+                    }
                 }
             }
             catch (SharpLinkException exception) when (
