@@ -24,9 +24,23 @@ public sealed class SharpLinkClientRetryBehaviorTests
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var firstRequest = transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        if (ReferenceEquals(await Task.WhenAny(firstRequest, invocation), invocation))
+        {
+            var result = await invocation;
+            throw new InvalidOperationException(
+                $"invocation completed with result {result} before first request emission");
+        }
+        var first = await firstRequest;
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
-        var second = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var secondRequest = transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        if (ReferenceEquals(await Task.WhenAny(secondRequest, invocation), invocation))
+        {
+            var result = await invocation;
+            throw new InvalidOperationException(
+                $"invocation completed with result {result} before retry request emission");
+        }
+        var second = await secondRequest;
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)second.RequestId));
 
         Ensure(await invocation == 0, "second attempt result");
