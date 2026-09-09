@@ -12,7 +12,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     private const int MaximumSnapshotAttempts = 5;
 
     private readonly StripedLongMap<ServerCallCancellationState> _calls;
-    private readonly int _maxCalls;
+    private int _maxCalls;
     private readonly TimeProvider _timeProvider;
     private readonly ArrayPool<ServerCallCancellationLease> _snapshotPool;
     private readonly ITimer _timer;
@@ -53,6 +53,26 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
             this,
             Timeout.InfiniteTimeSpan,
             Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// Monotonically raises the scheduler snapshot ceiling before admission can expose a higher
+    /// per-connection target. Shrink intentionally leaves the ceiling unchanged because calls
+    /// admitted under an older, higher target remain active until natural completion.
+    /// </summary>
+    internal void EnsureMaxCalls(int maxCalls)
+    {
+        if (maxCalls is < 1 or > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerConnection)
+            throw new ArgumentOutOfRangeException(nameof(maxCalls));
+
+        var current = Volatile.Read(ref _maxCalls);
+        while (current < maxCalls)
+        {
+            var observed = Interlocked.CompareExchange(ref _maxCalls, maxCalls, current);
+            if (observed == current)
+                return;
+            current = observed;
+        }
     }
 
     internal void Register(ServerCallCancellationState call)
@@ -108,18 +128,21 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
                 _hasApproximateEarliestDeadline = false;
                 _deadlineRevision++;
             }
-            var activeHint = Math.Min(_maxCalls, _calls.Count);
+
+            var maxCalls = Volatile.Read(ref _maxCalls);
+            var activeHint = Math.Min(maxCalls, _calls.Count);
             if (activeHint == 0)
                 return;
 
-            var requestedCapacity = GetInitialSnapshotCapacity(activeHint);
+            var requestedCapacity = GetInitialSnapshotCapacity(activeHint, maxCalls);
             for (var attempt = 0; attempt < MaximumSnapshotAttempts; attempt++)
             {
+                maxCalls = Volatile.Read(ref _maxCalls);
                 var snapshot = _snapshotPool.Rent(requestedCapacity);
                 var capturedCount = 0;
                 try
                 {
-                    var usableCapacity = Math.Min(snapshot.Length, _maxCalls);
+                    var usableCapacity = Math.Min(snapshot.Length, maxCalls);
                     if (_calls.TryCopyEntries(
                             snapshot.AsSpan(0, usableCapacity),
                             static (requestId, state) => state.CaptureLease(requestId),
@@ -136,13 +159,26 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
                     _snapshotPool.Return(snapshot, clearArray: false);
                 }
 
-                if (requestedCapacity >= _maxCalls)
+                var latestMaxCalls = Volatile.Read(ref _maxCalls);
+                if (latestMaxCalls > maxCalls)
+                {
+                    maxCalls = latestMaxCalls;
+                    requestedCapacity = GetNextSnapshotCapacity(
+                        requestedCapacity,
+                        attempt,
+                        Math.Min(maxCalls, _calls.Count),
+                        maxCalls);
+                    continue;
+                }
+
+                if (requestedCapacity >= maxCalls)
                     break;
 
                 requestedCapacity = GetNextSnapshotCapacity(
                     requestedCapacity,
                     attempt,
-                    Math.Min(_maxCalls, _calls.Count));
+                    Math.Min(maxCalls, _calls.Count),
+                    maxCalls);
             }
 
             // Reaching the configured upper bound without fitting means admission/map invariants
@@ -157,25 +193,26 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         }
     }
 
-    private int GetInitialSnapshotCapacity(int activeHint)
+    private static int GetInitialSnapshotCapacity(int activeHint, int maxCalls)
         => Math.Min(
-            _maxCalls,
+            maxCalls,
             Math.Max(
-                Math.Min(MinimumSnapshotCapacity, _maxCalls),
+                Math.Min(MinimumSnapshotCapacity, maxCalls),
                 SaturatingAdd(activeHint, SnapshotHeadroom)));
 
-    private int GetNextSnapshotCapacity(
+    private static int GetNextSnapshotCapacity(
         int currentCapacity,
         int attempt,
-        int activeHint)
+        int activeHint,
+        int maxCalls)
     {
         if (attempt == MaximumSnapshotAttempts - 2)
-            return _maxCalls;
+            return maxCalls;
 
-        var doubled = currentCapacity > _maxCalls / 2
-            ? _maxCalls
+        var doubled = currentCapacity > maxCalls / 2
+            ? maxCalls
             : currentCapacity * 2;
-        var hinted = Math.Min(_maxCalls, SaturatingAdd(activeHint, SnapshotHeadroom));
+        var hinted = Math.Min(maxCalls, SaturatingAdd(activeHint, SnapshotHeadroom));
         return Math.Max(doubled, hinted);
     }
 
