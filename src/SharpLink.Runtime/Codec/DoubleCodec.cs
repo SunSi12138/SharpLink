@@ -36,7 +36,7 @@ internal sealed class NullableDoubleCodec : IRpcCodec<double?>
         }
         else
         {
-            span.Clear();
+            span[..Size].Clear();
         }
         writer.Advance(Size);
     }
