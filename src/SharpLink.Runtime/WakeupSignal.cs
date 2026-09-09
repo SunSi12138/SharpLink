@@ -18,7 +18,7 @@ namespace SharpLink.Runtime;
 /// so a stale callback can never complete a later arm. Untimed idle waits allocate nothing and
 /// never touch deadline ownership state on their successful signal path.
 /// </remarks>
-internal sealed class WakeupSignal : IValueTaskSource<bool>
+internal sealed class WakeupSignal : IValueTaskSource<bool>, IThreadPoolWorkItem
 {
     private const long Idle = 0;
     private const long Latched = 1;
@@ -29,6 +29,8 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>
     private long _generation;
     private long _state;
     private DeadlineArm? _deadline;
+    private Action<object?>? _pumpContinuation;
+    private object? _pumpContinuationState;
 
     internal WakeupSignal()
     {
@@ -160,8 +162,40 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>
         Action<object?> continuation,
         object? state,
         short token,
-        ValueTaskSourceOnCompletedFlags flags) =>
-        _core.OnCompleted(continuation, state, token, flags);
+        ValueTaskSourceOnCompletedFlags flags)
+    {
+        if (flags != ValueTaskSourceOnCompletedFlags.None)
+        {
+            // Non-pump consumers retain the normal execution/scheduling-context contract.
+            _core.RunContinuationsAsynchronously = true;
+            _core.OnCompleted(continuation, state, token, flags);
+            return;
+        }
+
+        // Only this framework trampoline can run inline. The actual pump is always
+        // queued, using the same global-queue preference as Channel's AsyncOperation.
+        // A local LIFO wake can repeatedly overtake sibling RPC continuations and
+        // flush each request before the rest of the ready batch has been enqueued.
+        _pumpContinuation = continuation;
+        _pumpContinuationState = state;
+        _core.RunContinuationsAsynchronously = false;
+        _core.OnCompleted(
+            static owner => ThreadPool.UnsafeQueueUserWorkItem((WakeupSignal)owner!, preferLocal: false),
+            this,
+            token,
+            ValueTaskSourceOnCompletedFlags.None);
+    }
+
+    void IThreadPoolWorkItem.Execute()
+    {
+        // Clear before invoking: the continuation may consume this wait and arm the
+        // next generation synchronously, which must not be overwritten on return.
+        var continuation = _pumpContinuation!;
+        var state = _pumpContinuationState;
+        _pumpContinuation = null;
+        _pumpContinuationState = null;
+        continuation(state);
+    }
 
     private sealed class DeadlineArm
     {

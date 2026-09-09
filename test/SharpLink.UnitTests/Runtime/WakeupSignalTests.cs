@@ -167,6 +167,99 @@ public class WakeupSignalTests
         Ensure(!await wait, "after consuming the old latch, the deadline must be the winner");
     }
 
+    [Test]
+    public async Task PumpContinuationIsQueuedRatherThanInvokedOnTheProducerThread()
+    {
+        var signal = new WakeupSignal();
+        var wait = signal.WaitAsync();
+        var resumedThread = 0;
+        async Task ConsumeAsync()
+        {
+            Ensure(await wait.ConfigureAwait(false), "producer must signal true");
+            resumedThread = Environment.CurrentManagedThreadId;
+        }
+        var consumer = ConsumeAsync();
+        var producerThread = 0;
+        var producer = new Thread(() =>
+        {
+            producerThread = Environment.CurrentManagedThreadId;
+            signal.Signal();
+        });
+        producer.Start();
+        Ensure(producer.Join(TimeSpan.FromSeconds(5)), "producer must finish");
+        await consumer.WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(resumedThread != producerThread, "pump must not execute inline on producer");
+    }
+
+    [Test]
+    public async Task GloballyQueuedWakeCanRearmAcrossConcurrentMailboxBursts()
+    {
+        const int producerCount = 4;
+        const int perProducer = 10_000;
+        var mailbox = new System.Collections.Concurrent.ConcurrentQueue<int>();
+        var signal = new WakeupSignal();
+        async Task ConsumeAsync()
+        {
+            var seen = new bool[producerCount * perProducer];
+            var received = 0;
+            while (received < seen.Length)
+            {
+                while (mailbox.TryDequeue(out var value))
+                {
+                    Ensure(!seen[value], "mailbox item must be consumed exactly once");
+                    seen[value] = true;
+                    received++;
+                }
+                if (received < seen.Length)
+                    await signal.WaitAsync().ConfigureAwait(false);
+            }
+        }
+        var consumer = ConsumeAsync();
+        var producers = new Task[producerCount];
+        for (var index = 0; index < producers.Length; index++)
+        {
+            var producerId = index;
+            producers[index] = Task.Run(() =>
+            {
+                for (var item = 0; item < perProducer; item++)
+                {
+                    mailbox.Enqueue(producerId * perProducer + item);
+                    signal.Signal();
+                }
+            });
+        }
+        await Task.WhenAll(producers).WaitAsync(TimeSpan.FromSeconds(10));
+        await consumer.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Test]
+    public async Task ContextAwareContinuationRetainsItsCapturedExecutionContext()
+    {
+        var ambient = new AsyncLocal<string?>();
+        var signal = new WakeupSignal();
+        var wait = signal.WaitAsync();
+        var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ambient.Value = "registered";
+        var awaiter = wait.GetAwaiter();
+        awaiter.OnCompleted(() =>
+        {
+            try
+            {
+                _ = awaiter.GetResult();
+                completion.SetResult(ambient.Value);
+            }
+            catch (Exception error)
+            {
+                completion.SetException(error);
+            }
+        });
+        ambient.Value = "producer";
+        signal.Signal();
+        Ensure(await completion.Task.WaitAsync(TimeSpan.FromSeconds(5)) == "registered",
+            "context-aware consumers must keep execution-context flow");
+        ambient.Value = null;
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
