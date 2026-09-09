@@ -68,6 +68,29 @@ Connection window 不得小于 stream window。窗口过小会增加 WindowUpdat
 
 wire error code 仍为 `ResourceExhausted`；一个单字节有界 discriminator 位于可截断文本之前，新客户端据此恢复自身 metric 与 Activity tag，同时仍兼容识别旧消息中的稳定原因。容量拒绝不会关闭健康连接，释放槽位后同一连接可以继续调用。
 
+## Session 配置生命周期与运行时更新
+
+**Dynamic configuration 不等于 active-session renegotiation。** 当前 Session/wire-sensitive 配置在构建或 handshake 时进入一个稳定 owner；已经建立的 Session 不会因为控制面更新而逐字段切换协议、容量或身份状态。
+
+| 配置 | owner / capture 点 | effective lifetime | runtime update | 对现有连接 / Session | 对未来连接 / Session |
+|---|---|---|---|---|---|
+| Protocol / frame limits | frozen RuntimeContext；handshake 后为 `NegotiatedSessionOptions` | Session | 当前无通用 desired-session publication；语义为 **new-session only** | 不变，不做 active renegotiation | 若未来加入 publication，只允许新 Session 捕获新 generation |
+| Negotiated flow-control window limits | handshake -> `NegotiatedSessionOptions` / `StreamFlowController` | Session | **new-session only** | configured/negotiated window 不变；正常 credit consume/return/`WINDOW_UPDATE` 继续演化 | 新 Session 才可使用不同初始/协商窗口 |
+| `MaxPendingRequestsPerConnection` | `ClientConnection` 构造 `PendingRequestTable` | physical Client connection | construction only | 不 live-resize active table | 新 physical connection 使用其构造快照 |
+| `MaxConcurrentStreamsPerConnection` | `RpcSession` / `StreamManager` / flow-controller construction | Session | **new-session only** | 不 live-resize | 新 Session 使用新结构容量（若未来有 publication） |
+| Compression Provider / `WireProfile` | frozen provider bindings；handshake -> negotiated `CompressionBinding` | Session | build / **new-session only** | negotiated binding 不变 | 新 Session 可协商新的 provider/profile set（若未来有 publication） |
+| Authentication / handshake-sensitive identity | authenticator at handshake；成功 identity 存入 connection state | Connection / Session | **new-session only** | 不替换 established identity/security context | 新 handshake 可获得新的 credential/context |
+| `MaxConcurrentConnections` | `ServerConnectionAdmission` stable counter/lease domain + immutable target pair | Server admission lifetime | `ISharpLinkServer.UpdateConnectionAdmission(...)` | shrink 不 force-close 已 admitted connection | 后续 Accept acquisition 立即按新 target 判定 |
+| `MaxConcurrentHandshakes` | 同一个 `ServerConnectionAdmission` handshake counter/lease domain | Server admission lifetime | `ISharpLinkServer.UpdateConnectionAdmission(...)` | shrink 不 cancel 已运行 handshake | 后续 handshake acquisition 立即按新 target 判定 |
+
+“New-session only”描述的是**正确生命周期边界**，不是声称当前已经存在通用 Session 配置热更新 API。当前大部分这些设置实际仍是 build-only/frozen composition；如果以后需要 running Client/Server 发布 desired Session configuration，必须一次发布并在一次 physical connection/session creation 开始时捕获一个完整 immutable generation，不能把 `SharpLinkRuntimeContext` 改成逐字段可变对象。
+
+连接 admission 是例外，因为它位于 Session Ready 之前。`UpdateConnectionAdmission(...)` 每次构造并验证一份完整的 `SharpLinkConnectionAdmissionOptions` candidate，再原子发布 connection/handshake target pair；现有 `ServerConnectionAdmission` counters 与 leases 不会被替换。提高 target 会给未来 acquisition 增加容量；降低 target 只阻止新的非法 acquisition，直到自然 cleanup 使当前 usage 低于新 target。
+
+每次 runtime update 都按 `SharpLinkConnectionAdmissionOptions` 的安全默认和 #250 语义构造**完整 desired pair**：未显式设置 handshake bound 时仍使用 64 并在 connection bound 更低时 clamp；显式 `MaxConcurrentHandshakes = 0` 仍表示没有独立 handshake bound（effective bound 跟随 connection bound）。如果要保留一个非默认 handshake target，update callback 中应同时重新指定它。
+
+本地 compression send threshold/allow policy 是另一个 next-message runtime subsystem，不会替换 negotiated Provider/`WireProfile`。同样，flow-control 的 credit consume/return/`WINDOW_UPDATE` 是 active protocol state evolution，不是 negotiated window configuration 热更新。
+
 ## Profile
 
 - `LowLatency`：及时 flush、小 send queue、shared-memory 更多短 spin。
