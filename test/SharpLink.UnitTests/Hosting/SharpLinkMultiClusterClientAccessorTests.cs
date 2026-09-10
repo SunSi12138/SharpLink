@@ -100,14 +100,28 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
     private class FakeMultiClusterClient : ISharpLinkMultiClusterClient
     {
         public SharpLinkMultiClusterState State => SharpLinkMultiClusterState.Ready;
+        public SharpLinkClientLifecycleState LifecycleState => SharpLinkClientLifecycleState.Running;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.Ready;
 
+        public ValueTask StartAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask WaitForReadyAsync(
+            SharpLinkClusterKey cluster,
+            CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
         public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
 
-        public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Ready;
+        public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster)
+            => SharpLinkConnectionState.Ready;
+
+        public SharpLinkClusterState GetClusterRuntimeState(SharpLinkClusterKey cluster)
+            => SharpLinkClusterState.Ready;
+
+        public SharpLinkReadinessState GetClusterReadiness(SharpLinkClusterKey cluster)
+            => SharpLinkReadinessState.Ready;
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             SharpLinkClusterKey cluster,
@@ -159,7 +173,15 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public SharpLinkMultiClusterState State => SharpLinkMultiClusterState.Draining;
+        public SharpLinkClientLifecycleState LifecycleState => SharpLinkClientLifecycleState.Draining;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask WaitForReadyAsync(
+            SharpLinkClusterKey cluster,
+            CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default) => _release.Task;
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
@@ -168,7 +190,16 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
         }
 
         public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
-        public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Stopped;
+
+        public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster)
+            => SharpLinkConnectionState.Stopped;
+
+        public SharpLinkClusterState GetClusterRuntimeState(SharpLinkClusterKey cluster)
+            => SharpLinkClusterState.Stopped;
+
+        public SharpLinkReadinessState GetClusterReadiness(SharpLinkClusterKey cluster)
+            => SharpLinkReadinessState.NotReady;
+
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             SharpLinkClusterKey cluster,
             CancellationToken cancellationToken = default)

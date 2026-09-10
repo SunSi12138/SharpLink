@@ -1,18 +1,22 @@
 namespace SharpLink.Abstractions;
 
-/// <summary>Describes the aggregate lifecycle state of a multi-cluster client.</summary>
+/// <summary>
+/// Describes the legacy aggregate coordinator connection/readiness projection.
+/// Use <see cref="SharpLinkClientLifecycleState"/> and <see cref="SharpLinkReadinessState"/>
+/// when lifecycle and remote readiness must be distinguished.
+/// </summary>
 public enum SharpLinkMultiClusterState
 {
-    /// <summary>The client has been built but has not begun connecting.</summary>
+    /// <summary>The coordinator has been built but has not begun connecting.</summary>
     Created,
 
-    /// <summary>All required cluster slots are being connected.</summary>
+    /// <summary>Required cluster slots are being connected.</summary>
     Connecting,
 
     /// <summary>Every configured cluster slot is ready.</summary>
     Ready,
 
-    /// <summary>At least one slot is unavailable after a successful initial connection.</summary>
+    /// <summary>At least one configured cluster slot is currently unavailable.</summary>
     Degraded,
 
     /// <summary>Stop has begun and new dynamic registrations are rejected.</summary>
@@ -21,6 +25,6 @@ public enum SharpLinkMultiClusterState
     /// <summary>All owned cluster slots have stopped.</summary>
     Stopped,
 
-    /// <summary>An initial connection or coordinator operation failed irrecoverably.</summary>
+    /// <summary>A legacy initial connection or coordinator operation failed irrecoverably.</summary>
     Faulted
 }

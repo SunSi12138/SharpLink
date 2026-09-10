@@ -364,6 +364,8 @@ internal sealed partial class SharpLinkMultiClusterClient
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             _shutdown.Token);
+        if (LifecycleState == SharpLinkClientLifecycleState.Running)
+            await candidate.Client.StartAsync(linkedCancellation.Token).ConfigureAwait(false);
         await candidate.Client.ConnectAsync(linkedCancellation.Token).ConfigureAwait(false);
         return true;
     }

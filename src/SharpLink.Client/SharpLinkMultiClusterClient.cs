@@ -80,7 +80,17 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             if (_slotMutationInProgress)
                 return ValueTask.FromException(new InvalidOperationException("A cluster slot lifecycle mutation is in progress."));
 
-            _connectTask ??= ConnectCoreAsync();
+            var preserveRunningRuntime = LifecycleState is
+                SharpLinkClientLifecycleState.Starting or SharpLinkClientLifecycleState.Running;
+            if (preserveRunningRuntime)
+            {
+                if (_connectTask is not { IsCompleted: false })
+                    _connectTask = ConnectCoreAsync(preserveRunningRuntime: true);
+            }
+            else
+            {
+                _connectTask ??= ConnectCoreAsync(preserveRunningRuntime: false);
+            }
             operation = _connectTask;
         }
 
@@ -347,7 +357,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         return WaitForOperationAsync(operation, cancellationToken);
     }
 
-    private async Task ConnectCoreAsync()
+    private async Task ConnectCoreAsync(bool preserveRunningRuntime)
     {
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Connecting);
         using var attempts = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
@@ -365,6 +375,16 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         catch (Exception connectException)
         {
             attempts.Cancel();
+            if (preserveRunningRuntime)
+            {
+                _ = Interlocked.CompareExchange(
+                    ref _state,
+                    (int)SharpLinkMultiClusterState.Degraded,
+                    (int)SharpLinkMultiClusterState.Connecting);
+                ExceptionDispatchInfo.Capture(connectException).Throw();
+                throw new UnreachableException();
+            }
+
             var failures = new List<Exception> { connectException };
             await StopSlotsAsync(Volatile.Read(ref _snapshot).Clusters.Values, failures).ConfigureAwait(false);
             // StopAsync owns the terminal transition. A connect completion may only replace the
