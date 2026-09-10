@@ -21,7 +21,7 @@ public class TransportConnectionIntegrationTests
             ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -110,7 +110,7 @@ public class TransportConnectionIntegrationTests
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTransport(listener);
         var server = serverBuilder.Build();
-        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -166,7 +166,7 @@ public class TransportConnectionIntegrationTests
         var server = SharpLinkServerBuilder.Create()
             .UseTransport(listener)
             .Build();
-        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -532,7 +532,7 @@ public class TransportConnectionIntegrationTests
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120));
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -612,7 +612,7 @@ public class TransportConnectionIntegrationTests
             ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -773,7 +773,7 @@ public class TransportConnectionIntegrationTests
         {
             try
             {
-                await server.RunUntilStoppedAsync(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -824,7 +824,7 @@ public class TransportConnectionIntegrationTests
         {
             try
             {
-                await server.RunUntilStoppedAsync(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -877,7 +877,7 @@ public class TransportConnectionIntegrationTests
         {
             try
             {
-                await server.RunUntilStoppedAsync(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -926,7 +926,7 @@ public class TransportConnectionIntegrationTests
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
@@ -965,7 +965,7 @@ public class TransportConnectionIntegrationTests
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
@@ -1002,7 +1002,7 @@ public class TransportConnectionIntegrationTests
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
@@ -1036,7 +1036,7 @@ public class TransportConnectionIntegrationTests
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
@@ -1091,7 +1091,7 @@ public class TransportConnectionIntegrationTests
         {
             try
             {
-                await server.RunUntilStoppedAsync(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -1144,7 +1144,7 @@ public class TransportConnectionIntegrationTests
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var firstClient = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
@@ -1217,7 +1217,7 @@ public class TransportConnectionIntegrationTests
         {
             try
             {
-                await server.RunUntilStoppedAsync(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -1277,7 +1277,7 @@ public class TransportConnectionIntegrationTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-            await server.RunUntilStoppedAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await server.RunAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
@@ -1298,7 +1298,7 @@ public class TransportConnectionIntegrationTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-            await server.RunUntilStoppedAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await server.RunAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
@@ -1317,13 +1317,11 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            await EnsureThrows<IOException>(server.RunUntilStoppedAsync(CancellationToken.None).AsTask(), "server start transport accept exception");
+            await EnsureThrows<IOException>(server.RunAsync(CancellationToken.None).AsTask(), "server start transport accept exception");
         }
         finally
         {
-            await EnsureThrows<IOException>(
-                server.DisposeAsync().AsTask(),
-                "server terminal dispose exception");
+            await server.DisposeAsync();
         }
     }
 
@@ -1507,7 +1505,7 @@ public class TransportConnectionIntegrationTests
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
@@ -1667,7 +1665,7 @@ public class TransportConnectionIntegrationTests
             {
                 try
                 {
-                    await server.RunUntilStoppedAsync(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
                 {

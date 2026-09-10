@@ -9,17 +9,9 @@ services.AddSharpLinkServer(builder => builder.UseTcp(19090));
 services.AddSharpLinkClient(builder => builder.UseTcp("127.0.0.1", 19090));
 ```
 
-Host 启动 Client/Server，停止时执行有界排空和异步释放。Server HostedService 直接映射 `StartAsync / StopAsync`，不再持有独立的 accept-loop task 或 lifetime CTS；Server 自己拥有并观察长期 accept/background runtime。Client HostedService 调用 `StartAsync` 启动本地 runtime 与连接 supervisor；它不会等待远端 endpoint ready，因此远端暂时不可用不会阻塞整个 Generic Host 启动。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client 本地 runtime 发布；不要在容器构建期间同步阻塞获取连接。
+Host 启动 Client/Server，停止时执行有界排空和异步释放。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client；不要在容器构建期间同步阻塞获取连接。
 
-Server 的 canonical lifecycle 只有 `StartAsync / WaitForShutdownAsync / StopAsync`；public `RunAsync` 已移除。`LifecycleState` 描述 `Created/Starting/Running/Draining/Stopped/Faulted`，而 `HealthStatus` 仍单独描述本地 serving readiness。`StartAsync` 成功表示 accept infrastructure 已建立且 Server 已进入 `Running`；应用或 Host 的停止信号必须显式调用 `StopAsync`，不能再通过取消某个长期 Run token 隐式拥有 Server lifetime。
-
-当前内置 socket listener 在 transport 构造时已经同步完成 bind/listen，因此端口占用、地址无效等失败会比 `StartAsync` 更早暴露，而不会藏到后台 accept task。`StartAsync` 仍会等到 Server-owned accept operation 真正建立后才发布 `Running`；自定义 listener 若在首次 accept boundary 立即失败，该异常由 `StartAsync` 直接传播。
-
-Client 的状态域彼此独立：`LifecycleState` 描述本地 runtime 的 `Created/Starting/Running/Draining/Stopped/Faulted`；`Readiness` 描述当前 RPC 可用性；`ClusterState` 描述远端 cluster 的连接/重连状态。`Running` 不表示远端已 ready。需要在业务启动门禁中等待远端时，显式调用 `WaitForReadyAsync`。`ConnectAsync` 保留原有的显式连接尝试语义用于兼容，不作为新的 lifecycle 边界。
-
-`WaitForShutdownAsync` 只等待已经由别处请求的真实 shutdown，不会自行调用 `StopAsync`。它的 cancellation token 只取消当前等待。Generic Host 不需要调用它；独立 console/daemon 若由其他信号触发 `StopAsync`，可以用它等待 Client 真正终止。
-
-健康检查名称默认是 `sharplink_server` 和 `sharplink_remote`，tag 为 `ready`。Server readiness 表示接收路径已启动；remote readiness 实际查询当前可用连接与远端 server readiness，因此 Client 可以保持 `Running` 而该 health check 返回 unhealthy。
+健康检查名称默认是 `sharplink_server` 和 `sharplink_remote`，tag 为 `ready`。Server readiness 表示接收路径已启动；remote readiness 表示 Client 可用，不保证某个具体业务依赖健康。
 
 ## 自动服务注册
 
@@ -45,7 +37,7 @@ Service lifetime：
 
 ## 优雅停止
 
-停止顺序：停止接受新连接/调用，发送 GoAway，排空活动调用和流，关闭 session 与后台 loop，释放服务和 transport。强制超时后仍会清理 framework state，并通过指标/日志报告未完成调用。Server 的 `WaitForShutdownAsync` 不发起停止，只观察真实终态；它的 cancellation token 只取消当前 caller 的等待。若 Server 因不可恢复的 runtime/cleanup 错误进入 `Faulted`，该等待会传播 terminal exception。
+停止顺序：停止接受新连接/调用，发送 GoAway，排空活动调用和流，关闭 session 与后台 loop，释放服务和 transport。强制超时后仍会清理 framework state，并通过指标/日志报告未完成调用。应用必须观察 `RunAsync`/HostedService 的终止异常。
 
 ## AnonymousPipe Hosting
 

@@ -24,7 +24,7 @@ internal sealed class SharpLinkClientHostedService(
                 client = builder.Build();
                 _client = client;
             }
-            await client.StartAsync(cancellationToken).ConfigureAwait(false);
+            await client.ConnectAsync(cancellationToken);
             accessor.SetClient(client);
         }
         catch (DuplicateStartException exception)

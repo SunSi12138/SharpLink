@@ -804,7 +804,7 @@ public class InterceptorIntegrationTests
 
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
-            var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+            var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
 
             var clientBuilder = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)

@@ -1799,7 +1799,7 @@ public class IntegrationBehaviorTests
             {
                 try
                 {
-                    await server.RunUntilStoppedAsync(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {

@@ -107,7 +107,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             {
                 try
                 {
-                    await server.RunUntilStoppedAsync(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
                 {

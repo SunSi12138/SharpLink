@@ -157,7 +157,7 @@ public class EquivalentDuplexWorkloadTests
             static builder => builder,
             SharpLinkPerformanceProfile.Throughput);
         using var serverCancellation = new CancellationTokenSource();
-        var serverTask = harness.Server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
+        var serverTask = harness.Server.RunAsync(serverCancellation.Token).AsTask();
 
         try
         {

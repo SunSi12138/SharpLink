@@ -1971,7 +1971,7 @@ public sealed class RuntimeAssemblyIntegrationTests
                 .UseServiceProvider(serviceProvider);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
-            var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
+            var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
             var client = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))

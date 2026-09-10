@@ -64,8 +64,16 @@ public static class Program
         var server = serverBuilder.Build();
         VerifyRuntimeAssemblyBoundary(server);
 
-        await server.StartAsync(runToken).ConfigureAwait(false);
-        var serverTask = server.WaitForShutdownAsync();
+        var serverTask = Task.Run(async () =>
+        {
+            try
+            {
+                await server.RunAsync(runToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, CancellationToken.None);
 
         ISharpLinkClient client;
         if (useSharedMemory)
@@ -127,8 +135,7 @@ public static class Program
             .UseAdmissionControl(ConfigureAdmission)
             .Build();
         VerifyRuntimeAssemblyBoundary(server);
-        await server.StartAsync(timeout.Token).ConfigureAwait(false);
-        var runTask = server.WaitForShutdownAsync();
+        var runTask = server.RunAsync(timeout.Token).AsTask();
         Console.WriteLine("AOT_SMOKE_SERVER_READY");
         try
         {

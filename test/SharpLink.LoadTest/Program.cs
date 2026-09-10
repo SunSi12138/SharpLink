@@ -263,8 +263,10 @@ public static class Program
     {
         try
         {
-            await server.StartAsync(token);
-            await RunServerUntilCancelledAsync(server, token);
+            await server.RunAsync(token);
+        }
+        catch (OperationCanceledException)
+        {
         }
         catch (Exception exception)
         {
@@ -293,25 +295,8 @@ public static class Program
             options.SharedMemoryCapacity,
             options.SharedMemorySpinCount,
             runtime => ConfigureRuntime(runtime, options));
-        await server.StartAsync(cancelScope.Token);
         Console.WriteLine("[Server] started.");
-        await RunServerUntilCancelledAsync(server, cancelScope.Token);
-    }
-
-    private static async Task RunServerUntilCancelledAsync(
-        ISharpLinkServer server,
-        CancellationToken cancellationToken)
-    {
-        var terminal = server.WaitForShutdownAsync();
-        var cancellation = Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-        if (ReferenceEquals(await Task.WhenAny(terminal, cancellation), terminal))
-        {
-            await terminal;
-            return;
-        }
-
-        await server.StopAsync(TimeSpan.Zero);
-        await terminal;
+        await server.RunAsync(cancelScope.Token);
     }
 
     private static async Task RunClientOnlyAsync(LoadTestOptions options, MetricsRegistry metrics, ISharpLinkClient? clientOverride = null)
