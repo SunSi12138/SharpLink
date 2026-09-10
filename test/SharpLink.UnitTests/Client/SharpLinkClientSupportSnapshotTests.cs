@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -74,14 +75,22 @@ public sealed class SharpLinkClientSupportSnapshotTests
             "cluster connectivity is reported as reconnecting");
 
         var json = client.ExportDiagnosticSnapshotJson();
-        Ensure(json.Contains("\"lifecycleState\"", StringComparison.Ordinal),
-            "JSON exports lifecycle state");
-        Ensure(json.Contains("\"readinessState\"", StringComparison.Ordinal),
-            "JSON exports readiness state");
-        Ensure(json.Contains("\"clusterState\"", StringComparison.Ordinal),
-            "JSON exports cluster state");
-        Ensure(json.Contains("\"connectionState\"", StringComparison.Ordinal),
-            "JSON exports legacy connection state");
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Ensure(root.GetProperty("schemaVersion").GetInt32() == 2,
+            "JSON exports support schema v2");
+        Ensure(Enum.Parse<SharpLinkClientLifecycleState>(
+                root.GetProperty("lifecycleState").GetString()!, ignoreCase: true) == snapshot.LifecycleState,
+            "JSON exports lifecycle state value");
+        Ensure(Enum.Parse<SharpLinkReadinessState>(
+                root.GetProperty("readinessState").GetString()!, ignoreCase: true) == snapshot.ReadinessState,
+            "JSON exports readiness state value");
+        Ensure(Enum.Parse<SharpLinkClusterState>(
+                root.GetProperty("clusterState").GetString()!, ignoreCase: true) == snapshot.ClusterState,
+            "JSON exports cluster state value");
+        Ensure(Enum.Parse<SharpLinkConnectionState>(
+                root.GetProperty("connectionState").GetString()!, ignoreCase: true) == snapshot.ConnectionState,
+            "JSON exports legacy connection state value");
         Ensure(!json.Contains(secret, StringComparison.Ordinal),
             "new diagnostic state fields do not weaken failure redaction");
     }
