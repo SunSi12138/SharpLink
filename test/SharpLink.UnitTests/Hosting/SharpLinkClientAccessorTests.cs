@@ -50,7 +50,9 @@ public class SharpLinkClientAccessorTests
         }
         catch (InvalidOperationException ex)
         {
-            Ensure(ex.Message.Contains("host has already stopped", StringComparison.Ordinal), "exception message should describe the stopped host");
+            Ensure(
+                ex.Message.Contains("host has already stopped", StringComparison.Ordinal),
+                "exception message should describe the stopped host");
         }
     }
 
@@ -114,28 +116,25 @@ public class SharpLinkClientAccessorTests
     }
 
     [Test]
-    public async Task HostedStartShouldPreserveConnectAndCleanupFailures()
+    public async Task HostedStartShouldPublishRunningClientWhenRemoteConnectionFails()
     {
+        var accessor = new SharpLinkClientAccessor();
         var service = new SharpLinkClientHostedService(
             SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
-            new SharpLinkClientAccessor(),
+            accessor,
             NullLoggerFactory.Instance);
 
-        Exception failure;
-        try
-        {
-            await service.StartAsync(CancellationToken.None);
-            throw new Exception("expected hosted client start failure");
-        }
-        catch (Exception exception)
-        {
-            failure = exception;
-        }
+        await service.StartAsync(CancellationToken.None);
+        var client = await accessor.GetClientAsync();
 
-        Ensure(ContainsMessage(failure, "hosted connect failed"),
-            "hosted start must retain its primary connect failure");
-        Ensure(ContainsMessage(failure, "hosted cleanup failed"),
-            "hosted start must retain its cleanup failure");
+        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+            "hosted startup must publish the local runtime without waiting for remote readiness");
+        Ensure(client.Readiness == SharpLinkReadinessState.NotReady,
+            "a failed remote connection must remain a readiness condition");
+
+        var stopFailure = await CaptureExceptionAsync(service.StopAsync(CancellationToken.None));
+        Ensure(stopFailure is not null && ContainsMessage(stopFailure, "hosted cleanup failed"),
+            "hosted shutdown must still report transport cleanup failures");
     }
 
     [Test]
@@ -249,9 +248,14 @@ public class SharpLinkClientAccessorTests
     private class FakeSharpLinkClient : ISharpLinkClient
     {
         public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
+        public SharpLinkClientLifecycleState LifecycleState => SharpLinkClientLifecycleState.Running;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.Ready;
+        public SharpLinkClusterState ClusterState => SharpLinkClusterState.Ready;
 
+        public ValueTask StartAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
@@ -314,7 +318,13 @@ public class SharpLinkClientAccessorTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public SharpLinkConnectionState State => SharpLinkConnectionState.Draining;
+        public SharpLinkClientLifecycleState LifecycleState => SharpLinkClientLifecycleState.Draining;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => SharpLinkClusterState.Draining;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default) => _release.Task;
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
@@ -350,18 +360,26 @@ public class SharpLinkClientAccessorTests
 
         internal int DisposeCount => Volatile.Read(ref _disposeCount);
         public SharpLinkConnectionState State => SharpLinkConnectionState.Draining;
-        public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
+        public SharpLinkClientLifecycleState LifecycleState => SharpLinkClientLifecycleState.Draining;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => SharpLinkClusterState.Draining;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.CompletedTask;
         }
+
         public ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _disposeCount);
             return ValueTask.CompletedTask;
         }
+
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));

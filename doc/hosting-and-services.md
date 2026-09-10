@@ -9,9 +9,13 @@ services.AddSharpLinkServer(builder => builder.UseTcp(19090));
 services.AddSharpLinkClient(builder => builder.UseTcp("127.0.0.1", 19090));
 ```
 
-Host 启动 Client/Server，停止时执行有界排空和异步释放。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client；不要在容器构建期间同步阻塞获取连接。
+Host 启动 Client/Server，停止时执行有界排空和异步释放。Client HostedService 调用 `StartAsync` 启动本地 runtime 与连接 supervisor；它不会等待远端 endpoint ready，因此远端暂时不可用不会阻塞整个 Generic Host 启动。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client 本地 runtime 发布；不要在容器构建期间同步阻塞获取连接。
 
-健康检查名称默认是 `sharplink_server` 和 `sharplink_remote`，tag 为 `ready`。Server readiness 表示接收路径已启动；remote readiness 表示 Client 可用，不保证某个具体业务依赖健康。
+Client 的状态域彼此独立：`LifecycleState` 描述本地 runtime 的 `Created/Starting/Running/Draining/Stopped/Faulted`；`Readiness` 描述当前 RPC 可用性；`ClusterState` 描述远端 cluster 的连接/重连状态。`Running` 不表示远端已 ready。需要在业务启动门禁中等待远端时，显式调用 `WaitForReadyAsync`。`ConnectAsync` 保留原有的显式连接尝试语义用于兼容，不作为新的 lifecycle 边界。
+
+`WaitForShutdownAsync` 只等待已经由别处请求的真实 shutdown，不会自行调用 `StopAsync`。它的 cancellation token 只取消当前等待。Generic Host 不需要调用它；独立 console/daemon 若由其他信号触发 `StopAsync`，可以用它等待 Client 真正终止。
+
+健康检查名称默认是 `sharplink_server` 和 `sharplink_remote`，tag 为 `ready`。Server readiness 表示接收路径已启动；remote readiness 实际查询当前可用连接与远端 server readiness，因此 Client 可以保持 `Running` 而该 health check 返回 unhealthy。
 
 ## 自动服务注册
 

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Client runtime lifecycle is now separated from remote readiness and cluster connectivity; `StartAsync` starts locally owned supervisors without waiting for an endpoint, while `WaitForReadyAsync` and `WaitForShutdownAsync` provide explicit readiness and termination waits.
+
 ## [1.1.1] - 2026-08-03
 
 ### Added
