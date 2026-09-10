@@ -826,7 +826,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
         {
             try
             {
-                await server.RunAsync(serverCts.Token);
+                await server.RunUntilStoppedAsync(serverCts.Token);
             }
             catch (Exception exception) when (exception is OperationCanceledException or
                                               ObjectDisposedException or IOException or SocketException)
@@ -1269,7 +1269,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
             {
                 try
                 {
-                    await server.RunAsync(cts.Token);
+                    await server.RunUntilStoppedAsync(cts.Token);
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
                 {

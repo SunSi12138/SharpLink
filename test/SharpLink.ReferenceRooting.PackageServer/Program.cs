@@ -28,14 +28,17 @@ public static class Program
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(args[0])
             .Build();
-        var runTask = server.RunAsync(timeout.Token).AsTask();
+        await server.StartAsync(timeout.Token);
+        var shutdown = server.WaitForShutdownAsync();
         Console.WriteLine("PACKAGE_REFERENCE_ROOTING_SERVER_READY");
         try
         {
-            await runTask;
+            await shutdown.WaitAsync(timeout.Token);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
+            await server.StopAsync(TimeSpan.Zero);
+            await shutdown;
         }
         return 0;
     }

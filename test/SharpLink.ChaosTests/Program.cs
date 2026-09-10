@@ -843,7 +843,7 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
 {
     internal int Port { get; } = port;
 
-    internal static Task<ChaosServer> StartAsync(
+    internal static async Task<ChaosServer> StartAsync(
         ChaosTransport transport,
         string sharedMemoryName,
         int port,
@@ -860,8 +860,9 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
             ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port
             : 0;
         var server = (SharpLinkServer)builder.Build();
-        var runTask = server.RunAsync().AsTask();
-        return Task.FromResult(new ChaosServer(server, runTask, boundPort));
+        await server.StartAsync().ConfigureAwait(false);
+        var runTask = server.WaitForShutdownAsync();
+        return new ChaosServer(server, runTask, boundPort);
     }
 
     internal static async Task<ChaosServer> StartWithRetryAsync(

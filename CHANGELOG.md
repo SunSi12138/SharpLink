@@ -6,6 +6,7 @@
 
 ### Changed
 
+- Server lifetime now uses `StartAsync / WaitForShutdownAsync / StopAsync` as its single public lifecycle model; public `RunAsync` was removed, the Server owns and observes its accept/background runtime, and Generic Host no longer maintains a separate run-loop task or lifetime CTS.
 - Client runtime lifecycle is now separated from remote readiness and cluster connectivity; `StartAsync` starts locally owned supervisors without waiting for an endpoint, while `WaitForReadyAsync` and `WaitForShutdownAsync` provide explicit readiness and termination waits.
 
 ## [1.1.1] - 2026-08-03
