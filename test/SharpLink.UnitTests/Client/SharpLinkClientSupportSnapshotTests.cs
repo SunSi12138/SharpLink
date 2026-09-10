@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -26,7 +27,8 @@ public sealed class SharpLinkClientSupportSnapshotTests
             new TestClientTransportFactory());
 
         var snapshot = client.GetDiagnosticSnapshot();
-        Ensure(snapshot.SchemaVersion == 1, "schema version");
+        Ensure(snapshot.SchemaVersion == SharpLinkClientSupportSnapshot.CurrentSchemaVersion,
+            "schema version");
         Ensure(snapshot.Topology.Kind == SharpLinkSupportTopologyKind.Fixed, "fixed topology kind");
         Ensure(snapshot.Topology.TotalEndpoints == 1 && snapshot.Topology.CapturedEndpoints == 1,
             "fixed endpoint count");
@@ -42,6 +44,55 @@ public sealed class SharpLinkClientSupportSnapshotTests
         Ensure(!json.Contains(authoritySecret, StringComparison.Ordinal), "authority redacted");
         Ensure(!json.Contains(metadataSecret, StringComparison.Ordinal), "metadata redacted");
         Ensure(json.Contains("endpoint-0001", StringComparison.Ordinal), "safe endpoint id exported");
+    }
+
+    [Test]
+    public async Task StartedOfflineSnapshotShouldSeparateLifecycleReadinessAndConnectivity()
+    {
+        const string secret = "support-snapshot-review-secret";
+        await using var client = ClientBuilderTestHelper.Build(
+            new FailingTransportFactory(new InvalidOperationException(secret)));
+
+        await client.StartAsync();
+        for (var attempt = 0; attempt < 100 && client.State != SharpLinkConnectionState.Reconnecting; attempt++)
+            await Task.Delay(10);
+
+        var snapshot = client.GetDiagnosticSnapshot();
+        Ensure(snapshot.SchemaVersion == SharpLinkClientSupportSnapshot.CurrentSchemaVersion,
+            "lifecycle snapshot schema version");
+        Ensure(snapshot.SchemaVersion == 2, "lifecycle domains require support schema v2");
+        Ensure(snapshot.LifecycleState == SharpLinkClientLifecycleState.Running,
+            "runtime remains running while remote is unavailable");
+        Ensure(snapshot.ReadinessState == SharpLinkReadinessState.NotReady,
+            "remote unavailability is reported independently as not ready");
+        Ensure(snapshot.ClusterState == client.ClusterState,
+            "cluster state uses the independent connectivity domain");
+        Ensure(snapshot.ConnectionState == client.State,
+            "legacy connection state remains available independently");
+        Ensure(snapshot.ConnectionState == SharpLinkConnectionState.Reconnecting,
+            "failed initial connectivity is reported as reconnecting");
+        Ensure(snapshot.ClusterState == SharpLinkClusterState.Reconnecting,
+            "cluster connectivity is reported as reconnecting");
+
+        var json = client.ExportDiagnosticSnapshotJson();
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Ensure(root.GetProperty("schemaVersion").GetInt32() == 2,
+            "JSON exports support schema v2");
+        Ensure(Enum.Parse<SharpLinkClientLifecycleState>(
+                root.GetProperty("lifecycleState").GetString()!, ignoreCase: true) == snapshot.LifecycleState,
+            "JSON exports lifecycle state value");
+        Ensure(Enum.Parse<SharpLinkReadinessState>(
+                root.GetProperty("readinessState").GetString()!, ignoreCase: true) == snapshot.ReadinessState,
+            "JSON exports readiness state value");
+        Ensure(Enum.Parse<SharpLinkClusterState>(
+                root.GetProperty("clusterState").GetString()!, ignoreCase: true) == snapshot.ClusterState,
+            "JSON exports cluster state value");
+        Ensure(Enum.Parse<SharpLinkConnectionState>(
+                root.GetProperty("connectionState").GetString()!, ignoreCase: true) == snapshot.ConnectionState,
+            "JSON exports legacy connection state value");
+        Ensure(!json.Contains(secret, StringComparison.Ordinal),
+            "new diagnostic state fields do not weaken failure redaction");
     }
 
     [Test]
@@ -181,7 +232,8 @@ public sealed class SharpLinkClientSupportSnapshotTests
         for (var index = 0; index < 16; index++)
         {
             var snapshot = client.GetDiagnosticSnapshot();
-            Ensure(snapshot.SchemaVersion == 1, "post-stop schema version");
+            Ensure(snapshot.SchemaVersion == SharpLinkClientSupportSnapshot.CurrentSchemaVersion,
+                "post-stop schema version");
             Ensure(snapshot.Topology.CapturedEndpoints <= SharpLinkClientSupportSnapshotOptions.DefaultMaxEndpoints,
                 "post-stop endpoint bound");
             Ensure(snapshot.Topology.CapturedConnections <= SharpLinkClientSupportSnapshotOptions.DefaultMaxConnections,
@@ -193,5 +245,13 @@ public sealed class SharpLinkClientSupportSnapshotTests
     {
         if (!condition)
             throw new InvalidOperationException(message);
+    }
+
+    private sealed class FailingTransportFactory(Exception failure) : IClientTransportFactory
+    {
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(failure);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

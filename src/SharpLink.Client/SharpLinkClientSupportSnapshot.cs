@@ -148,7 +148,23 @@ public sealed record SharpLinkClientSupportSnapshot(
     SharpLinkClientReadinessSnapshot Readiness,
     SharpLinkSupportTopologySnapshot Topology,
     SharpLinkSupportResourceSnapshot Resources,
-    SharpLinkConnectionFailureSnapshot? LastConnectionFailure);
+    SharpLinkConnectionFailureSnapshot? LastConnectionFailure)
+{
+    /// <summary>The current support snapshot JSON schema version.</summary>
+    public const int CurrentSchemaVersion = 2;
+
+    /// <summary>Gets the local client runtime lifecycle independently of remote connectivity.</summary>
+    public SharpLinkClientLifecycleState LifecycleState { get; init; }
+
+    /// <summary>Gets the top-level RPC readiness independently of the client runtime lifecycle.</summary>
+    public SharpLinkReadinessState ReadinessState { get; init; }
+
+    /// <summary>Gets the configured cluster connectivity state.</summary>
+    public SharpLinkClusterState ClusterState { get; init; }
+
+    /// <summary>Gets the legacy connection-oriented client state for compatibility diagnostics.</summary>
+    public SharpLinkConnectionState ConnectionState { get; init; }
+}
 
 /// <summary>Safe runtime/package identity fields.</summary>
 public sealed record SharpLinkSupportRuntimeSnapshot(
@@ -292,7 +308,17 @@ public static class SharpLinkClientDiagnosticsExtensions
         ArgumentNullException.ThrowIfNull(client);
         if (client is not SharpLinkClient runtime)
             throw new NotSupportedException("This ISharpLinkClient implementation does not expose SharpLink support snapshots.");
-        return runtime.CaptureSupportSnapshot((options ?? new SharpLinkClientSupportSnapshotOptions()).CloneValidated());
+
+        var snapshot = runtime.CaptureSupportSnapshot(
+            (options ?? new SharpLinkClientSupportSnapshotOptions()).CloneValidated());
+        return snapshot with
+        {
+            SchemaVersion = SharpLinkClientSupportSnapshot.CurrentSchemaVersion,
+            LifecycleState = runtime.LifecycleState,
+            ReadinessState = runtime.Readiness,
+            ClusterState = runtime.ClusterState,
+            ConnectionState = runtime.State
+        };
     }
 
     /// <summary>Captures first, then serializes a redacted snapshot with a hard UTF-8 size limit.</summary>

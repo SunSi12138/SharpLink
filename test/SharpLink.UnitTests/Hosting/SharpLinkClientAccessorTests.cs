@@ -145,36 +145,33 @@ public class SharpLinkClientAccessorTests
     }
 
     [Test]
-    public async Task HostedStartShouldPreserveConnectAndCleanupFailures()
+    public async Task HostedStartShouldPublishRunningClientWhenRemoteConnectionFails()
     {
-        var service = new SharpLinkClientHostedService(
+        var accessor = new SharpLinkClientAccessor();
+        await using var service = new SharpLinkClientHostedService(
             SharpClientBuilder.Create()
                 .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                 .UseTransport(new ThrowingLifecycleTransportFactory())
                 .DisableRequestTimeout(),
-            new SharpLinkClientAccessor(),
+            accessor,
             NullLoggerFactory.Instance);
 
-        Exception failure;
-        try
-        {
-            await service.StartAsync(CancellationToken.None);
-            throw new Exception("expected hosted client start failure");
-        }
-        catch (Exception exception)
-        {
-            failure = exception;
-        }
+        await service.StartAsync(CancellationToken.None);
+        var client = await accessor.GetClientAsync();
 
-        Ensure(ContainsMessage(failure, "hosted connect failed"),
-            "hosted start must retain its primary connect failure");
-        Ensure(ContainsMessage(failure, "hosted cleanup failed"),
-            "hosted start must retain its cleanup failure");
+        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+            "hosted start must publish a running local client even when the remote endpoint is unavailable");
+        Ensure(client.Readiness == SharpLinkReadinessState.NotReady,
+            "remote connection failure must be represented as NotReady rather than Host startup failure");
+
+        await service.StopAsync(CancellationToken.None);
+        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Stopped,
+            "hosted StopAsync must stop the locally running client");
     }
 
     [Test]
     [TUnit.Core.Timeout(60_000)]
-    public async Task HostedStartShouldPublishConnectivityBeforeStaticReadinessTargetConverges(
+    public async Task HostedStartShouldPublishRuntimeBeforeStaticReadinessTargetConverges(
         CancellationToken cancellationToken)
     {
         var first = new GatedConnectTransportFactory();
@@ -207,19 +204,22 @@ public class SharpLinkClientAccessorTests
             NullLoggerFactory.Instance);
 
         var accessorWait = accessor.GetClientAsync().AsTask();
-        var hostedStart = service.StartAsync(cancellationToken);
-        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task).WaitAsync(cancellationToken);
-        Ensure(!hostedStart.IsCompleted && !accessorWait.IsCompleted,
-            "hosted publication must remain pending while neither endpoint has connected");
+        await service.StartAsync(cancellationToken);
+        var client = await accessorWait.WaitAsync(cancellationToken);
+        var startupSnapshot = client.GetReadinessSnapshot();
 
+        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+            "HostedService must publish after local runtime startup without waiting for connectivity");
+        Ensure(client.Readiness == SharpLinkReadinessState.NotReady && startupSnapshot.ReadyConnections == 0,
+            "published runtime must remain NotReady before either gated endpoint connects");
+
+        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task).WaitAsync(cancellationToken);
         first.ReleaseConnect();
         await first.ConnectCompleted.Task.WaitAsync(cancellationToken);
-        await hostedStart.WaitAsync(cancellationToken);
-        var client = await accessorWait.WaitAsync(cancellationToken);
-        var snapshot = client.GetReadinessSnapshot();
+        var snapshot = await client.WaitForReadinessAsync(1, cancellationToken);
 
         Ensure(first.ConnectCompleted.Task.IsCompleted && !second.ConnectCompleted.Task.IsCompleted,
-            "HostedService must publish after the first connection without releasing the second endpoint gate");
+            "one endpoint may become usable without releasing the second endpoint gate");
         Ensure(snapshot.State == SharpLinkConnectionState.Ready &&
                snapshot.ActiveEndpoints == 2 &&
                snapshot.ReadyEndpoints == 1 &&
@@ -400,8 +400,7 @@ public class SharpLinkClientAccessorTests
             => ValueTask.FromException<ITransportConnection>(
                 new InvalidOperationException("hosted connect failed"));
 
-        public ValueTask DisposeAsync()
-            => ValueTask.FromException(new InvalidOperationException("hosted cleanup failed"));
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class GatedConnectTransportFactory : IClientTransportFactory
