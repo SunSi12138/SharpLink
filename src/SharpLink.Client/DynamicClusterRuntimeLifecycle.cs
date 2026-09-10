@@ -187,6 +187,10 @@ internal sealed partial class SharpLinkClient
                     }
                     catch (Exception exception)
                     {
+                        _client.RecordClusterConnectionFailure(
+                            SharpLinkConnectionFailureStage.Resolve,
+                            exception,
+                            endpointKey: null);
                         SharpLinkTelemetry.RecordClientResolverFailure();
                         LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
                         await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
@@ -215,6 +219,10 @@ internal sealed partial class SharpLinkClient
                 }
                 catch (Exception exception)
                 {
+                    _client.RecordClusterConnectionFailure(
+                        SharpLinkConnectionFailureStage.Resolve,
+                        exception,
+                        endpointKey: null);
                     SharpLinkTelemetry.RecordClientResolverFailure();
                     LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
                     mustResolve = true;
