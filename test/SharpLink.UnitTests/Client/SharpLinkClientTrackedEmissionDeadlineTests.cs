@@ -1,4 +1,3 @@
-using System.Reflection;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
 
@@ -30,6 +29,8 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
             MethodTimeout: TimeSpan.FromSeconds(5));
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
+        transport.Connection.RunOnNextOutputBufferRequest(() =>
+            timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
         var invocation = channel.InvokeUnaryAsync(
             method,
             in request,
@@ -38,10 +39,6 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
             metadata: null,
             cancellationToken: default).AsTask();
 
-        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
-
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "a tracked Unary Request dropped at emission must complete its pending call immediately");
@@ -49,16 +46,6 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
                 ProtocolV2FrameType.Request,
                 TimeSpan.FromMilliseconds(50)),
             "an expired Unary Request must not reach the transport");
-    }
-
-    private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
-    {
-        var connections = (ClientConnection[])(typeof(SharpLinkClient).GetField(
-                "_readyConnections",
-                BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(client) ?? throw new Exception("cannot find ready connection selection snapshot"));
-        Ensure(connections.Length == 1, "expected exactly one ready connection");
-        return connections[0];
     }
 
     private static async Task<SharpLinkException> CaptureSharpLinkExceptionAsync(Task operation)
