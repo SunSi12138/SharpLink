@@ -24,7 +24,7 @@ internal sealed class SharpLinkMultiClusterClientHostedService(
                 client = builder.Build();
                 _client = client;
             }
-            await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+            await client.StartAsync(cancellationToken).ConfigureAwait(false);
             accessor.SetClient(client);
         }
         catch (DuplicateStartException exception)
