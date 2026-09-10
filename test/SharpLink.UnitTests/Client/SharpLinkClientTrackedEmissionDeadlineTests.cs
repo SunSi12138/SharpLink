@@ -30,6 +30,14 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
             MethodTimeout: TimeSpan.FromSeconds(5));
         var channel = (IRpcChannel)client;
         var request = default(RpcEmptyRequest);
+
+        // Drain output already owned by ConnectAsync (notably the first heartbeat Ping) before
+        // arming the one-shot writer hook. The next output-buffer request is then owned by this
+        // Unary, so the clock advance occurs at the target Request's actual emission boundary.
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
+        transport.Connection.RunOnNextOutputBufferRequest(() =>
+            timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
         var invocation = channel.InvokeUnaryAsync(
             method,
             in request,
@@ -37,10 +45,6 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
             cancellationToken: default).AsTask();
-
-        timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5));
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
 
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
