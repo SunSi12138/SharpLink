@@ -76,6 +76,91 @@ internal sealed partial class SharpLinkClient
                 return _connections.CaptureReadyConnections();
         }
 
+        public SupportTopologyCapture CaptureSupportTopology(
+            SharpLinkClientSupportSnapshotOptions options,
+            long? failureEndpointKey)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+            lock (_gate)
+            {
+                var states = _current.States;
+                var totalEndpoints = states.Count;
+                var capturedEndpointCount = Math.Min(totalEndpoints, options.MaxEndpoints);
+                var endpointSnapshots = new SharpLinkSupportEndpointSnapshot[capturedEndpointCount];
+                var connectionSnapshots = new List<SharpLinkSupportConnectionSnapshot>(
+                    Math.Min(options.MaxConnections, _options.MaxConnections));
+                var capturedConnectionIndex = 0;
+                var totalConnections = 0;
+                var readyConnections = 0;
+                var pendingRequests = 0;
+                var activeCalls = 0;
+                var activeStreams = 0;
+                long sendQueuedBytes = 0;
+                string? failureEndpointSafeId = null;
+
+                for (var index = 0; index < totalEndpoints; index++)
+                {
+                    var endpoint = states[index];
+                    var safeId = SupportRedaction.EndpointOrdinal(index);
+                    if (failureEndpointKey == endpoint.Generation)
+                        failureEndpointSafeId = safeId;
+                    var detailBudget = index < capturedEndpointCount
+                        ? Math.Max(0, options.MaxConnections - capturedConnectionIndex)
+                        : 0;
+                    var connections = _client.CaptureOwnedConnections(
+                        _connections.GetOwnedConnections(endpoint),
+                        safeId,
+                        detailBudget,
+                        ref capturedConnectionIndex);
+                    totalConnections += connections.TotalConnections;
+                    readyConnections += connections.ReadyConnections;
+                    pendingRequests += connections.PendingRequests;
+                    activeCalls += connections.ActiveCalls;
+                    activeStreams += connections.ActiveStreams;
+                    sendQueuedBytes += connections.SendQueuedBytes;
+
+                    if (index >= capturedEndpointCount)
+                        continue;
+                    endpointSnapshots[index] = new SharpLinkSupportEndpointSnapshot(
+                        safeId,
+                        SupportRedaction.GetTransportKind(
+                            endpoint.Configuration.Endpoint,
+                            endpoint.Configuration.TransportFactory),
+                        endpoint.Configuration.Endpoint.Authority is not null,
+                        endpoint.Retiring
+                            ? SharpLinkSupportEndpointState.Retiring
+                            : connections.ReadyConnections != 0
+                                ? SharpLinkSupportEndpointState.Ready
+                                : SharpLinkSupportEndpointState.Unavailable,
+                        endpoint.Generation,
+                        connections.ReadyConnections,
+                        connections.ActiveConnections,
+                        connections.RetiringConnections,
+                        endpoint.ConnectingCount);
+                    connectionSnapshots.AddRange(connections.Details);
+                }
+
+                return new SupportTopologyCapture(
+                    new SharpLinkSupportTopologySnapshot(
+                        SharpLinkSupportTopologyKind.Dynamic,
+                        totalEndpoints,
+                        capturedEndpointCount,
+                        totalEndpoints > capturedEndpointCount,
+                        totalConnections,
+                        connectionSnapshots.Count,
+                        totalConnections > connectionSnapshots.Count,
+                        Array.AsReadOnly(endpointSnapshots),
+                        connectionSnapshots.AsReadOnly()),
+                    new SharpLinkSupportResourceSnapshot(
+                        pendingRequests,
+                        activeCalls,
+                        activeStreams,
+                        sendQueuedBytes,
+                        readyConnections),
+                    failureEndpointSafeId);
+            }
+        }
+
         public void BeginStop() => _lifecycle.BeginStop();
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken)
@@ -270,7 +355,13 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 if (!resolverSucceeded)
+                {
+                    _client.RecordClusterConnectionFailure(
+                        SharpLinkConnectionFailureStage.Resolve,
+                        exception,
+                        endpointKey: null);
                     SharpLinkTelemetry.RecordClientResolverFailure();
+                }
                 _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
                 _lifecycle.StartResolverWorker(resolveBeforeWatch: true);
                 throw new SharpLinkException(
@@ -334,6 +425,10 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
+                _client.RecordClusterConnectionFailure(
+                    SharpLinkConnectionFailureStage.Resolve,
+                    exception,
+                    endpointKey: null);
                 SharpLinkTelemetry.RecordClientResolverFailure();
                 LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
@@ -373,6 +468,10 @@ internal sealed partial class SharpLinkClient
                 lock (_gate)
                     ownedFactories.UnionWith(GetOwnedFactoriesLocked());
                 await _lifecycle.DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
+                _client.RecordClusterConnectionFailure(
+                    SharpLinkConnectionFailureStage.Resolve,
+                    exception,
+                    endpointKey: null);
                 SharpLinkTelemetry.RecordClientResolverFailure();
                 LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
@@ -453,12 +552,17 @@ internal sealed partial class SharpLinkClient
                 await _lifecycle.DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 if (rejectedForFactoryOwnership)
                 {
+                    var exception = new InvalidOperationException(
+                        "A resolver snapshot reused a transport factory owned by another endpoint generation.");
+                    _client.RecordClusterConnectionFailure(
+                        SharpLinkConnectionFailureStage.Resolve,
+                        exception,
+                        endpointKey: null);
                     SharpLinkTelemetry.RecordClientResolverFailure();
                     LogClientResolverUpdateFailed(
                         _client._logger,
                         nameof(ApplySnapshotAsync),
-                        new InvalidOperationException(
-                            "A resolver snapshot reused a transport factory owned by another endpoint generation."));
+                        exception);
                 }
                 return false;
             }
@@ -653,12 +757,14 @@ internal sealed partial class SharpLinkClient
             ITransportConnection? transport = null;
             ClientConnection? connection = null;
             Exception? connectFailure = null;
+            var failureStage = SharpLinkConnectionFailureStage.Dial;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
                 transport = await endpoint.Configuration.TransportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
                 if (transport is ITransportSecurityInfo securityInfo)
                     LogTlsEstablished(_client._logger, securityInfo.Protocol, securityInfo.CipherSuite);
+                failureStage = SharpLinkConnectionFailureStage.Handshake;
                 session = new RpcSession(
                     transport,
                     new RpcSessionCreationOptions(
@@ -670,6 +776,7 @@ internal sealed partial class SharpLinkClient
 
                 await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
                     .ConfigureAwait(false);
+                failureStage = SharpLinkConnectionFailureStage.Readiness;
                 if (_client._beforeReadyPublicationTestHook is not null)
                     await _client._beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);
 
@@ -725,6 +832,11 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 connectFailure = exception;
+                if (exception is not OperationCanceledException ||
+                    (!cancellationToken.IsCancellationRequested && !_client._shutdownCts.IsCancellationRequested))
+                {
+                    _client.RecordClusterConnectionFailure(failureStage, exception, endpoint.Generation);
+                }
             }
             finally
             {
