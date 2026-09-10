@@ -212,7 +212,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             var server = builder.Build();
             var shutdown = new CancellationTokenSource();
-            var runTask = server.RunUntilStoppedAsync(shutdown.Token).AsTask();
+            var runTask = server.RunAsync(shutdown.Token).AsTask();
             return Task.FromResult(new ServerScope(port, server, shutdown, runTask));
         }
 

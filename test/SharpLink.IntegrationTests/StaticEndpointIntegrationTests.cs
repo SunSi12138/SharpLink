@@ -841,7 +841,7 @@ public sealed class StaticEndpointIntegrationTests
             _server = server;
             Port = port;
             Service = service;
-            _runTask = Task.Run(() => _server.RunUntilStoppedAsync(_cancellation.Token).AsTask(), CancellationToken.None);
+            _runTask = Task.Run(() => _server.RunAsync(_cancellation.Token).AsTask(), CancellationToken.None);
         }
 
         public int Port { get; }
