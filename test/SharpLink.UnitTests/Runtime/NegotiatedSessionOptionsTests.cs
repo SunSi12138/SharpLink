@@ -426,7 +426,7 @@ public class NegotiatedSessionOptionsTests
         var drainingFailure = CaptureSharpLinkException(() =>
             ready.SendPacket(CreateFrame(ready, ProtocolV2FrameType.Request)));
         ready.SendPacket(CreateFrame(ready, ProtocolV2FrameType.Response));
-        await ready.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await ready.FlushSendQueueAsync();
 
         Ensure(handshakeFailure.Code == SharpLinkErrorCode.ProtocolViolation &&
                readyFailure.Code == SharpLinkErrorCode.ProtocolViolation,
