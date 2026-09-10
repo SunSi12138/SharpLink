@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkClient
     /// Orchestrates resolver topology, connection ownership and focused reconnect/lifecycle collaborators
     /// for a dynamic endpoint cluster.
     /// </summary>
-    private sealed class DynamicClusterRuntime : IEndpointClusterRuntime
+    private sealed partial class DynamicClusterRuntime : IEndpointClusterRuntime
     {
         private readonly SharpLinkClient _client;
         private readonly ISharpLinkEndpointResolver _resolver;
@@ -270,7 +270,13 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 if (!resolverSucceeded)
+                {
+                    _client.RecordClusterConnectionFailure(
+                        SharpLinkConnectionFailureStage.Resolve,
+                        exception,
+                        endpointKey: null);
                     SharpLinkTelemetry.RecordClientResolverFailure();
+                }
                 _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
                 _lifecycle.StartResolverWorker(resolveBeforeWatch: true);
                 throw new SharpLinkException(
@@ -334,6 +340,10 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
+                _client.RecordClusterConnectionFailure(
+                    SharpLinkConnectionFailureStage.Resolve,
+                    exception,
+                    endpointKey: null);
                 SharpLinkTelemetry.RecordClientResolverFailure();
                 LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
@@ -373,6 +383,10 @@ internal sealed partial class SharpLinkClient
                 lock (_gate)
                     ownedFactories.UnionWith(GetOwnedFactoriesLocked());
                 await _lifecycle.DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
+                _client.RecordClusterConnectionFailure(
+                    SharpLinkConnectionFailureStage.Resolve,
+                    exception,
+                    endpointKey: null);
                 SharpLinkTelemetry.RecordClientResolverFailure();
                 LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
@@ -453,12 +467,17 @@ internal sealed partial class SharpLinkClient
                 await _lifecycle.DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 if (rejectedForFactoryOwnership)
                 {
+                    var exception = new InvalidOperationException(
+                        "A resolver snapshot reused a transport factory owned by another endpoint generation.");
+                    _client.RecordClusterConnectionFailure(
+                        SharpLinkConnectionFailureStage.Resolve,
+                        exception,
+                        endpointKey: null);
                     SharpLinkTelemetry.RecordClientResolverFailure();
                     LogClientResolverUpdateFailed(
                         _client._logger,
                         nameof(ApplySnapshotAsync),
-                        new InvalidOperationException(
-                            "A resolver snapshot reused a transport factory owned by another endpoint generation."));
+                        exception);
                 }
                 return false;
             }
@@ -653,12 +672,14 @@ internal sealed partial class SharpLinkClient
             ITransportConnection? transport = null;
             ClientConnection? connection = null;
             Exception? connectFailure = null;
+            var failureStage = SharpLinkConnectionFailureStage.Dial;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
                 transport = await endpoint.Configuration.TransportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
                 if (transport is ITransportSecurityInfo securityInfo)
                     LogTlsEstablished(_client._logger, securityInfo.Protocol, securityInfo.CipherSuite);
+                failureStage = SharpLinkConnectionFailureStage.Handshake;
                 session = new RpcSession(
                     transport,
                     new RpcSessionCreationOptions(
@@ -670,6 +691,7 @@ internal sealed partial class SharpLinkClient
 
                 await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
                     .ConfigureAwait(false);
+                failureStage = SharpLinkConnectionFailureStage.Readiness;
                 if (_client._beforeReadyPublicationTestHook is not null)
                     await _client._beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);
 
@@ -725,6 +747,11 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 connectFailure = exception;
+                if (exception is not OperationCanceledException ||
+                    (!cancellationToken.IsCancellationRequested && !_client._shutdownCts.IsCancellationRequested))
+                {
+                    _client.RecordClusterConnectionFailure(failureStage, exception, endpoint.Generation);
+                }
             }
             finally
             {

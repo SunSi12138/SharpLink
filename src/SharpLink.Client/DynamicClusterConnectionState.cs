@@ -71,6 +71,18 @@ internal sealed partial class SharpLinkClient
             return result;
         }
 
+        /// <summary>
+        /// Returns the existing endpoint-owned connection collection for an on-demand support capture.
+        /// The caller must hold the dynamic cluster gate for the entire enumeration.
+        /// </summary>
+        public IReadOnlyCollection<ClientConnection> GetOwnedConnections(DynamicEndpointState endpoint)
+        {
+            ArgumentNullException.ThrowIfNull(endpoint);
+            return _connectionsByEndpoint.TryGetValue(endpoint, out var connections)
+                ? connections
+                : Array.Empty<ClientConnection>();
+        }
+
         public int NonRetiringConnectionCount(DynamicEndpointState endpoint)
         {
             ArgumentNullException.ThrowIfNull(endpoint);

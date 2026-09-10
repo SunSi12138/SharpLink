@@ -13,6 +13,9 @@ internal sealed partial class SharpLinkClient
         void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy);
         void UpdateEndpointSelector(ISharpLinkEndpointSelector selector);
         ClientConnection[] CaptureReadyConnections();
+        SupportTopologyCapture CaptureSupportTopology(
+            SharpLinkClientSupportSnapshotOptions options,
+            long? failureEndpointKey);
         ValueTask ConnectAsync(CancellationToken cancellationToken);
         void BeginStop();
         ClientConnection GetReadyConnection(

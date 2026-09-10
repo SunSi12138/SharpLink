@@ -8,7 +8,7 @@ internal sealed partial class SharpLinkClient
     /// Owns static multi-endpoint transport state without introducing nested SharpLinkClient instances.
     /// The enclosing client continues to own the proxy, interceptor, codec, pending-call and session pipeline.
     /// </summary>
-    private sealed class StaticClusterRuntime : IEndpointClusterRuntime
+    private sealed partial class StaticClusterRuntime : IEndpointClusterRuntime
     {
         private readonly SharpLinkClient _client;
         private readonly SharpLinkClusterOptions _options;
@@ -57,23 +57,6 @@ internal sealed partial class SharpLinkClient
 
         public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
             => _topology.UpdateEndpointSelector(selector);
-
-        public ClientConnection[] CaptureReadyConnections()
-        {
-            lock (_gate)
-            {
-                var ready = new List<ClientConnection>();
-                for (var index = 0; index < _endpoints.Length; index++)
-                {
-                    foreach (var connection in _endpoints[index].Connections)
-                    {
-                        if (connection.CanAcceptCalls)
-                            ready.Add(connection);
-                    }
-                }
-                return ready.Count == 0 ? [] : ready.ToArray();
-            }
-        }
 
         public void BeginStop()
         {
@@ -453,12 +436,14 @@ internal sealed partial class SharpLinkClient
             ITransportConnection? transport = null;
             ClientConnection? connection = null;
             Exception? connectFailure = null;
+            var failureStage = SharpLinkConnectionFailureStage.Dial;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
                 transport = await endpoint.Configuration.TransportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
                 if (transport is ITransportSecurityInfo securityInfo)
                     LogTlsEstablished(_client._logger, securityInfo.Protocol, securityInfo.CipherSuite);
+                failureStage = SharpLinkConnectionFailureStage.Handshake;
                 session = new RpcSession(
                     transport,
                     new RpcSessionCreationOptions(
@@ -470,6 +455,7 @@ internal sealed partial class SharpLinkClient
 
                 await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
                     .ConfigureAwait(false);
+                failureStage = SharpLinkConnectionFailureStage.Readiness;
                 if (_client._beforeReadyPublicationTestHook is not null)
                     await _client._beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);
 
@@ -521,6 +507,11 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 connectFailure = exception;
+                if (exception is not OperationCanceledException ||
+                    (!cancellationToken.IsCancellationRequested && !_client._shutdownCts.IsCancellationRequested))
+                {
+                    _client.RecordClusterConnectionFailure(failureStage, exception, endpoint.Index);
+                }
             }
             finally
             {
