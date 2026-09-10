@@ -216,7 +216,7 @@ public class SharpLinkClientAccessorTests
         await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task).WaitAsync(cancellationToken);
         first.ReleaseConnect();
         await first.ConnectCompleted.Task.WaitAsync(cancellationToken);
-        var snapshot = client.GetReadinessSnapshot();
+        var snapshot = await client.WaitForReadinessAsync(1, cancellationToken);
 
         Ensure(first.ConnectCompleted.Task.IsCompleted && !second.ConnectCompleted.Task.IsCompleted,
             "one endpoint may become usable without releasing the second endpoint gate");
