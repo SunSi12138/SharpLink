@@ -58,23 +58,6 @@ internal sealed partial class SharpLinkClient
         public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
             => _topology.UpdateEndpointSelector(selector);
 
-        public ClientConnection[] CaptureReadyConnections()
-        {
-            lock (_gate)
-            {
-                var ready = new List<ClientConnection>();
-                for (var index = 0; index < _endpoints.Length; index++)
-                {
-                    foreach (var connection in _endpoints[index].Connections)
-                    {
-                        if (connection.CanAcceptCalls)
-                            ready.Add(connection);
-                    }
-                }
-                return ready.Count == 0 ? [] : ready.ToArray();
-            }
-        }
-
         public void BeginStop()
         {
             lock (_gate)
