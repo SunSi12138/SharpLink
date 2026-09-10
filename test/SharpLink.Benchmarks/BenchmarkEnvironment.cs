@@ -57,16 +57,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var server = serverBuilder.Build();
 
         var shutdown = new CancellationTokenSource();
-        var serverTask = Task.Run(async () =>
-        {
-            try
-            {
-                await server.RunAsync(shutdown.Token);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }, shutdown.Token);
+        await server.StartAsync(shutdown.Token);
+        var serverTask = server.WaitForShutdownAsync();
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)

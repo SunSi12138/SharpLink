@@ -231,7 +231,16 @@ public static class Program
     {
         try
         {
-            await server.RunAsync(cancellationToken);
+            await server.StartAsync(cancellationToken);
+            var terminal = server.WaitForShutdownAsync();
+            var cancellation = Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            if (ReferenceEquals(await Task.WhenAny(terminal, cancellation), terminal))
+            {
+                await terminal;
+                return;
+            }
+            await server.StopAsync(TimeSpan.Zero);
+            await terminal;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

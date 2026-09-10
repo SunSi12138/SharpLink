@@ -63,8 +63,13 @@ internal sealed partial class SharpLinkServer(
     private readonly Lock _frameworkTasksGate = new();
     private readonly HashSet<Task> _frameworkTasks = [];
     private readonly TaskCompletionSource<bool> _callsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private Task? _runTask;
+    private Task? _startTask;
+    private Task? _acceptTask;
+    private Task? _acceptObserverTask;
     private Task? _stopTask;
+    private readonly TaskCompletionSource<Exception?> _terminalCompletion =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Exception? _terminalFailure;
     private int _state = (int)ServerState.Created;
     private readonly SharpLinkProtocolOptions _protocolOptions =
         (protocolOptions ?? runtimeContext?.Protocol ?? new SharpLinkProtocolOptions()).CloneValidated();
@@ -109,9 +114,19 @@ internal sealed partial class SharpLinkServer(
             stopTask = _stopTask;
         }
 
-        return cancellationToken.CanBeCanceled
-            ? new ValueTask(stopTask.WaitAsync(cancellationToken))
-            : new ValueTask(stopTask);
+        return new ValueTask(WaitForStopAsync(stopTask, cancellationToken));
+    }
+
+    private async Task WaitForStopAsync(Task stopTask, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.CanBeCanceled)
+            await stopTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+        else
+            await stopTask.ConfigureAwait(false);
+
+        var terminalFailure = Volatile.Read(ref _terminalFailure);
+        if (terminalFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalFailure).Throw();
     }
 
     private async Task StopCoreAsync(TimeSpan gracefulTimeout)
@@ -159,6 +174,7 @@ internal sealed partial class SharpLinkServer(
                 goAwayTask,
                 flushTask,
                 closeSessionsTask,
+                WaitForAcceptRuntimeShutdownAsync(),
                 frameworkTasksTask);
 
             var frameworkCleanupCompleted = false;
@@ -221,8 +237,13 @@ internal sealed partial class SharpLinkServer(
             (stopFailures ??= []).Add(exception);
         }
 
+        var terminalFailure = CreateTerminalFailure(faulted, stopFailures);
         TransitionTo(faulted ? ServerState.Faulted : ServerState.Stopped);
-        ThrowStopFailures(stopFailures);
+        Volatile.Write(ref _terminalFailure, terminalFailure);
+        if (terminalFailure is null)
+            _terminalCompletion.TrySetResult(null);
+        else
+            _terminalCompletion.TrySetException(terminalFailure);
     }
 
     private static void AddTaskFailures(
@@ -240,13 +261,19 @@ internal sealed partial class SharpLinkServer(
             (failures ??= []).Add(exception);
     }
 
-    private static void ThrowStopFailures(List<Exception>? failures)
+    private static Exception? CreateTerminalFailure(
+        bool faulted,
+        List<Exception>? failures)
     {
-        if (failures is null)
-            return;
-        if (failures.Count == 1)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
-        throw new AggregateException(failures);
+        if (failures is { Count: 1 })
+            return failures[0];
+        if (failures is { Count: > 1 })
+            return new AggregateException(failures);
+        return faulted
+            ? new SharpLinkException(
+                SharpLinkErrorCode.Internal,
+                "Server reached a faulted terminal state during shutdown.")
+            : null;
     }
 
     private async Task CleanupAfterRunFailureAsync()
@@ -273,6 +300,7 @@ internal sealed partial class SharpLinkServer(
         var frameworkCleanupTask = Task.WhenAll(
             StartListenerDispose(transportListener),
             DisposeAllSessionsAsync(),
+            WaitForAcceptRuntimeShutdownAsync(),
             WaitForFrameworkTasksAsync());
         var frameworkCleanupCompleted = false;
         try
@@ -399,28 +427,50 @@ internal sealed partial class SharpLinkServer(
 
     private void TrackFrameworkTask(Task task)
     {
-        lock (_frameworkTasksGate)
-            _frameworkTasks.Add(task);
-
+        AddFrameworkTask(task);
         task.ContinueWith(
             static (completedTask, state) =>
-            {
-                var server = (SharpLinkServer)state!;
-                lock (server._frameworkTasksGate)
-                    server._frameworkTasks.Remove(completedTask);
-
-                if (completedTask.Exception is { } exception)
-                {
-                    LogServerBackgroundLoopUnhandledException(
-                        server._logger,
-                        "FrameworkTask",
-                        exception.GetBaseException());
-                }
-            },
+                ((SharpLinkServer)state!).ObserveFrameworkTaskCompletion(
+                    completedTask,
+                    terminalOnFailure: false),
             this,
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    private void TrackServerRuntimeTask(Task task)
+    {
+        AddFrameworkTask(task);
+        task.ContinueWith(
+            static (completedTask, state) =>
+                ((SharpLinkServer)state!).ObserveFrameworkTaskCompletion(
+                    completedTask,
+                    terminalOnFailure: true),
+            this,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private void AddFrameworkTask(Task task)
+    {
+        lock (_frameworkTasksGate)
+            _frameworkTasks.Add(task);
+    }
+
+    private void ObserveFrameworkTaskCompletion(Task completedTask, bool terminalOnFailure)
+    {
+        lock (_frameworkTasksGate)
+            _frameworkTasks.Remove(completedTask);
+
+        if (completedTask.Exception is not { } exception)
+            return;
+
+        var failure = exception.GetBaseException();
+        LogServerBackgroundLoopUnhandledException(_logger, "FrameworkTask", failure);
+        if (terminalOnFailure && CurrentState is ServerState.Starting or ServerState.Running)
+            _ = BeginTerminalFailure(failure);
     }
 
     private async Task DisposeAllSessionsAsync()
@@ -753,16 +803,5 @@ internal sealed partial class SharpLinkServer(
 
     private void TransitionTo(ServerState state)
         => Interlocked.Exchange(ref _state, (int)state);
-
-    internal void ForceStop()
-    {
-        try
-        {
-            _forceStopCts.Cancel();
-        }
-        catch (ObjectDisposedException) when (CurrentState == ServerState.Stopped)
-        {
-        }
-    }
 
 }
