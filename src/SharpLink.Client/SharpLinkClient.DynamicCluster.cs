@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkClient
     /// Orchestrates resolver topology, connection ownership and focused reconnect/lifecycle collaborators
     /// for a dynamic endpoint cluster.
     /// </summary>
-    private sealed class DynamicClusterRuntime : IEndpointClusterRuntime
+    private sealed partial class DynamicClusterRuntime : IEndpointClusterRuntime
     {
         private readonly SharpLinkClient _client;
         private readonly ISharpLinkEndpointResolver _resolver;
@@ -74,91 +74,6 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
                 return _connections.CaptureReadyConnections();
-        }
-
-        public SupportTopologyCapture CaptureSupportTopology(
-            SharpLinkClientSupportSnapshotOptions options,
-            long? failureEndpointKey)
-        {
-            ArgumentNullException.ThrowIfNull(options);
-            lock (_gate)
-            {
-                var states = _current.States;
-                var totalEndpoints = states.Count;
-                var capturedEndpointCount = Math.Min(totalEndpoints, options.MaxEndpoints);
-                var endpointSnapshots = new SharpLinkSupportEndpointSnapshot[capturedEndpointCount];
-                var connectionSnapshots = new List<SharpLinkSupportConnectionSnapshot>(
-                    Math.Min(options.MaxConnections, _options.MaxConnections));
-                var capturedConnectionIndex = 0;
-                var totalConnections = 0;
-                var readyConnections = 0;
-                var pendingRequests = 0;
-                var activeCalls = 0;
-                var activeStreams = 0;
-                long sendQueuedBytes = 0;
-                string? failureEndpointSafeId = null;
-
-                for (var index = 0; index < totalEndpoints; index++)
-                {
-                    var endpoint = states[index];
-                    var safeId = SupportRedaction.EndpointOrdinal(index);
-                    if (failureEndpointKey == endpoint.Generation)
-                        failureEndpointSafeId = safeId;
-                    var detailBudget = index < capturedEndpointCount
-                        ? Math.Max(0, options.MaxConnections - capturedConnectionIndex)
-                        : 0;
-                    var connections = _client.CaptureOwnedConnections(
-                        _connections.GetOwnedConnections(endpoint),
-                        safeId,
-                        detailBudget,
-                        ref capturedConnectionIndex);
-                    totalConnections += connections.TotalConnections;
-                    readyConnections += connections.ReadyConnections;
-                    pendingRequests += connections.PendingRequests;
-                    activeCalls += connections.ActiveCalls;
-                    activeStreams += connections.ActiveStreams;
-                    sendQueuedBytes += connections.SendQueuedBytes;
-
-                    if (index >= capturedEndpointCount)
-                        continue;
-                    endpointSnapshots[index] = new SharpLinkSupportEndpointSnapshot(
-                        safeId,
-                        SupportRedaction.GetTransportKind(
-                            endpoint.Configuration.Endpoint,
-                            endpoint.Configuration.TransportFactory),
-                        endpoint.Configuration.Endpoint.Authority is not null,
-                        endpoint.Retiring
-                            ? SharpLinkSupportEndpointState.Retiring
-                            : connections.ReadyConnections != 0
-                                ? SharpLinkSupportEndpointState.Ready
-                                : SharpLinkSupportEndpointState.Unavailable,
-                        endpoint.Generation,
-                        connections.ReadyConnections,
-                        connections.ActiveConnections,
-                        connections.RetiringConnections,
-                        endpoint.ConnectingCount);
-                    connectionSnapshots.AddRange(connections.Details);
-                }
-
-                return new SupportTopologyCapture(
-                    new SharpLinkSupportTopologySnapshot(
-                        SharpLinkSupportTopologyKind.Dynamic,
-                        totalEndpoints,
-                        capturedEndpointCount,
-                        totalEndpoints > capturedEndpointCount,
-                        totalConnections,
-                        connectionSnapshots.Count,
-                        totalConnections > connectionSnapshots.Count,
-                        Array.AsReadOnly(endpointSnapshots),
-                        connectionSnapshots.AsReadOnly()),
-                    new SharpLinkSupportResourceSnapshot(
-                        pendingRequests,
-                        activeCalls,
-                        activeStreams,
-                        sendQueuedBytes,
-                        readyConnections),
-                    failureEndpointSafeId);
-            }
         }
 
         public void BeginStop() => _lifecycle.BeginStop();
