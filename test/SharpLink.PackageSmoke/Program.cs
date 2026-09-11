@@ -157,12 +157,14 @@ public static class Program
                 child => child.UseTcp(IPAddress.Loopback.ToString(), port),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.ConnectAsync(cancellationToken);
+        await client.StartAsync(cancellationToken);
+        await client.WaitForReadyAsync("bootstrap", cancellationToken);
 
         await client.AddClusterAsync(
             "runtime",
             child => child.UseTcp(IPAddress.Loopback.ToString(), port),
             cancellationToken: cancellationToken);
+        await client.WaitForReadyAsync("runtime", cancellationToken);
         if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
 

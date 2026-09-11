@@ -6,6 +6,7 @@
 
 ### Changed
 
+- Running multi-cluster `AddClusterAsync` now commits after local child runtime startup and snapshot revalidation instead of waiting for remote readiness; unavailable added clusters publish as NotReady/Reconnecting and converge under their own connectivity supervisor, while Replace remains ready-before-swap.
 - Server lifetime now uses `StartAsync / WaitForShutdownAsync / StopAsync` as its single public lifecycle model; public `RunAsync` is removed, the Server owns and observes its accept/background runtime, and Generic Host no longer maintains a separate Server run-loop task or lifetime CTS.
 - Compression policy is now algorithm-neutral: `SharpLink.Runtime` ships no concrete compressor, algorithm-specific framing, or checksum machinery. Negotiation, adaptive raw/compressed selection, bounds, flow-control accounting, and call/stream failure isolation remain in Core.
 - `ISharpLinkCompressionProvider` now uses `TryCompress(...) -> bool` plus `void Decompress(...)`. Successful return means the complete input was consumed; Core measures output bytes from its bounded writer. `TryCompress=false` is the public bounded-candidate fallback and replaces the old internal output-limit exception path.

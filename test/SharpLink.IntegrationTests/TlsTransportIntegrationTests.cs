@@ -32,7 +32,8 @@ public class TlsTransportIntegrationTests
                     .UseAuthenticator(CreateClientAuthenticator("runtime-token")),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.ConnectAsync();
+        await client.StartAsync();
+        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
 
         await client.AddClusterAsync(
             "runtime",
@@ -43,6 +44,7 @@ public class TlsTransportIntegrationTests
                     CreateClientOptions("localhost"),
                     TimeSpan.FromSeconds(2))
                 .UseAuthenticator(CreateClientAuthenticator("runtime-token")));
+        await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
         Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42,
             "runtime Add must preserve TLS and client authentication configuration");
 
