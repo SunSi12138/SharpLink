@@ -384,11 +384,12 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private async Task ConnectCoreAsync()
     {
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Connecting);
+        var capturedSlots = Volatile.Read(ref _snapshot).Clusters.Values.ToArray();
         using var attempts = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
         try
         {
             await Parallel.ForEachAsync(
-                Volatile.Read(ref _snapshot).Clusters.Values,
+                capturedSlots,
                 new ParallelOptions { CancellationToken = attempts.Token, MaxDegreeOfParallelism = _options.MaxConcurrentClusterConnects },
                 static async (slot, token) =>
                 {
@@ -405,17 +406,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         catch (Exception connectException)
         {
             attempts.Cancel();
-            var failures = new List<Exception> { connectException };
-            await StopSlotsAsync(Volatile.Read(ref _snapshot).Clusters.Values, failures).ConfigureAwait(false);
-            // StopAsync owns the terminal transition. A connect completion may only replace the
-            // original Connecting state, never Draining or Stopped.
-            _ = Interlocked.CompareExchange(
-                ref _state,
-                (int)SharpLinkMultiClusterState.Faulted,
-                (int)SharpLinkMultiClusterState.Connecting);
-            if (failures.Count == 1)
-                ExceptionDispatchInfo.Capture(connectException).Throw();
-            throw new AggregateException(failures);
+            await RethrowInitialConnectFailureAsync(connectException, capturedSlots).ConfigureAwait(false);
         }
     }
 

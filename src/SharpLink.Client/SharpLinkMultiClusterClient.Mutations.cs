@@ -43,7 +43,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             builder.UseLoggerFactoryIfUnset(_loggerFactory);
             lock (_gate)
             {
-                var snapshot = BeginSlotMutationLocked();
+                var snapshot = BeginSlotMutationLocked(allowRunningConnectivityTransition: true);
                 if (snapshot.Clusters.ContainsKey(cluster))
                     throw new InvalidOperationException($"Cluster '{cluster}' is already configured.");
                 if (snapshot.Clusters.Count >= _options.MaxClusters)
@@ -61,18 +61,18 @@ internal sealed partial class SharpLinkMultiClusterClient
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var snapshot = GetPublishableSnapshotLocked();
+                var snapshot = GetPublishableSnapshotLocked(allowRunningConnectivityTransition: true);
                 if (snapshot.Clusters.ContainsKey(cluster))
                     throw new InvalidOperationException($"Cluster '{cluster}' was added by another operation.");
                 ValidateSteadyBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
                 ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
                 _ = MergeRoutes(snapshot.Routes, candidate.StaticRoutes);
             }
-            failureStage = "candidate_connect";
-            var candidateConnected = await ConnectCandidateWhenRequiredAsync(
+            failureStage = "candidate_start";
+            var candidateStarted = await StartAddCandidateWhenRequiredAsync(
                 candidate.Slot, cancellationToken).ConfigureAwait(false);
             LogMutationStage(_logger, "add", cluster.Value,
-                candidateConnected ? "candidate_connected" : "candidate_prepared", "success",
+                candidateStarted ? "candidate_started" : "candidate_prepared", "success",
                 candidate.Slot.ConfiguredConnectionBudget,
                 _timeProvider.GetElapsedTime(started).TotalMilliseconds);
 
@@ -80,7 +80,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var snapshot = GetPublishableSnapshotLocked();
+                var snapshot = GetPublishableSnapshotLocked(allowRunningConnectivityTransition: true);
                 if (snapshot.Clusters.ContainsKey(cluster))
                     throw new InvalidOperationException($"Cluster '{cluster}' was added by another operation.");
                 ValidateSteadyBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
@@ -171,7 +171,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             }
 
             failureStage = "candidate_connect";
-            var candidateConnected = await ConnectCandidateWhenRequiredAsync(
+            var candidateConnected = await ConnectReplacementCandidateWhenRequiredAsync(
                 candidate.Slot, cancellationToken).ConfigureAwait(false);
             LogMutationStage(_logger, "replace", cluster.Value,
                 candidateConnected ? "candidate_connected" : "candidate_prepared", "success",
@@ -338,13 +338,25 @@ internal sealed partial class SharpLinkMultiClusterClient
         }
     }
 
-    private MultiClusterSnapshot BeginSlotMutationLocked()
+    private MultiClusterSnapshot BeginSlotMutationLocked(
+        bool allowRunningConnectivityTransition = false)
     {
         var state = (SharpLinkMultiClusterState)_state;
-        if (state == SharpLinkMultiClusterState.Connecting)
-            throw new InvalidOperationException("Cluster slot lifecycle operations are unavailable while the coordinator is connecting.");
+        var lifecycle = LifecycleState;
+        if (state == SharpLinkMultiClusterState.Connecting &&
+            !(allowRunningConnectivityTransition && lifecycle == SharpLinkClientLifecycleState.Running))
+        {
+            throw new InvalidOperationException(
+                "Cluster slot lifecycle operations are unavailable while the coordinator is connecting.");
+        }
         if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             throw new InvalidOperationException($"Multi-cluster client state '{state}' does not accept cluster slot lifecycle operations.");
+        if (lifecycle is SharpLinkClientLifecycleState.Starting or SharpLinkClientLifecycleState.Draining or
+            SharpLinkClientLifecycleState.Stopped or SharpLinkClientLifecycleState.Faulted)
+        {
+            throw new InvalidOperationException(
+                $"Multi-cluster client lifecycle state '{lifecycle}' does not accept cluster slot lifecycle operations.");
+        }
         if (_slotMutationInProgress || _activeAssemblyReplacements != 0 ||
             _unregisterOperations.Count != 0 || _drainingRegistrations.Count != 0)
         {
@@ -355,9 +367,22 @@ internal sealed partial class SharpLinkMultiClusterClient
         return Volatile.Read(ref _snapshot);
     }
 
-    private MultiClusterSnapshot GetPublishableSnapshotLocked()
+    private MultiClusterSnapshot GetPublishableSnapshotLocked(
+        bool allowRunningConnectivityTransition = false)
     {
         var state = (SharpLinkMultiClusterState)_state;
+        var lifecycle = LifecycleState;
+        if (lifecycle is SharpLinkClientLifecycleState.Starting or SharpLinkClientLifecycleState.Draining or
+            SharpLinkClientLifecycleState.Stopped or SharpLinkClientLifecycleState.Faulted)
+        {
+            throw new InvalidOperationException(
+                $"Multi-cluster client lifecycle state '{lifecycle}' changed before the cluster slot could be published.");
+        }
+        if (state == SharpLinkMultiClusterState.Connecting &&
+            allowRunningConnectivityTransition && lifecycle == SharpLinkClientLifecycleState.Running)
+        {
+            return Volatile.Read(ref _snapshot);
+        }
         if (state is not SharpLinkMultiClusterState.Created and
             not SharpLinkMultiClusterState.Ready and
             not SharpLinkMultiClusterState.Degraded)
@@ -368,7 +393,27 @@ internal sealed partial class SharpLinkMultiClusterClient
         return Volatile.Read(ref _snapshot);
     }
 
-    private async Task<bool> ConnectCandidateWhenRequiredAsync(
+    private async Task<bool> StartAddCandidateWhenRequiredAsync(
+        SharpLinkClusterSlot candidate,
+        CancellationToken cancellationToken)
+    {
+        var lifecycle = LifecycleState;
+        if (lifecycle == SharpLinkClientLifecycleState.Created)
+            return false;
+        if (lifecycle != SharpLinkClientLifecycleState.Running)
+        {
+            throw new InvalidOperationException(
+                $"Multi-cluster client lifecycle state '{lifecycle}' cannot publish an added cluster candidate.");
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _shutdown.Token);
+        await candidate.Client.StartAsync(linkedCancellation.Token).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> ConnectReplacementCandidateWhenRequiredAsync(
         SharpLinkClusterSlot candidate,
         CancellationToken cancellationToken)
     {

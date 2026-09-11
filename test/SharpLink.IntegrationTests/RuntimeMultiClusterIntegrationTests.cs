@@ -22,14 +22,16 @@ public sealed class RuntimeMultiClusterIntegrationTests
                 slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        await client.ConnectAsync();
+        await client.StartAsync();
+        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
         await client.AddClusterAsync(
             "runtime",
             child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port));
+        await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
 
         var oldProxy = client.Get<IConnectionBehaviorService>();
         Ensure(await oldProxy.GetEndpointIdAsync() == "first",
-            "a ready coordinator must connect the candidate before publishing its route");
+            "the published runtime route must become usable after its explicit readiness wait");
 
         await client.ReplaceClusterAsync(
             "runtime",
@@ -66,7 +68,8 @@ public sealed class RuntimeMultiClusterIntegrationTests
                 child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.ConnectAsync();
+        await client.StartAsync();
+        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
 
         await client.AddClusterAsync(
             "runtime",
@@ -78,6 +81,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
                     options.MaxConnections = 1;
                     options.MaxConnectionsPerEndpoint = 1;
                 }));
+        await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
         var proxy = client.Get<IConnectionBehaviorService>();
         Ensure(await proxy.GetEndpointIdAsync() == "resolver-first",
             "runtime resolver slot must use its initial endpoint");

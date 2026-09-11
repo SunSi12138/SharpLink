@@ -33,40 +33,33 @@ public sealed class SharpLinkMultiClusterMutationConcurrencyTests : SharpLinkMul
     }
 
     [Test]
-    public async Task ConcurrentSameKeyAddsShouldPublishOneCandidateAndDisposeTheLoser()
+    public async Task SameKeyAddAfterPublicationShouldRejectAndDisposeTheLoser()
     {
-        var winnerTransport = new ControlledMutationTransportFactory(blockConnect: true);
+        var winnerTransport = new ControlledMutationTransportFactory();
         var loserTransport = new ControlledMutationTransportFactory();
         await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.ConnectAsync();
+        await client.StartAsync();
+        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(RaceCoordinationTimeout);
 
-        var winner = AddClusterWithFixedDiscoveryAsync(client,
+        await AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(winnerTransport),
-            slot => slot.AllowDynamicContracts = true).AsTask();
-        await winnerTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
-        var loser = AddClusterWithFixedDiscoveryAsync(client,
+            slot => slot.AllowDynamicContracts = true);
+        var loserFailure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(loserTransport),
-            slot => slot.AllowDynamicContracts = true).AsTask();
-        await Task.Delay(50);
-        Ensure(!loser.IsCompleted,
-            "v1 must serialize a second same-key mutation behind the in-flight candidate");
-
-        winnerTransport.ReleaseConnect();
-        await winner.WaitAsync(RaceCoordinationTimeout);
-        var loserFailure = await CaptureExceptionAsync(loser.WaitAsync(RaceCoordinationTimeout));
+            slot => slot.AllowDynamicContracts = true).AsTask());
 
         Ensure(loserFailure is InvalidOperationException exception &&
                exception.Message.Contains("already configured", StringComparison.Ordinal),
-            "the serialized losing add must observe the committed duplicate key");
-        Ensure(winnerTransport.ConnectCount == 1 && winnerTransport.DisposeCount == 0,
-            "the winning candidate must be connected once and remain coordinator-owned");
+            "the losing add must observe the committed duplicate key");
+        Ensure(winnerTransport.ConnectCount >= 1 && winnerTransport.DisposeCount == 0,
+            "the published winner runtime must remain coordinator-owned while connectivity proceeds independently");
         Ensure(loserTransport.ConnectCount == 0 && loserTransport.DisposeCount == 1,
-            "the losing unbuilt candidate must never connect and must release its transport");
+            "the losing unbuilt candidate must never start connectivity and must release its transport");
     }
 
     [Test]
@@ -93,56 +86,60 @@ public sealed class SharpLinkMultiClusterMutationConcurrencyTests : SharpLinkMul
     }
 
     [Test]
-    public async Task StopRacingRuntimeAddShouldCancelAndDisposeThePendingCandidate()
+    public async Task CancellationAfterRuntimeAddPublicationShouldNotUndoOwnership()
     {
         var candidateTransport = new ControlledMutationTransportFactory(blockConnect: true);
         await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.ConnectAsync();
+        await client.StartAsync();
+        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(RaceCoordinationTimeout);
+        using var cancellation = new CancellationTokenSource();
+
+        await AddClusterWithFixedDiscoveryAsync(client,
+            "candidate",
+            child => child.UseTransport(candidateTransport),
+            slot => slot.AllowDynamicContracts = true,
+            cancellation.Token);
+        await candidateTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
+        cancellation.Cancel();
+
+        Ensure(client.GetClusterReadiness("candidate") == SharpLinkReadinessState.NotReady,
+            "caller cancellation after publication must not remove the coordinator-owned candidate");
+        Ensure(candidateTransport.DisposeCount == 0,
+            "caller cancellation after publication must not dispose the published child runtime");
+
+        await client.StopAsync().AsTask().WaitAsync(RaceCoordinationTimeout);
+        Ensure(candidateTransport.DisposeCount == 1,
+            "coordinator Stop must eventually dispose the published child exactly once");
+    }
+
+    [Test]
+    public async Task RunningCoordinatorShouldPublishStartedCandidateBeforeItIsReady()
+    {
+        var candidateTransport = new ControlledMutationTransportFactory(blockConnect: true);
+        await using var client = CreateDynamicBuilder()
+            .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+        await client.StartAsync();
+        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(RaceCoordinationTimeout);
 
         var add = AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(candidateTransport),
             slot => slot.AllowDynamicContracts = true).AsTask();
-        await candidateTransport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var stop = client.StopAsync().AsTask();
+        await candidateTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
+        await add.WaitAsync(RaceCoordinationTimeout);
 
-        await EnsureThrows<OperationCanceledException>(async () => await add);
-        await stop.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(client.State == SharpLinkMultiClusterState.Stopped,
-            "global Stop must win a race with an unpublished runtime add");
-        Ensure(candidateTransport.DisposeCount == 1,
-            "Stop-raced candidate resources must be disposed exactly once");
-        await EnsureThrows<ArgumentException>(() =>
-        {
-            _ = client.GetClusterState("candidate");
-            return Task.CompletedTask;
-        });
-    }
+        Ensure(client.GetClusterReadiness("candidate") == SharpLinkReadinessState.NotReady,
+            "Running Add must publish after local Start without waiting for remote readiness");
+        Ensure(client.Readiness == SharpLinkReadinessState.Degraded,
+            "a ready bootstrap plus a published not-ready candidate must project Degraded readiness");
 
-    [Test]
-    public async Task DegradedCoordinatorShouldConnectCandidateBeforeRuntimeAddPublication()
-    {
-        var candidateTransport = new ControlledMutationTransportFactory();
-        await using var client = CreateDynamicBuilder()
-            .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
-                slot => slot.AllowDynamicContracts = true)
-            .Build();
-        typeof(SharpLinkMultiClusterClient)
-            .GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(client, (int)SharpLinkMultiClusterState.Degraded);
-
-        await AddClusterWithFixedDiscoveryAsync(client,
-            "candidate",
-            child => child.UseTransport(candidateTransport),
-            slot => slot.AllowDynamicContracts = true);
-
-        Ensure(candidateTransport.ConnectCount == 1,
-            "a Degraded coordinator must connect a runtime candidate before publication");
-        Ensure(client.GetClusterState("candidate") == SharpLinkConnectionState.Ready,
-            "the published candidate must expose its connected state");
+        candidateTransport.ReleaseConnect();
+        await client.WaitForReadyAsync("candidate").AsTask().WaitAsync(RaceCoordinationTimeout);
     }
 
     [Test]
@@ -174,35 +171,37 @@ public sealed class SharpLinkMultiClusterMutationConcurrencyTests : SharpLinkMul
     }
 
     [Test]
-    public async Task CancelledReadyAddShouldRollbackCandidateWithoutPublishingItsSlot()
+    public async Task CancellationAfterCandidateStartBeforePublicationShouldRollbackRuntime()
     {
         var bootstrapTransport = new ControlledMutationTransportFactory();
-        var candidateTransport = new ControlledMutationTransportFactory(blockConnect: true);
+        using var cancellation = new CancellationTokenSource();
+        var candidateTransport = new CancelOnConnectTransportFactory(cancellation);
         await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(bootstrapTransport),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.ConnectAsync();
-        using var cancellation = new CancellationTokenSource();
+        await client.StartAsync();
+        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(RaceCoordinationTimeout);
 
-        var add = AddClusterWithFixedDiscoveryAsync(client,
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(candidateTransport),
             slot => slot.AllowDynamicContracts = true,
-            cancellation.Token).AsTask();
-        await candidateTransport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        cancellation.Cancel();
+            cancellation.Token).AsTask());
 
-        await EnsureThrows<OperationCanceledException>(async () => await add);
+        Ensure(failure is OperationCanceledException,
+            "cancellation after child Start but before publication must reach the Add caller");
+        Ensure(candidateTransport.ConnectStarted.Task.IsCompleted,
+            "the candidate runtime must have started before the caller cancellation is observed");
         Ensure(candidateTransport.DisposeCount == 1,
-            "cancellation before publication must stop and dispose the connected candidate generation");
+            "pre-publication cancellation must stop and dispose the started candidate runtime");
         await EnsureThrows<ArgumentException>(() =>
         {
             _ = client.GetClusterState("candidate");
             return Task.CompletedTask;
         });
-        Ensure(client.GetClusterState("bootstrap") == SharpLinkConnectionState.Ready,
-            "candidate cancellation must leave the existing public snapshot unchanged");
+        Ensure(client.GetClusterReadiness("bootstrap") == SharpLinkReadinessState.Ready,
+            "candidate rollback must leave the existing public snapshot unchanged");
     }
 
     [Test]

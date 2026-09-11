@@ -18,8 +18,15 @@ public readonly record struct SharpLinkClusterRemovalResult
 /// <summary>Adds runtime lifecycle operations to a SharpLink multi-cluster client.</summary>
 public static class SharpLinkMultiClusterClientExtensions
 {
-    /// <summary>Builds and atomically adds a cluster slot while the coordinator is running.</summary>
-    /// <remarks>Cancellation before publication rolls back the candidate and leaves the public snapshot unchanged.</remarks>
+    /// <summary>Builds and atomically adds a cluster slot to the local coordinator.</summary>
+    /// <remarks>
+    /// When the coordinator is running, successful completion means the child runtime and routes are published
+    /// and coordinator-owned; it does not guarantee that the remote cluster is ready. Call
+    /// <see cref="ISharpLinkMultiClusterClient.WaitForReadyAsync(SharpLinkClusterKey, CancellationToken)"/>
+    /// before issuing work that requires immediate remote availability. Cancellation before publication rolls
+    /// back the candidate and leaves the public snapshot unchanged; cancellation after publication does not
+    /// revoke coordinator ownership.
+    /// </remarks>
     public static ValueTask AddClusterAsync(
         this ISharpLinkMultiClusterClient client,
         SharpLinkClusterKey cluster,
