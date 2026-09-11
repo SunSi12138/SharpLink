@@ -41,25 +41,27 @@ public sealed class Calculator : ICalculator
 ## 启动 Server 和 Client
 
 ```csharp
-var server = SharpLinkServerBuilder.Create()
+await using var server = SharpLinkServerBuilder.Create()
     .UseTcp(19090, "127.0.0.1")
     .Build();
 
-using var stopping = new CancellationTokenSource();
-var serverTask = server.RunAsync(stopping.Token);
+await server.StartAsync();
 
-var client = SharpClientBuilder.Create()
+await using var client = SharpClientBuilder.Create()
     .UseTcp("127.0.0.1", 19090)
     .UseRequestTimeout()
     .Build();
 
 await client.ConnectAsync();
 var value = await client.Get<ICalculator>().AddAsync(20, 22, CancellationToken.None);
+
+await server.StopAsync(TimeSpan.FromSeconds(30));
+await server.WaitForShutdownAsync();
 ```
 
 每个 Client 都必须在 Build 前显式选择请求超时策略：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 则明确关闭 Client-wide fallback。没有选择策略时 Build 会失败；方法 `[Timeout]` 和继承的父调用 `TimeBudget` 仍按各自规则生效。
 
-Client 和 Server 都是异步可释放对象。生产代码必须在停止时先阻止新工作，再 `DisposeAsync`，并观察后台运行任务；不要用进程退出替代资源收口。
+Client 和 Server 都是异步可释放对象。Server 使用 `StartAsync / WaitForShutdownAsync / StopAsync` 作为唯一 public lifecycle：`StartAsync` 成功后 Server 自己持有 accept/background runtime，`WaitForShutdownAsync` 只观察真正终止，应用信号通过 `StopAsync` 显式触发排空。不要用进程退出替代资源收口。
 
 `SharpClientBuilder` 与 `SharpLinkServerBuilder` 也是一次性构建器：一次 `Build()` 尝试后（成功或
 失败）不能继续配置或再次 Build，需要新的运行实例时请创建新的 Builder。Client 在第一次选择

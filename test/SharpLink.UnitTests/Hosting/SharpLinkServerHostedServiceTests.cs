@@ -14,7 +14,7 @@ namespace SharpLink.UnitTests.Hosting;
 public class SharpLinkServerHostedServiceTests
 {
     [Test]
-    public async Task StopAsyncShouldCancelRunLoopDisposeServerAndBeIdempotent()
+    public async Task StopAsyncShouldDisposeServerAndBeIdempotent()
     {
         var transport = new BlockingTransport();
         var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -39,7 +39,7 @@ public class SharpLinkServerHostedServiceTests
         Ensure(readiness.Status == SharpLinkHealthStatus.Unhealthy,
             "readiness should be unhealthy after hosted service stops");
         Ensure(!lifetime.ApplicationStopping.IsCancellationRequested,
-            "normal hosted stop must not be reported as a run failure");
+            "normal hosted stop must not be reported as a terminal failure");
     }
 
     [Test]
@@ -66,7 +66,7 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
-    public async Task AsynchronousRunFailureShouldStopTheHost()
+    public async Task AsynchronousRuntimeFailureShouldStopTheHost()
     {
         var transport = new DeferredFailureTransport();
         var lifetime = new TestHostApplicationLifetime();
@@ -99,7 +99,7 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
-    public async Task ExpectedRunFailureDuringHostedStopShouldNotStopTheHost()
+    public async Task ExpectedTerminalFailureDuringHostedStopShouldNotStopTheHost()
     {
         var lifetime = new TestHostApplicationLifetime();
         await using var provider = new ServiceCollection().BuildServiceProvider();
@@ -117,7 +117,7 @@ public class SharpLinkServerHostedServiceTests
         Ensure(stopFailure is IOException { Message: "listener cleanup failed" },
             "Hosted Stop must preserve the expected listener cleanup failure");
         Ensure(!lifetime.ApplicationStopping.IsCancellationRequested,
-            "an expected Run fault after hosted Stop begins must not stop the owning Host");
+            "an expected terminal fault after hosted Stop begins must not stop the owning Host");
     }
 
     [Test]
@@ -169,7 +169,7 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
-    public async Task UnexpectedSuccessfulRunCompletionShouldStopTheHost()
+    public async Task UnexpectedSuccessfulServerTerminationShouldStopTheHost()
     {
         var transport = new BlockingTransport();
         var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
@@ -216,7 +216,7 @@ public class SharpLinkServerHostedServiceTests
         try
         {
             Ensure(!stoppedByStartupToken,
-                "the transient StartAsync token must not own the long-lived Run loop");
+                "the transient StartAsync token must not own the long-lived Server runtime");
             Ensure(readiness.Status == SharpLinkHealthStatus.Ready,
                 "startup-token cancellation after publication must not change readiness");
         }
@@ -232,16 +232,17 @@ public class SharpLinkServerHostedServiceTests
         var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new FailingDisposeTransport())
             .Build();
-        var runTask = server.RunAsync().AsTask();
+        await server.StartAsync();
+        var terminal = server.WaitForShutdownAsync();
 
         var stopFailure = await CaptureFailureAsync(
             server.StopAsync(TimeSpan.Zero).AsTask());
-        var runFailure = await CaptureFailureAsync(runTask);
+        var terminalFailure = await CaptureFailureAsync(terminal);
 
         Ensure(stopFailure is IOException { Message: "listener cleanup failed" },
             "StopAsync must surface the owned listener cleanup failure");
-        Ensure(runFailure is IOException { Message: "listener cleanup failed" },
-            "the shared Run operation must observe the same failed stop");
+        Ensure(terminalFailure is IOException { Message: "listener cleanup failed" },
+            "WaitForShutdownAsync must observe the same failed stop");
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
             "a cleanup failure must leave the server unhealthy");
     }
@@ -262,18 +263,16 @@ public class SharpLinkServerHostedServiceTests
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
 
-        var stopTask = hosted.StopAsync(cancelled.Token);
+        var cancelledWait = hosted.StopAsync(cancelled.Token);
         await transport.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        transport.ReleaseDispose();
-        var failure = await CaptureFailureAsync(stopTask);
+        var cancellationFailure = await CaptureFailureAsync(cancelledWait);
+        Ensure(cancellationFailure is OperationCanceledException,
+            "Hosted Stop caller cancellation must cancel only that caller's wait");
 
-        var failures = failure is AggregateException aggregate
-            ? aggregate.Flatten().InnerExceptions
-            : failure is null ? [] : [failure];
-        Ensure(failures.Any(static exception => exception is OperationCanceledException),
-            "Hosted Stop must preserve caller cancellation");
-        Ensure(failures.Any(static exception => exception is IOException { Message: "listener cleanup failed" }),
-            "Hosted Stop must preserve later listener cleanup failure");
+        transport.ReleaseDispose();
+        var terminalFailure = await CaptureFailureAsync(hosted.StopAsync(CancellationToken.None));
+        Ensure(terminalFailure is IOException { Message: "listener cleanup failed" },
+            "the shared Hosted Stop must continue and preserve its listener cleanup failure");
     }
 
     [Test]
@@ -286,7 +285,8 @@ public class SharpLinkServerHostedServiceTests
             .UseTransport(transport)
             .Build();
         var concrete = (SharpLinkServer)server;
-        var runTask = server.RunAsync().AsTask();
+        await server.StartAsync();
+        var terminal = server.WaitForShutdownAsync();
 
         var stop = server.StopAsync(TimeSpan.Zero).AsTask();
         Ensure(transport.DisposeStarted.Task.IsCompleted,
@@ -299,7 +299,9 @@ public class SharpLinkServerHostedServiceTests
             "the deferred cleanup observer must not be published before the framework budget expires");
 
         provider.Advance(TimeSpan.FromTicks(1));
-        await stop;
+        var stopFailure = await CaptureFailureAsync(stop);
+        Ensure(stopFailure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
+            "framework cleanup timeout must fault the shared StopAsync operation");
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
             "framework cleanup timeout must leave the server unhealthy");
         var deferred = concrete.DeferredTaskSnapshotForDiagnostics;
@@ -313,7 +315,9 @@ public class SharpLinkServerHostedServiceTests
         Ensure(concrete.DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver ==
                TaskStatus.RanToCompletion,
             "framework cleanup observer must complete after the listener owner releases");
-        await runTask;
+        var terminalFailure = await CaptureFailureAsync(terminal);
+        Ensure(terminalFailure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
+            "framework cleanup timeout must fault terminal shutdown observation");
         Ensure(provider.ActiveTimerCount == 0,
             "framework cleanup completion must leave no provider timer behind");
     }
@@ -328,7 +332,8 @@ public class SharpLinkServerHostedServiceTests
             .Build();
         var concrete = (SharpLinkServer)server;
         var lifecycle = concrete.LifecycleForDiagnostics;
-        var runTask = server.RunAsync().AsTask();
+        await server.StartAsync();
+        var terminal = server.WaitForShutdownAsync();
         var callAdmission = typeof(SharpLinkServer).GetField(
             "_callAdmission",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -363,7 +368,7 @@ public class SharpLinkServerHostedServiceTests
         Ensure(concrete.DeferredTaskSnapshotForDiagnostics.DeferredServiceCleanup ==
                TaskStatus.RanToCompletion,
             "deferred service cleanup must complete after the active-call owner releases");
-        await runTask;
+        await terminal;
         Ensure(provider.ActiveTimerCount == 0,
             "graceful force and deferred cleanup completion must leave no provider timer");
     }

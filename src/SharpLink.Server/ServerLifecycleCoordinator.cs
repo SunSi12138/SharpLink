@@ -8,7 +8,7 @@ internal sealed partial class SharpLinkServer
     /// drain publication, shutdown cancellation, bounded framework teardown, and final cleanup order.
     ///
     /// Invariants:
-    /// - exactly one run task and one shared stop/cleanup task are established;
+    /// - exactly one startup operation, one accept runtime, and one shared stop/cleanup task are established;
     /// - the first stop owner fixes the graceful deadline for every later waiter;
     /// - Draining is published before admission/framework intake is closed;
     /// - call drain is published only after pending admission and global call ownership reach zero;
@@ -23,8 +23,14 @@ internal sealed partial class SharpLinkServer
         private readonly Lock _stateGate = new();
         private readonly TaskCompletionSource<bool> _callsDrained =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private Task? _runTask;
+        private readonly TaskCompletionSource<bool> _terminalCompletion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Task? _startTask;
+        private Task? _acceptTask;
+        private Task? _acceptObserverTask;
+        private Task? _terminalFailureObserverTask;
         private Task? _stopTask;
+        private Exception? _terminalFailure;
         private Task? _deferredServiceCleanupTask;
         private Task? _shutdownCleanupObserver;
         private Task? _serviceCleanupObserver;
@@ -49,6 +55,17 @@ internal sealed partial class SharpLinkServer
         // Read under StateGate so lifecycle consumers serialize against stop publication.
         internal bool HasStopStarted => _stopTask is not null;
 
+        internal SharpLinkServerLifecycleState LifecycleState => _server.CurrentState switch
+        {
+            ServerState.Created => SharpLinkServerLifecycleState.Created,
+            ServerState.Starting => SharpLinkServerLifecycleState.Starting,
+            ServerState.Running => SharpLinkServerLifecycleState.Running,
+            ServerState.Draining => SharpLinkServerLifecycleState.Draining,
+            ServerState.Stopped => SharpLinkServerLifecycleState.Stopped,
+            ServerState.Faulted => SharpLinkServerLifecycleState.Faulted,
+            _ => SharpLinkServerLifecycleState.Faulted
+        };
+
         internal SharpLinkHealthStatus HealthStatus => _server.CurrentState switch
         {
             ServerState.Running => SharpLinkHealthStatus.Ready,
@@ -56,27 +73,55 @@ internal sealed partial class SharpLinkServer
             _ => SharpLinkHealthStatus.Unhealthy
         };
 
-        internal ValueTask RunAsync(CancellationToken cancellationToken)
+        internal ValueTask StartAsync(CancellationToken cancellationToken)
         {
-            Task runTask;
+            cancellationToken.ThrowIfCancellationRequested();
+            Task operation;
+            TaskCompletionSource<bool>? startCompletion = null;
             lock (_stateGate)
             {
-                if (_runTask is null)
+                var state = _server.CurrentState;
+                if (state == ServerState.Running)
+                    return ValueTask.CompletedTask;
+                if (state is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
                 {
-                    if (_server.CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
-                    {
-                        return ValueTask.FromException(new SharpLinkException(
-                            SharpLinkErrorCode.ConnectionClosed,
-                            "Server cannot be restarted."));
-                    }
-
-                    _runTask = RunCoreAsync(cancellationToken);
+                    return ValueTask.FromException(new SharpLinkException(
+                        SharpLinkErrorCode.ConnectionClosed,
+                        $"Server lifecycle state '{state}' cannot start."));
                 }
 
-                runTask = _runTask;
+                if (state == ServerState.Starting)
+                {
+                    operation = _startTask ??
+                        throw new InvalidOperationException("Server startup has no owned start operation.");
+                }
+                else
+                {
+                    _server.TransitionTo(ServerState.Starting);
+                    startCompletion = new TaskCompletionSource<bool>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    _startTask = startCompletion.Task;
+                    operation = _startTask;
+                }
             }
 
-            return new ValueTask(runTask);
+            if (startCompletion is not null)
+            {
+                _ = CompleteStartAsync(startCompletion, cancellationToken);
+                return new ValueTask(operation);
+            }
+
+            return cancellationToken.CanBeCanceled
+                ? new ValueTask(operation.WaitAsync(cancellationToken))
+                : new ValueTask(operation);
+        }
+
+        internal Task WaitForShutdownAsync(CancellationToken cancellationToken)
+        {
+            var completion = _terminalCompletion.Task;
+            return cancellationToken.CanBeCanceled
+                ? completion.WaitAsync(cancellationToken)
+                : completion;
         }
 
         internal ValueTask StopAsync(
@@ -90,44 +135,203 @@ internal sealed partial class SharpLinkServer
                 : new ValueTask(stopTask);
         }
 
-        private async Task RunCoreAsync(CancellationToken cancellationToken)
+        private async Task CompleteStartAsync(
+            TaskCompletionSource<bool> completion,
+            CancellationToken startupCancellation)
         {
-            _server.TransitionTo(ServerState.Starting);
-            using var runCts = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                _acceptCts.Token);
-            var acceptToken = runCts.Token;
-            _server.TransitionTo(ServerState.Running);
+            try
+            {
+                await StartCoreAsync(startupCancellation).ConfigureAwait(false);
+                completion.TrySetResult(true);
+            }
+            catch (OperationCanceledException exception) when (startupCancellation.IsCancellationRequested)
+            {
+                try
+                {
+                    await StopAsync(TimeSpan.Zero, CancellationToken.None).ConfigureAwait(false);
+                    completion.TrySetCanceled(startupCancellation);
+                }
+                catch (Exception cleanupException)
+                {
+                    completion.TrySetException(new AggregateException(exception, cleanupException));
+                }
+            }
+            catch (Exception exception)
+            {
+                try
+                {
+                    await BeginTerminalFailure(exception).ConfigureAwait(false);
+                    completion.TrySetException(exception);
+                }
+                catch (Exception terminalException)
+                {
+                    completion.TrySetException(terminalException);
+                }
+            }
+        }
+
+        private async Task StartCoreAsync(CancellationToken startupCancellation)
+        {
+            var acceptStarted = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var running = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var acceptToken = _acceptCts.Token;
+
+            var acceptTask = _server.RunAcceptLoopAsync(acceptStarted, running, acceptToken);
+            Volatile.Write(ref _acceptTask, acceptTask);
 
             try
             {
-                await _server.RunAcceptLoopAsync(acceptToken).ConfigureAwait(false);
+                await acceptStarted.Task.WaitAsync(startupCancellation).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                acceptToken.IsCancellationRequested && !startupCancellation.IsCancellationRequested)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ConnectionClosed,
+                    "Server stopped while startup was in progress.");
+            }
 
-                if (cancellationToken.IsCancellationRequested && _server.CurrentState == ServerState.Running)
+            startupCancellation.ThrowIfCancellationRequested();
+            var previous = (ServerState)Interlocked.CompareExchange(
+                ref _server._state,
+                (int)ServerState.Running,
+                (int)ServerState.Starting);
+            if (previous != ServerState.Starting)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ConnectionClosed,
+                    $"Server startup was interrupted by lifecycle state '{previous}'.");
+            }
+            running.TrySetResult(true);
+
+            if (acceptTask.IsCompleted)
+            {
+                await acceptTask.ConfigureAwait(false);
+                throw new InvalidOperationException("Server accept loop completed during startup.");
+            }
+
+            Volatile.Write(ref _acceptObserverTask, ObserveAcceptLoopAsync(acceptTask, acceptToken));
+        }
+
+        private async Task ObserveAcceptLoopAsync(Task acceptTask, CancellationToken acceptToken)
+        {
+            try
+            {
+                await acceptTask.ConfigureAwait(false);
+                if (_server.CurrentState is ServerState.Starting or ServerState.Running)
                 {
-                    await GetOrCreateStopTask(TimeSpan.Zero).ConfigureAwait(false);
+                    BeginAndObserveTerminalFailure(new InvalidOperationException(
+                        "Server accept loop completed unexpectedly."));
                 }
-                else
-                {
-                    Task? stopTask;
-                    lock (_stateGate)
-                        stopTask = _stopTask;
-                    if (stopTask is not null)
-                        await stopTask.ConfigureAwait(false);
-                }
+            }
+            catch (OperationCanceledException) when (acceptToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception) when (
+                _server.CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            {
+            }
+            catch (Exception exception)
+            {
+                BeginAndObserveTerminalFailure(exception);
+            }
+        }
+
+        internal void BeginAndObserveTerminalFailure(Exception failure)
+        {
+            var stopTask = BeginTerminalFailure(failure);
+            lock (_stateGate)
+                _terminalFailureObserverTask ??= ObserveTerminalFailureAsync(stopTask);
+        }
+
+        internal Task? TerminalFailureObserverTaskForDiagnostics
+            => Volatile.Read(ref _terminalFailureObserverTask);
+
+        private static async Task ObserveTerminalFailureAsync(Task stopTask)
+        {
+            try
+            {
+                await stopTask.ConfigureAwait(false);
             }
             catch
             {
-                Task cleanupTask;
-                lock (_stateGate)
-                {
-                    _server.TransitionTo(ServerState.Faulted);
-                    _stopTask ??= CleanupAfterRunFailureAsync();
-                    cleanupTask = _stopTask;
-                }
+                // Observation is intentionally separate from propagation: the shared stop task stays
+                // faulted so a later StopAsync caller can still join and rethrow the terminal failure.
+            }
+        }
 
-                await cleanupTask.ConfigureAwait(false);
-                throw;
+        internal Task BeginTerminalFailure(Exception failure)
+        {
+            ArgumentNullException.ThrowIfNull(failure);
+            lock (_stateGate)
+            {
+                var state = _server.CurrentState;
+                if (state is ServerState.Draining or ServerState.Stopped)
+                    return _stopTask ?? Task.CompletedTask;
+
+                _terminalFailure ??= failure;
+                if (state != ServerState.Faulted)
+                    _server.TransitionTo(ServerState.Faulted);
+                return _stopTask ??= CompleteFaultedStopAsync();
+            }
+        }
+
+        private async Task CompleteFaultedStopAsync()
+        {
+            Exception? cleanupFailure = null;
+            try
+            {
+                await CleanupAfterRuntimeFailureAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                cleanupFailure = exception;
+            }
+
+            Exception terminalFailure;
+            lock (_stateGate)
+            {
+                var primaryFailure = _terminalFailure ?? new SharpLinkException(
+                    SharpLinkErrorCode.Internal,
+                    "Server entered Faulted without a recorded terminal failure.");
+                terminalFailure = cleanupFailure is null
+                    ? primaryFailure
+                    : new AggregateException(primaryFailure, cleanupFailure);
+            }
+
+            Volatile.Write(ref _terminalFailure, terminalFailure);
+            _terminalCompletion.TrySetException(terminalFailure);
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalFailure).Throw();
+        }
+
+        private async Task WaitForAcceptRuntimeShutdownAsync()
+        {
+            var observer = Volatile.Read(ref _acceptObserverTask);
+            if (observer is not null)
+            {
+                await observer.ConfigureAwait(false);
+                return;
+            }
+
+            var acceptTask = Volatile.Read(ref _acceptTask);
+            if (acceptTask is null)
+                return;
+            try
+            {
+                await acceptTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_acceptCts.IsCancellationRequested)
+            {
+            }
+            catch (ObjectDisposedException) when (
+                _server.CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            {
+            }
+            catch (Exception) when (_server.CurrentState == ServerState.Faulted)
+            {
+                // The raw accept failure is already recorded as the terminal failure.
             }
         }
 
@@ -205,6 +409,7 @@ internal sealed partial class SharpLinkServer
                     goAwayTask,
                     flushTask,
                     closeSessionsTask,
+                    WaitForAcceptRuntimeShutdownAsync(),
                     frameworkTasksTask);
 
                 var frameworkCleanupCompleted = false;
@@ -266,11 +471,20 @@ internal sealed partial class SharpLinkServer
                 (stopFailures ??= []).Add(exception);
             }
 
-            _server.TransitionTo(faulted ? ServerState.Faulted : ServerState.Stopped);
-            ThrowStopFailures(stopFailures);
+            var terminalFailure = CreateTerminalFailure(faulted, stopFailures);
+            _server.TransitionTo(terminalFailure is null ? ServerState.Stopped : ServerState.Faulted);
+            Volatile.Write(ref _terminalFailure, terminalFailure);
+            if (terminalFailure is null)
+            {
+                _terminalCompletion.TrySetResult(true);
+                return;
+            }
+
+            _terminalCompletion.TrySetException(terminalFailure);
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalFailure).Throw();
         }
 
-        private async Task CleanupAfterRunFailureAsync()
+        private async Task CleanupAfterRuntimeFailureAsync()
         {
             var timeProvider = _server._runtimeContext.TimeProvider;
             var deadline = SharpLinkTime.AddDuration(
@@ -301,6 +515,7 @@ internal sealed partial class SharpLinkServer
             var frameworkCleanupTask = Task.WhenAll(
                 StartListenerDispose(_server._transportListener),
                 DisposeAllSessionsAsync(),
+                WaitForAcceptRuntimeShutdownAsync(),
                 _server._frameworkTasks.DrainAsync());
             var frameworkCleanupCompleted = false;
             try
@@ -428,252 +643,5 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        private async Task SendGoAwayToAllAsync()
-        {
-            var connections = _server._connectionRegistry.SnapshotActive();
-            var tasks = new Task[connections.Length];
-            for (var index = 0; index < connections.Length; index++)
-            {
-                var connection = connections[index];
-                connection.MarkDraining();
-                tasks[index] = SendGoAwayAsync(connection);
-            }
-
-            await Task.WhenAll(tasks).ConfigureAwait(false);
-        }
-
-        private static async Task SendGoAwayAsync(ServerConnectionState connection)
-        {
-            try
-            {
-                await connection.Session.SendGoAwayAsync(
-                    connection.LastAcceptedRequestId,
-                    SharpLinkErrorCode.Unavailable,
-                    "Server is draining.").ConfigureAwait(false);
-            }
-            catch (Exception exception) when (
-                exception is SharpLinkException or System.IO.IOException or ObjectDisposedException)
-            {
-            }
-        }
-
-        private async Task FlushAllSessionsAsync()
-        {
-            var connections = _server._connectionRegistry.SnapshotActive();
-            var tasks = new Task[connections.Length];
-            for (var index = 0; index < connections.Length; index++)
-                tasks[index] = FlushSessionAsync(connections[index]);
-            await Task.WhenAll(tasks).ConfigureAwait(false);
-        }
-
-        private static async Task FlushSessionAsync(ServerConnectionState connection)
-        {
-            try
-            {
-                await connection.Session.FlushSendQueueAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception) when (
-                exception is SharpLinkException or System.IO.IOException or ObjectDisposedException)
-            {
-            }
-        }
-
-        private async Task DisposeAllSessionsAsync()
-        {
-            var connections = _server._connectionRegistry.SnapshotActive();
-            var tasks = new Task[connections.Length];
-            for (var index = 0; index < connections.Length; index++)
-                tasks[index] = _server.DisconnectConnectionAsync(connections[index]).AsTask();
-            try
-            {
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-            }
-            catch
-            {
-                ThrowUnexpectedShutdownTaskFailures(tasks);
-            }
-        }
-
-        private async Task DisposeServicesWhenDrainedAsync(Task callsDrained)
-        {
-            try
-            {
-                await callsDrained.ConfigureAwait(false);
-                await DisposeRegisteredServicesAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Services", exception);
-            }
-        }
-
-        private async Task DisposeRegisteredServicesAsync()
-        {
-            List<Exception>? failures = null;
-            try
-            {
-                await _server.ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                (failures ??= []).Add(exception);
-            }
-
-            try
-            {
-                await _server._serviceCleanup.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                (failures ??= []).Add(exception);
-            }
-
-            if (_server._admissionController is not null)
-            {
-                try
-                {
-                    await _server._admissionController.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (Exception exception)
-                {
-                    (failures ??= []).Add(exception);
-                }
-            }
-
-            try
-            {
-                _server._runtimeContext.Dispose();
-            }
-            catch (Exception exception)
-            {
-                (failures ??= []).Add(exception);
-            }
-
-            if (failures is { Count: 1 })
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
-            if (failures is not null)
-                throw new AggregateException(failures);
-        }
-
-        private Task<bool> WaitUntilWithRuntimeTimeAsync(Task task, long deadline)
-            => WaitUntilWithProviderAsync(task, deadline, _server._runtimeContext.TimeProvider);
-
-        private static async Task<bool> WaitUntilWithProviderAsync(
-            Task task,
-            long deadline,
-            TimeProvider timeProvider)
-        {
-            if (task.IsCompleted)
-            {
-                await task.ConfigureAwait(false);
-                return true;
-            }
-
-            var remaining = SharpLinkTime.GetRemaining(
-                deadline,
-                timeProvider.GetTimestamp(),
-                timeProvider.TimestampFrequency);
-            if (remaining <= TimeSpan.Zero)
-                return false;
-            return await SharpLinkTimer.WaitAsync(task, remaining, timeProvider).ConfigureAwait(false);
-        }
-
-        private static Task StartListenerDispose(IServerTransportListener listener)
-        {
-            try
-            {
-                return listener.DisposeAsync().AsTask();
-            }
-            catch (Exception exception)
-            {
-                return Task.FromException(exception);
-            }
-        }
-
-        private void CancelForShutdown(CancellationTokenSource cancellation, string cleanupName)
-        {
-            try
-            {
-                cancellation.Cancel();
-            }
-            catch (Exception exception)
-            {
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, cleanupName, exception);
-            }
-        }
-
-        private async Task ObserveShutdownAndDisposeTokensAsync(Task shutdownTask)
-        {
-            try
-            {
-                await shutdownTask.ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", exception);
-            }
-            finally
-            {
-                _acceptCts.Dispose();
-                _forceStopCts.Dispose();
-            }
-        }
-
-        private async Task ObserveCleanupFailureAsync(Task cleanupTask, string cleanupName)
-        {
-            try
-            {
-                await cleanupTask.ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, cleanupName, exception);
-            }
-        }
-
-        private static void AddTaskFailures(
-            ref List<Exception>? failures,
-            Task task,
-            Exception fallback)
-        {
-            if (task.Exception is not { } aggregate)
-            {
-                (failures ??= []).Add(fallback);
-                return;
-            }
-
-            foreach (var exception in aggregate.Flatten().InnerExceptions)
-                (failures ??= []).Add(exception);
-        }
-
-        private static void ThrowStopFailures(List<Exception>? failures)
-        {
-            if (failures is null)
-                return;
-            if (failures.Count == 1)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
-            throw new AggregateException(failures);
-        }
-
-        private static void ThrowUnexpectedShutdownTaskFailures(Task[] tasks)
-        {
-            List<Exception>? unexpected = null;
-            for (var taskIndex = 0; taskIndex < tasks.Length; taskIndex++)
-            {
-                if (tasks[taskIndex].Exception is not { } aggregate)
-                    continue;
-                foreach (var exception in aggregate.Flatten().InnerExceptions)
-                {
-                    if (SharpLinkServer.IsExpectedSessionShutdownException(exception))
-                        continue;
-                    (unexpected ??= []).Add(exception);
-                }
-            }
-
-            if (unexpected is { Count: 1 })
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
-            if (unexpected is not null)
-                throw new AggregateException(unexpected);
-        }
     }
 }

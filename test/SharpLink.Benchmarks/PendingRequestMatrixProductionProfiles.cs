@@ -72,7 +72,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         using var shutdown = new CancellationTokenSource();
-        var serverTask = server.RunAsync(shutdown.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(shutdown.Token).AsTask();
         using var metricScope = metrics ? new PendingMetricScope() : null;
         using var clientTrace = traceAll ? FeatureTelemetryScope.ForClient(ClientFeatureScenario.ClientTraceAll) : null;
         using var serverTrace = traceAll ? FeatureTelemetryScope.ForServer(ServerFeatureScenario.ServerTraceAll) : null;

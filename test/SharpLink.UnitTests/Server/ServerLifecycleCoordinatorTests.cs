@@ -23,8 +23,12 @@ public class ServerLifecycleCoordinatorTests
             "_forceStopCts",
             "_stateGate",
             "_callsDrained",
-            "_runTask",
+            "_terminalCompletion",
+            "_startTask",
+            "_acceptTask",
+            "_acceptObserverTask",
             "_stopTask",
+            "_terminalFailure",
             "_deferredServiceCleanupTask",
             "_shutdownCleanupObserver",
             "_serviceCleanupObserver",
@@ -52,8 +56,10 @@ public class ServerLifecycleCoordinatorTests
 
         string[] operationNames =
         [
+            "StartCoreAsync",
+            "WaitForAcceptRuntimeShutdownAsync",
             "StopCoreAsync",
-            "CleanupAfterRunFailureAsync",
+            "CleanupAfterRuntimeFailureAsync",
             "SendGoAwayToAllAsync",
             "FlushAllSessionsAsync",
             "DisposeAllSessionsAsync",

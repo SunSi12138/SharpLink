@@ -101,7 +101,15 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _lifecycle = new ServerLifecycleCoordinator(this);
     }
 
+    public SharpLinkServerLifecycleState LifecycleState => _lifecycle.LifecycleState;
+
     public SharpLinkHealthStatus HealthStatus => _lifecycle.HealthStatus;
+
+    public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        => _lifecycle.StartAsync(cancellationToken);
+
+    public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+        => _lifecycle.WaitForShutdownAsync(cancellationToken);
 
     public ValueTask DisposeAsync() => StopAsync(TimeSpan.Zero);
 
@@ -115,6 +123,30 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         string operation,
         TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
         => _frameworkTasks.Track(task, operation, observationMode, IsExpectedSessionShutdownException);
+
+    internal void TrackServerRuntimeTask(Task task, string operation)
+    {
+        TrackFrameworkTask(task, operation);
+        _ = task.ContinueWith(
+            static (completedTask, state) =>
+            {
+                var context = ((SharpLinkServer Server, string Operation))state!;
+                var server = context.Server;
+                if (server.CurrentState is not (ServerState.Starting or ServerState.Running))
+                    return;
+
+                var failure = completedTask.Exception?.GetBaseException()
+                    ?? (completedTask.IsCanceled
+                        ? new TaskCanceledException(completedTask)
+                        : new InvalidOperationException(
+                            $"Server runtime task '{context.Operation}' completed unexpectedly."));
+                server._lifecycle.BeginAndObserveTerminalFailure(failure);
+            },
+            (this, operation),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
 
     /// <summary>Exposes the pre-call connection admission gate for diagnostics and tests.</summary>
     internal ServerConnectionAdmission ConnectionAdmission => _connectionAdmission;

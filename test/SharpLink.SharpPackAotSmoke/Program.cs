@@ -46,7 +46,7 @@ public static class Program
         {
             try
             {
-                await server.RunAsync(timeout.Token).ConfigureAwait(false);
+                await server.RunUntilStoppedAsync(timeout.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

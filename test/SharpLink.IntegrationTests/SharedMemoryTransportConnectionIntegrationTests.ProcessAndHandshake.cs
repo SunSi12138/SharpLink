@@ -314,7 +314,7 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         {
             try
             {
-                await server.RunAsync(serverCts.Token);
+                await server.RunUntilStoppedAsync(serverCts.Token);
             }
             catch (Exception exception) when (exception is OperationCanceledException or
                                               ObjectDisposedException or IOException or SocketException)

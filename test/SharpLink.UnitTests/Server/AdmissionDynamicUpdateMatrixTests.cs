@@ -266,6 +266,8 @@ public sealed class AdmissionDynamicUpdateMatrixTests
 
     private sealed class UnsupportedServer : ISharpLinkServer
     {
+        public SharpLinkServerLifecycleState LifecycleState => default;
+
         public SharpLinkHealthStatus HealthStatus => default;
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
@@ -284,8 +286,11 @@ public sealed class AdmissionDynamicUpdateMatrixTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask RunAsync(CancellationToken cancellationToken = default)
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
+
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
 
         public ValueTask StopAsync(
             TimeSpan gracefulTimeout,

@@ -206,7 +206,7 @@ public sealed class ConnectionAdmissionRuntimeUpdateTests
                 options.MaxConcurrentHandshakes = 2;
             },
             listener);
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.AcceptEntered;
 
         using var candidateEntered = new ManualResetEventSlim();

@@ -145,7 +145,7 @@ public static class Program
     {
         try
         {
-            await server.RunAsync(token);
+            await server.RunUntilStoppedAsync(token);
         }
         catch (OperationCanceledException)
         {
@@ -179,7 +179,7 @@ public static class Program
             runtime => ConfigureRuntime(runtime, options));
 
         Console.WriteLine("[Server] started");
-        await server.RunAsync(cancel.Token);
+        await server.RunUntilStoppedAsync(cancel.Token);
     }
 
     private static async Task RunClientOnlyAsync(StreamLoadOptions options)

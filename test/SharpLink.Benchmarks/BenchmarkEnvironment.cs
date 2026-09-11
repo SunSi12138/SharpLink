@@ -65,7 +65,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         {
             try
             {
-                await server.RunAsync(shutdown.Token);
+                await server.RunUntilStoppedAsync(shutdown.Token);
             }
             catch (OperationCanceledException)
             {
@@ -112,7 +112,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         {
             try
             {
-                await server.RunAsync(shutdown.Token).ConfigureAwait(false);
+                await server.RunUntilStoppedAsync(shutdown.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
             {

@@ -584,7 +584,7 @@ public static class ConnectionAdmissionEvidenceRunner
         {
             try
             {
-                await server.RunAsync(runCts.Token).ConfigureAwait(false);
+                await server.RunUntilStoppedAsync(runCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

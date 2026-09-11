@@ -6,6 +6,7 @@
 
 ### Changed
 
+- Server lifetime now uses `StartAsync / WaitForShutdownAsync / StopAsync` as its single public lifecycle model; public `RunAsync` is removed, the Server owns and observes its accept/background runtime, and Generic Host no longer maintains a separate Server run-loop task or lifetime CTS.
 - Compression policy is now algorithm-neutral: `SharpLink.Runtime` ships no concrete compressor, algorithm-specific framing, or checksum machinery. Negotiation, adaptive raw/compressed selection, bounds, flow-control accounting, and call/stream failure isolation remain in Core.
 - `ISharpLinkCompressionProvider` now uses `TryCompress(...) -> bool` plus `void Decompress(...)`. Successful return means the complete input was consumed; Core measures output bytes from its bounded writer. `TryCompress=false` is the public bounded-candidate fallback and replaces the old internal output-limit exception path.
 - The compression SPI now explicitly permits zero-byte successful representations; the generic inbound envelope no longer imposes a one-byte algorithm-specific minimum, and an end-to-end length-only compressed-frame test locks the contract.

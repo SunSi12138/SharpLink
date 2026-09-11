@@ -76,7 +76,7 @@ public static class Program
         {
             try
             {
-                await server.RunAsync(runToken);
+                await server.RunUntilStoppedAsync(runToken);
             }
             catch (OperationCanceledException)
             {
@@ -145,7 +145,7 @@ public static class Program
             .UseRuntime(ConfigureZstd)
             .Build();
         VerifyRuntimeAssemblyBoundary(server);
-        var runTask = server.RunAsync(timeout.Token).AsTask();
+        var runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();
         Console.WriteLine("AOT_SMOKE_SERVER_READY");
         try
         {

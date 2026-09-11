@@ -18,31 +18,24 @@ Console.CancelKeyPress += cancelHandler;
 
 try
 {
-    using var runCancellation = new CancellationTokenSource();
     await using var server = SharpLinkServerBuilder.Create()
         .UseTcp(port, IPAddress.Loopback)
         .Build();
 
-    var runTask = server.RunAsync(runCancellation.Token).AsTask();
+    await server.StartAsync();
+    var terminal = server.WaitForShutdownAsync();
     Console.WriteLine($"QUICKSTART_SERVER_READY http=127.0.0.1:{port}");
 
     var requestedStop = runOnce ? QuickStartState.FirstCallCompleted.Task : stopRequested.Task;
-    var completed = await Task.WhenAny(runTask, requestedStop);
-    if (completed == runTask)
+    var completed = await Task.WhenAny(terminal, requestedStop);
+    if (completed == terminal)
     {
-        await runTask;
+        await terminal;
     }
     else
     {
         await server.StopAsync(TimeSpan.FromSeconds(5));
-        await runCancellation.CancelAsync();
-        try
-        {
-            await runTask;
-        }
-        catch (OperationCanceledException) when (runCancellation.IsCancellationRequested)
-        {
-        }
+        await terminal;
     }
 
     Console.WriteLine("QUICKSTART_SERVER_STOPPED");

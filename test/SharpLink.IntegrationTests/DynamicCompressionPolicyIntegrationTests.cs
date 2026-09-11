@@ -346,7 +346,7 @@ public sealed class DynamicCompressionPolicyIntegrationTests
             {
                 try
                 {
-                    await server.RunAsync(_cancellation.Token);
+                    await server.RunUntilStoppedAsync(_cancellation.Token);
                 }
                 catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                 {

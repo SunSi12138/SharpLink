@@ -165,7 +165,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
             {
                 var listener = new BlockingListener();
                 await using var server = CreateServer(listener);
-                var runTask = server.RunAsync().AsTask();
+                var runTask = server.RunUntilStoppedAsync().AsTask();
                 await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
                 var connection = CreateState();
                 Ensure(connection.MarkReady(null), "connection ready");
@@ -217,7 +217,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         var admissionFirstListener = new BlockingListener();
         await using (var admissionFirstServer = CreateServer(admissionFirstListener))
         {
-            var runTask = admissionFirstServer.RunAsync().AsTask();
+            var runTask = admissionFirstServer.RunUntilStoppedAsync().AsTask();
             await admissionFirstListener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "admission-first connection ready");
@@ -236,7 +236,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         var stopFirstListener = new BlockingListener();
         await using (var stopFirstServer = CreateServer(stopFirstListener))
         {
-            var runTask = stopFirstServer.RunAsync().AsTask();
+            var runTask = stopFirstServer.RunUntilStoppedAsync().AsTask();
             await stopFirstListener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "stop-first connection ready");
@@ -259,7 +259,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
     {
         var listener = new BlockingListener();
         await using var server = CreateServer(listener);
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var connection = CreateState();
         var service = new BlockingTrackingService();

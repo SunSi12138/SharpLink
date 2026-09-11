@@ -10,7 +10,7 @@ public class MalformedRequestProtocolIntegrationTests
             .UseTcp(0, IPAddress.Loopback.ToString());
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
         try
         {

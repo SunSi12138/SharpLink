@@ -385,7 +385,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             {
                 try
                 {
-                    await server.RunAsync(cancellationToken);
+                    await server.RunUntilStoppedAsync(cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {

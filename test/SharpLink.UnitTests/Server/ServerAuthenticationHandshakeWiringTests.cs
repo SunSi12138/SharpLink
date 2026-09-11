@@ -68,7 +68,7 @@ public class ServerAuthenticationHandshakeWiringTests
         {
             try
             {
-                await server.RunAsync(runCts.Token);
+                await server.RunUntilStoppedAsync(runCts.Token);
             }
             catch (OperationCanceledException) when (runCts.IsCancellationRequested)
             {

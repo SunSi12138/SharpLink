@@ -42,7 +42,7 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
             ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port
             : 0;
         var server = (SharpLinkServer)builder.Build();
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         return Task.FromResult(new ChaosServer(server, runTask, boundPort));
     }
 
