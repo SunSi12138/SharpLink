@@ -32,7 +32,7 @@ internal sealed partial class SharpLinkServer
         _ = _forceStopCts.Token.UnsafeRegister(
             static state => ((ServerDecodeExecutor)state!).StopAccepting(),
             executor);
-        TrackFrameworkTask(executor.Completion, "DecodeExecutor");
+        TrackServerRuntimeTask(executor.Completion, "DecodeExecutor");
     }
 
     private bool ShouldUsePersistentDecode(

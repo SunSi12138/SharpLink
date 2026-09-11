@@ -108,7 +108,7 @@ public sealed class ConnectionAdmissionSecureDefaultTests
             .IsEqualTo(SharpLinkConnectionAdmissionOptions.DefaultMaxConcurrentHandshakes);
 
         using var runCts = new CancellationTokenSource();
-        var runTask = server.RunAsync(runCts.Token).AsTask();
+        var runTask = server.RunUntilStoppedAsync(runCts.Token).AsTask();
         try
         {
             var message = await provider.AdmissionConfigured.Task.WaitAsync(TimeSpan.FromSeconds(5));

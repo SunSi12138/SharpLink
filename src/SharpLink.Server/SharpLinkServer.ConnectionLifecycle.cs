@@ -331,6 +331,21 @@ internal sealed partial class SharpLinkServer
         }
     }
 
+
+    private async Task DisconnectHeartbeatTimedOutConnectionAsync(
+        ServerConnectionState connection,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await DisconnectConnectionAsync(connection).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsExpectedCancellation(exception, cancellationToken))
+        {
+            LogDeferredCleanupFailed(_logger, "HeartbeatConnection", exception);
+        }
+    }
+
     private async Task HeartbeatCheckLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -349,7 +364,7 @@ internal sealed partial class SharpLinkServer
                 LogClientHeartbeatTimeout(_logger);
 
                 if (_connectionRegistry.TryGetValue(id, out var current) && ReferenceEquals(current, connection))
-                    await DisconnectConnectionAsync(connection).ConfigureAwait(false);
+                    await DisconnectHeartbeatTimedOutConnectionAsync(connection, ct).ConfigureAwait(false);
             }
         }
     }

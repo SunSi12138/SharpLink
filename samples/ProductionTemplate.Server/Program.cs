@@ -53,7 +53,6 @@ Console.CancelKeyPress += cancelHandler;
 
 try
 {
-    using var runCancellation = new CancellationTokenSource();
     await using var server = SharpLinkServerBuilder.Create()
         .UseLoggerFactory(loggerFactory)
         .UseConnectionAdmission(options =>
@@ -80,25 +79,19 @@ try
             tlsHandshakeTimeout: TimeSpan.FromSeconds(5))
         .Build();
 
-    var runTask = server.RunAsync(runCancellation.Token).AsTask();
+    await server.StartAsync();
+    var terminal = server.WaitForShutdownAsync();
     Console.WriteLine($"PRODUCTION_TEMPLATE_SERVER_READY https=localhost:{port}");
 
-    var completed = await Task.WhenAny(runTask, stopRequested.Task);
-    if (completed == runTask)
+    var completed = await Task.WhenAny(terminal, stopRequested.Task);
+    if (completed == terminal)
     {
-        await runTask;
+        await terminal;
     }
     else
     {
         await server.StopAsync(TimeSpan.FromSeconds(30));
-        await runCancellation.CancelAsync();
-        try
-        {
-            await runTask;
-        }
-        catch (OperationCanceledException) when (runCancellation.IsCancellationRequested)
-        {
-        }
+        await terminal;
     }
 }
 finally

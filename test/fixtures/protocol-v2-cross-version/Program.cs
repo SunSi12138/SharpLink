@@ -30,7 +30,7 @@ public static class Program
             .UseTcp(0, IPAddress.Loopback.ToString());
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
-        var runTask = server.RunAsync(timeout.Token).AsTask();
+        var runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();
         Console.WriteLine($"SERVER_READY {port}");
         Console.Out.Flush();
         try

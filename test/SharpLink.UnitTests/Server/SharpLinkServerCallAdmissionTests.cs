@@ -259,7 +259,7 @@ public partial class SharpLinkServerInvocationTests
         var connection = CreateConnection(session);
         Ensure(connection.MarkReady(null), "connection ready");
 
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
             "the active invocation must acquire both capacity slots before Stop");
@@ -324,7 +324,7 @@ public partial class SharpLinkServerInvocationTests
             });
         Ensure(connection.MarkReady(null), "connection ready");
 
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var admissionTask = LongRunningTestWorker.Run(() => server.TryAcquireCall(connection));
         try

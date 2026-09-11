@@ -49,7 +49,7 @@ public class ContractManifestReadyBoundaryTests
             });
         });
 
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         try
         {
             await WaitForConnectionAsync(registry);

@@ -337,7 +337,7 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         {
             try
             {
-                await server.RunAsync(token);
+                await server.RunUntilStoppedAsync(token);
             }
             catch (Exception exception) when (
                 exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException)

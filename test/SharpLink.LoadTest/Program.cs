@@ -267,7 +267,7 @@ public static class Program
     {
         try
         {
-            await server.RunAsync(token);
+            await server.RunUntilStoppedAsync(token);
         }
         catch (OperationCanceledException)
         {
@@ -300,7 +300,7 @@ public static class Program
             options.SharedMemorySpinCount,
             runtime => ConfigureRuntime(runtime, options));
         Console.WriteLine("[Server] started.");
-        await server.RunAsync(cancelScope.Token);
+        await server.RunUntilStoppedAsync(cancelScope.Token);
     }
 
     private static async Task RunClientOnlyAsync(LoadTestOptions options, MetricsRegistry metrics, ISharpLinkClient? clientOverride = null)

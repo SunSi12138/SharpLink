@@ -57,7 +57,7 @@ public class ClientProxyRpcBridgeBenchmarks
         {
             try
             {
-                await _server.RunAsync(_shutdown.Token);
+                await _server.RunUntilStoppedAsync(_shutdown.Token);
             }
             catch (OperationCanceledException)
             {

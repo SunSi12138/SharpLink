@@ -11,7 +11,7 @@ public partial class TransportConnectionIntegrationTests
             ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -98,7 +98,7 @@ public partial class TransportConnectionIntegrationTests
             .UseTcp(0, IPAddress.Loopback.ToString());
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -166,7 +166,7 @@ public partial class TransportConnectionIntegrationTests
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTransport(listener);
         var server = serverBuilder.Build();
-        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -221,7 +221,7 @@ public partial class TransportConnectionIntegrationTests
         var server = SharpLinkServerBuilder.Create()
             .UseTransport(listener)
             .Build();
-        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -387,7 +387,7 @@ public partial class TransportConnectionIntegrationTests
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120));
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
         try
         {
@@ -467,7 +467,7 @@ public partial class TransportConnectionIntegrationTests
             ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
         try
         {

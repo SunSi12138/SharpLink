@@ -28,7 +28,7 @@ public static class Program
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(args[0])
             .Build();
-        var runTask = server.RunAsync(timeout.Token).AsTask();
+        var runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();
         Console.WriteLine("PACKAGE_REFERENCE_ROOTING_SERVER_READY");
         try
         {

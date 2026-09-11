@@ -70,17 +70,18 @@ public interface IGreetingService : IService
 
 Canonical source: [`samples/QuickStart.Server/Program.cs`](samples/QuickStart.Server/Program.cs)
 
-Server 项目引用 Contracts，`[RpcService]` 实现业务接口，然后配置 listener 并运行：
+Server 项目引用 Contracts，`[RpcService]` 实现业务接口，然后配置 listener 并显式启动本地 serving runtime：
 
 ```csharp
 await using var server = SharpLinkServerBuilder.Create()
     .UseTcp(50051, IPAddress.Loopback)
     .Build();
 
-var runTask = server.RunAsync(runCancellation.Token).AsTask();
+await server.StartAsync();
+var terminal = server.WaitForShutdownAsync();
 ```
 
-canonical sample 同时包含 Ctrl+C 停机：先 `StopAsync(TimeSpan.FromSeconds(5))` 发送 GoAway 并排空活动调用，再取消 `RunAsync`，最后通过 `await using` 完成释放。
+Server 的 canonical lifecycle 是 `StartAsync / WaitForShutdownAsync / StopAsync`。`StartAsync` 只负责启动，`WaitForShutdownAsync` 只观察真实终态；canonical sample 的 Ctrl+C 路径显式调用 `StopAsync(TimeSpan.FromSeconds(5))` 发送 GoAway 并排空活动调用，然后等待 `terminal` 完成。
 
 ### 3. Client
 

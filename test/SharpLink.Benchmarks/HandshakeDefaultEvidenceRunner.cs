@@ -305,7 +305,7 @@ public static class HandshakeDefaultEvidenceRunner
         {
             try
             {
-                await server.RunAsync(runCts.Token).ConfigureAwait(false);
+                await server.RunUntilStoppedAsync(runCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (runCts.IsCancellationRequested)
             {

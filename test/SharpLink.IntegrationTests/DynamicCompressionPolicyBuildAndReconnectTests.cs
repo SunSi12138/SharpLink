@@ -175,7 +175,7 @@ public sealed class DynamicCompressionPolicyBuildAndReconnectTests
             {
                 try
                 {
-                    await server.RunAsync(_cancellation.Token);
+                    await server.RunUntilStoppedAsync(_cancellation.Token);
                 }
                 catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                 {

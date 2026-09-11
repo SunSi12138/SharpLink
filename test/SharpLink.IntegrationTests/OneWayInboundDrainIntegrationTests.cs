@@ -156,7 +156,7 @@ public class OneWayInboundDrainIntegrationTests
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(
-                () => server.RunAsync(cts.Token).AsTask(),
+                () => server.RunUntilStoppedAsync(cts.Token).AsTask(),
                 CancellationToken.None);
 
             var client = SharpClientBuilder.Create().DisableRequestTimeout()

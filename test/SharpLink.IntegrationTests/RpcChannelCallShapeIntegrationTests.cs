@@ -234,7 +234,7 @@ public class RpcChannelCallShapeIntegrationTests
             {
                 try
                 {
-                    await server.RunAsync(cts.Token);
+                    await server.RunUntilStoppedAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {

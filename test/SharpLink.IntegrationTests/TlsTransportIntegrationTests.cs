@@ -281,7 +281,7 @@ public class TlsTransportIntegrationTests
         var boundPort = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         var server = builder.Build();
         var cts = new CancellationTokenSource();
-        var runTask = server.RunAsync(cts.Token).AsTask();
+        var runTask = server.RunUntilStoppedAsync(cts.Token).AsTask();
         await Task.Yield();
         return new TlsServerHarness(boundPort, server, cts, runTask);
     }

@@ -701,7 +701,7 @@ public class DynamicAdmissionGenerationTests
             {
                 try
                 {
-                    await server.RunAsync(cancellationToken);
+                    await server.RunUntilStoppedAsync(cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {

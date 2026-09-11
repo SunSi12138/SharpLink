@@ -447,6 +447,8 @@ public sealed class AdmissionRuntimeControlTests
 
     private sealed class UnsupportedServer : ISharpLinkServer
     {
+        public SharpLinkServerLifecycleState LifecycleState => default;
+
         public SharpLinkHealthStatus HealthStatus => default;
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
@@ -465,8 +467,11 @@ public sealed class AdmissionRuntimeControlTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask RunAsync(CancellationToken cancellationToken = default)
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
+
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
 
         public ValueTask StopAsync(
             TimeSpan gracefulTimeout,

@@ -448,7 +448,7 @@ public sealed class ConnectionAdmissionTests
             .Build();
         var port = ((IPEndPoint)listener.LocalEndPoint!).Port;
         using var runCts = new CancellationTokenSource();
-        var runTask = server.RunAsync(runCts.Token).AsTask();
+        var runTask = server.RunUntilStoppedAsync(runCts.Token).AsTask();
         try
         {
             using var first = new TcpClient();
@@ -502,7 +502,7 @@ public sealed class ConnectionAdmissionTests
             .Build();
         var port = ((IPEndPoint)listener.LocalEndPoint!).Port;
         using var runCts = new CancellationTokenSource();
-        var runTask = server.RunAsync(runCts.Token).AsTask();
+        var runTask = server.RunUntilStoppedAsync(runCts.Token).AsTask();
         try
         {
             // Never send the ClientHello: the server parks in the TLS handshake and holds
@@ -812,7 +812,7 @@ public sealed class ConnectionAdmissionTests
         {
             try
             {
-                await server.RunAsync(runCts.Token);
+                await server.RunUntilStoppedAsync(runCts.Token);
             }
             catch (OperationCanceledException)
             {

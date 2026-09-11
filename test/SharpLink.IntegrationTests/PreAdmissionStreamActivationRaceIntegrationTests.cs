@@ -325,7 +325,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         {
             try
             {
-                await server.RunAsync(cancellationToken);
+                await server.RunUntilStoppedAsync(cancellationToken);
             }
             catch (OperationCanceledException)
             {

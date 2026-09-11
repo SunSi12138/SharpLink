@@ -203,7 +203,7 @@ public partial class TransportConnectionIntegrationTests
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
-        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
 
@@ -363,7 +363,7 @@ public partial class TransportConnectionIntegrationTests
             {
                 try
                 {
-                    await server.RunAsync(cts.Token);
+                    await server.RunUntilStoppedAsync(cts.Token);
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
                 {

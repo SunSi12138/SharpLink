@@ -13,7 +13,10 @@ services.AddSharpLinkClient(builder => builder
 
 Hosted Client 与直接构建的 Client 一样，必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；未指定会在 Host materialize Client 时失败。
 
-Host 启动 Client/Server，停止时执行有界排空和异步释放。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client；不要在容器构建期间同步阻塞获取连接。Accessor 在 topology-specific `ConnectAsync` connectivity boundary 完成后发布 Client，保持快速启动与 dynamic accepted-empty 语义；若应用要求多 endpoint 收敛，应在取得 Client 后显式调用 `WaitForReadinessAsync`。
+Host 启动 Client/Server，停止时执行有界排空和异步释放。Server HostedService 直接映射 `StartAsync / StopAsync`，不再持有独立的 accept-loop task 或 lifetime CTS；长期 accept/background runtime 由 Server 自己持有和观察。Client HostedService 调用 `StartAsync` 启动本地 runtime 与连接 supervisor；它不会等待远端 endpoint ready，因此远端暂时不可用不会阻塞整个 Generic Host 启动。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client 本地 runtime 发布；不要在容器构建期间同步阻塞获取连接。
+Server 的 canonical lifecycle 只有 `StartAsync / WaitForShutdownAsync / StopAsync`；public `RunAsync` 已移除。`LifecycleState` 描述 `Created/Starting/Running/Draining/Stopped/Faulted`，而 `HealthStatus` 单独描述本地 serving readiness。`StartAsync` 成功意味着 Server-owned accept infrastructure 已建立且 lifecycle 已发布为 `Running`；完成 startup 后，调用方传入的 startup cancellation token 不再拥有 Server lifetime。
+
+当前内置 socket listener 在 transport 构造时同步完成 bind/listen，因此端口占用、地址无效等 bind failure 会在构造阶段 fail fast；自定义 listener 若在首次 accept startup boundary 立即失败，`StartAsync` 会直接传播该异常。`WaitForShutdownAsync(ct)` 不发起停止，`ct` 只取消当前 waiter；正常 lifetime 只能由显式 `StopAsync` 或不可恢复的 Server-owned runtime failure 终止。
 
 健康检查名称默认是 `sharplink_server` 和 `sharplink_remote`，tag 为 `ready`。Server readiness 表示接收路径已启动；remote readiness 通过协议健康检查表示远端可用，不等同于 Client 的多 endpoint topology readiness，也不保证某个具体业务依赖健康。
 
@@ -41,7 +44,7 @@ Service lifetime：
 
 ## 优雅停止
 
-停止顺序：停止接受新连接/调用，发送 GoAway，排空活动调用和流，关闭 session 与后台 loop，释放服务和 transport。强制超时后仍会清理 framework state，并通过指标/日志报告未完成调用。应用必须观察 `RunAsync`/HostedService 的终止异常。
+停止顺序：停止接受新连接/调用，发送 GoAway，排空活动调用和流，关闭 session 与后台 loop，释放服务和 transport。强制超时后仍会清理 framework state，并通过指标/日志报告未完成调用。应用可通过 `WaitForShutdownAsync` 观察真实终态；不可恢复的 Server runtime/cleanup fault 会在 Server-owned cleanup 完成后由该等待传播。
 
 ## AnonymousPipe Hosting
 

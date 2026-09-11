@@ -307,7 +307,7 @@ public class SharpLinkServerSecurityLoggingTests
         {
             try
             {
-                await server.RunAsync(runCts.Token);
+                await server.RunUntilStoppedAsync(runCts.Token);
             }
             catch (OperationCanceledException)
             {

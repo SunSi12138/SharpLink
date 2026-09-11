@@ -10,40 +10,34 @@ public class ServerStopOwnershipCharacterizationTests
 {
     [Test]
     [NotInParallel]
-    public async Task FirstRunCancellationShouldOwnZeroGraceSharedStopWithoutExplicitStop()
+    public async Task SuccessfulStartCancellationShouldNotOwnServerLifetime()
     {
         var listener = new BlockingListener();
         await using var server = CreateServer(listener);
-        using var runCancellation = new CancellationTokenSource();
-        var runTask = server.RunAsync(runCancellation.Token).AsTask();
+        using var startupCancellation = new CancellationTokenSource();
+
+        await server.StartAsync(startupCancellation.Token);
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var terminal = server.WaitForShutdownAsync();
 
-        var connection = CreateState();
-        Ensure(connection.MarkReady(null), "connection ready");
-        Ensure(server.TryAcquireCall(connection) == ServerCallAdmissionResult.Acquired,
-            "the synthetic invocation must own server and connection call capacity");
+        startupCancellation.Cancel();
+        using (var waiterCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100)))
+        {
+            var waiterFailure = await CaptureFailureAsync(
+                server.WaitForShutdownAsync(waiterCancellation.Token));
+            Ensure(waiterFailure is OperationCanceledException,
+                "cancelling the completed StartAsync token must not terminate the Server");
+        }
 
-        runCancellation.Cancel();
-        await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(server.LifecycleState == SharpLinkServerLifecycleState.Running,
+            "a completed StartAsync token must not become a long-lived Server lifetime token");
+        Ensure(!terminal.IsCompleted,
+            "Server terminal completion must remain pending until an explicit StopAsync or fatal runtime failure");
 
-        Ensure(GetServerStateName(server) == "Stopped",
-            "first-run cancellation must complete the normal zero-grace stop path in Stopped without explicit StopAsync");
-        Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
-            "run cancellation must use zero grace so the run task can complete while an active call still owns capacity");
-        Ensure(!server.CallsDrainedForDiagnostics.IsCompleted,
-            "zero-grace run cancellation must not forge call-drain completion while the active call remains owned");
-
-        var laterStopTask = server.StopAsync(TimeSpan.FromSeconds(30)).AsTask();
-        await laterStopTask.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(GetServerStateName(server) == "Stopped",
-            "a later StopAsync must reuse the already-completed normal stop instead of changing its terminal state");
-        Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
-            "a later StopAsync must reuse the cancellation-owned zero-grace shared stop instead of applying a new grace period");
-
-        server.ReleaseCall(connection);
-        await server.CallsDrainedForDiagnostics.WaitAsync(TimeSpan.FromSeconds(2));
-        await connection.CloseAsync();
-        await connection.ServiceCleanupTask;
+        await server.StopAsync(TimeSpan.Zero);
+        await terminal.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(server.LifecycleState == SharpLinkServerLifecycleState.Stopped,
+            "explicit StopAsync must remain the normal lifecycle shutdown trigger");
     }
 
     [Test]
@@ -52,7 +46,7 @@ public class ServerStopOwnershipCharacterizationTests
     {
         var listener = new BlockingListener();
         await using var server = CreateServer(listener);
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         var connection = CreateState();
@@ -104,7 +98,7 @@ public class ServerStopOwnershipCharacterizationTests
     {
         var listener = new BlockingListener();
         await using var server = CreateServer(listener);
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         var connection = CreateState();
@@ -156,7 +150,7 @@ public class ServerStopOwnershipCharacterizationTests
         var longFirstListener = new BlockingListener();
         await using (var longFirstServer = CreateServer(longFirstListener))
         {
-            var runTask = longFirstServer.RunAsync().AsTask();
+            var runTask = longFirstServer.RunUntilStoppedAsync().AsTask();
             await longFirstListener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "long-first connection ready");
@@ -191,7 +185,7 @@ public class ServerStopOwnershipCharacterizationTests
         var zeroFirstListener = new BlockingListener();
         await using (var zeroFirstServer = CreateServer(zeroFirstListener))
         {
-            var runTask = zeroFirstServer.RunAsync().AsTask();
+            var runTask = zeroFirstServer.RunUntilStoppedAsync().AsTask();
             await zeroFirstListener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var connection = CreateState();
             Ensure(connection.MarkReady(null), "zero-first connection ready");
@@ -271,6 +265,19 @@ public class ServerStopOwnershipCharacterizationTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static void Ensure(bool condition, string message)

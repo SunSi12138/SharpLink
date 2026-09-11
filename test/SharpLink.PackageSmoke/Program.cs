@@ -289,7 +289,7 @@ public static class Program
     {
         try
         {
-            await server.RunAsync(cancellationToken);
+            await server.RunUntilStoppedAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

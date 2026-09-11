@@ -21,7 +21,7 @@ public class ServerDecodeExecutorLifecycleTests
             .UseTransport(listener)
             .Build();
 
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         Ensure(server.DecodeWorkerCountForDiagnostics is > 0 and <= 2,

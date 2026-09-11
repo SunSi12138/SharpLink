@@ -168,7 +168,7 @@ public class CompressionDecodeDeadlineAdmissionIndependenceTests
             {
                 try
                 {
-                    await server.RunAsync(serverCts.Token);
+                    await server.RunUntilStoppedAsync(serverCts.Token);
                 }
                 catch (OperationCanceledException)
                 {

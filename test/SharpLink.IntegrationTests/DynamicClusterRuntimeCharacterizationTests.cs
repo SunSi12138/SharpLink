@@ -321,7 +321,7 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         {
             _server = server;
             Port = port;
-            _runTask = Task.Run(() => _server.RunAsync(_cancellation.Token).AsTask(), CancellationToken.None);
+            _runTask = Task.Run(() => _server.RunUntilStoppedAsync(_cancellation.Token).AsTask(), CancellationToken.None);
         }
 
         public int Port { get; }

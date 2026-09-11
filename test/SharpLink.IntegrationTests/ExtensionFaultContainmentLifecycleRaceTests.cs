@@ -362,7 +362,7 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
             {
                 try
                 {
-                    await server.RunAsync(cancellation.Token).ConfigureAwait(false);
+                    await server.RunUntilStoppedAsync(cancellation.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
                 {

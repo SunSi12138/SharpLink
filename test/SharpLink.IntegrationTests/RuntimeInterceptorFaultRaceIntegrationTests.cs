@@ -55,11 +55,11 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
     public async Task ServerFaultPublicationShouldSerializeWithReplacementGate()
     {
         var listener = new GatedFailServerTransportListener();
-        await using var server = SharpLinkServerBuilder.Create()
+        var server = SharpLinkServerBuilder.Create()
             .UseTransport(listener)
             .Build();
 
-        var runTask = server.RunAsync().AsTask();
+        var runTask = server.RunUntilStoppedAsync().AsTask();
         await listener.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Ready,
             "server must be running before the injected accept failure");
@@ -91,6 +91,10 @@ public class RuntimeInterceptorFaultRaceIntegrationTests
         Ensure(Capture(() => server.ReplaceInterceptors([new PassThroughServerInterceptor()]))
                 is InvalidOperationException,
             "server replacement after fault must be rejected");
+
+        var disposeFailure = await CaptureAsync(server.DisposeAsync().AsTask());
+        Ensure(disposeFailure is InvalidOperationException { Message: "server accept failed" },
+            "server disposal after terminal fault must expose the same failure");
     }
 
     private static void SetPrivateField<T>(object target, string fieldName, T value)

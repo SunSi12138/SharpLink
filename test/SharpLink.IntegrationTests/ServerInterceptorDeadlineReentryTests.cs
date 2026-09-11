@@ -20,7 +20,7 @@ public class ServerInterceptorDeadlineReentryTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         await using var server = serverBuilder.Build();
         var serverTask = Task.Run(
-            () => server.RunAsync(serverCancellation.Token).AsTask(),
+            () => server.RunUntilStoppedAsync(serverCancellation.Token).AsTask(),
             CancellationToken.None);
         await using var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)

@@ -251,7 +251,7 @@ public partial class TransportConnectionIntegrationTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-            await server.RunAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await server.RunUntilStoppedAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
@@ -272,7 +272,7 @@ public partial class TransportConnectionIntegrationTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-            await server.RunAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await server.RunUntilStoppedAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
@@ -291,11 +291,13 @@ public partial class TransportConnectionIntegrationTests
 
         try
         {
-            await EnsureThrows<IOException>(server.RunAsync(CancellationToken.None).AsTask(), "server start transport accept exception");
+            await EnsureThrows<IOException>(server.RunUntilStoppedAsync(CancellationToken.None).AsTask(), "server start transport accept exception");
         }
         finally
         {
-            await server.DisposeAsync();
+            await EnsureThrows<IOException>(
+                server.DisposeAsync().AsTask(),
+                "server disposal after terminal accept exception");
         }
     }
 

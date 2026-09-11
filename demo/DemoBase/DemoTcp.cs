@@ -36,18 +36,21 @@ public static class DemoTcp
         return builder.Build();
     }
 
-    public static Task StartServerAsync(ISharpLinkServer server, CancellationToken cancellationToken)
+    public static async Task StartServerAsync(
+        ISharpLinkServer server,
+        CancellationToken cancellationToken)
     {
-        return Task.Run(async () =>
+        await server.StartAsync(cancellationToken);
+        var terminal = server.WaitForShutdownAsync();
+        var cancellation = Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        if (ReferenceEquals(await Task.WhenAny(terminal, cancellation), terminal))
         {
-            try
-            {
-                await server.RunAsync(cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }, cancellationToken);
+            await terminal;
+            return;
+        }
+
+        await server.StopAsync(TimeSpan.Zero);
+        await terminal;
     }
 
     public static async Task EnsureConnectedAsync(
