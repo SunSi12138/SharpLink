@@ -251,9 +251,18 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
             _view.SafeMemoryMappedViewHandle.ReleasePointer();
             _pointer = null;
         }
+        var diagnosticClock = System.Diagnostics.Stopwatch.StartNew();
         _view.Dispose();
+        if (diagnosticClock.ElapsedMilliseconds > 100)
+            Console.Error.WriteLine($"STOP_STAGE mapping-view-dispose {diagnosticClock.ElapsedMilliseconds}ms");
+        diagnosticClock.Restart();
         _mappedFile.Dispose();
+        if (diagnosticClock.ElapsedMilliseconds > 100)
+            Console.Error.WriteLine($"STOP_STAGE mapping-handle-dispose {diagnosticClock.ElapsedMilliseconds}ms");
+        diagnosticClock.Restart();
         _file.Dispose();
+        if (diagnosticClock.ElapsedMilliseconds > 100)
+            Console.Error.WriteLine($"STOP_STAGE mapping-file-dispose {diagnosticClock.ElapsedMilliseconds}ms");
         Interlocked.Decrement(ref s_activeMappingCount);
         if (_pathToDelete is not null)
             TryDelete(_pathToDelete);

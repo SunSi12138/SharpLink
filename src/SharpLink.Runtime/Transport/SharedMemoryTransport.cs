@@ -427,6 +427,7 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
 
     private async Task DisposeCoreAsync()
     {
+        var diagnosticClock = System.Diagnostics.Stopwatch.StartNew();
         Exception? cleanupException = null;
         try
         {
@@ -441,7 +442,10 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
         }
         try
         {
+            diagnosticClock.Restart();
             await Input.CompleteAsync().ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE shm-input-complete {diagnosticClock.ElapsedMilliseconds}ms");
         }
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex) || ex is SharpLinkException)
         {
@@ -452,7 +456,10 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
         }
         try
         {
+            diagnosticClock.Restart();
             await _control.DisposeAsync().ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE shm-control-dispose {diagnosticClock.ElapsedMilliseconds}ms");
         }
         catch (Exception exception)
         {
@@ -460,7 +467,10 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
         }
         try
         {
+            diagnosticClock.Restart();
             await _mapping.DisposeAsync().ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE shm-mapping-dispose {diagnosticClock.ElapsedMilliseconds}ms");
         }
         catch (Exception exception)
         {
