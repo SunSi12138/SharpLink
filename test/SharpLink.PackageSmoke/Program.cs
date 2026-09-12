@@ -160,19 +160,29 @@ public static class Program
         await client.StartAsync(cancellationToken);
         await client.WaitForReadyAsync("bootstrap", cancellationToken);
 
-        await client.AddClusterAsync(
+        var add = await client.AddClusterAsync(
             "runtime",
             child => child.UseTcp(IPAddress.Loopback.ToString(), port),
             cancellationToken: cancellationToken);
+        if (!add.Succeeded || add.FailureCode != SharpLinkClusterMutationFailureCode.None)
+            throw new InvalidOperationException("Runtime multi-cluster Add structured result package smoke failed.");
         await client.WaitForReadyAsync("runtime", cancellationToken);
         if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
 
-        await client.ReplaceClusterAsync(
+        var replacement = await client.ReplaceClusterAsync(
             "runtime",
             child => child.UseTcp(IPAddress.Loopback.ToString(), port),
             TimeSpan.FromSeconds(2),
             cancellationToken);
+        if (!replacement.Succeeded ||
+            !replacement.Published ||
+            replacement.FailureCode != SharpLinkClusterMutationFailureCode.None ||
+            !replacement.ReferencesReleased ||
+            replacement.ForcedStop)
+        {
+            throw new InvalidOperationException("Runtime multi-cluster Replace structured result package smoke failed.");
+        }
         if (await client.Get<IPackageSmokeService>().AddAsync(19, 23) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
 
@@ -180,8 +190,13 @@ public static class Program
             "runtime",
             TimeSpan.FromSeconds(2),
             cancellationToken);
-        if (!removal.Succeeded || !removal.ReferencesReleased || removal.ForcedStop)
-            throw new InvalidOperationException("Runtime multi-cluster Remove package smoke failed.");
+        if (!removal.Succeeded ||
+            removal.FailureCode != SharpLinkClusterMutationFailureCode.None ||
+            !removal.ReferencesReleased ||
+            removal.ForcedStop)
+        {
+            throw new InvalidOperationException("Runtime multi-cluster Remove structured result package smoke failed.");
+        }
     }
 
     private static async Task RunStaticEndpointSmokeAsync(CancellationToken cancellationToken)

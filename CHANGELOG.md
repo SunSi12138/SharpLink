@@ -6,6 +6,7 @@
 
 ### Changed
 
+- Runtime multi-cluster `AddClusterAsync`, `ReplaceClusterAsync`, and `RemoveClusterAsync` now return operation-specific immutable results with stable `SharpLinkClusterMutationFailureCode` values for expected control-plane rejection. Add reports publication only (not readiness); Replace separates pre-publication failure from committed publication plus old-child cleanup; Remove preserves cleanup outcome while adding structured `NotFound`/`Busy`/`LifecycleClosed`. Programmer/configuration errors, cancellation, and unexpected failures remain exceptions.
 - Running multi-cluster `AddClusterAsync` now commits after local child runtime startup and snapshot revalidation instead of waiting for remote readiness; unavailable added clusters publish as NotReady/Reconnecting and converge under their own connectivity supervisor, while Replace remains ready-before-swap.
 - Server lifetime now uses `StartAsync / WaitForShutdownAsync / StopAsync` as its single public lifecycle model; public `RunAsync` is removed, the Server owns and observes its accept/background runtime, and Generic Host no longer maintains a separate Server run-loop task or lifetime CTS.
 - Compression policy is now algorithm-neutral: `SharpLink.Runtime` ships no concrete compressor, algorithm-specific framing, or checksum machinery. Negotiation, adaptive raw/compressed selection, bounds, flow-control accounting, and call/stream failure isolation remain in Core.

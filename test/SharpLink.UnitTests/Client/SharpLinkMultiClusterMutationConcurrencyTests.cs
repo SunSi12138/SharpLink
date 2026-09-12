@@ -16,14 +16,17 @@ public sealed class SharpLinkMultiClusterMutationConcurrencyTests : SharpLinkMul
 
         var connecting = client.ConnectAsync().AsTask();
         await blocked.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
+        var result = await AddClusterWithFixedDiscoveryAsync(client,
             "plugins",
             child => child.UseTransport(rejectedTransport),
-            slot => slot.AllowDynamicContracts = true).AsTask());
+            slot => slot.AllowDynamicContracts = true);
 
-        Ensure(failure is InvalidOperationException exception &&
-               exception.Message.Contains("connecting", StringComparison.OrdinalIgnoreCase),
-            "runtime slot mutation must be rejected while the coordinator is Connecting");
+        Ensure(result is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.Busy
+        },
+            "runtime slot mutation must report Busy while the legacy coordinator is Connecting");
         Ensure(rejectedTransport.DisposeCount == 1,
             "Connecting rejection must release the unbuilt candidate resources");
         await client.StopAsync();
@@ -48,14 +51,17 @@ public sealed class SharpLinkMultiClusterMutationConcurrencyTests : SharpLinkMul
             "candidate",
             child => child.UseTransport(winnerTransport),
             slot => slot.AllowDynamicContracts = true);
-        var loserFailure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
+        var loserResult = await AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(loserTransport),
-            slot => slot.AllowDynamicContracts = true).AsTask());
+            slot => slot.AllowDynamicContracts = true);
 
-        Ensure(loserFailure is InvalidOperationException exception &&
-               exception.Message.Contains("already configured", StringComparison.Ordinal),
-            "the losing add must observe the committed duplicate key");
+        Ensure(loserResult is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.AlreadyExists
+        },
+            "the losing add must observe the committed duplicate key as a structured rejection");
         Ensure(winnerTransport.ConnectCount >= 1 && winnerTransport.DisposeCount == 0,
             "the published winner runtime must remain coordinator-owned while connectivity proceeds independently");
         Ensure(loserTransport.ConnectCount == 0 && loserTransport.DisposeCount == 1,
@@ -131,8 +137,10 @@ public sealed class SharpLinkMultiClusterMutationConcurrencyTests : SharpLinkMul
             child => child.UseTransport(candidateTransport),
             slot => slot.AllowDynamicContracts = true).AsTask();
         await candidateTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
-        await add.WaitAsync(RaceCoordinationTimeout);
+        var addResult = await add.WaitAsync(RaceCoordinationTimeout);
 
+        Ensure(addResult.Succeeded,
+            "remote NotReady must not turn a locally committed runtime Add into a failure");
         Ensure(client.GetClusterReadiness("candidate") == SharpLinkReadinessState.NotReady,
             "Running Add must publish after local Start without waiting for remote readiness");
         Ensure(client.Readiness == SharpLinkReadinessState.Degraded,
@@ -158,14 +166,17 @@ public sealed class SharpLinkMultiClusterMutationConcurrencyTests : SharpLinkMul
             .GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(client, (int)terminalState);
 
-        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
+        var result = await AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(rejectedTransport),
-            slot => slot.AllowDynamicContracts = true).AsTask());
+            slot => slot.AllowDynamicContracts = true);
 
-        Ensure(failure is InvalidOperationException exception &&
-               exception.Message.Contains(terminalState.ToString(), StringComparison.Ordinal),
-            "terminal coordinator states must reject runtime slot mutations explicitly");
+        Ensure(result is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.LifecycleClosed
+        },
+            "terminal coordinator states must return a stable lifecycle-closed rejection");
         Ensure(rejectedTransport.DisposeCount == 1,
             "a candidate builder rejected by a terminal state must release its resources");
     }

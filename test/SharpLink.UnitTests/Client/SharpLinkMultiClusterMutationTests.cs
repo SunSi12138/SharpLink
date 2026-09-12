@@ -149,21 +149,26 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
     {
         var oldTransport = new ControlledMutationTransportFactory();
         var failingCandidate = new ControlledMutationTransportFactory(
-            connectFailure: new InvalidOperationException("controlled replacement connect failure"));
+            connectFailure: new System.IO.IOException("controlled replacement connect failure"));
         await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
         var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
 
-        var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
+        var result = await client.ReplaceClusterAsync(
             "orders",
             child => child.UseTransport(failingCandidate),
-            TimeSpan.FromSeconds(2)).AsTask());
+            TimeSpan.FromSeconds(2));
         var proxyAfterFailure = (OrdersProxy)client.Get<IOrdersContract>();
 
-        Ensure(failure is InvalidOperationException { Message: "controlled replacement connect failure" },
-            "the original candidate connect failure must reach the caller");
+        Ensure(result is
+        {
+            Succeeded: false,
+            Published: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.CandidateUnavailable
+        },
+            "candidate unavailability must be a structured pre-publication replacement rejection");
         Ensure(ReferenceEquals(oldProxy.Channel, proxyAfterFailure.Channel),
             "failed replacement must leave the old route and child published");
         Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Ready,
@@ -206,12 +211,15 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
                 slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
-            "orders", child => child.UseTransport(rejectedTransport)).AsTask());
+        var result = await AddClusterWithFixedDiscoveryAsync(client,
+            "orders", child => child.UseTransport(rejectedTransport));
 
-        Ensure(failure is InvalidOperationException exception &&
-               exception.Message.Contains("MaxClusters", StringComparison.Ordinal),
-            "runtime add must enforce the configured slot-count limit");
+        Ensure(result is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.CapacityExceeded
+        },
+            "runtime add must report the configured slot-count limit as a structured capacity rejection");
         Ensure(rejectedTransport.DisposeCount == 1,
             "a builder rejected before candidate construction must release its transport");
         Ensure(client.GetClusterState("plugins") == SharpLinkConnectionState.Created,
@@ -233,12 +241,15 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
             .Build();
         await client.ConnectAsync();
 
-        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
-            "orders", child => child.UseTransport(rejectedTransport)).AsTask());
+        var result = await AddClusterWithFixedDiscoveryAsync(client,
+            "orders", child => child.UseTransport(rejectedTransport));
 
-        Ensure(failure is InvalidOperationException exception &&
-               exception.Message.Contains("MaxTotalConfiguredConnections", StringComparison.Ordinal),
-            "runtime add must enforce the published steady-state connection budget");
+        Ensure(result is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.CapacityExceeded
+        },
+            "runtime add must report the published steady-state connection budget as a structured rejection");
         Ensure(rejectedTransport.DisposeCount == 1,
             "a built candidate rejected by the budget check must be stopped and disposed");
         Ensure(rejectedTransport.ConnectCount == 0,
@@ -313,17 +324,20 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
         var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
         await client.ConnectAsync();
 
-        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(
+        var result = await AddClusterWithFixedDiscoveryAsync(
             client,
             "conflict",
             child => child.UseTransport(rejectedTransport),
             manifests: [Manifest.Instance],
-            routes: [conflictingRoute]).AsTask());
+            routes: [conflictingRoute]);
         var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
 
-        Ensure(failure is InvalidOperationException exception &&
-               exception.Message.Contains("already routed", StringComparison.Ordinal),
-            "runtime route conflict must reject the candidate before publication");
+        Ensure(result is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.RouteConflict
+        },
+            "runtime route conflict must be a structured pre-publication rejection");
         Ensure(rejectedTransport.DisposeCount == 1,
             "route-conflicting candidate must be stopped and disposed");
         Ensure(rejectedTransport.ConnectCount == 0,
@@ -375,14 +389,18 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
             .SetValue(client, (int)SharpLinkMultiClusterState.Ready);
         var rejectedTransport = new ControlledMutationTransportFactory();
 
-        var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
+        var result = await client.ReplaceClusterAsync(
             "heavy",
             child => child.DisableRequestTimeout().UseTransport(rejectedTransport),
-            TimeSpan.Zero).AsTask());
+            TimeSpan.Zero);
 
-        Ensure(failure is InvalidOperationException exception &&
-               exception.Message.Contains("transition", StringComparison.OrdinalIgnoreCase),
-            "replacement must reject a physical old/new overlap above twice the steady budget");
+        Ensure(result is
+        {
+            Succeeded: false,
+            Published: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.CapacityExceeded
+        },
+            "replacement must report a physical old/new overlap above twice the steady budget as capacity rejection");
         Ensure(rejectedTransport.DisposeCount == 1,
             "transition-budget rejection must dispose the replacement candidate");
         Ensure(rejectedTransport.ConnectCount == 0,
@@ -407,13 +425,16 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
         await AddClusterWithFixedDiscoveryAsync(client, "orders", child => child.UseTransport(originalTransport));
         var originalProxy = (OrdersProxy)client.Get<IOrdersContract>();
 
-        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
-            "orders", child => child.UseTransport(duplicateTransport)).AsTask());
+        var result = await AddClusterWithFixedDiscoveryAsync(client,
+            "orders", child => child.UseTransport(duplicateTransport));
         var proxyAfterFailure = (OrdersProxy)client.Get<IOrdersContract>();
 
-        Ensure(failure is InvalidOperationException exception &&
-               exception.Message.Contains("already configured", StringComparison.Ordinal),
-            "a duplicate runtime key must be rejected deterministically");
+        Ensure(result is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.AlreadyExists
+        },
+            "a duplicate runtime key must return a deterministic structured rejection");
         Ensure(duplicateTransport.DisposeCount == 1,
             "the duplicate operation must release its unbuilt transport");
         Ensure(ReferenceEquals(originalProxy.Channel, proxyAfterFailure.Channel),
