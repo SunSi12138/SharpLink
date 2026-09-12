@@ -428,10 +428,9 @@ internal sealed partial class RpcSession
             long batchStartTimestamp,
             int bytesAccumulated)
         {
-            // Queue publication and policy publication share one wake authority. A policy
-            // generation change is the only wake that is consumed internally: it restarts the
-            // decision from the original batch start. An ordinary data wake keeps the static
-            // pump's established behavior and returns to the outer control loop immediately.
+            // Queue publication and policy publication share one wake authority. Every wake
+            // rechecks the queue, policy, stop state, and original batch deadline: a producer
+            // may signal only after the pump has already consumed its published frame.
             while (true)
             {
                 if (HasProgressFrames() || HasNormalFrames())
@@ -470,11 +469,10 @@ internal sealed partial class RpcSession
                 if (!ReferenceEquals(policy, _flushPolicyState.Capture()))
                     continue;
 
-                // Preserve the pre-runtime static pump contract: a data wake returns to the outer
-                // loop. If the queue was already drained by the time it is observed, the outer
-                // queue check falls through to the same immediate flush behavior as before #590.
+                // A wake is a request to recheck state, not an independent flush boundary.
+                // Delayed signals for already consumed frames must not flush a timed batch.
                 if (woke)
-                    return true;
+                    continue;
 
                 if (remaining <= MaximumTimerDelay)
                     return false;
