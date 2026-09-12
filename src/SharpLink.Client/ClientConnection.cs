@@ -24,6 +24,7 @@ internal sealed class ClientConnection :
     private int _callAdmissionReservations;
     private int _callAdmissionClosed;
     private int _selectionEligible = 1;
+    private int _fatalFailureObservedForAdmission;
     private int _plannedSessionRefreshRetirement;
     private ClientConnection? _sessionRefreshReplacement;
     private int _disposed;
@@ -71,6 +72,9 @@ internal sealed class ClientConnection :
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
 
+    internal bool HasObservedFatalFailureForAdmission
+        => Volatile.Read(ref _fatalFailureObservedForAdmission) != 0;
+
     internal bool HasPlannedSessionRefreshRetirement
         => Volatile.Read(ref _plannedSessionRefreshRetirement) != 0;
 
@@ -79,7 +83,7 @@ internal sealed class ClientConnection :
         ClientConnection? candidate = this;
         for (var redirects = 0; candidate is not null && redirects < 32; redirects++)
         {
-            if (candidate.TryReserveOwnCallAdmission())
+            if (candidate.TryReserveOwnCallAdmission(notifyTestHook: true))
             {
                 admitted = candidate;
                 return true;
@@ -91,23 +95,35 @@ internal sealed class ClientConnection :
         return false;
     }
 
-    private bool TryReserveOwnCallAdmission()
+    internal bool TryReserveSessionRefreshCommit()
     {
-        if (Volatile.Read(ref _callAdmissionClosed) != 0 ||
+        _client.NotifyBeforeSessionRefreshEligibilityCommitForTest(this);
+        return TryReserveOwnCallAdmission(notifyTestHook: false);
+    }
+
+    internal void ObserveFatalFailureForAdmission()
+        => Volatile.Write(ref _fatalFailureObservedForAdmission, 1);
+
+    private bool TryReserveOwnCallAdmission(bool notifyTestHook)
+    {
+        if (Volatile.Read(ref _fatalFailureObservedForAdmission) != 0 ||
+            Volatile.Read(ref _callAdmissionClosed) != 0 ||
             State != ClientConnectionState.Ready || !Session.CanAcceptCalls)
         {
             return false;
         }
 
         Interlocked.Increment(ref _callAdmissionReservations);
-        if (Volatile.Read(ref _callAdmissionClosed) != 0 ||
+        if (Volatile.Read(ref _fatalFailureObservedForAdmission) != 0 ||
+            Volatile.Read(ref _callAdmissionClosed) != 0 ||
             State != ClientConnectionState.Ready || !Session.CanAcceptCalls)
         {
             ReleaseCallAdmissionReservation();
             return false;
         }
 
-        _client.NotifyCallAdmissionReservedForTest(this);
+        if (notifyTestHook)
+            _client.NotifyCallAdmissionReservedForTest(this);
         return true;
     }
 
@@ -528,7 +544,7 @@ internal sealed partial class SharpLinkClient
         => _logger.LogError(exception, "SharpLink connection cancellation callback failed during teardown.");
 
     internal void ReportProducerCancellationCallbackFailure(Exception exception)
-        => _logger.LogError(exception, "SharpLink client-stream producer cancellation callback failed.");
+        => _logger.LogError(exception, "SharpLink client-stream producer cancellation callback failed during teardown.");
 }
 
 internal struct LateResponseLogLimiter

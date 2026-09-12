@@ -187,6 +187,7 @@ internal sealed partial class SharpLinkClient
             RpcSession? session = null;
             ITransportConnection? transport = null;
             ClientConnection? replacement = null;
+            var replacementCommitReserved = false;
             var failureStage = SharpLinkConnectionFailureStage.Dial;
             try
             {
@@ -224,10 +225,14 @@ internal sealed partial class SharpLinkClient
                     endpoint.Configuration.Endpoint.Id);
                 var publishedReplacement = replacement;
                 var readySession = publishedReplacement.Session;
-                readySession.OnDisconnected += exception => HandleDisconnected(
-                    endpoint,
-                    publishedReplacement,
-                    exception ?? CreateConnectionClosedException("Transport closed."));
+                readySession.OnDisconnected += exception =>
+                {
+                    publishedReplacement.ObserveFatalFailureForAdmission();
+                    HandleDisconnected(
+                        endpoint,
+                        publishedReplacement,
+                        exception ?? CreateConnectionClosedException("Transport closed."));
+                };
 
                 var published = false;
                 var sourceGone = false;
@@ -263,12 +268,29 @@ internal sealed partial class SharpLinkClient
                             _client.RunProcessRequestLoopAsync(publishedReplacement, sessionCts.Token),
                             "StaticClusterProcessRequestLoop");
 
-                        source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
-                        PublishReadySnapshotLocked();
-                        endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
-                        Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
-                        published = true;
+                        if (!endpoint.Connections.Contains(publishedReplacement) ||
+                            !publishedReplacement.CanAcceptCalls ||
+                            !publishedReplacement.TryReserveSessionRefreshCommit())
+                        {
+                            endpoint.Connections.Remove(publishedReplacement);
+                            retryForCapacity = true;
+                        }
+                        else
+                        {
+                            replacementCommitReserved = true;
+                            source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
+                            PublishReadySnapshotLocked();
+                            endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
+                            Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
+                            published = true;
+                        }
                     }
+                }
+
+                if (replacementCommitReserved)
+                {
+                    publishedReplacement.ReleaseCallAdmissionReservation();
+                    replacementCommitReserved = false;
                 }
 
                 if (!published)
@@ -287,6 +309,8 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
+                if (replacementCommitReserved && replacement is not null)
+                    replacement.ReleaseCallAdmissionReservation();
                 if (exception is not OperationCanceledException ||
                     (!cancellationToken.IsCancellationRequested && !_client._shutdownCts.IsCancellationRequested))
                 {
