@@ -1,41 +1,378 @@
 namespace SharpLink.Abstractions;
 
-/// <summary>Owns SharpLink client connections and generated contract proxies.</summary>
-public interface ISharpLinkClient : IAsyncDisposable
+/// <summary>Owns the SharpLink client runtime, remote connections, and generated contract proxies.</summary>
+public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
 {
-    /// <summary>Gets the current atomic client lifecycle state.</summary>
+    /// <summary>
+    /// Gets the legacy connection-oriented state projection.
+    /// Use <see cref="LifecycleState"/>, <see cref="Readiness"/>, and <see cref="ClusterState"/>
+    /// when lifecycle and remote availability must be distinguished.
+    /// </summary>
     SharpLinkConnectionState State { get; }
 
-    /// <summary>Atomically registers the source-generated artifacts owned by an already loaded assembly.</summary>
-    /// <param name="assembly">The assembly containing a generated SharpLink manifest.</param>
-    /// <returns>A non-throwing registration result with structured diagnostics after rejection.</returns>
-    SharpLinkAssemblyRegistrationResult RegisterAssembly(System.Reflection.Assembly assembly);
+    /// <summary>Gets the lifecycle of the local client runtime.</summary>
+    /// <remarks>Legacy custom implementations receive a projection of <see cref="State"/> by default.</remarks>
+    SharpLinkClientLifecycleState LifecycleState => State switch
+    {
+        SharpLinkConnectionState.Created => SharpLinkClientLifecycleState.Created,
+        SharpLinkConnectionState.Connecting => SharpLinkClientLifecycleState.Starting,
+        SharpLinkConnectionState.Ready => SharpLinkClientLifecycleState.Running,
+        SharpLinkConnectionState.Reconnecting => SharpLinkClientLifecycleState.Running,
+        SharpLinkConnectionState.Draining => SharpLinkClientLifecycleState.Draining,
+        SharpLinkConnectionState.Stopped => SharpLinkClientLifecycleState.Stopped,
+        SharpLinkConnectionState.Faulted => SharpLinkClientLifecycleState.Faulted,
+        _ => SharpLinkClientLifecycleState.Faulted
+    };
 
-    /// <summary>Drains and unregisters one previously registered assembly.</summary>
-    /// <param name="assembly">The exact Assembly object used during registration.</param>
-    /// <param name="gracefulTimeout">Maximum time to wait before canceling calls owned by the module.</param>
-    /// <param name="cancellationToken">Cancels only this caller's wait; draining continues.</param>
-    ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
-        System.Reflection.Assembly assembly,
-        TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken = default);
+    /// <summary>Gets current remote-call readiness independently of the local lifecycle.</summary>
+    SharpLinkReadinessState Readiness => State == SharpLinkConnectionState.Ready
+        ? SharpLinkReadinessState.Ready
+        : SharpLinkReadinessState.NotReady;
 
-    /// <summary>Prepares a generated assembly and atomically replaces one runtime registration before draining it.</summary>
-    /// <param name="oldAssembly">The exact Assembly object used for the running registration.</param>
-    /// <param name="newAssembly">The assembly whose validated generated artifacts replace the old routes.</param>
-    /// <param name="gracefulTimeout">Maximum time to wait before canceling calls owned by the old registration.</param>
-    /// <param name="cancellationToken">Cancels only this caller's wait; publication, draining, and cleanup continue.</param>
-    /// <returns>The transactional publication result and the bounded old-registration drain state.</returns>
-    ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
-        System.Reflection.Assembly oldAssembly,
-        System.Reflection.Assembly newAssembly,
-        TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken = default);
+    /// <summary>Gets current connectivity state of this client's configured cluster.</summary>
+    SharpLinkClusterState ClusterState => State switch
+    {
+        SharpLinkConnectionState.Created => SharpLinkClusterState.Inactive,
+        SharpLinkConnectionState.Connecting => SharpLinkClusterState.Connecting,
+        SharpLinkConnectionState.Ready => SharpLinkClusterState.Ready,
+        SharpLinkConnectionState.Draining => SharpLinkClusterState.Draining,
+        SharpLinkConnectionState.Reconnecting => SharpLinkClusterState.Reconnecting,
+        SharpLinkConnectionState.Stopped => SharpLinkClusterState.Stopped,
+        SharpLinkConnectionState.Faulted => SharpLinkClusterState.Unavailable,
+        _ => SharpLinkClusterState.Unavailable
+    };
 
-    /// <summary>Connects and completes only after the RPC handshake succeeds.</summary>
-    /// <param name="cancellationToken">Cancels the shared connection attempt.</param>
+    /// <summary>
+    /// Gets an immutable point-in-time observation of the active endpoint topology without waiting,
+    /// locking, or traversing endpoint collections.
+    /// </summary>
+    /// <returns>The latest published topology readiness snapshot.</returns>
+    /// <exception cref="NotSupportedException">
+    /// This implementation does not expose endpoint readiness details.
+    /// </exception>
+    SharpLinkClientReadinessSnapshot GetReadinessSnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose endpoint readiness details.");
+
+    /// <summary>
+    /// Starts or joins the topology's existing connectivity lifecycle when necessary, then waits
+    /// until a point-in-time Ready-state observation contains at least the requested number of ready
+    /// endpoints. A successful result is not a lease or a guarantee that topology readiness will be
+    /// retained after the method returns. The wait does not raise the configured convergence target.
+    /// </summary>
+    /// <param name="minimumReadyEndpoints">The minimum number of active ready endpoints to observe.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <returns>The snapshot that satisfied the requested threshold.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="minimumReadyEndpoints"/> is less than one or exceeds this topology's configured
+    /// readiness limit.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// This implementation does not support endpoint readiness waits.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was canceled. The Client-owned connectivity lifecycle continues.
+    /// </exception>
+    /// <exception cref="SharpLinkException">
+    /// The joined initial connectivity attempt failed, the observed attempt entered Faulted, or the
+    /// Client began draining or stopped.
+    /// </exception>
+    ValueTask<SharpLinkClientReadinessSnapshot> WaitForReadinessAsync(
+        int minimumReadyEndpoints,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(minimumReadyEndpoints, 1);
+        return ValueTask.FromException<SharpLinkClientReadinessSnapshot>(
+            new NotSupportedException(
+                "This ISharpLinkClient implementation does not support endpoint readiness waits."));
+    }
+
+    /// <summary>
+    /// Atomically replaces the client interceptor pipeline for logical RPCs that start after this call returns.
+    /// Calls already in progress retain the interceptor generation captured at their invocation boundary.
+    /// </summary>
+    /// <param name="interceptors">The complete interceptor pipeline in execution order. The sequence is copied before publication.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="interceptors"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="interceptors"/> contains a null element.</exception>
+    /// <exception cref="InvalidOperationException">The client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime interceptor replacement.</exception>
+    void ReplaceInterceptors(IEnumerable<ISharpLinkClientInterceptor> interceptors)
+    {
+        ArgumentNullException.ThrowIfNull(interceptors);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime interceptor replacement.");
+    }
+
+    /// <summary>Gets the currently published immutable reconnect policy.</summary>
+    SharpLinkReconnectPolicy GetReconnectPolicy()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime reconnect policy state.");
+
+    /// <summary>
+    /// Atomically publishes a reconnect policy for future reconnect waits. An armed reconnect delay
+    /// is explicitly woken and rescheduled against the new generation; a connection attempt that has
+    /// already started is allowed to finish under its captured lifecycle.
+    /// </summary>
+    /// <param name="policy">The complete immutable reconnect timing policy.</param>
+    void UpdateReconnectPolicy(SharpLinkReconnectPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime reconnect policy updates.");
+    }
+
+    /// <summary>Gets the currently published heartbeat scheduling and liveness configuration.</summary>
+    SharpLinkHeartbeatConfigurationSnapshot GetHeartbeatConfigurationSnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime heartbeat configuration state.");
+
+    /// <summary>
+    /// Atomically publishes a complete heartbeat interval/timeout pair and explicitly wakes active
+    /// heartbeat loops so they can reschedule against the new generation without reconnecting.
+    /// </summary>
+    /// <param name="interval">The positive heartbeat scheduling interval.</param>
+    /// <param name="timeout">The liveness timeout, which must be greater than <paramref name="interval"/>.</param>
+    void UpdateHeartbeat(TimeSpan interval, TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        if (timeout <= interval)
+            throw new ArgumentException("Heartbeat timeout must be greater than interval.");
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime heartbeat configuration updates.");
+    }
+
+    /// <summary>
+    /// Atomically updates the heartbeat interval while retaining the current timeout. Active heartbeat
+    /// loops are woken and rescheduled from the last actual Ping scheduling anchor.
+    /// </summary>
+    /// <param name="interval">The positive interval, which must remain smaller than the current timeout.</param>
+    void UpdateHeartbeatInterval(TimeSpan interval)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime heartbeat configuration updates.");
+    }
+
+    /// <summary>
+    /// Atomically updates the heartbeat liveness timeout while retaining the current interval. The
+    /// existing peer-activity timestamp is preserved, so shortening can immediately expire an idle session.
+    /// </summary>
+    /// <param name="timeout">The positive timeout, which must remain greater than the current interval.</param>
+    void UpdateHeartbeatTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime heartbeat configuration updates.");
+    }
+
+    /// <summary>
+    /// Gets the currently published client-wide request-timeout fallback generation.
+    /// Method-level timeout policy and inherited deadlines can still impose a different effective call lifetime.
+    /// </summary>
+    SharpLinkRequestTimeoutPolicySnapshot GetRequestTimeoutPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime request-timeout policy state.");
+
+    /// <summary>
+    /// Atomically publishes a custom client-wide request-timeout fallback for future logical RPCs.
+    /// A logical RPC that already captured an earlier generation keeps its frozen deadline across
+    /// interceptor suspension, retry attempts, and streaming lifetime.
+    /// </summary>
+    /// <param name="timeout">The positive timeout to publish.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="timeout"/> is not positive.</exception>
+    /// <exception cref="InvalidOperationException">The client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime request-timeout updates.</exception>
+    void UpdateRequestTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime request-timeout updates.");
+    }
+
+    /// <summary>
+    /// Atomically disables the client-wide request-timeout fallback for future logical RPCs.
+    /// Calls that already captured a timeout generation keep their existing deadline.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime request-timeout updates.</exception>
+    void DisableRequestTimeout()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime request-timeout updates.");
+
+    /// <summary>Gets the currently published retry-policy generation.</summary>
+    SharpLinkRetryPolicySnapshot GetRetryPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime retry policy state.");
+
+    /// <summary>
+    /// Atomically publishes a built-in retry-policy generation for future logical RPCs.
+    /// The supplied values are copied and validated before publication.
+    /// </summary>
+    /// <param name="options">The complete bounded built-in retry settings.</param>
+    void UpdateRetryPolicy(ISharpLinkRetryOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+    }
+
+    /// <summary>
+    /// Atomically publishes a custom retry-policy generation for future logical RPCs using the same
+    /// default attempt bounds as <c>UseRetry(ISharpLinkRetryPolicy)</c>.
+    /// </summary>
+    /// <param name="policy">The application-owned synchronous retry decision policy.</param>
+    void UpdateRetryPolicy(ISharpLinkRetryPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+    }
+
+    /// <summary>
+    /// Atomically publishes a custom retry-policy generation and explicit bounded attempt settings
+    /// for future logical RPCs. The options are copied before publication.
+    /// </summary>
+    /// <param name="policy">The application-owned synchronous retry decision policy.</param>
+    /// <param name="limits">The complete bounded attempt settings captured with the custom policy.</param>
+    void UpdateRetryPolicy(ISharpLinkRetryPolicy policy, ISharpLinkRetryOptions limits)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(limits);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+    }
+
+    /// <summary>
+    /// Atomically disables retries for future logical RPCs. Calls already in progress retain their
+    /// captured retry generation through interceptor suspension, backoff and subsequent attempts.
+    /// </summary>
+    void DisableRetry()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime retry policy updates.");
+
+    /// <summary>Gets the currently published endpoint-admission generation and mode.</summary>
+    SharpLinkEndpointAdmissionPolicySnapshot GetEndpointAdmissionPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime endpoint admission policy state.");
+
+    /// <summary>
+    /// Atomically publishes an application-owned endpoint admission policy for future endpoint attempts.
+    /// An attempt that has already been admitted remains permanently paired with the exact policy and
+    /// opaque token that admitted it until its terminal report completes.
+    /// </summary>
+    /// <param name="policy">The application-owned synchronous endpoint admission policy.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="policy"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="policy"/> is the built-in circuit-breaker implementation.</exception>
+    /// <exception cref="InvalidOperationException">The built-in circuit breaker is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime endpoint admission updates.</exception>
+    void UpdateEndpointAdmissionPolicy(ISharpLinkEndpointAdmissionPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime endpoint admission updates.");
+    }
+
+    /// <summary>
+    /// Disables the application-owned endpoint admission policy for future endpoint attempts.
+    /// Already admitted attempts retain their exact policy/token lease through terminal reporting.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The built-in circuit breaker is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime endpoint admission updates.</exception>
+    void DisableEndpointAdmissionPolicy()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime endpoint admission updates.");
+
+    /// <summary>Gets the currently published built-in endpoint circuit-breaker configuration.</summary>
+    SharpLinkCircuitBreakerPolicySnapshot GetCircuitBreakerPolicySnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose runtime circuit-breaker state.");
+
+    /// <summary>
+    /// Enables or atomically replaces the built-in endpoint-generation circuit-breaker settings.
+    /// Ordinary option updates preserve live Closed/Open/HalfOpen state and retained sample history;
+    /// enabling from disabled starts with a fresh Closed breaker.
+    /// </summary>
+    /// <param name="options">The complete circuit-breaker settings copied before publication.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">One or more option values are invalid.</exception>
+    /// <exception cref="InvalidOperationException">Custom endpoint admission is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime circuit-breaker updates.</exception>
+    void UpdateCircuitBreaker(ISharpLinkCircuitBreakerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime circuit-breaker updates.");
+    }
+
+    /// <summary>
+    /// Disables the built-in circuit breaker for future endpoint attempts. Re-enabling later creates
+    /// fresh endpoint-generation breaker state rather than reviving retired Open/HalfOpen history.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Custom endpoint admission is active, or the client is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime circuit-breaker updates.</exception>
+    void DisableCircuitBreaker()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime circuit-breaker updates.");
+
+    /// <summary>
+    /// Atomically replaces the client-local Request compression policy. The next Request or
+    /// client-to-server StreamData frame captures the new policy at its compression decision point.
+    /// </summary>
+    /// <param name="policy">The complete replacement policy.</param>
+    void UpdateRequestCompressionPolicy(SharpLinkCompressionSendPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not support runtime request compression policy updates.");
+    }
+
+    /// <summary>
+    /// Publishes the desired Server-to-Client response compression preference and waits for the
+    /// fixed cohort of currently eligible Ready sessions to converge to at least that generation.
+    /// </summary>
+    /// <param name="allowResponseCompression">Whether response-direction compression is allowed.</param>
+    /// <param name="cancellationToken">Cancels only this caller's convergence wait; the desired state remains published.</param>
+    ValueTask SetResponseCompressionPreferenceAsync(
+        bool allowResponseCompression,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException(new NotSupportedException(
+            "This ISharpLinkClient implementation does not support response compression preference updates."));
+
+    /// <summary>
+    /// Starts locally owned client supervisors and returns without waiting for remote readiness.
+    /// </summary>
+    /// <remarks>
+    /// Built-in SharpLink clients provide non-blocking local startup. Legacy custom implementations fall back to
+    /// <see cref="ConnectAsync(CancellationToken)"/> until they override this member.
+    /// </remarks>
+    /// <param name="cancellationToken">Cancels only this caller's wait for the shared start operation.</param>
+    ValueTask StartAsync(CancellationToken cancellationToken = default)
+        => ConnectAsync(cancellationToken);
+
+    /// <summary>
+    /// Runs or joins the legacy explicit connection attempt and completes after a usable remote connection exists.
+    /// This compatibility API does not define <see cref="LifecycleState"/>.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// Cancels only this caller's wait; the shared client-owned connection attempt continues.
+    /// </param>
     /// <exception cref="SharpLinkException">The transport or handshake failed.</exception>
     ValueTask ConnectAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Waits until this client's configured cluster has a usable remote connection.</summary>
+    /// <param name="cancellationToken">Cancels only this caller's readiness wait.</param>
+    ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        => ConnectAsync(cancellationToken);
+
+    /// <summary>Waits for an independently requested shutdown to finish without initiating shutdown itself.</summary>
+    /// <remarks>Legacy custom implementations must override this member to expose a termination signal while running.</remarks>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+        => State == SharpLinkConnectionState.Stopped
+            ? Task.CompletedTask
+            : Task.FromException(new NotSupportedException(
+                "This custom client does not expose a shutdown completion signal."));
 
     /// <summary>Stops reconnecting, fails pending work, and releases all owned resources.</summary>
     /// <param name="cancellationToken">Cancels only this caller's wait for the shared stop operation.</param>
@@ -50,4 +387,9 @@ public interface ISharpLinkClient : IAsyncDisposable
     /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;
+
+    /// <summary>Creates a generated proxy that attaches one immutable metadata snapshot to every invocation.</summary>
+    /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
+    /// <param name="metadata">Envelope metadata attached without adding a business-contract parameter.</param>
+    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
 }

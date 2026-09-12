@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "release": "2.0.0",
+  "publishedBaseline": {
+    "version": "1.1.1",
+    "commit": "201b1621cc706ee221e10ac20947af5fc62b087e"
+  },
+  "versions": [
+    {
+      "name": "Generated ABI",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
+      "pattern": "const int Api = (\\d+);",
+      "published": 3,
+      "current": 4,
+      "policy": "increment",
+      "reason": "One binary compatibility boundary since 1.1.1/API3."
+    },
+    {
+      "name": "Generator emitted ABI",
+      "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
+      "pattern": "public int ApiVersion => (\\d+);",
+      "published": 3,
+      "current": 4,
+      "policy": "increment",
+      "reason": "Emitted artifacts and runtime must agree."
+    },
+    {
+      "name": "Protocol major",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
+      "pattern": "const int Protocol = (\\d+);",
+      "published": 2,
+      "current": 2,
+      "policy": "unchanged",
+      "reason": "Protocol v2 frame envelope remains the protocol family."
+    },
+    {
+      "name": "Generator emitted protocol",
+      "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
+      "pattern": "public int ProtocolVersion => (\\d+);",
+      "published": 2,
+      "current": 2,
+      "policy": "unchanged",
+      "reason": "Same protocol family as the runtime."
+    },
+    {
+      "name": "Protocol minor",
+      "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
+      "pattern": "const ushort MinorVersion = (\\d+);",
+      "published": 3,
+      "current": 4,
+      "policy": "increment",
+      "reason": "All 2.0 handshake, TimeBudget, error and control-frame changes share one release boundary."
+    },
+    {
+      "name": "Minimum compatible minor",
+      "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
+      "pattern": "const ushort MinimumCompatibleMinorVersion = (\\d+);",
+      "published": null,
+      "current": 4,
+      "policy": "floor",
+      "reason": "This is a bound on protocol minor, not an independently versioned format."
+    },
+    {
+      "name": "Contract Manifest JSON",
+      "path": "src/SharpLink.Generator/RpcGenerator.ContractManifest.cs",
+      "pattern": "ContractManifestFormatVersion = (\\d+);",
+      "published": 1,
+      "current": 2,
+      "policy": "increment",
+      "reason": "One released manifest-format change."
+    },
+    {
+      "name": "Runtime ABI identity",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
+      "pattern": "AbiIdentity = \"sharplink-2.0-api4-rpcchannel-codec-provider-v(\\d+)\"",
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "First released version; historical development artifact headers are not rewritten."
+    },
+    {
+      "name": "Generator ABI identity",
+      "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
+      "pattern": "GeneratedAbiIdentity = \"sharplink-2.0-api4-rpcchannel-codec-provider-v(\\d+)\"",
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "First released version; historical development artifact headers are not rewritten."
+    },
+    {
+      "name": "Diagnostic snapshot",
+      "path": "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs",
+      "pattern": "CurrentSchemaVersion = (\\d+);",
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "First released version; historical development artifact headers are not rewritten."
+    },
+    {
+      "name": "Support export",
+      "path": "src/SharpLink.Client/SharpLinkClient.SupportSnapshot.cs",
+      "pattern": "SupportSnapshotSchemaVersion = (\\d+);",
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "First released version; historical development artifact headers are not rewritten."
+    },
+    {
+      "name": "Formal performance report",
+      "path": "test/SharpLink.LoadTestBase/Metrics/PerformanceReportCompatibility.cs",
+      "pattern": "CurrentSchemaVersion = (\\d+);",
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "First released version; historical development artifact headers are not rewritten."
+    },
+    {
+      "name": "Padding evidence report",
+      "path": "test/SharpLink.Benchmarks/UnsafeBlitPaddingEvidenceRunner.cs",
+      "pattern": "SchemaVersion: (\\d+),",
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "First released version; historical development artifact headers are not rewritten."
+    },
+    {
+      "name": "Maintainability report",
+      "path": "eng/SharpLink.Maintainability/Program.cs",
+      "pattern": "SchemaVersion: (\\d+),",
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "First released version; historical development artifact headers are not rewritten."
+    },
+    {
+      "name": "SharedMemoryMapping",
+      "path": "src/SharpLink.Runtime/Transport/SharedMemoryMapping.cs",
+      "pattern": "private const int Version = (\\d+);",
+      "published": 1,
+      "current": 1,
+      "policy": "unchanged",
+      "reason": "The existing transport format has no release-format change."
+    },
+    {
+      "name": "SharedMemoryTransport",
+      "path": "src/SharpLink.Runtime/Transport/SharedMemoryTransport.cs",
+      "pattern": "private const int Version = (\\d+);",
+      "published": 3,
+      "current": 3,
+      "policy": "unchanged",
+      "reason": "The existing transport format has no release-format change."
+    }
+  ]
+}

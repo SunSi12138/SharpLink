@@ -1,12 +1,12 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Hosting;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Reflection;
 using SharpLink.Hosting;
 using SharpLink.Server;
+using SharpLink.UnitTests.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace SharpLink.UnitTests.Hosting;
@@ -14,10 +14,10 @@ namespace SharpLink.UnitTests.Hosting;
 public class SharpLinkServerHostedServiceTests
 {
     [Test]
-    public async Task StopAsyncShouldCancelRunLoopDisposeServerAndBeIdempotent()
+    public async Task StopAsyncShouldDisposeServerAndBeIdempotent()
     {
         var transport = new BlockingTransport();
-        var builder = SharpLinkServerBuilder.Create()
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var readiness = new SharpLinkServerReadiness();
@@ -39,14 +39,14 @@ public class SharpLinkServerHostedServiceTests
         Ensure(readiness.Status == SharpLinkHealthStatus.Unhealthy,
             "readiness should be unhealthy after hosted service stops");
         Ensure(!lifetime.ApplicationStopping.IsCancellationRequested,
-            "normal hosted stop must not be reported as a run failure");
+            "normal hosted stop must not be reported as a terminal failure");
     }
 
     [Test]
     public async Task ConcurrentStopCallersShouldAwaitTheSameServerCleanup()
     {
         var transport = new DelayedDisposeTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var hosted = new SharpLinkServerHostedService(
             builder,
@@ -66,7 +66,7 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
-    public async Task AsynchronousRunFailureShouldStopTheHost()
+    public async Task AsynchronousRuntimeFailureShouldStopTheHost()
     {
         var transport = new DeferredFailureTransport();
         var lifetime = new TestHostApplicationLifetime();
@@ -99,12 +99,12 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
-    public async Task ExpectedRunFailureDuringHostedStopShouldNotStopTheHost()
+    public async Task ExpectedTerminalFailureDuringHostedStopShouldNotStopTheHost()
     {
         var lifetime = new TestHostApplicationLifetime();
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var hosted = new SharpLinkServerHostedService(
-            SharpLinkServerBuilder.Create().UseTransport(new FailingDisposeTransport()),
+            SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new FailingDisposeTransport()),
             NullLoggerFactory.Instance,
             provider,
             new SharpLinkServerReadiness(),
@@ -117,7 +117,7 @@ public class SharpLinkServerHostedServiceTests
         Ensure(stopFailure is IOException { Message: "listener cleanup failed" },
             "Hosted Stop must preserve the expected listener cleanup failure");
         Ensure(!lifetime.ApplicationStopping.IsCancellationRequested,
-            "an expected Run fault after hosted Stop begins must not stop the owning Host");
+            "an expected terminal fault after hosted Stop begins must not stop the owning Host");
     }
 
     [Test]
@@ -125,7 +125,7 @@ public class SharpLinkServerHostedServiceTests
     {
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var duplicateHosted = new SharpLinkServerHostedService(
-            SharpLinkServerBuilder.Create().UseTransport(new BlockingTransport()),
+            SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new BlockingTransport()),
             NullLoggerFactory.Instance,
             provider,
             new SharpLinkServerReadiness(),
@@ -145,7 +145,7 @@ public class SharpLinkServerHostedServiceTests
 
         var readiness = new SharpLinkServerReadiness();
         var hosted = new SharpLinkServerHostedService(
-            SharpLinkServerBuilder.Create().UseTransport(new BlockingTransport()),
+            SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new BlockingTransport()),
             NullLoggerFactory.Instance,
             provider,
             readiness,
@@ -160,7 +160,7 @@ public class SharpLinkServerHostedServiceTests
             await server.DisposeAsync();
 
         Ensure(duplicateFailure is InvalidOperationException
-            { Message: "The SharpLink server host has already started." },
+        { Message: "The SharpLink server host has already started." },
             "a duplicate hosted Start must be rejected before replacing the owned server");
         Ensure(startFailure is InvalidOperationException,
             "a completed hosted Stop must be a terminal barrier to later Start");
@@ -169,10 +169,10 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
-    public async Task UnexpectedSuccessfulRunCompletionShouldStopTheHost()
+    public async Task UnexpectedSuccessfulServerTerminationShouldStopTheHost()
     {
         var transport = new BlockingTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var lifetime = new TestHostApplicationLifetime();
         var hosted = new SharpLinkServerHostedService(
@@ -187,20 +187,16 @@ public class SharpLinkServerHostedServiceTests
             .GetField("_server", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(hosted) ?? throw new Exception("hosted server was not published"));
         await server.StopAsync(TimeSpan.Zero);
-        var completed = await Task.WhenAny(
-            lifetime.StopRequested.Task,
-            Task.Delay(TimeSpan.FromMilliseconds(500)));
+        await lifetime.StopRequested.Task;
 
         await hosted.StopAsync(CancellationToken.None);
-        Ensure(ReferenceEquals(completed, lifetime.StopRequested.Task),
-            "an unexpected successful Server run-loop exit must stop the owning Host");
     }
 
     [Test]
     public async Task SuccessfulStartupShouldNotRetainItsCancellationToken()
     {
         var transport = new BlockingTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var readiness = new SharpLinkServerReadiness();
         var hosted = new SharpLinkServerHostedService(
@@ -220,7 +216,7 @@ public class SharpLinkServerHostedServiceTests
         try
         {
             Ensure(!stoppedByStartupToken,
-                "the transient StartAsync token must not own the long-lived Run loop");
+                "the transient StartAsync token must not own the long-lived Server runtime");
             Ensure(readiness.Status == SharpLinkHealthStatus.Ready,
                 "startup-token cancellation after publication must not change readiness");
         }
@@ -233,19 +229,20 @@ public class SharpLinkServerHostedServiceTests
     [Test]
     public async Task ServerStopShouldSurfaceImmediateListenerCleanupFailure()
     {
-        var server = SharpLinkServerBuilder.Create()
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new FailingDisposeTransport())
             .Build();
-        var runTask = server.RunAsync().AsTask();
+        await server.StartAsync();
+        var terminal = server.WaitForShutdownAsync();
 
         var stopFailure = await CaptureFailureAsync(
             server.StopAsync(TimeSpan.Zero).AsTask());
-        var runFailure = await CaptureFailureAsync(runTask);
+        var terminalFailure = await CaptureFailureAsync(terminal);
 
         Ensure(stopFailure is IOException { Message: "listener cleanup failed" },
             "StopAsync must surface the owned listener cleanup failure");
-        Ensure(runFailure is IOException { Message: "listener cleanup failed" },
-            "the shared Run operation must observe the same failed stop");
+        Ensure(terminalFailure is IOException { Message: "listener cleanup failed" },
+            "WaitForShutdownAsync must observe the same failed stop");
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
             "a cleanup failure must leave the server unhealthy");
     }
@@ -254,7 +251,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task HostedStopShouldPreserveCancellationAndListenerCleanupFailure()
     {
         var transport = new DelayedFailingDisposeTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var hosted = new SharpLinkServerHostedService(
             builder,
@@ -266,62 +263,140 @@ public class SharpLinkServerHostedServiceTests
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
 
-        var stopTask = hosted.StopAsync(cancelled.Token);
+        var cancelledWait = hosted.StopAsync(cancelled.Token);
         await transport.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        transport.ReleaseDispose();
-        var failure = await CaptureFailureAsync(stopTask);
+        var cancellationFailure = await CaptureFailureAsync(cancelledWait);
+        Ensure(cancellationFailure is OperationCanceledException,
+            "Hosted Stop caller cancellation must cancel only that caller's wait");
 
-        var failures = failure is AggregateException aggregate
-            ? aggregate.Flatten().InnerExceptions
-            : failure is null ? [] : [failure];
-        Ensure(failures.Any(static exception => exception is OperationCanceledException),
-            "Hosted Stop must preserve caller cancellation");
-        Ensure(failures.Any(static exception => exception is IOException { Message: "listener cleanup failed" }),
-            "Hosted Stop must preserve later listener cleanup failure");
+        transport.ReleaseDispose();
+        var terminalFailure = await CaptureFailureAsync(hosted.StopAsync(CancellationToken.None));
+        Ensure(terminalFailure is IOException { Message: "listener cleanup failed" },
+            "the shared Hosted Stop must continue and preserve its listener cleanup failure");
     }
 
     [Test]
-    [NotInParallel]
     public async Task ServerStopShouldReturnFaultedWhenFrameworkCleanupExceedsBudget()
     {
+        var provider = new ManualTimeProvider();
         var transport = new DelayedDisposeTransport();
-        var server = SharpLinkServerBuilder.Create()
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .UseTimeProvider(provider)
             .UseTransport(transport)
             .Build();
-        var runTask = server.RunAsync().AsTask();
+        var concrete = (SharpLinkServer)server;
+        await server.StartAsync();
+        var terminal = server.WaitForShutdownAsync();
 
-        var started = Stopwatch.GetTimestamp();
-        await server.StopAsync(TimeSpan.Zero).AsTask().WaitAsync(TimeSpan.FromSeconds(7));
-        var elapsed = Stopwatch.GetElapsedTime(started);
+        var stop = server.StopAsync(TimeSpan.Zero).AsTask();
+        Ensure(transport.DisposeStarted.Task.IsCompleted,
+            "framework cleanup must start before its provider-owned budget is armed");
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!stop.IsCompleted,
+            "framework cleanup must remain pending one provider tick before its budget");
+        Ensure(concrete.DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver is null,
+            "the deferred cleanup observer must not be published before the framework budget expires");
 
-        Ensure(elapsed >= TimeSpan.FromSeconds(4), "cleanup budget must be allowed before faulting");
-        Ensure(elapsed < TimeSpan.FromSeconds(7), "server stop must be bounded by the cleanup budget");
+        provider.Advance(TimeSpan.FromTicks(1));
+        var stopFailure = await CaptureFailureAsync(stop);
+        Ensure(stopFailure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
+            "framework cleanup timeout must fault the shared StopAsync operation");
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
             "framework cleanup timeout must leave the server unhealthy");
+        var deferred = concrete.DeferredTaskSnapshotForDiagnostics;
+        Ensure(deferred.ShutdownCleanupObserver is not null and not TaskStatus.RanToCompletion,
+            "timed-out framework cleanup must remain continuously observed and diagnosable");
+        var shutdownCleanupObserver = concrete.LifecycleForDiagnostics.ShutdownCleanupObserverTaskForDiagnostics
+            ?? throw new Exception("cannot find lifecycle shutdown cleanup observer owner");
 
         transport.ReleaseDispose();
-        await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await shutdownCleanupObserver;
+        Ensure(concrete.DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver ==
+               TaskStatus.RanToCompletion,
+            "framework cleanup observer must complete after the listener owner releases");
+        var terminalFailure = await CaptureFailureAsync(terminal);
+        Ensure(terminalFailure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
+            "framework cleanup timeout must fault terminal shutdown observation");
+        Ensure(provider.ActiveTimerCount == 0,
+            "framework cleanup completion must leave no provider timer behind");
+    }
+
+    [Test]
+    public async Task ServerGracefulActiveCallShouldForceAtProviderEqualityAndObserveDeferredCleanup()
+    {
+        var provider = new ManualTimeProvider();
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .UseTimeProvider(provider)
+            .UseTransport(new BlockingTransport())
+            .Build();
+        var concrete = (SharpLinkServer)server;
+        var lifecycle = concrete.LifecycleForDiagnostics;
+        await server.StartAsync();
+        var terminal = server.WaitForShutdownAsync();
+        var callAdmission = typeof(SharpLinkServer).GetField(
+            "_callAdmission",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(server)
+            ?? throw new Exception("cannot find Server call-admission owner");
+        var activeCalls = typeof(ServerCallAdmission).GetField(
+            "_globalActiveCalls",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find admission active-call counter");
+        var callsDrained = lifecycle.CallsDrainedSignalForTesting;
+        activeCalls.SetValue(callAdmission, 1);
+
+        var stop = server.StopAsync(TimeSpan.FromSeconds(5)).AsTask();
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!stop.IsCompleted && concrete.LastStopDiagnostics is null,
+            "an active call must remain graceful one owner-provider tick before its deadline");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        await stop;
+        Ensure(concrete.LastStopDiagnostics is { GlobalActiveCalls: 1 },
+            "the equality winner must capture the one call forced beyond grace");
+        Ensure(concrete.DeferredTaskSnapshotForDiagnostics.DeferredServiceCleanup is not null and
+               not TaskStatus.RanToCompletion,
+            "forced active-call cleanup must remain continuously observed until the call owner releases");
+        var deferredCleanup = lifecycle.DeferredServiceCleanupTaskForDiagnostics
+            ?? throw new Exception("cannot find lifecycle deferred service cleanup owner");
+
+        activeCalls.SetValue(callAdmission, 0);
+        callsDrained.TrySetResult(true);
+        await deferredCleanup;
+        Ensure(concrete.DeferredTaskSnapshotForDiagnostics.DeferredServiceCleanup ==
+               TaskStatus.RanToCompletion,
+            "deferred service cleanup must complete after the active-call owner releases");
+        await terminal;
+        Ensure(provider.ActiveTimerCount == 0,
+            "graceful force and deferred cleanup completion must leave no provider timer");
     }
 
     [Test]
     public async Task TimerRangeExceedingServerGracefulWaitShouldRemainPending()
     {
-        var method = typeof(SharpLinkServer).GetMethod(
-            "WaitUntilAsync",
-            BindingFlags.Static | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server graceful wait helper");
+        var provider = new ManualTimeProvider();
         var owner = new TaskCompletionSource<bool>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var wait = (Task<bool>)method.Invoke(null, [owner.Task, long.MaxValue])!;
+        var wait = SharpLinkServer.ServerLifecycleCoordinator.WaitUntilWithProviderForDiagnosticsAsync(
+            owner.Task,
+            long.MaxValue,
+            provider);
 
-        await Task.Delay(50);
-        var completedBeforeOwner = wait.IsCompleted;
+        Ensure(provider.ActiveTimerCount == 1,
+            "a timer-range-exceeding graceful wait must own one provider timer");
+        provider.Advance(TimeSpan.FromMilliseconds(int.MaxValue));
+        Ensure(!wait.IsCompleted,
+            "reaching the first maximum timer slice must not exhaust a long graceful deadline");
         owner.TrySetResult(true);
-        var failure = await CaptureFailureAsync(wait);
+        var completed = await wait;
 
-        Ensure(!completedBeforeOwner,
-            "a timer-range-exceeding graceful wait must not fail before its owner completes");
-        Ensure(failure is null, $"long graceful wait failed as {failure?.GetType().Name}");
+        Ensure(completed,
+            "owner completion must finish the long graceful wait successfully");
+        await provider.WaitForTimersDrainedAsync();
+        Ensure(provider.ActiveTimerCount == 0,
+            "owner completion must dispose the provider timer without a real-time wait");
     }
 
     private static void Ensure(bool condition, string message)

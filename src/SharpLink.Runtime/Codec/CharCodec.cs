@@ -11,16 +11,16 @@ internal sealed class CharCodec : IRpcCodec<char>
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public char Deserialize(in ReadOnlySequence<byte> buffer)
     {
         CodecHelpers.EnsureExactSize(buffer, Size);
-        if (buffer.FirstSpan.Length >= Size) 
+        if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<char>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
         }
-        
+
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         return Unsafe.ReadUnaligned<char>(ref MemoryMarshal.GetReference(temp));
@@ -41,7 +41,7 @@ internal sealed class NullableCharCodec : IRpcCodec<char?>
         {
             start = 1; // Tag
             Unsafe.WriteUnaligned(
-                ref Unsafe.Add(ref start, 1), 
+                ref Unsafe.Add(ref start, 1),
                 value.GetValueOrDefault()
             );
         }
@@ -49,11 +49,11 @@ internal sealed class NullableCharCodec : IRpcCodec<char?>
         {
             start = 0; // Tag
             Unsafe.WriteUnaligned(
-                ref Unsafe.Add(ref start, 1), 
+                ref Unsafe.Add(ref start, 1),
                 (ushort)0
             );
         }
-        
+
         writer.Advance(Size);
     }
 
@@ -72,7 +72,7 @@ internal sealed class NullableCharCodec : IRpcCodec<char?>
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
-        
+
         return Unsafe.ReadUnaligned<char>(ref Unsafe.Add(ref tempStart, 1));
     }
 }

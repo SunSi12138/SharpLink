@@ -27,7 +27,7 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
             buffer.CopyTo(temp);
             dayNumber = Unsafe.ReadUnaligned<int>(ref MemoryMarshal.GetReference(temp));
         }
-        
+
         return CodecHelpers.CreateDateOnly(dayNumber);
     }
 }
@@ -63,7 +63,7 @@ internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
             if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
-            
+
             var dayNumber = Unsafe.ReadUnaligned<int>(ref Unsafe.Add(ref start, 1));
             return CodecHelpers.CreateDateOnly(dayNumber);
         }
@@ -71,9 +71,9 @@ internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        
+
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
-        
+
         var tempDayNumber = Unsafe.ReadUnaligned<int>(ref Unsafe.Add(ref tempStart, 1));
         return CodecHelpers.CreateDateOnly(tempDayNumber);
     }

@@ -14,13 +14,13 @@ internal sealed partial class SharpLinkClient
 
     private static IDisposable? BeginRequestLogScope(ILogger logger, long requestId) => SRequestScope(logger, requestId);
 
-    [Conditional(CompileSymbols.Debug)]
+    [Conditional("DEBUG")]
     private static void DebugLogServerHeartbeatReceived(ILogger logger) => LogServerHeartbeatReceived(logger);
 
-    [Conditional(CompileSymbols.Debug)]
+    [Conditional("DEBUG")]
     private static void DebugLogServerCancelIgnored(ILogger logger) => LogServerCancelIgnored(logger);
-    
-    
+
+
 
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatReceived, Level = LogLevel.Debug, Message = "Receive heartbeat from server.")]
     private static partial void LogServerHeartbeatReceived(ILogger logger);

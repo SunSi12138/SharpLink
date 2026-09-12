@@ -47,6 +47,17 @@ TCP TLS 使用 .NET `SslClientAuthenticationOptions`/`SslServerAuthenticationOpt
 
 TLS handshake timeout 与 RPC handshake timeout 独立。前者保护证书/加密协商，后者保护 SharpLink capability/authentication 协商。
 
+`UseTcp(port)` 默认只绑定 loopback。需要监听其他网卡时，先显式调用
+`ListenOnAnyAddress()` 或 `ListenOn(IPAddress)`；非 loopback 的明文 TCP 会被 `Build()` 拒绝，
+必须通过 `AllowUnencrypted()` 与 `AllowUnauthenticated()` 分别 opt-in。不要把这类扩大暴露范围、降低传输保护
+的配置隐藏在默认参数中。
+
+## 原始结构体序列化边界
+
+未被内置、生成、显式或 resolver Codec 接管的 unmanaged value payload 可能回退到 `UnsafeBlitCodec<T>`。该 Codec 直接发送 `T` 的 managed representation，因此结构体 padding 也会进入 wire payload。对 unsafe、native interop、`stackalloc`、`Unsafe.SkipInit`、复用 native/pooled storage 等来源，padding 可能包含非逻辑状态并跨越机密边界。
+
+测试环境中普通 managed construction 的 padding 曾观测为零，但这不是 C#/.NET 表示契约，也不能把 `new T()`、`default` 或“已赋值所有逻辑字段”当作 padding sanitizer。机密边界上的可靠支持路径是绑定使用 field-wise/non-raw representation 的自定义 Codec/Adapter。只有当被清理的 storage 本身就是随后直接交给 raw blit 的那份 representation，且中间不存在依赖 padding 内容保持不变的 struct copy 时，完整 representation sanitization 才能作为有效控制；对可能先经过 generated/proxy value copy 的普通调用方值，不应把 caller-side padding 清理当作受支持的机密性保证。完整威胁模型、复现、性能数据与 2.x 产品决策见 [UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)。
+
 ## 日志与遥测安全
 
 - AnonymousPipe handles、authentication payload、原始 token 不得记录。

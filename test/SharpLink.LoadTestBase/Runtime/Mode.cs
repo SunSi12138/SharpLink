@@ -1,4 +1,4 @@
-﻿namespace SharpLink.LoadTestBase;
+namespace SharpLink.LoadTestBase;
 
 public enum RunMode
 {

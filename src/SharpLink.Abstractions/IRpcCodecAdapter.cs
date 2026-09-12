@@ -6,9 +6,6 @@ public interface IRpcCodecAdapter
     /// <summary>Gets the implementation and lifecycle identity.</summary>
     string AdapterId { get; }
 
-    /// <summary>Gets the stable binary wire-format identity.</summary>
-    string WireFormatId { get; }
-
     /// <summary>Creates isolated state for one runtime Context and generated manifest.</summary>
     IRpcCodecAdapterScope CreateScope();
 }

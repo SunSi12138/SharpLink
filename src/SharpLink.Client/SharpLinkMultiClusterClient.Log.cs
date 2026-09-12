@@ -3,6 +3,15 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkMultiClusterClient
 {
     [LoggerMessage(
+        EventId = LogEvents.Client.BackgroundLoopUnhandledException,
+        Level = LogLevel.Error,
+        Message = "Multi-cluster framework task {Operation} terminated with an unhandled exception.")]
+    private static partial void LogMultiClusterFrameworkTaskFailure(
+        ILogger logger,
+        string operation,
+        Exception exception);
+
+    [LoggerMessage(
         EventId = LogEvents.Client.MultiClusterMutationStage,
         Level = LogLevel.Information,
         Message = "Multi-cluster {Operation} for {ClusterKey} reached {Stage} with {Result}; failure stage {FailureStage}; configured budget {ConfiguredConnectionBudget}; elapsed {ElapsedMilliseconds} ms.")]

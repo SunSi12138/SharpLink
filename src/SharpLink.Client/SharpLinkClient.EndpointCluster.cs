@@ -9,15 +9,29 @@ internal sealed partial class SharpLinkClient
         int PendingCallCount { get; }
         int ActiveCallCount { get; }
         int ActiveStreamCount { get; }
+        SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot();
+        void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy);
+        void UpdateEndpointSelector(ISharpLinkEndpointSelector selector);
+        ClientConnection[] CaptureReadyConnections();
+        SupportTopologyCapture CaptureSupportTopology(
+            SharpLinkClientSupportSnapshotOptions options,
+            long? failureEndpointKey);
         ValueTask ConnectAsync(CancellationToken cancellationToken);
+        void BeginStop();
         ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
             AttemptOutcomeState? attemptOutcome);
         bool TryGetEndpointCandidate(ClientConnection connection, out SharpLinkEndpointCandidate candidate);
+        void HandleConnectionFailure(ClientConnection connection, Exception exception);
         void MarkConnectionDraining(ClientConnection connection);
         void RetireDrainingConnectionIfIdle(ClientConnection connection);
+        void TryAdvancePlannedSessionRefreshRetirement(ClientConnection connection);
+        void RequestSessionRefresh(
+            RpcSession session,
+            ProtocolV2SessionRefreshRequested request);
         ValueTask StopAsync();
+        ValueTask DisposeResourcesAsync();
     }
 
     /// <summary>Keeps the zero-allocation per-logical-call endpoint exclusion mask for retry attempts.</summary>

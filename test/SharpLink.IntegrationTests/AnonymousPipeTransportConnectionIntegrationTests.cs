@@ -94,10 +94,10 @@ public class AnonymousPipeTransportConnectionIntegrationTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
             var allocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
-            var (inHandle, outHandle) = await allocator.AllocateAsync(cts.Token);
+            using var offer = await allocator.AllocateAsync(cts.Token);
 
-            var client = SharpClientBuilder.Create()
-                .UseAnonymousPipe(inHandle, outHandle)
+            var client = SharpClientBuilder.Create().DisableRequestTimeout()
+                .UseTransport(offer.CreateLocalClientTransportFactory())
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
                 .Build();
@@ -107,7 +107,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             {
                 try
                 {
-                    await server.RunAsync(cts.Token);
+                    await server.RunUntilStoppedAsync(cts.Token);
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
                 {

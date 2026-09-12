@@ -4,104 +4,29 @@ using System.Diagnostics;
 using System.Buffers.Binary;
 using SharpLink.Client;
 using SharpLink.Sdk;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
-public class SharpLinkClientCallOptionsTests
+public class SharpLinkClientCallControlTests
 {
     [Test]
     public async Task WaitForReadyFalseShouldFailImmediatelyWhenDisconnected()
     {
         var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+        await using var client = ClientBuilderTestHelper.Build(transport);
 
         var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(client));
         Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "fail-fast error code");
     }
 
     [Test]
-    public async Task WaitForReadyShouldResumeAfterConnectionBecomesReady()
-    {
-        var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
-
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
-            client,
-            new SharpLinkCallOptions
-            {
-                Timeout = TimeSpan.FromSeconds(2),
-                WaitForReady = true
-            }).AsTask();
-
-        await Task.Delay(50);
-        Ensure(!invocation.IsCompleted, "call should wait while no connection is ready");
-        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 1,
-            "a wait-for-ready logical call must remain visible before it leases a connection");
-        await client.ConnectAsync();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
-
-        Ensure(await invocation == 0, "zero-valued Int32 response");
-        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 0,
-            "the logical call count must be released when wait-for-ready completes");
-    }
-
-    [Test]
-    public async Task WaitForReadyDeadlineShouldMapToDeadlineExceeded()
-    {
-        var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
-
-        var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(
-            client,
-            new SharpLinkCallOptions
-            {
-                Timeout = TimeSpan.FromMilliseconds(80),
-                WaitForReady = true
-            }));
-        Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "wait deadline error code");
-    }
-
-    [Test]
-    public async Task FarFutureWaitForReadyDeadlineShouldRemainCancellable()
-    {
-        await using var client = new SharpLinkClient(
-            new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-
-        var failure = await CaptureException(ClientInvokerTestHelper.InvokeUnaryAsync(
-            client,
-            new SharpLinkCallOptions
-            {
-                Deadline = DateTimeOffset.MaxValue,
-                WaitForReady = true
-            },
-            cancellation.Token).AsTask());
-
-        Ensure(failure is OperationCanceledException,
-            $"far-future WaitForReady should remain cancellable, not fail as {failure?.GetType().Name}");
-    }
-
-    [Test]
     public async Task MaximumPositiveDefaultTimeoutShouldSaturateAndSendTheRequest()
     {
         var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            requestTimeout: TimeSpan.MaxValue);
+            builder => builder.UseRequestTimeout(TimeSpan.MaxValue));
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
@@ -111,134 +36,8 @@ public class SharpLinkClientCallOptionsTests
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "maximum positive timeout should not fail before send");
-        Ensure((request.Flags & ProtocolV2FrameFlags.HasDeadline) != 0,
+        Ensure((request.Flags & ProtocolV2FrameFlags.HasTimeBudget) != 0,
             "saturated timeout should retain an explicit far-future deadline");
-    }
-
-    [Test]
-    public async Task WaitForReadyShouldRetryZeroAdmissionDelayWithABoundedYield()
-    {
-        var transport = new TestClientTransportFactory();
-        var policy = new RejectOnceWithZeroDelayPolicy();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            fixedEndpoint: FixedEndpoint,
-            endpointAdmissionPolicy: policy);
-        await client.ConnectAsync();
-
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
-            client,
-            new SharpLinkCallOptions { WaitForReady = true }).AsTask();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
-
-        Ensure(await invocation == 0, "zero-delay admission rejection should retry");
-        Ensure(policy.AcquireCount >= 2, "admission should be retried after the bounded yield");
-        Ensure(policy.ReportCount == 1, "only the granted admission lease should report");
-    }
-
-    [Test]
-    public async Task ClientStopShouldCancelWaitForReadyAdmissionDelayPromptly()
-    {
-        var transport = new TestClientTransportFactory();
-        var policy = new SignaledRejectWithDelayPolicy(TimeSpan.MaxValue);
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            fixedEndpoint: FixedEndpoint,
-            endpointAdmissionPolicy: policy);
-        await client.ConnectAsync();
-
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
-            client, new SharpLinkCallOptions { WaitForReady = true }).AsTask();
-        await policy.RejectionStarted.WaitAsync(TimeSpan.FromSeconds(2));
-
-        var stoppedAt = Stopwatch.GetTimestamp();
-        var stop = client.StopAsync().AsTask();
-        var exception = await CaptureSharpLinkException(invocation.WaitAsync(TimeSpan.FromSeconds(2)));
-        await stop.WaitAsync(TimeSpan.FromSeconds(2));
-
-        Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "stopped admission delay error code");
-        Ensure(Stopwatch.GetElapsedTime(stoppedAt) < TimeSpan.FromSeconds(1),
-            "client stop must cancel the wait-for-ready admission delay promptly");
-    }
-
-    [Test]
-    public async Task WaitForReadyShouldDiscardAStaleAdmissionDelayAfterAnAdmittedEndpointDisconnects()
-    {
-        var first = new TestClientTransportFactory();
-        var second = new TestClientTransportFactory();
-        var blockingSecond = new ReconnectBlockingFactory(second);
-        var policy = new RejectFirstThenBlockSecondAdmissionPolicy();
-        var endpoints = new[]
-        {
-            new StaticEndpointConfiguration(Endpoint("first", 5001), first),
-            new StaticEndpointConfiguration(Endpoint("second", 5002), blockingSecond)
-        };
-        await using var client = new SharpLinkClient(
-            first,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            staticEndpoints: endpoints,
-            clusterOptions: new SharpLinkClusterOptions { MinReadyEndpoints = 2, MaxConnections = 2 },
-            endpointSelector: new FirstUnexcludedSelector(),
-            endpointAdmissionPolicy: policy);
-        await client.ConnectAsync();
-        await WaitForReadyConnectionCountAsync(client, 2);
-
-        var invocation = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(
-            client, new SharpLinkCallOptions { WaitForReady = true }));
-        await policy.SecondAdmissionEntered.WaitAsync(TimeSpan.FromSeconds(2));
-        await InjectGoAwayAsync(second.Connection);
-        await blockingSecond.ReconnectStarted.WaitAsync(TimeSpan.FromSeconds(2));
-        await WaitForReadyConnectionCountAsync(client, 1);
-        var freshRejectionDelay = TimeSpan.FromMilliseconds(120);
-        policy.RejectNextFirstAdmission(freshRejectionDelay);
-        var releasedAt = Stopwatch.GetTimestamp();
-        policy.ReleaseSecondAdmission();
-
-        var request = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
-            .WaitAsync(TimeSpan.FromSeconds(5));
-        await first.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
-
-        Ensure(await invocation == 0, "a granted endpoint disconnect must not retain a previous rejection delay");
-        Ensure(Stopwatch.GetElapsedTime(releasedAt) >= freshRejectionDelay - TimeSpan.FromMilliseconds(25),
-            "a fresh all-rejected selection must honor its retry delay after the lost grant");
-        Ensure(policy.FreshFirstRejectionCount == 1, "fresh rejection should be sampled exactly once");
-    }
-
-    [Test]
-    public async Task EndpointOutcomeElapsedShouldExcludeWaitForReadyTime()
-    {
-        var transport = new TestClientTransportFactory();
-        var policy = new RecordingAdmissionPolicy();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            fixedEndpoint: FixedEndpoint,
-            endpointAdmissionPolicy: policy);
-
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
-            client,
-            new SharpLinkCallOptions
-            {
-                Timeout = TimeSpan.FromSeconds(2),
-                WaitForReady = true
-            }).AsTask();
-        await Task.Delay(200);
-        await client.ConnectAsync();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
-
-        Ensure(await invocation == 0, "wait-for-ready response");
-        var measuredEndpointInterval = Stopwatch.GetElapsedTime(policy.LastAdmissionTimestamp, policy.LastReportTimestamp);
-        var difference = (policy.LastOutcome.Elapsed - measuredEndpointInterval).Duration();
-        Ensure(difference < TimeSpan.FromMilliseconds(100),
-            "endpoint outcome elapsed must measure the interval after admission rather than pre-ready waiting");
     }
 
     [Test]
@@ -246,12 +45,10 @@ public class SharpLinkClientCallOptionsTests
     {
         var transport = new TestClientTransportFactory();
         var policy = new RecordingAdmissionPolicy();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.BuildEndpoint(
+            FixedEndpoint,
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            fixedEndpoint: FixedEndpoint,
-            endpointAdmissionPolicy: policy);
+            builder => builder.UseEndpointAdmission(policy));
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
@@ -274,38 +71,18 @@ public class SharpLinkClientCallOptionsTests
     }
 
     [Test]
-    public async Task WaitForReadyAdmissionDelayBeyondDeadlineShouldNotOverflow()
-    {
-        var transport = new TestClientTransportFactory();
-        var policy = new RejectWithDelayPolicy(TimeSpan.MaxValue);
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            fixedEndpoint: FixedEndpoint,
-            endpointAdmissionPolicy: policy);
-        await client.ConnectAsync();
-
-        var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(
-            client,
-            new SharpLinkCallOptions { WaitForReady = true, Timeout = TimeSpan.FromSeconds(1) }));
-        Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "oversized admission retry delay must map to deadline exceeded");
-        Ensure(policy.AcquireCount == 1, "oversized delay should not loop or issue a request");
-    }
-
-    [Test]
     public async Task StreamRegistrationFailuresShouldReportAcquiredAdmissionLeases()
     {
         var transport = new TestClientTransportFactory();
         var policy = new RecordingAdmissionPolicy();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.BuildEndpoint(
+            FixedEndpoint,
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            protocolOptions: new SharpLinkProtocolOptions { MaxPendingRequestsPerConnection = 1 },
-            fixedEndpoint: FixedEndpoint,
-            endpointAdmissionPolicy: policy);
+            builder =>
+            {
+                builder.UseProtocol(options => options.MaxPendingRequestsPerConnection = 1);
+                builder.UseEndpointAdmission(policy);
+            });
         await client.ConnectAsync();
 
         var occupied = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();

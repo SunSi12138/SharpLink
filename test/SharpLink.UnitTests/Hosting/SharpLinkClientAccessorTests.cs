@@ -59,83 +59,175 @@ public class SharpLinkClientAccessorTests
     {
         const int attempts = 100_000;
         using var start = new Barrier(3);
+        using var workersCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var accessor = new SharpLinkClientAccessor();
         var client = new FakeSharpLinkClient();
         Exception? publicationFailure = null;
 
-        var publish = Task.Run(() =>
+        var publish = LongRunningTestWorker.Run(() =>
         {
-            for (var attempt = 0; attempt < attempts; attempt++)
-            {
-                start.SignalAndWait();
-                try
-                {
-                    accessor.SetClient(client);
-                }
-                catch (InvalidOperationException exception)
-                {
-                    publicationFailure = exception;
-                }
-                start.SignalAndWait();
-            }
-        });
-        var stop = Task.Run(() =>
-        {
-            for (var attempt = 0; attempt < attempts; attempt++)
-            {
-                start.SignalAndWait();
-                accessor.Stop();
-                start.SignalAndWait();
-            }
-        });
-
-        for (var attempt = 0; attempt < attempts; attempt++)
-        {
-            accessor = new SharpLinkClientAccessor();
-            publicationFailure = null;
-            start.SignalAndWait();
-            start.SignalAndWait();
-
             try
             {
-                await accessor.GetClientAsync();
-                throw new Exception($"attempt {attempt} returned a client after stop");
+                for (var attempt = 0; attempt < attempts; attempt++)
+                {
+                    start.SignalAndWait(workersCancellation.Token);
+                    try
+                    {
+                        accessor.SetClient(client);
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        publicationFailure = exception;
+                    }
+                    start.SignalAndWait(workersCancellation.Token);
+                }
             }
-            catch (InvalidOperationException)
+            catch (OperationCanceledException) when (workersCancellation.IsCancellationRequested)
             {
             }
+            catch
+            {
+                workersCancellation.Cancel();
+                throw;
+            }
+        });
+        var stop = LongRunningTestWorker.Run(() =>
+        {
+            try
+            {
+                for (var attempt = 0; attempt < attempts; attempt++)
+                {
+                    start.SignalAndWait(workersCancellation.Token);
+                    accessor.Stop();
+                    start.SignalAndWait(workersCancellation.Token);
+                }
+            }
+            catch (OperationCanceledException) when (workersCancellation.IsCancellationRequested)
+            {
+            }
+            catch
+            {
+                workersCancellation.Cancel();
+                throw;
+            }
+        });
+        try
+        {
+            for (var attempt = 0; attempt < attempts; attempt++)
+            {
+                accessor = new SharpLinkClientAccessor();
+                publicationFailure = null;
+                start.SignalAndWait(workersCancellation.Token);
+                start.SignalAndWait(workersCancellation.Token);
 
-            Ensure(publicationFailure is null ||
-                publicationFailure.Message.Contains("host has already stopped", StringComparison.Ordinal),
-                "publication may only fail because stop won the race");
+                try
+                {
+                    await accessor.GetClientAsync();
+                    throw new Exception($"attempt {attempt} returned a client after stop");
+                }
+                catch (InvalidOperationException)
+                {
+                }
+
+                Ensure(publicationFailure is null ||
+                    publicationFailure.Message.Contains("host has already stopped", StringComparison.Ordinal),
+                    "publication may only fail because stop won the race");
+            }
+
+            await Task.WhenAll(publish, stop);
         }
-
-        await Task.WhenAll(publish, stop);
+        finally
+        {
+            workersCancellation.Cancel();
+            await LongRunningTestWorker.JoinAsync(publish, TimeSpan.FromSeconds(10));
+            await LongRunningTestWorker.JoinAsync(stop, TimeSpan.FromSeconds(10));
+        }
     }
 
     [Test]
-    public async Task HostedStartShouldPreserveConnectAndCleanupFailures()
+    public async Task HostedStartShouldPublishRunningClientWhenRemoteConnectionFails()
     {
-        var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
-            new SharpLinkClientAccessor(),
+        var accessor = new SharpLinkClientAccessor();
+        await using var service = new SharpLinkClientHostedService(
+            SharpClientBuilder.Create()
+                .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .UseTransport(new ThrowingLifecycleTransportFactory())
+                .DisableRequestTimeout(),
+            accessor,
             NullLoggerFactory.Instance);
 
-        Exception failure;
-        try
-        {
-            await service.StartAsync(CancellationToken.None);
-            throw new Exception("expected hosted client start failure");
-        }
-        catch (Exception exception)
-        {
-            failure = exception;
-        }
+        await service.StartAsync(CancellationToken.None);
+        var client = await accessor.GetClientAsync();
 
-        Ensure(ContainsMessage(failure, "hosted connect failed"),
-            "hosted start must retain its primary connect failure");
-        Ensure(ContainsMessage(failure, "hosted cleanup failed"),
-            "hosted start must retain its cleanup failure");
+        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+            "hosted start must publish a running local client even when the remote endpoint is unavailable");
+        Ensure(client.Readiness == SharpLinkReadinessState.NotReady,
+            "remote connection failure must be represented as NotReady rather than Host startup failure");
+
+        await service.StopAsync(CancellationToken.None);
+        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Stopped,
+            "hosted StopAsync must stop the locally running client");
+    }
+
+    [Test]
+    [TUnit.Core.Timeout(60_000)]
+    public async Task HostedStartShouldPublishRuntimeBeforeStaticReadinessTargetConverges(
+        CancellationToken cancellationToken)
+    {
+        var first = new GatedConnectTransportFactory();
+        var second = new GatedConnectTransportFactory();
+        var accessor = new SharpLinkClientAccessor();
+        await using var service = new SharpLinkClientHostedService(
+            SharpClientBuilder.Create()
+                .DisableRequestTimeout()
+                .UseEndpoints(
+                [
+                    new SharpLinkEndpoint
+                    {
+                        Id = "first",
+                        Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+                    },
+                    new SharpLinkEndpoint
+                    {
+                        Id = "second",
+                        Address = new SharpLinkTcpAddress("127.0.0.1", 5002)
+                    }
+                ],
+                endpoint => endpoint.Id == "first" ? first : second)
+                .UseCluster(options =>
+                {
+                    options.MinReadyEndpoints = 2;
+                    options.MaxConnections = 2;
+                    options.MaxConnectionsPerEndpoint = 1;
+                }),
+            accessor,
+            NullLoggerFactory.Instance);
+
+        var accessorWait = accessor.GetClientAsync().AsTask();
+        await service.StartAsync(cancellationToken);
+        var client = await accessorWait.WaitAsync(cancellationToken);
+        var startupSnapshot = client.GetReadinessSnapshot();
+
+        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+            "HostedService must publish after local runtime startup without waiting for connectivity");
+        Ensure(client.Readiness == SharpLinkReadinessState.NotReady && startupSnapshot.ReadyConnections == 0,
+            "published runtime must remain NotReady before either gated endpoint connects");
+
+        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task).WaitAsync(cancellationToken);
+        first.ReleaseConnect();
+        await first.ConnectCompleted.Task.WaitAsync(cancellationToken);
+        var snapshot = await client.WaitForReadinessAsync(1, cancellationToken);
+
+        Ensure(first.ConnectCompleted.Task.IsCompleted && !second.ConnectCompleted.Task.IsCompleted,
+            "one endpoint may become usable without releasing the second endpoint gate");
+        Ensure(snapshot.State == SharpLinkConnectionState.Ready &&
+               snapshot.ActiveEndpoints == 2 &&
+               snapshot.ReadyEndpoints == 1 &&
+               snapshot.ReadyConnections == 1 &&
+               snapshot.TargetReadyEndpoints == 2,
+            "the published client must distinguish connectivity from the unconverged static target");
+        Ensure(!snapshot.MeetsTarget,
+            "one ready endpoint must not satisfy a configured two-endpoint readiness target");
     }
 
     [Test]
@@ -143,7 +235,7 @@ public class SharpLinkClientAccessorTests
     {
         var accessor = new SharpLinkClientAccessor();
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create(),
+            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty),
             accessor,
             NullLoggerFactory.Instance);
         var client = new DisposalTrackingClient();
@@ -169,7 +261,7 @@ public class SharpLinkClientAccessorTests
     public async Task ConcurrentHostedStopCallersShouldAwaitTheSameClientCleanup()
     {
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
+            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new ThrowingLifecycleTransportFactory()),
             new SharpLinkClientAccessor(),
             NullLoggerFactory.Instance);
         var client = new BlockingStopClient();
@@ -192,7 +284,7 @@ public class SharpLinkClientAccessorTests
     public async Task CancelledHostedStopShouldStillDisposeTransferredClient()
     {
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
+            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new ThrowingLifecycleTransportFactory()),
             new SharpLinkClientAccessor(),
             NullLoggerFactory.Instance);
         var client = new CancellationSensitiveClient();
@@ -263,6 +355,13 @@ public class SharpLinkClientAccessorTests
         public T Get<T>() where T : IService
             => throw new NotSupportedException();
 
+
+
+        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+
+
+            => throw new NotSupportedException();
+
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => default;
 
@@ -301,8 +400,34 @@ public class SharpLinkClientAccessorTests
             => ValueTask.FromException<ITransportConnection>(
                 new InvalidOperationException("hosted connect failed"));
 
-        public ValueTask DisposeAsync()
-            => ValueTask.FromException(new InvalidOperationException("hosted cleanup failed"));
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class GatedConnectTransportFactory : IClientTransportFactory
+    {
+        private readonly TestClientTransportFactory _inner = new();
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ConnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ConnectCompleted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ConnectStarted.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            var connection = await _inner.ConnectAsync(cancellationToken);
+            ConnectCompleted.TrySetResult();
+            return connection;
+        }
+
+        internal void ReleaseConnect() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 
     private sealed class BlockingStopClient : ISharpLinkClient
@@ -327,6 +452,13 @@ public class SharpLinkClientAccessorTests
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
 
         public T Get<T>() where T : IService => throw new NotSupportedException();
+
+
+
+        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+
+
+            => throw new NotSupportedException();
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly) => default;
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,
@@ -366,6 +498,11 @@ public class SharpLinkClientAccessorTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
         public T Get<T>() where T : IService => throw new NotSupportedException();
+
+
+        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+
+            => throw new NotSupportedException();
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly) => default;
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,

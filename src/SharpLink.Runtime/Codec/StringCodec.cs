@@ -18,16 +18,16 @@ internal sealed class StringCodec : IRpcCodec<string?>
             CodecHelpers.WriteInt32(writer, 0);
             return;
         }
-        
+
         var bytesCount = checked(value.Length * CharSize);
         CodecHelpers.EnsureSerializablePayloadLength(bytesCount, nameof(value));
 
         var span = writer.GetSpan(bytesCount + 4);
 
         BinaryPrimitives.WriteInt32LittleEndian(span[..4], bytesCount);
-        
+
         value.AsSpan().CopyTo(MemoryMarshal.Cast<byte, char>(span[4..]));
-        
+
         writer.Advance(bytesCount + 4);
     }
 

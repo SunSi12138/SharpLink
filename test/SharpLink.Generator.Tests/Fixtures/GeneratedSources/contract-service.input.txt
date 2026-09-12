@@ -1,0 +1,13 @@
+[SharpLink.Sdk.RpcContract]
+public interface IFixtureService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+    IAsyncEnumerable<string> Watch(int count, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class FixtureService : IFixtureService
+{
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public IAsyncEnumerable<string> Watch(int count, CancellationToken cancellationToken) => throw new NotImplementedException();
+}

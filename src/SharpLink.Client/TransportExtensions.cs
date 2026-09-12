@@ -6,10 +6,19 @@ public static class TransportExtensions
     extension(SharpClientBuilder builder)
     {
         /// <summary>Connects through a local or Windows named pipe.</summary>
-        public SharpClientBuilder UseNamedPipe(string name)
+        /// <param name="name">The logical pipe name.</param>
+        /// <param name="configure">Optional named-pipe options, such as allowing cross-user access.</param>
+        public SharpClientBuilder UseNamedPipe(
+            string name,
+            Action<NamedPipeTransportOptions>? configure = null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            return builder.UseTransport(new NamedPipeClientTransportFactory(name));
+            var options = new NamedPipeTransportOptions();
+            configure?.Invoke(options);
+            return builder.UseTransport(new NamedPipeClientTransportFactory(
+                name,
+                ".",
+                options.ToPipeOptions()));
         }
 
         /// <summary>Connects to a TCP endpoint without TLS.</summary>
@@ -53,7 +62,11 @@ public static class TransportExtensions
         }
 
         /// <summary>Connects through a one-time anonymous-pipe handle pair.</summary>
-        /// <remarks>Handle values are secrets and must not be logged or reused.</remarks>
+        /// <remarks>
+        /// Use inherited handles in a child process. For a client in the server's process, pass
+        /// <see cref="AnonymousPipeOffer.CreateLocalClientTransportFactory"/> to <c>UseTransport</c>.
+        /// Handle values are secrets and must not be logged or reused.
+        /// </remarks>
         public SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(inHandle);

@@ -13,7 +13,7 @@ public sealed class ServiceLifetimeIntegrationTests
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
-        var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
         _ = await client.Get<IBlockingConnectionCleanupProbe>().ActivateAsync();
@@ -48,7 +48,7 @@ public sealed class ServiceLifetimeIntegrationTests
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
-        var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var firstClient = CreateClient(port);
         await using var secondClient = CreateClient(port);
         await firstClient.ConnectAsync();
@@ -83,7 +83,7 @@ public sealed class ServiceLifetimeIntegrationTests
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
-        var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
         var service = client.Get<ICallLifetimeProbe>();
@@ -132,7 +132,7 @@ public sealed class ServiceLifetimeIntegrationTests
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
-        var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
+        var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
         var service = client.Get<ICallLifetimeProbe>();
@@ -179,7 +179,7 @@ public sealed class ServiceLifetimeIntegrationTests
             .UseTcp(0, IPAddress.Loopback.ToString());
         var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
         await using var firstServer = firstBuilder.Build();
-        var firstServerTask = firstServer.RunAsync(firstCancellation.Token).AsTask();
+        var firstServerTask = firstServer.RunUntilStoppedAsync(firstCancellation.Token).AsTask();
         await using var firstClient = CreateClient(firstPort);
         await firstClient.ConnectAsync();
         _ = await firstClient.Get<ICallLifetimeProbe>().GetInstanceIdAsync();
@@ -190,7 +190,8 @@ public sealed class ServiceLifetimeIntegrationTests
         }
         catch (SharpLinkException exception)
         {
-            Ensure(exception.Code == SharpLinkErrorCode.Unimplemented, "filtered service route");
+            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
+                "filtered service contract acquisition");
         }
         await firstClient.StopAsync();
         await firstServer.StopAsync(TimeSpan.FromSeconds(2));
@@ -202,7 +203,7 @@ public sealed class ServiceLifetimeIntegrationTests
             .UseTcp(0, IPAddress.Loopback.ToString());
         var secondPort = ((IPEndPoint)secondBuilder.Transport!.LocalEndPoint!).Port;
         await using var secondServer = secondBuilder.Build();
-        var secondServerTask = secondServer.RunAsync(secondCancellation.Token).AsTask();
+        var secondServerTask = secondServer.RunUntilStoppedAsync(secondCancellation.Token).AsTask();
         await using var secondClient = CreateClient(secondPort);
         await secondClient.ConnectAsync();
         _ = await secondClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
@@ -230,7 +231,7 @@ public sealed class ServiceLifetimeIntegrationTests
     }
 
     private static ISharpLinkClient CreateClient(int port)
-        => SharpClientBuilder.Create()
+        => SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
             .Build();

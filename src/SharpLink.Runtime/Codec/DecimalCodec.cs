@@ -49,7 +49,7 @@ internal sealed class NullableDecimalCodec : IRpcCodec<decimal?>
             start = 0;
             Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 1), default(decimal));
         }
-        
+
         writer.Advance(Size);
     }
 
@@ -61,14 +61,14 @@ internal sealed class NullableDecimalCodec : IRpcCodec<decimal?>
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
             if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
-            
+
             return CodecHelpers.ValidateDecimal(
                 Unsafe.ReadUnaligned<decimal>(ref Unsafe.Add(ref start, 1)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        
+
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
 

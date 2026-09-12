@@ -1,4 +1,4 @@
-﻿using SharpLink.Runtime;
+using SharpLink.Runtime;
 using SharpLink.Abstractions;
 using System;
 using System.Threading.Tasks;
@@ -35,7 +35,11 @@ public static class LoadTestTransportFactory
 
         return transport switch
         {
-            TransportMode.Tcp => builder.UseTcp(port, bindIp).Build(),
+            TransportMode.Tcp => builder
+                .UseTcp(port, System.Net.IPAddress.Parse(bindIp))
+                .AllowUnencrypted()
+                .AllowUnauthenticated()
+                .Build(),
             TransportMode.Uds => builder.UseUds(udsPath).Build(),
             TransportMode.NamedPipe => builder.UseNamedPipe(pipeName).Build(),
             TransportMode.SharedMemory => builder.UseSharedMemory(
@@ -82,6 +86,8 @@ public static class LoadTestTransportFactory
             builder.DisableRequestTimeout();
         else if (requestTimeout is { } timeout)
             builder.UseRequestTimeout(timeout);
+        else
+            builder.UseRequestTimeout();
 
         return transport switch
         {
@@ -156,9 +162,9 @@ public static class LoadTestTransportFactory
         var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
         var serverAnonymous = serverBuilder.Build();
 
-        var (inHandler, outHandler) = await anonymousPipeAllocator.AllocateAsync();
+        using var offer = await anonymousPipeAllocator.AllocateAsync();
         var clientAnonymous = SharpClientBuilder.Create()
-            .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
+            .UseTransport(offer.CreateLocalClientTransportFactory())
 
             .UseRuntime(options =>
             {
@@ -176,6 +182,8 @@ public static class LoadTestTransportFactory
             clientAnonymous.DisableRequestTimeout();
         else if (requestTimeout is { } timeout)
             clientAnonymous.UseRequestTimeout(timeout);
+        else
+            clientAnonymous.UseRequestTimeout();
 
         return new LocalHarness(serverAnonymous, clientAnonymous.Build(), static () => { });
     }

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <RootNamespace>SharpLink.Runtime</RootNamespace>
+    <RootNamespace>SharpLink.Serializer.SharpPack</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />

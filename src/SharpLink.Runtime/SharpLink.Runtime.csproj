@@ -1,8 +1,9 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <DefineConstants Condition="'$(PublishAot)' == 'true'">$(DefineConstants);SHARPLINK_NATIVEAOT</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
@@ -11,7 +12,13 @@
     </ItemGroup>
 
     <ItemGroup>
+      <Compile Include="..\SharpLink.Shared\RpcBuiltinCollectionWireCatalog.cs"
+               Link="Shared\RpcBuiltinCollectionWireCatalog.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
       <InternalsVisibleTo Include="SharpLink.UnitTests" />
+      <InternalsVisibleTo Include="SharpLink.CodecCompatibility" />
       <InternalsVisibleTo Include="SharpLink.Client" />
       <InternalsVisibleTo Include="SharpLink.Server" />
     </ItemGroup>

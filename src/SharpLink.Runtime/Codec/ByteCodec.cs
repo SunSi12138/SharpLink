@@ -1,4 +1,5 @@
 namespace SharpLink.Runtime;
+
 internal sealed class ByteCodec : IRpcCodec<byte>
 {
     internal static readonly ByteCodec Instance = new();
@@ -38,7 +39,7 @@ internal sealed class NullableByteCodec : IRpcCodec<byte?>
         {
             Unsafe.WriteUnaligned(ref start, (ushort)0);
         }
-        
+
         writer.Advance(Size);
     }
 
@@ -54,12 +55,12 @@ internal sealed class NullableByteCodec : IRpcCodec<byte?>
         }
 
         Span<byte> temp = stackalloc byte[Size];
-        
+
         buffer.CopyTo(temp);
 
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
-        
+
         return Unsafe.Add(ref tempStart, 1);
     }
 }

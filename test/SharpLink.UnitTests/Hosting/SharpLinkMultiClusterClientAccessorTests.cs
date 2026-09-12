@@ -27,7 +27,7 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
     {
         var accessor = new SharpLinkMultiClusterClientAccessor();
         var service = new SharpLinkMultiClusterClientHostedService(
-            SharpLinkMultiClusterClientBuilder.Create(),
+            SharpLinkMultiClusterClientBuilder.Create().UseGeneratedDiscoverySources(FixedGeneratedManifestSource.Empty, FixedGeneratedClusterRouteSource.Empty),
             accessor,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
         var client = new BlockingStopMultiClusterClient();
@@ -51,7 +51,7 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
     {
         var accessor = new SharpLinkMultiClusterClientAccessor();
         var service = new SharpLinkMultiClusterClientHostedService(
-            SharpLinkMultiClusterClientBuilder.Create(),
+            SharpLinkMultiClusterClientBuilder.Create().UseGeneratedDiscoverySources(FixedGeneratedManifestSource.Empty, FixedGeneratedClusterRouteSource.Empty),
             accessor,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
         var client = new DisposalTrackingMultiClusterClient();
@@ -106,6 +106,9 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
         public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
         public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService => throw new NotSupportedException();
 
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Ready;
 
@@ -168,6 +171,9 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
         }
 
         public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
+
+
+        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService => throw new NotSupportedException();
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Stopped;
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             SharpLinkClusterKey cluster,

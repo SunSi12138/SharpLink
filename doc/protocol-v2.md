@@ -2,7 +2,7 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-当前 protocol minor 为 3，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 取双方较小值；1.0.0 只承诺与采用相同 minor-3 握手布局的对端互操作。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
 
 ## 固定帧头
 
@@ -25,7 +25,7 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 | `HandshakeRequest` | 0 | minor、supported/required capabilities、本端 frame/window 限制、有界压缩算法列表、认证载荷 |
 | `HandshakeResponse` | 0 | 协商后的 minor、capabilities、frame/window 限制和唯一压缩 token；失败时为二进制错误 |
 | `Ping` / `Pong` | 0 | 发送端 monotonic timestamp (`int64`) |
-| `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 deadline、metadata 和业务 payload |
+| `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 TimeBudget、metadata 和业务 payload |
 | `Response` | 非 0 | 成功时直接为返回 payload；`Error` 时为二进制错误 |
 | `Cancel` | 非 0 | 未协商 `CancellationReason` 时为空；协商后固定一个有效 reason byte |
 | `StreamData` | 非 0 | `streamId:uint16 + item payload` |
@@ -41,8 +41,8 @@ Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID
 
 - `Error`：载荷使用二进制错误格式。
 - `Truncated`：错误消息已在 UTF-8 字符边界截断，只能与 `Error` 同时出现。
-- `HasDeadline`：Request 路由前缀后包含绝对 UTC deadline（Unix milliseconds，`int64`）。
-- `HasMetadata`：deadline 后包含 `varuint length + metadata bytes`；metadata payload 为 `entryCount:varuint`，随后重复 UTF-8 key/value 的 `varuint length + bytes`。
+- `HasTimeBudget`：Request 路由前缀后包含发送瞬间剩余 RPC lifetime（`TimeSpan.Ticks`，非负 `int64`）；它是 duration，不是 UTC timestamp。
+- `HasMetadata`：TimeBudget 后包含 `varuint length + metadata bytes`；metadata payload 为 `entryCount:varuint`，随后重复 UTF-8 key/value 的 `varuint length + bytes`。
 - `Compressed`：对应载荷已压缩，必须先通过能力协商。
 - `Cancellable`：调用允许远端取消。
 - `OneWay`：单向请求，不得同时设置 `HasReturn`。
@@ -61,8 +61,12 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 2: flow control
 - bit 3: protocol health check
 - bit 4: cancellation reason
+- bit 5: contract manifest
+- bit 6: session refresh
 
-minor 3 的 `HandshakeRequest` 在三个固定限制字段后编码：
+当前 wire generation 使用 `minor 4`（`MinimumCompatibleMinorVersion == MinorVersion == 4`），只相对已发布的 1.1.1/minor 3 升级一次。开发期使用过的中间编号不构成发布兼容性边界。minor 只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
+
+minor 4 的 `HandshakeRequest` 在三个固定限制字段后编码：
 
 ```text
 profileCount:uint8
@@ -72,25 +76,27 @@ authenticationLength:varuint32 + authentication bytes
 
 wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在固定字段后编码 `selectedProfileLength:uint8 + selectedProfile`。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 profile。协商 capability 与 profile 缺失/多余或选择未被 Client 提供的 profile 都是连接级 `ProtocolViolation`。
 
-`ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端 CPU/压缩比而不影响解码的配置（例如内置 Provider 的 `CompressionLevel`）可以在两端不同；dictionary identity、必须支持的 window/profile 或其他影响解码兼容性的配置必须编码进唯一 profile，例如 `zstd/v1` 与 `zstd-dict/0123abcd`，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置不兼容解码参数属于 Provider 配置错误。
+`ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端成本/压缩比而不影响解码的 tuning 可以在两端不同；dictionary identity、必须支持的 window/profile、integrity mode 或其他影响解码兼容性的配置必须编码进唯一 profile，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置不兼容解码参数属于 Provider 配置错误。
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
 
 ## 压缩载荷
 
-压缩只覆盖 Generated Codec 产生的业务 payload，路由、deadline、metadata 和 stream ID 始终保持未压缩，便于在分配前完成路由、资源与长度校验：
+压缩只覆盖 Generated Codec 产生的业务 payload，路由、TimeBudget、metadata 和 stream ID 始终保持未压缩，便于在分配前完成路由、资源与长度校验：
 
 ```text
-Request    = route/deadline/metadata envelope + originalBodyLength:uint32 + compressedBody
+Request    = route/TimeBudget/metadata envelope + originalBodyLength:uint32 + compressedBody
 Response   = originalBodyLength:uint32 + compressedBody
 StreamData = streamId:uint16 + originalItemLength:uint32 + compressedBody
+
+`compressedBody` may be empty when the negotiated provider profile defines a valid zero-byte representation; Core validates the `originalLength` envelope and delegates representation validity to the provider.
 ```
 
-`original*Length` 必须非零，并且与未压缩固定前缀相加后不超过协商的 frame 上限；框架在租借有界 owner 之前完成该检查。Provider 必须报告 consumed/written，框架同时核对实际 writer 长度、完整输入消费和声明的原始长度。Stream flow-control 始终按原始 item 字节计费，防止高压缩比数据绕过接收窗口。
+`original*Length` 必须非零，并且与未压缩固定前缀相加后不超过协商的 frame 上限；框架在租借有界 owner 之前完成该检查。Provider 成功返回即承诺完整消费输入；Core 直接从其有界 writer 核对实际写入长度与声明的原始长度。Stream flow-control 始终按原始 item 字节计费，防止高压缩比数据绕过接收窗口。
 
 发送端仅在业务 payload 至少 1024 B、至少节省 64 B 且节省比例不低于 5% 时选用候选压缩帧；三个阈值均可配置。候选无收益时立即归还候选 owner，原始 owner 原样交给现有 SendPump。SendPump 不识别压缩，也不会同时持有两个候选。
 
-唯一内置的 `brotli` Provider 使用 `BrotliStream` 编码、`BrotliDecoder` 解码，默认 `CompressionLevel.Fastest`，也可在工厂方法中选择其他 level。level 是本地编码策略，不进入握手；请求和响应方向可以使用不同 level。其不透明 `compressedBody` 在标准 Brotli 流后附加 8 字节 `SCP1 magic:uint32 + compressedBytesCrc32:uint32` 完整性尾部；解码器自身提供精确消费位置，用于确定性拒绝截断、损坏和尾部垃圾，无需维护压缩格式解析器。自定义 Provider 可定义自己的不透明格式，但必须遵守 consumed/written 契约。
+Core 不内置具体压缩算法，也不为算法增加私有 framing/checksum。`TryCompress` 返回 `true` 表示完整 representation 已写入，返回 `false` 只表示它无法在 Core 给定的 `maxOutputBytes` 内完成，Core 会丢弃候选并发送 raw。`Decompress` 正常返回表示完整消费 `compressedBody` 且没有忽略 trailing bytes；malformed、truncated、profile integrity failure 或超过输出上限必须确定性失败。具体 profile 的 silent-corruption 检测能力由该 profile/provider 自身定义；未来官方 profile 若要求强完整性，应使用该 wire format 自带的完整性机制，而不是把算法补偿逻辑放回 Core。
 
 未协商却设置 `Compressed`、非法固定前缀或原始长度属于连接级 `ProtocolViolation`。已协商载荷的截断、损坏、尾部数据或输出长度不符映射为当前调用/流的 `DataLoss`；自定义 Provider 的未预期异常映射为该调用/流的安全 `Internal`。这两类调用级错误不关闭健康连接。
 
@@ -137,3 +143,21 @@ errorCode:uint16 + messageLength:varuint32 + UTF8 message
 - metadata 默认上限 16 KiB，错误消息默认上限 64 KiB。
 - 所有网络长度在 `Slice`、复制或分配前验证。
 - `HandshakeRequest/Response`、`Ping/Pong`、`Cancel`、`StreamComplete`、`WindowUpdate`、`GoAway` 和 health 帧都有类型级最小/最大载荷校验。
+
+
+## Runtime response compression preference control
+
+The current Protocol v2 handshake has a fixed client preference tuple:
+`ResponseCompressionPreferenceGeneration` plus `AllowResponseCompression`. The fields are present even when the
+peers ultimately have no common compression profile. A successful handshake confirms that the server has published
+that initial tuple for the session.
+
+After a session negotiates `Compression`, later client preference changes use the connection-level, uncompressed,
+fixed-size `ResponseCompressionPreferenceUpdate` frame (`requestId = 0`). The server replies with
+`ResponseCompressionPreferenceAck`, whose `AppliedGeneration` is cumulative: ACK `N` completes every client waiter
+for generation `<= N`. A stale update never rolls server state backward. ACK is a convergence boundary for new
+response-compression decisions, not a wire barrier for responses already compressed or queued.
+
+Local Request/Response compression thresholds are not wire state. They are captured from an instance-scoped immutable
+runtime send-policy snapshot at each business-frame compression decision, while provider/profile negotiation remains
+build/handshake immutable.

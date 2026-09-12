@@ -16,6 +16,7 @@ fi
 PACKAGES=(
   SharpLink.Abstractions
   SharpLink.Client
+  SharpLink.Compression.Zstd
   SharpLink.Hosting
   SharpLink.Runtime
   SharpLink.Sdk
@@ -56,12 +57,34 @@ done
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
   grep -Fx "analyzers/dotnet/cs/SharpLink.Generator.dll" >/dev/null
 unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
-  grep -F "<dependency id=\"SharpLink.Runtime\" version=\"$EXPECTED_VERSION\"" >/dev/null
+  grep -F "<dependency id=\"SharpLink.Abstractions\" version=\"$EXPECTED_VERSION\"" >/dev/null
+if unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
+   grep -F '<dependency id="SharpLink.Runtime"' >/dev/null; then
+  echo "SharpLink.Sdk must not depend on SharpLink.Runtime." >&2
+  exit 1
+fi
 
 if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" SharpLink.Abstractions.nuspec |
    grep -F '<dependency id="SharpLink.Sdk"' >/dev/null; then
   echo "SharpLink.Abstractions must not depend on SharpLink.Sdk." >&2
   exit 1
 fi
+
+if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" SharpLink.Abstractions.nuspec |
+   grep -F '<dependency id="Microsoft.Extensions.DependencyInjection.Abstractions"' >/dev/null; then
+  echo "SharpLink.Abstractions must not depend on Microsoft.Extensions.DependencyInjection.Abstractions." >&2
+  exit 1
+fi
+
+if ! unzip -p "$ARTIFACT_DIR/SharpLink.Hosting.$EXPECTED_VERSION.nupkg" SharpLink.Hosting.nuspec |
+   grep -F "<dependency id=\"SharpLink.Runtime\" version=\"$EXPECTED_VERSION\"" >/dev/null; then
+  echo "SharpLink.Hosting must directly depend on SharpLink.Runtime $EXPECTED_VERSION." >&2
+  exit 1
+fi
+
+# Full public/protected signatures are checked by verify-public-api.sh against eng/public-api/2.0.0.
+# Keep this independent packed XML documentation check for the documented Runtime configuration.
+unzip -p "$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg" lib/net10.0/SharpLink.Runtime.xml |
+  grep -F '<member name="P:SharpLink.Runtime.SharpLinkFlowControlOptions.MaxPreCreditSerializedBytes">' >/dev/null
 
 echo "Verified ${#PACKAGES[@]} package and symbol pairs for $EXPECTED_VERSION at $EXPECTED_COMMIT."

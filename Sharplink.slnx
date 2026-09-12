@@ -2,6 +2,7 @@
     <Project Path="demo\DemoBase\DemoBase.csproj" />
     <Project Path="src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
     <Project Path="src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Project Path="src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj" />
     <Project Path="src/SharpLink.Generator/SharpLink.Generator.csproj" />
     <Project Path="demo/HelloWorld/HelloWorld.csproj" />
     <Project Path="demo/HostApplication/HostApplication.csproj" />
@@ -22,12 +23,19 @@
     <Project Path="demo/MultiCluster/MultiCluster.csproj" />
     <Project Path="demo/MultiCluster.Orders.Contracts/MultiCluster.Orders.Contracts.csproj" />
     <Project Path="demo/MultiCluster.Payments.Contracts/MultiCluster.Payments.Contracts.csproj" />
+    <Project Path="samples/QuickStart.Contracts/QuickStart.Contracts.csproj" />
+    <Project Path="samples/QuickStart.Server/QuickStart.Server.csproj" />
+    <Project Path="samples/QuickStart.Client/QuickStart.Client.csproj" />
+    <Project Path="samples/ProductionTemplate.Contracts/ProductionTemplate.Contracts.csproj" />
+    <Project Path="samples/ProductionTemplate.Server/ProductionTemplate.Server.csproj" />
+    <Project Path="samples/ProductionTemplate.Client/ProductionTemplate.Client.csproj" />
     <Project Path="src/SharpLink.Client/SharpLink.Client.csproj" />
     <Project Path="src/SharpLink.Server/SharpLink.Server.csproj" />
     <Project Path="src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
     <Project Path="src/SharpLink.Hosting/SharpLink.Hosting.csproj" />
     <Project Path="src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
-    
+    <Project Path="eng/SharpLink.Maintainability/SharpLink.Maintainability.csproj" />
+
     <Project Path="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" />
     <Project Path="test/SharpLink.LoadTestBase/SharpLink.LoadTestBase.csproj" />
     <Project Path="test/SharpLink.LoadTest/SharpLink.LoadTest.csproj" />
@@ -39,9 +47,18 @@
     <Project Path="test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj" />
     <Project Path="test/SharpLink.DynamicServices/SharpLink.DynamicServices.csproj" />
     <Project Path="test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj" />
+    <Project Path="test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj" />
+    <Project Path="test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj" />
+    <Project Path="test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj" />
     <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
     <Project Path="test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj" />
+    <Project Path="test/SharpLink.GeneratedAssemblyScanner/SharpLink.GeneratedAssemblyScanner.csproj" />
     <Project Path="test/SharpLink.AotContracts/SharpLink.AotContracts.csproj" />
     <Project Path="test/SharpLink.AotServices/SharpLink.AotServices.csproj" />
+    <Project Path="test/SharpLink.AotExternalPayloads/SharpLink.AotExternalPayloads.csproj" />
     <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />
+    <Project Path="test/SharpLink.SharpPackAotSmoke/SharpLink.SharpPackAotSmoke.csproj" />
+    <Project Path="test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj" />
+    <Project Path="test/SharpLink.ZstdAotSmoke/SharpLink.ZstdAotSmoke.csproj" />
+    <Project Path="test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj" />
 </Solution>

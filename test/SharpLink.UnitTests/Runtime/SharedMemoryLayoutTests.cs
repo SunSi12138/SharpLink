@@ -7,6 +7,7 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class SharedMemoryLayoutTests
 {
+    // Marked tests share the process-wide mapping counter or fixed shared-memory directory state.
     [Test]
     public async Task RingCursorArithmeticShouldSurviveSignedOverflow()
     {

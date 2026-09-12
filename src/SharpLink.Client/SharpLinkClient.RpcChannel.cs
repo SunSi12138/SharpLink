@@ -1,6 +1,3 @@
-
-
-
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -12,13 +9,13 @@ internal sealed partial class SharpLinkClient
         long requestId,
         ProtocolV2FrameFlags flags,
         Action<IBufferWriter<byte>>? payloadWriter,
-        DateTimeOffset? deadline = null,
+        RpcDeadline deadline = default,
         SharpLinkMetadata? metadata = null)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
-        if (deadline is not null)
-            flags |= ProtocolV2FrameFlags.HasDeadline;
+        if (deadline.HasValue)
+            flags |= ProtocolV2FrameFlags.HasTimeBudget;
         if (hasMetadata)
         {
             if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
@@ -44,18 +41,17 @@ internal sealed partial class SharpLinkClient
             using (writer.BeginPacketScope(
                        ProtocolV2FrameType.Request, flags, unchecked((ulong)requestId)))
             {
-                var span = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+                var prefixLength = ProtocolV2Constants.RequestPrefixBytes +
+                    (deadline.HasValue ? sizeof(long) : 0);
+                var span = writer.GetSpan(prefixLength);
                 BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
-                writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
-                if (deadline is { } absoluteDeadline)
+                if (deadline.HasValue)
                 {
-                    var deadlineSpan = writer.GetSpan(sizeof(long));
                     BinaryPrimitives.WriteInt64LittleEndian(
-                        deadlineSpan,
-                        absoluteDeadline.ToUnixTimeMilliseconds());
-                    writer.Advance(sizeof(long));
+                        span[ProtocolV2Constants.RequestPrefixBytes..], 0L);
                 }
+                writer.Advance(prefixLength);
                 if (hasMetadata)
                 {
                     ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));
@@ -64,9 +60,8 @@ internal sealed partial class SharpLinkClient
                 payloadWriter?.Invoke(writer);
             }
 
-            // SendPacket takes ownership even when enqueueing detects a terminal session.
             ownsWriter = false;
-            session.SendPacket(writer);
+            session.SendPacket(writer, deadline);
         }
         finally
         {
@@ -79,11 +74,12 @@ internal sealed partial class SharpLinkClient
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
+        IRpcCodec<T> codec,
         CancellationToken cancellationToken = default)
         => Task.FromException(new InvalidOperationException(
             "Client streams must use the connection-bound sink supplied to generated stream writers."));
 
-    private static ValueTask DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
+    private static ValueTask DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))
@@ -114,7 +110,10 @@ internal sealed partial class SharpLinkClient
             return;
         }
         var error = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
-        var exception = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
+        var exception = SharpLinkResourceExhaustion.CreateRemote(
+            error.Code,
+            error.DetailCode,
+            error.Message);
         if (streamId == 0)
         {
             connection.PendingCalls.TryComplete(
@@ -148,19 +147,19 @@ internal sealed partial class SharpLinkClient
 
     private void HandleDisconnected(ClientConnection connection, Exception ex)
     {
-        if (!RemoveReadyConnection(connection))
+        connection.ObserveFatalFailureForAdmission();
+        if (_cluster is not null)
+        {
+            _cluster.HandleConnectionFailure(connection, ex);
+            return;
+        }
+
+        if (!TryStartConnectionCleanup(connection, "DisconnectedConnectionCleanup", ex))
             return;
 
         var session = connection.Session;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         LogClientDisconnectedWithError(_logger, ex);
-
-        connection.Fail(ex);
-        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
-
-        if (_shutdownCts.IsCancellationRequested ||
-            State is SharpLinkConnectionState.Stopped)
-            return;
 
         if (ReadyConnectionCount != 0)
         {
@@ -169,12 +168,34 @@ internal sealed partial class SharpLinkClient
             return;
         }
 
-        ResetReadySignal();
-        var stableTicks = Stopwatch.GetTimestamp() - Volatile.Read(ref _readyTimestamp);
-        if (stableTicks >= 30L * Stopwatch.Frequency)
-            Volatile.Write(ref _reconnectDelayMilliseconds, 100);
+        SharpLinkReconnectPolicy reconnectPolicy;
+        long readyTimestamp;
+        bool hasReadyTimestamp;
+        lock (_stateGate)
+        {
+            reconnectPolicy = CaptureReconnectPolicy().Policy;
+            readyTimestamp = _readyTimestamp;
+            hasReadyTimestamp = _hasReconnectReadyTimestamp;
+            _readyTimestamp = default;
+            _hasReconnectReadyTimestamp = false;
+        }
+        if (HasReachedReconnectStableWindow(readyTimestamp, hasReadyTimestamp, reconnectPolicy))
+            Volatile.Write(ref _reconnectDelayTicks, reconnectPolicy.InitialDelay.Ticks);
         TransitionTo(SharpLinkConnectionState.Reconnecting);
         EnsureReconnectLoop();
+    }
+
+    internal void HandleConnectionFatalFailure(ClientConnection connection, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(exception);
+        if (_cluster is not null)
+        {
+            _cluster.HandleConnectionFailure(connection, exception);
+            return;
+        }
+
+        HandleDisconnected(connection, exception);
     }
 
     private void EnsureReconnectLoop()
@@ -184,7 +205,10 @@ internal sealed partial class SharpLinkClient
             if (_shutdownCts.IsCancellationRequested)
                 return;
             if (_reconnectTask is not { IsCompleted: false })
+            {
                 _reconnectTask = ReconnectLoopAsync();
+                TrackFrameworkTask(_reconnectTask, "ReconnectLoop");
+            }
             if (_reconnectSignal.CurrentCount == 0)
                 _reconnectSignal.Release();
         }
@@ -206,15 +230,22 @@ internal sealed partial class SharpLinkClient
             while (!_shutdownCts.IsCancellationRequested &&
                    ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
-                var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
-                var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
-                var delay = TimeSpan.FromMilliseconds(baseDelay * jitter);
+                var generation = CaptureReconnectPolicy();
+                var baseDelay = ResolveReconnectDelay(Volatile.Read(ref _reconnectDelayTicks), generation.Policy);
                 try
                 {
-                    await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
+                    if (!await WaitForReconnectDelayAsync(baseDelay, generation, _shutdownCts.Token).ConfigureAwait(false))
+                        continue;
                     SharpLinkTelemetry.ReconnectAttempt();
                     await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
                     PublishReadyState();
+                    var completionPolicy = generation.Policy;
+                    if (IsCurrentReconnectPolicyGeneration(generation))
+                    {
+                        Volatile.Write(
+                            ref _reconnectDelayTicks,
+                            ResolveReconnectCompletionDelay(baseDelay, reconnected: true, completionPolicy).Ticks);
+                    }
                 }
                 catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
                 {
@@ -224,8 +255,13 @@ internal sealed partial class SharpLinkClient
                 {
                     using var scope = BeginSessionLogScope(_logger, "reconnect");
                     LogClientConnectionAttemptFailed(_logger, nameof(ReconnectLoopAsync), ex);
-                    var nextDelay = Math.Min(baseDelay * 2, 5000);
-                    Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
+                    var completionPolicy = generation.Policy;
+                    if (IsCurrentReconnectPolicyGeneration(generation))
+                    {
+                        Volatile.Write(
+                            ref _reconnectDelayTicks,
+                            ResolveReconnectCompletionDelay(baseDelay, reconnected: false, completionPolicy).Ticks);
+                    }
                     TransitionTo(SharpLinkConnectionState.Reconnecting);
                 }
             }
@@ -237,9 +273,12 @@ internal sealed partial class SharpLinkClient
         if (_cluster is not null)
             return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null);
 
-        var connections = Volatile.Read(ref _readyConnections);
-        if (!_shutdownCts.IsCancellationRequested && connections.Length != 0)
+        for (var snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++)
         {
+            var connections = Volatile.Read(ref _readyConnections);
+            if (_shutdownCts.IsCancellationRequested || connections.Length == 0)
+                break;
+
             ClientConnection selected;
             if (connections.Length == 1)
             {
@@ -251,16 +290,17 @@ internal sealed partial class SharpLinkClient
                 var second = Random.Shared.Next(connections.Length - 1);
                 if (second >= first)
                     second++;
-                selected = SelectLeastLoaded(connections, first, second);
+                selected = EndpointSelectionKernel.SelectLeastLoaded(connections, first, second);
             }
 
-            if (selected.CanAcceptCalls)
+            if (selected.TryReserveCallAdmission(out var admitted))
             {
-                if (selected.ActiveCallCount != 0)
+                if (admitted.ActiveCallCount != 0)
                     EnsureExpansion();
-                return selected;
+                return admitted;
             }
         }
+
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
         throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
@@ -289,32 +329,13 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            var connection = GetReadyConnection();
-            attemptOutcome.SetConnection(connection);
-            return connection;
+            return GetReadyConnection();
         }
         catch (Exception exception)
         {
             attemptOutcome.CompleteLocalFailure(exception);
             throw;
         }
-    }
-
-    internal static ClientConnection SelectLeastLoaded(
-        ClientConnection[] connections,
-        int first,
-        int second)
-    {
-        ArgumentNullException.ThrowIfNull(connections);
-        ArgumentOutOfRangeException.ThrowIfNegative(first);
-        ArgumentOutOfRangeException.ThrowIfNegative(second);
-        if ((uint)first >= (uint)connections.Length || (uint)second >= (uint)connections.Length)
-            throw new ArgumentOutOfRangeException(nameof(first));
-        var firstConnection = connections[first];
-        var secondConnection = connections[second];
-        return firstConnection.ActiveCallCount <= secondConnection.ActiveCallCount
-            ? firstConnection
-            : secondConnection;
     }
 
     private bool RemoveReadyConnection(ClientConnection connection)
@@ -327,6 +348,39 @@ internal sealed partial class SharpLinkClient
             return true;
         }
     }
+
+    private bool TryStartConnectionCleanup(
+        ClientConnection connection,
+        string operation,
+        Exception? failure = null)
+    {
+        lock (_poolGate)
+        {
+            if (_poolStopping || !_connections.Remove(connection))
+                return false;
+
+            PublishReadySnapshotLocked();
+            QueueConnectionCleanup(connection, operation, failure);
+            return true;
+        }
+    }
+
+    // Call while owning the topology gate that detaches the connection. Register before stop
+    // can seal supervision, but never execute Fail/Dispose synchronously under that gate:
+    // pending completion can wait for registration, which may need the same topology gate.
+    private void QueueConnectionCleanup(ClientConnection connection, string operation, Exception? failure = null)
+        => TrackFrameworkTask(Task.Run(async () =>
+        {
+            try
+            {
+                if (failure is not null)
+                    connection.Fail(failure);
+            }
+            finally
+            {
+                await DisposeDisconnectedConnectionAsync(connection).ConfigureAwait(false);
+            }
+        }), operation);
 
     private void MarkConnectionDraining(ClientConnection connection)
     {
@@ -348,7 +402,6 @@ internal sealed partial class SharpLinkClient
             EnsureReconnectLoop();
             return;
         }
-        ResetReadySignal();
         TransitionTo(SharpLinkConnectionState.Draining);
         EnsureReconnectLoop();
     }
@@ -384,12 +437,10 @@ internal sealed partial class SharpLinkClient
         }
         if (connection.State != ClientConnectionState.Draining ||
             connection.ActiveCallCount != 0 ||
-            !RemoveReadyConnection(connection))
+            !TryStartConnectionCleanup(connection, "DrainingConnectionCleanup"))
         {
             return;
         }
-
-        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
     }
 
     private void EnsureExpansion()
@@ -406,6 +457,7 @@ internal sealed partial class SharpLinkClient
                 return;
             }
             _expansionTask = ExpandOneAsync();
+            TrackFrameworkTask(_expansionTask, "ConnectionPoolExpansion");
         }
     }
 
@@ -425,13 +477,6 @@ internal sealed partial class SharpLinkClient
         {
             using var scope = BeginSessionLogScope(_logger, "pool-expand");
             LogClientConnectionAttemptFailed(_logger, nameof(ExpandOneAsync), ex);
-
-            // Expansion is opportunistic while the pool still has a ready connection, but
-            // that connection can start draining while ConnectOneAsync is in flight. Once
-            // the failed expansion observes that the pool fell below its minimum it must
-            // hand ownership to the persistent reconnect worker. Otherwise a coalesced
-            // reconnect signal can leave the client permanently stranded with zero ready
-            // connections after a rolling restart.
             if (!_shutdownCts.IsCancellationRequested &&
                 ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
@@ -451,5 +496,4 @@ internal sealed partial class SharpLinkClient
         {
         }
     }
-
 }

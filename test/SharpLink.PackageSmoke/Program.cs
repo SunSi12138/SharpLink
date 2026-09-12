@@ -1,8 +1,11 @@
+using System.Buffers;
 using System.Diagnostics;
+using System.IO.Pipelines;
 using System.Net;
 using System.Net.Sockets;
 using SharpLink.Abstractions;
 using SharpLink.Client;
+using SharpLink.Compression.Zstd;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
@@ -50,13 +53,29 @@ public sealed class PackageSmokeService : IPackageSmokeService
 
 public static class Program
 {
+    private static readonly string[] RuntimeRawDispatcherTypeNames =
+    [
+        "SharpLink.Runtime.IStreamDispatcher",
+        "SharpLink.Runtime.IStreamConsumptionAwareDispatcher",
+        "SharpLink.Runtime.IStreamDispatchLease",
+        "SharpLink.Runtime.IStreamDispatchState",
+        "SharpLink.Runtime.PooledAsyncStreamDispatcher`1",
+        "SharpLink.Runtime.PreAdmissionStreamDispatcher",
+        "SharpLink.Runtime.DiscardingStreamDispatcher"
+    ];
+
     public static async Task Main()
     {
+        AssertEnginePublicApiBoundary();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
         await RunTransportSmokeAsync(useSharedMemory: true, timeout.Token);
         await RunStaticEndpointSmokeAsync(timeout.Token);
         await RunReferencedAssemblyPackageSmokeAsync(timeout.Token);
+    }
+
+    private static void ConfigureZstd(SharpLinkRuntimeOptions options)
+    {        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
     }
 
     private static async Task RunTransportSmokeAsync(
@@ -65,8 +84,8 @@ public static class Program
     {
         var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression)
-            .UseAdmissionControl(options => options.Global.UseConcurrency(64));
+            .UseAdmissionControl(options => options.Global.UseConcurrency(64))
+            .UseRuntime(ConfigureZstd);
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -78,8 +97,8 @@ public static class Program
         var server = serverBuilder.Build();
         var serverTask = RunServerAsync(server, cancellationToken);
 
-        var clientBuilder = SharpClientBuilder.Create()
-            .UseRuntime(ConfigureCompression);
+        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseRuntime(ConfigureZstd);
         if (useSharedMemory)
             clientBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -89,6 +108,15 @@ public static class Program
         try
         {
             await client.ConnectAsync(cancellationToken);
+            var fixedReadiness = await client.WaitForReadinessAsync(1, cancellationToken);
+            VerifyReadinessSnapshot(
+                fixedReadiness,
+                expectedActiveEndpoints: 1,
+                expectedTargetReadyEndpoints: 1);
+            VerifyReadinessSnapshot(
+                client.GetReadinessSnapshot(),
+                expectedActiveEndpoints: 1,
+                expectedTargetReadyEndpoints: 1);
 
             var proxy = client.Get<IPackageSmokeService>();
             var result = await proxy.AddAsync(20, 22);
@@ -123,26 +151,38 @@ public static class Program
         int port,
         CancellationToken cancellationToken)
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "bootstrap",
                 child => child.UseTcp(IPAddress.Loopback.ToString(), port),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.ConnectAsync(cancellationToken);
+        await client.StartAsync(cancellationToken);
+        await client.WaitForReadyAsync("bootstrap", cancellationToken);
 
-        await client.AddClusterAsync(
+        var add = await client.AddClusterAsync(
             "runtime",
             child => child.UseTcp(IPAddress.Loopback.ToString(), port),
             cancellationToken: cancellationToken);
+        if (!add.Succeeded || add.FailureCode != SharpLinkClusterMutationFailureCode.None)
+            throw new InvalidOperationException("Runtime multi-cluster Add structured result package smoke failed.");
+        await client.WaitForReadyAsync("runtime", cancellationToken);
         if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
 
-        await client.ReplaceClusterAsync(
+        var replacement = await client.ReplaceClusterAsync(
             "runtime",
             child => child.UseTcp(IPAddress.Loopback.ToString(), port),
             TimeSpan.FromSeconds(2),
             cancellationToken);
+        if (!replacement.Succeeded ||
+            !replacement.Published ||
+            replacement.FailureCode != SharpLinkClusterMutationFailureCode.None ||
+            !replacement.ReferencesReleased ||
+            replacement.ForcedStop)
+        {
+            throw new InvalidOperationException("Runtime multi-cluster Replace structured result package smoke failed.");
+        }
         if (await client.Get<IPackageSmokeService>().AddAsync(19, 23) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
 
@@ -150,18 +190,21 @@ public static class Program
             "runtime",
             TimeSpan.FromSeconds(2),
             cancellationToken);
-        if (!removal.Succeeded || !removal.ReferencesReleased || removal.ForcedStop)
-            throw new InvalidOperationException("Runtime multi-cluster Remove package smoke failed.");
+        if (!removal.Succeeded ||
+            removal.FailureCode != SharpLinkClusterMutationFailureCode.None ||
+            !removal.ReferencesReleased ||
+            removal.ForcedStop)
+        {
+            throw new InvalidOperationException("Runtime multi-cluster Remove structured result package smoke failed.");
+        }
     }
 
     private static async Task RunStaticEndpointSmokeAsync(CancellationToken cancellationToken)
     {
         var firstBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression)
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
             .UseTcp(0, IPAddress.Loopback.ToString());
         var secondBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression)
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
             .UseTcp(0, IPAddress.Loopback.ToString());
         var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
@@ -185,8 +228,7 @@ public static class Program
                 Attributes = new Dictionary<string, string> { ["zone"] = "b" }
             }
         };
-        var client = SharpClientBuilder.Create()
-            .UseRuntime(ConfigureCompression)
+        var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseEndpoints(
                 endpoints,
                 SharpLinkTransportFactories.Sockets())
@@ -202,11 +244,19 @@ public static class Program
         try
         {
             await client.ConnectAsync(cancellationToken);
+            var staticReadiness = await client.WaitForReadinessAsync(2, cancellationToken);
+            VerifyReadinessSnapshot(
+                staticReadiness,
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
+            VerifyReadinessSnapshot(
+                client.GetReadinessSnapshot(),
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
             if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
-            await using var dynamicClient = SharpClientBuilder.Create()
-                .UseRuntime(ConfigureCompression)
+            await using var dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
                         _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1, endpoints))),
@@ -214,6 +264,15 @@ public static class Program
                 .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
                 .Build();
             await dynamicClient.ConnectAsync(cancellationToken);
+            var dynamicReadiness = await dynamicClient.WaitForReadinessAsync(2, cancellationToken);
+            VerifyReadinessSnapshot(
+                dynamicReadiness,
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
+            VerifyReadinessSnapshot(
+                dynamicClient.GetReadinessSnapshot(),
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
             if (await dynamicClient.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
         }
@@ -227,11 +286,27 @@ public static class Program
         }
     }
 
+    private static void VerifyReadinessSnapshot(
+        SharpLinkClientReadinessSnapshot snapshot,
+        int expectedActiveEndpoints,
+        int expectedTargetReadyEndpoints)
+    {
+        if (!snapshot.MeetsTarget ||
+            snapshot.State != SharpLinkConnectionState.Ready ||
+            snapshot.ActiveEndpoints != expectedActiveEndpoints ||
+            snapshot.ReadyEndpoints != expectedActiveEndpoints ||
+            snapshot.ReadyConnections < snapshot.ReadyEndpoints ||
+            snapshot.TargetReadyEndpoints != expectedTargetReadyEndpoints)
+        {
+            throw new InvalidOperationException($"Unexpected Client readiness snapshot: {snapshot}.");
+        }
+    }
+
     private static async Task RunServerAsync(ISharpLinkServer server, CancellationToken cancellationToken)
     {
         try
         {
-            await server.RunAsync(cancellationToken);
+            await server.RunUntilStoppedAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -316,6 +391,303 @@ public static class Program
         return path;
     }
 
-    private static void ConfigureCompression(SharpLinkRuntimeOptions options)
-        => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+    private static void AssertEnginePublicApiBoundary()
+    {
+        var abstractions = typeof(IRpcGeneratedServerBridge).Assembly;
+        foreach (var name in new[]
+                 {
+                     "SharpLink.Abstractions.IRpcSession",
+                     "SharpLink.Abstractions.IStreamManager",
+                     "SharpLink.Abstractions.IStreamDispatcher",
+                     "SharpLink.Abstractions.IStreamConsumptionAwareDispatcher"
+                 })
+        {
+            if (abstractions.GetType(name, throwOnError: false) is not null)
+                throw new InvalidOperationException($"Removed Runtime engine API is still exported: {name}.");
+        }
+
+        var runtime = typeof(SharpLinkRuntimeContext).Assembly;
+        foreach (var name in new[]
+                 {
+                     "SharpLink.Runtime.RpcSession",
+                     "SharpLink.Runtime.StreamManager",
+                     "SharpLink.Runtime.RpcSessionExtensions"
+                 })
+        {
+            var engineType = runtime.GetType(name, throwOnError: false);
+            if (engineType is null || engineType.IsPublic)
+                throw new InvalidOperationException($"Runtime engine API is still public: {name}.");
+        }
+
+        var rawDispatcherTypes = new Dictionary<string, Type>(StringComparer.Ordinal);
+        foreach (var name in RuntimeRawDispatcherTypeNames)
+        {
+            var rawDispatcherType = runtime.GetType(name, throwOnError: false);
+            if (rawDispatcherType is null)
+                throw new InvalidOperationException($"Runtime raw stream dispatcher type is missing: {name}.");
+            if (rawDispatcherType.IsPublic || rawDispatcherType.IsNestedPublic || rawDispatcherType.IsVisible)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime raw stream dispatcher type is externally visible: {name}.");
+            }
+            rawDispatcherTypes.Add(name, rawDispatcherType);
+        }
+
+        var streamDispatcher = rawDispatcherTypes["SharpLink.Runtime.IStreamDispatcher"];
+        var dispatchLease = rawDispatcherTypes["SharpLink.Runtime.IStreamDispatchLease"];
+        var dispatchState = rawDispatcherTypes["SharpLink.Runtime.IStreamDispatchState"];
+        var expectedRawDispatcherTypeNames = RuntimeRawDispatcherTypeNames.ToHashSet(StringComparer.Ordinal);
+        var discoveredRawDispatcherTypeNames = runtime.GetTypes()
+            .Where(type =>
+                !type.IsNested &&
+                (streamDispatcher.IsAssignableFrom(type) ||
+                 dispatchLease.IsAssignableFrom(type) ||
+                 dispatchState.IsAssignableFrom(type)))
+            .Select(static type => type.FullName!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (!expectedRawDispatcherTypeNames.SetEquals(discoveredRawDispatcherTypeNames))
+        {
+            var missing = expectedRawDispatcherTypeNames
+                .Except(discoveredRawDispatcherTypeNames)
+                .OrderBy(static name => name, StringComparer.Ordinal);
+            var unexpected = discoveredRawDispatcherTypeNames
+                .Except(expectedRawDispatcherTypeNames)
+                .OrderBy(static name => name, StringComparer.Ordinal);
+            throw new InvalidOperationException(
+                $"Runtime raw stream dispatcher inventory changed. Missing: {string.Join(", ", missing)}; " +
+                $"unexpected: {string.Join(", ", unexpected)}.");
+        }
+
+        var explicitlyDeniedExports = runtime.GetExportedTypes()
+            .Select(static type => type.FullName)
+            .Where(name => name is not null && expectedRawDispatcherTypeNames.Contains(name))
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (explicitlyDeniedExports.Length != 0)
+        {
+            throw new InvalidOperationException(
+                $"Explicitly denied Runtime raw stream dispatcher types are exported: " +
+                $"{string.Join(", ", explicitlyDeniedExports)}.");
+        }
+
+        var exportedRawDispatchers = new[] { abstractions, runtime }
+            .SelectMany(static assembly => assembly.GetExportedTypes())
+            .Where(static type =>
+                type.Name.Contains("Dispatcher", StringComparison.Ordinal) ||
+                type.Name is "IStreamDispatchLease" or "IStreamDispatchState")
+            .Select(static type => type.FullName ?? type.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (exportedRawDispatchers.Length != 0)
+        {
+            throw new InvalidOperationException(
+                $"Raw stream dispatcher types are still exported: {string.Join(", ", exportedRawDispatchers)}.");
+        }
+
+        AssertPublicType<IRpcGeneratedServerBridge>();
+
+        var connection = new PackageTransport();
+        var codec = new PackageCodec();
+        var clientTransport = new PackageClientTransportFactory();
+        var serverListener = new PackageServerTransportListener();
+        var clientAuthenticator = new PackageClientAuthenticator();
+        var serverAuthenticator = new PackageServerAuthenticator();
+        var endpointResolver = new PackageEndpointResolver();
+        var endpointSelector = new PackageEndpointSelector();
+        var retryPolicy = new PackageRetryPolicy();
+        var admissionPolicy = new PackageEndpointAdmissionPolicy();
+        var clientInterceptor = new PackageClientInterceptor();
+        var serverInterceptor = new PackageInterceptor();
+
+        AssertPublicSpi<ITransportConnection, PackageTransport>(connection);
+        AssertPublicSpi<IRpcCodec<int>, PackageCodec>(codec);
+        AssertPublicSpi<IClientTransportFactory, PackageClientTransportFactory>(clientTransport);
+        AssertPublicSpi<IServerTransportListener, PackageServerTransportListener>(serverListener);
+        AssertPublicSpi<ISharpLinkClientAuthenticator, PackageClientAuthenticator>(clientAuthenticator);
+        AssertPublicSpi<ISharpLinkServerAuthenticator, PackageServerAuthenticator>(serverAuthenticator);
+        AssertPublicSpi<ISharpLinkEndpointResolver, PackageEndpointResolver>(endpointResolver);
+        AssertPublicSpi<ISharpLinkEndpointSelector, PackageEndpointSelector>(endpointSelector);
+        AssertPublicSpi<ISharpLinkRetryPolicy, PackageRetryPolicy>(retryPolicy);
+        AssertPublicSpi<ISharpLinkEndpointAdmissionPolicy, PackageEndpointAdmissionPolicy>(admissionPolicy);
+        AssertPublicSpi<ISharpLinkClientInterceptor, PackageClientInterceptor>(clientInterceptor);
+        AssertPublicSpi<ISharpLinkServerInterceptor, PackageInterceptor>(serverInterceptor);
+
+        var directClientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
+        AssertBuilderReturnsSelf(
+            directClientBuilder,
+            directClientBuilder
+                .UseTransport(clientTransport)
+                .UseAuthenticator(clientAuthenticator)
+                .AddInterceptor(clientInterceptor)
+                .UseEndpointSelector(endpointSelector)
+                .UseRetry(retryPolicy)
+                .UseEndpointAdmission(admissionPolicy),
+            "SharpClientBuilder direct transport and policy SPI configuration");
+
+        SharpLinkEndpointTransportFactory endpointTransportFactory =
+            static _ => new PackageClientTransportFactory();
+        AssertPublicType<SharpLinkEndpointTransportFactory>();
+        var resolverClientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
+        AssertBuilderReturnsSelf(
+            resolverClientBuilder,
+            resolverClientBuilder.UseEndpointResolver(endpointResolver, endpointTransportFactory),
+            "SharpClientBuilder endpoint resolver SPI configuration");
+
+        var serverBuilder = SharpLinkServerBuilder.Create();
+        AssertBuilderReturnsSelf(
+            serverBuilder,
+            serverBuilder
+                .UseTransport(serverListener)
+                .UseAuthenticator(serverAuthenticator)
+                .AddInterceptor(serverInterceptor),
+            "SharpLinkServerBuilder transport and policy SPI configuration");
+    }
+
+    private static void AssertPublicType<T>()
+    {
+        if (!typeof(T).IsPublic)
+            throw new InvalidOperationException($"Supported SharpLink API is not public: {typeof(T).FullName}.");
+    }
+
+    private static void AssertPublicSpi<TContract, TImplementation>(TContract instance)
+        where TImplementation : TContract
+    {
+        AssertPublicType<TContract>();
+        if (!typeof(TContract).IsAssignableFrom(typeof(TImplementation)))
+        {
+            throw new InvalidOperationException(
+                $"Package consumer type {typeof(TImplementation).FullName} does not implement {typeof(TContract).FullName}.");
+        }
+        if (!typeof(TImplementation).IsInstanceOfType(instance))
+        {
+            throw new InvalidOperationException(
+                $"Package consumer SPI instance has the wrong runtime type for {typeof(TContract).FullName}.");
+        }
+    }
+
+    private static void AssertBuilderReturnsSelf<TBuilder>(TBuilder expected, TBuilder actual, string operation)
+        where TBuilder : class
+    {
+        if (!ReferenceEquals(expected, actual))
+            throw new InvalidOperationException($"{operation} did not preserve the configured builder instance.");
+    }
+
+    private sealed class PackageTransport : ITransportConnection
+    {
+        public string Id => "package-smoke-transport";
+
+        public PipeReader Input => PipeReader.Create(Stream.Null);
+
+        public PipeWriter Output => PipeWriter.Create(Stream.Null);
+
+        public EndPoint? LocalEndPoint => null;
+
+        public EndPoint? RemoteEndPoint => null;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PackageClientTransportFactory : IClientTransportFactory
+    {
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(
+                new NotSupportedException("Package SPI compile probe does not connect."));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PackageServerTransportListener : IServerTransportListener
+    {
+        public EndPoint? LocalEndPoint => null;
+
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(
+                new NotSupportedException("Package SPI compile probe does not accept connections."));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PackageClientAuthenticator : ISharpLinkClientAuthenticator
+    {
+        public ValueTask<ReadOnlyMemory<byte>> CreatePayloadAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(ReadOnlyMemory<byte>.Empty);
+    }
+
+    private sealed class PackageServerAuthenticator : ISharpLinkServerAuthenticator
+    {
+        public ValueTask<SharpLinkAuthenticationResult> AuthenticateAsync(
+            SharpLinkAuthenticationRequest request,
+            CancellationToken cancellationToken)
+            => ValueTask.FromResult(SharpLinkAuthenticationResult.Success);
+    }
+
+    private sealed class PackageEndpointResolver : ISharpLinkEndpointResolver
+    {
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, []));
+
+        public IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(CancellationToken cancellationToken)
+            => EmptySnapshots();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private static async IAsyncEnumerable<SharpLinkEndpointSnapshot> EmptySnapshots()
+        {
+            await Task.Yield();
+            yield break;
+        }
+    }
+
+    private sealed class PackageEndpointSelector : ISharpLinkEndpointSelector
+    {
+        public int Select(in SharpLinkEndpointSelectionContext context)
+            => context.Count == 0 ? -1 : 0;
+    }
+
+    private sealed class PackageRetryPolicy : ISharpLinkRetryPolicy
+    {
+        public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
+            => new(false, TimeSpan.Zero);
+    }
+
+    private sealed class PackageEndpointAdmissionPolicy : ISharpLinkEndpointAdmissionPolicy
+    {
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+            => new(true, Token: 0, RetryAfter: null);
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+        }
+    }
+
+    private sealed class PackageClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+            => next(context);
+    }
+
+    private sealed class PackageCodec : IRpcCodec<int>
+    {
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
+        {
+            var span = buffer.GetSpan(sizeof(int));
+            BitConverter.TryWriteBytes(span, value);
+            buffer.Advance(sizeof(int));
+        }
+
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+            => BitConverter.ToInt32(buffer.ToArray());
+    }
+
+    private sealed class PackageInterceptor : ISharpLinkServerInterceptor
+    {
+        public ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+            => next(context);
+    }
 }

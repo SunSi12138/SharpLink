@@ -9,6 +9,7 @@
     <ProjectReference Include="../DemoBase/DemoBase.csproj" />
     <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
     <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj" />
     <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
     <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
     <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />

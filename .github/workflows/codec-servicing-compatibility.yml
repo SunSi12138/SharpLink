@@ -1,0 +1,298 @@
+name: Codec .NET 10 Servicing Compatibility
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  produce:
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [baseline, latest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve SDK lane
+        id: sdk
+        shell: bash
+        run: |
+          if [[ "${{ matrix.lane }}" == "baseline" ]]; then
+            sdk_spec="$(node -p "JSON.parse(require('fs').readFileSync('global.json','utf8')).sdk.version")"
+          else
+            sdk_spec="10.0.x"
+          fi
+          if [[ -z "$sdk_spec" ]]; then
+            echo "::error::Unable to resolve SDK specification for ${{ matrix.lane }}."
+            exit 1
+          fi
+          echo "spec=$sdk_spec" >> "$GITHUB_OUTPUT"
+
+      - name: Setup .NET SDK lane
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ steps.sdk.outputs.spec }}
+
+      - name: Pin exact SDK and bundled runtime identity
+        shell: bash
+        run: |
+          if [[ "${{ matrix.lane }}" == "baseline" ]]; then
+            exact_sdk="${{ steps.sdk.outputs.spec }}"
+          else
+            exact_sdk="$(dotnet --list-sdks | awk '{print $1}' | grep '^10\.0\.' | sort -V | tail -n 1)"
+          fi
+          if [[ -z "$exact_sdk" ]]; then
+            echo "::error::Unable to resolve an installed .NET 10 SDK for ${{ matrix.lane }}."
+            exit 1
+          fi
+          node - "$exact_sdk" <<'NODE'
+          const fs = require('fs');
+          const version = process.argv[2];
+          const globalJson = JSON.parse(fs.readFileSync('global.json', 'utf8'));
+          globalJson.sdk.version = version;
+          globalJson.sdk.rollForward = 'disable';
+          fs.writeFileSync('global.json', JSON.stringify(globalJson, null, 2) + '\n');
+          NODE
+          actual_sdk="$(dotnet --version)"
+          if [[ "$actual_sdk" != "$exact_sdk" ]]; then
+            echo "::error::Expected SDK $exact_sdk, got $actual_sdk."
+            exit 1
+          fi
+
+          bundled_versions="$DOTNET_ROOT/sdk/$actual_sdk/Microsoft.NETCoreSdk.BundledVersions.props"
+          if [[ ! -f "$bundled_versions" ]]; then
+            echo "::error::Bundled runtime metadata not found: $bundled_versions"
+            exit 1
+          fi
+          exact_runtime="$(sed -nE 's#.*<BundledNETCoreAppPackageVersion[^>]*>([^<]+)</BundledNETCoreAppPackageVersion>.*#\1#p' "$bundled_versions" | head -n 1)"
+          if [[ -z "$exact_runtime" ]]; then
+            echo "::error::Unable to resolve BundledNETCoreAppPackageVersion from $bundled_versions."
+            exit 1
+          fi
+          if ! dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App $exact_runtime ["; then
+            echo "::error::SDK $actual_sdk declares bundled runtime $exact_runtime, but it is not installed."
+            dotnet --list-runtimes
+            exit 1
+          fi
+
+          echo "SHARPLINK_SDK_VERSION=$actual_sdk" >> "$GITHUB_ENV"
+          echo "SHARPLINK_RUNTIME_VERSION=$exact_runtime" >> "$GITHUB_ENV"
+          echo "Using ${{ matrix.lane }} SDK/runtime $actual_sdk / $exact_runtime"
+
+      - name: Produce servicing corpus on exact runtime
+        shell: bash
+        env:
+          DOTNET_ROLL_FORWARD: Disable
+        run: |
+          dotnet run -c Release \
+            -p:RuntimeFrameworkVersion="$SHARPLINK_RUNTIME_VERSION" \
+            --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj \
+            -- produce \
+            --output artifacts/codec-servicing/corpus
+
+      - name: Assert producer runtime identity
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'artifacts/codec-servicing/corpus/manifest.json';
+          const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const expectedSdk = process.env.SHARPLINK_SDK_VERSION;
+          const expectedRuntime = process.env.SHARPLINK_RUNTIME_VERSION;
+          if (manifest.sdkVersion !== expectedSdk || manifest.runtimeVersion !== expectedRuntime) {
+            console.error(`::error::Producer runtime identity mismatch: expected SDK/runtime ${expectedSdk}/${expectedRuntime}, observed ${manifest.sdkVersion}/${manifest.runtimeVersion}.`);
+            process.exit(1);
+          }
+          console.log(`Observed producer SDK/runtime ${manifest.sdkVersion}/${manifest.runtimeVersion}.`);
+          NODE
+
+      - name: Upload servicing corpus
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-servicing-corpus-${{ matrix.lane }}
+          path: artifacts/codec-servicing/corpus
+          if-no-files-found: error
+          retention-days: 30
+
+  verify:
+    needs: produce
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [baseline, latest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download baseline producer corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-servicing-corpus-baseline
+          path: artifacts/codec-servicing/producers/baseline
+
+      - name: Download latest producer corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-servicing-corpus-latest
+          path: artifacts/codec-servicing/producers/latest
+
+      - name: Resolve exact consumer SDK/runtime from producer evidence
+        id: runtime
+        shell: bash
+        run: |
+          manifest="artifacts/codec-servicing/producers/${{ matrix.lane }}/manifest.json"
+          exact_sdk="$(node -p "JSON.parse(require('fs').readFileSync('$manifest','utf8')).sdkVersion")"
+          exact_runtime="$(node -p "JSON.parse(require('fs').readFileSync('$manifest','utf8')).runtimeVersion")"
+          if [[ -z "$exact_sdk" || "$exact_sdk" == "unknown" ]]; then
+            echo "::error::Producer manifest has no usable SDK identity for ${{ matrix.lane }}."
+            exit 1
+          fi
+          if [[ -z "$exact_runtime" || "$exact_runtime" == "unknown" ]]; then
+            echo "::error::Producer manifest has no usable runtime identity for ${{ matrix.lane }}."
+            exit 1
+          fi
+          echo "sdk=$exact_sdk" >> "$GITHUB_OUTPUT"
+          echo "runtime=$exact_runtime" >> "$GITHUB_OUTPUT"
+
+      - name: Setup exact consumer SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ steps.runtime.outputs.sdk }}
+
+      - name: Pin exact consumer SDK/runtime
+        shell: bash
+        run: |
+          exact_sdk="${{ steps.runtime.outputs.sdk }}"
+          exact_runtime="${{ steps.runtime.outputs.runtime }}"
+          node - "$exact_sdk" <<'NODE'
+          const fs = require('fs');
+          const version = process.argv[2];
+          const globalJson = JSON.parse(fs.readFileSync('global.json', 'utf8'));
+          globalJson.sdk.version = version;
+          globalJson.sdk.rollForward = 'disable';
+          fs.writeFileSync('global.json', JSON.stringify(globalJson, null, 2) + '\n');
+          NODE
+          actual_sdk="$(dotnet --version)"
+          if [[ "$actual_sdk" != "$exact_sdk" ]]; then
+            echo "::error::Expected SDK $exact_sdk, got $actual_sdk."
+            exit 1
+          fi
+          if ! dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App $exact_runtime ["; then
+            echo "::error::Required consumer runtime $exact_runtime is not installed."
+            dotnet --list-runtimes
+            exit 1
+          fi
+          echo "SHARPLINK_SDK_VERSION=$actual_sdk" >> "$GITHUB_ENV"
+          echo "SHARPLINK_RUNTIME_VERSION=$exact_runtime" >> "$GITHUB_ENV"
+          echo "Using ${{ matrix.lane }} consumer SDK/runtime $actual_sdk / $exact_runtime"
+
+      - name: Verify baseline producer on ${{ matrix.lane }} consumer
+        shell: bash
+        env:
+          DOTNET_ROLL_FORWARD: Disable
+        run: |
+          dotnet run -c Release \
+            -p:RuntimeFrameworkVersion="$SHARPLINK_RUNTIME_VERSION" \
+            --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj \
+            -- verify \
+            --input artifacts/codec-servicing/producers/baseline \
+            --output artifacts/codec-servicing/verification/from-baseline/verification.json
+
+      - name: Verify latest producer on ${{ matrix.lane }} consumer
+        shell: bash
+        env:
+          DOTNET_ROLL_FORWARD: Disable
+        run: |
+          dotnet run -c Release \
+            -p:RuntimeFrameworkVersion="$SHARPLINK_RUNTIME_VERSION" \
+            --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj \
+            -- verify \
+            --input artifacts/codec-servicing/producers/latest \
+            --output artifacts/codec-servicing/verification/from-latest/verification.json
+
+      - name: Assert consumer runtime identity
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const expectedSdk = process.env.SHARPLINK_SDK_VERSION;
+          const expectedRuntime = process.env.SHARPLINK_RUNTIME_VERSION;
+          for (const producer of ['baseline', 'latest']) {
+            const path = `artifacts/codec-servicing/verification/from-${producer}/verification.json`;
+            const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+            if (report.consumer.sdkVersion !== expectedSdk || report.consumer.runtimeVersion !== expectedRuntime) {
+              console.error(`::error::Consumer runtime identity mismatch in ${path}: expected SDK/runtime ${expectedSdk}/${expectedRuntime}, observed ${report.consumer.sdkVersion}/${report.consumer.runtimeVersion}.`);
+              process.exit(1);
+            }
+          }
+          console.log(`Observed consumer SDK/runtime ${expectedSdk}/${expectedRuntime}.`);
+          NODE
+
+      - name: Upload servicing verification reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-servicing-verification-${{ matrix.lane }}
+          path: artifacts/codec-servicing/verification
+          if-no-files-found: warn
+          retention-days: 30
+
+  summary:
+    needs: verify
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download baseline producer corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-servicing-corpus-baseline
+          path: artifacts/codec-servicing/evidence/producers/baseline
+
+      - name: Download latest producer corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-servicing-corpus-latest
+          path: artifacts/codec-servicing/evidence/producers/latest
+
+      - name: Download baseline consumer reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-servicing-verification-baseline
+          path: artifacts/codec-servicing/evidence/verifications/baseline
+
+      - name: Download latest consumer reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-servicing-verification-latest
+          path: artifacts/codec-servicing/evidence/verifications/latest
+
+      - name: Validate and summarize servicing evidence
+        run: >-
+          python3 eng/summarize-codec-servicing-evidence.py
+          --input artifacts/codec-servicing/evidence
+          --output artifacts/codec-servicing/summary
+
+      - name: Upload servicing compatibility summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-servicing-compatibility-summary
+          path: artifacts/codec-servicing/summary
+          if-no-files-found: warn
+          retention-days: 30

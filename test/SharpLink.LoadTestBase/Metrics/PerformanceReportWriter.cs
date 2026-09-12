@@ -30,6 +30,7 @@ public static class PerformanceReportWriter
             Directory.CreateDirectory(directory);
 
         var report = new PerformanceReport<TConfiguration, TResult>(
+            PerformanceReportCompatibility.CurrentSchemaVersion,
             workload,
             DateTimeOffset.UtcNow,
             ReadCommit(),
@@ -84,9 +85,10 @@ public static class PerformanceReportWriter
 
 /// <summary>Machine-readable performance evidence emitted by a load-test executable.</summary>
 public sealed record PerformanceReport<TConfiguration, TResult>(
+    int SchemaVersion,
     string Workload,
     DateTimeOffset TimestampUtc,
-    string Commit,
+    string SourceCommit,
     string OperatingSystem,
     string OsArchitecture,
     string ProcessArchitecture,

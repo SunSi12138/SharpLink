@@ -1,0 +1,19 @@
+namespace SharpLink.Serializer.SharpPack
+{
+    public interface ISharpPackRpcCodecAdapterScopeConfiguration
+    {
+        void Configure(string configurationId, System.Action<SharpPack.SharpPackSerializerContextBuilder> configure);
+    }
+    public static class SharpPackRpcCodec
+    {
+        public static SharpLink.Abstractions.IRpcCodec<T> Create<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)]  T>(SharpPack.SharpPackSerializerContext context) { }
+    }
+    [SharpLink.Sdk.RpcCodecSemanticIdentity(4600237960634280311ul, 13503960551886836297ul)]
+    public sealed class SharpPackRpcCodecAdapter : SharpLink.Abstractions.IRpcCodecAdapter
+    {
+        public const string AdapterIdentity = "sharplink.serializer.sharppack/v1";
+        public SharpPackRpcCodecAdapter() { }
+        public string AdapterId { get; }
+        public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() { }
+    }
+}

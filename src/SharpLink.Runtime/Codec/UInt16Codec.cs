@@ -64,7 +64,7 @@ internal sealed class NullableUInt16Codec : IRpcCodec<ushort?>
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        
+
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref tempStart, 1));
     }

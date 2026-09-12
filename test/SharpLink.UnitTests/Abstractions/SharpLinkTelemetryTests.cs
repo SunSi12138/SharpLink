@@ -1,46 +1,40 @@
 using System.Collections.Generic;
 using System.Diagnostics.Metrics;
-using System.Text;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Abstractions;
 
 public class SharpLinkTelemetryTests
 {
+    // Tests marked NotInParallel install process-wide MeterListeners and can observe
+    // measurements emitted by otherwise unrelated tests.
     [Test]
-    public void RemoteResourceExhaustionShouldRestoreKnownReasonFromWireMessage()
+    public void RemoteResourceExhaustionShouldRestoreKnownReasonFromDetailCode()
     {
-        var wire = SharpLinkResourceExhaustion.CreateWire(
-            SharpLinkResourceExhaustion.ServerCallCapacity,
-            "Server call capacity is exhausted (server_call_capacity).");
-        Ensure(Encoding.UTF8.GetByteCount(wire.Message.AsSpan(0, 1)) == 1,
-            "the stable discriminator must survive a one-byte error-message limit");
-        var truncated = SharpLinkResourceExhaustion.CreateRemote(
-            SharpLinkErrorCode.ResourceExhausted,
-            wire.Message[..1]);
-        Ensure(
-            SharpLinkResourceExhaustion.GetReason(truncated) ==
-            SharpLinkResourceExhaustion.ServerCallCapacity,
-            "a maximally truncated wire message must retain its stable reason");
-
         var restored = SharpLinkResourceExhaustion.CreateRemote(
             SharpLinkErrorCode.ResourceExhausted,
-            "Server call capacity is exhausted (server_call_capacity).");
+            SharpLinkErrorDetails.ResourceExhausted.ServerCallCapacity,
+            "Server call capacity is exhausted.");
         Ensure(
             SharpLinkResourceExhaustion.GetReason(restored) ==
             SharpLinkResourceExhaustion.ServerCallCapacity,
-            "the client must restore the server-provided stable reason after wire decoding");
+            "the client must restore the stable reason from the structured detail code");
 
-        var unspecified = SharpLinkResourceExhaustion.CreateRemote(
+        const ushort futureDetail = ushort.MaxValue;
+        var unknown = SharpLinkResourceExhaustion.CreateRemote(
             SharpLinkErrorCode.ResourceExhausted,
-            "An older peer reported an unclassified bounded-resource failure.");
+            futureDetail,
+            "A newer peer reported an unrecognized bounded-resource failure.");
+        Ensure(unknown.DetailCode == futureDetail,
+            "unknown detail values must be preserved for forward compatibility");
         Ensure(
-            SharpLinkResourceExhaustion.GetReason(unspecified) ==
+            SharpLinkResourceExhaustion.GetReason(unknown) ==
             SharpLinkResourceExhaustion.Unspecified,
-            "unknown peer messages must remain a bounded unspecified telemetry series");
+            "unknown detail values must map to the bounded unspecified telemetry series");
     }
 
     [Test]
+    [NotInParallel]
     public void ResourceExhaustedMetricsShouldExposeStableReasons()
     {
         const string side = "resource-exhaustion-reason-test";
@@ -88,6 +82,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void AbandonedAndLateResponseMetricsShouldExposeStableTags()
     {
         const string side = "telemetry-unit-test";
@@ -135,6 +130,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void SharedMemoryEvidenceMetricsShouldExposeStableKindsAndReasons()
     {
         var directBytes = 0L;
@@ -217,6 +213,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void AdmissionMetricsShouldExposeStableNamesAndLowCardinalityReasons()
     {
         var permits = 0L;
@@ -284,6 +281,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void ClientTopologyMetricsShouldExposeStableLowCardinalityInstruments()
     {
         var resolverUpdates = 0L;
@@ -340,6 +338,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void MultiClusterMutationMetricsShouldExposeStableOperationAndResultTags()
     {
         var mutations = 0L;

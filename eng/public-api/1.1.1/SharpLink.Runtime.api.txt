@@ -1,0 +1,323 @@
+namespace SharpLink.Runtime
+{
+    public sealed class AnonymousPipeClientTransportFactory : SharpLink.Abstractions.IClientTransportFactory, System.IAsyncDisposable
+    {
+        public AnonymousPipeClientTransportFactory(string inHandle, string outHandle) { }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> ConnectAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public readonly struct AnonymousPipeOffer : System.IDisposable, System.IEquatable<SharpLink.Runtime.AnonymousPipeOffer>
+    {
+        public AnonymousPipeOffer(string InHandle, string OutHandle) { }
+        public string InHandle { get; init; }
+        public string OutHandle { get; init; }
+        public void CompleteHandleTransfer() { }
+        public void Dispose() { }
+        public bool Equals(SharpLink.Runtime.AnonymousPipeOffer other) { }
+        public override int GetHashCode() { }
+        public override string ToString() { }
+    }
+    public sealed class AnonymousPipeServerTransportListener : SharpLink.Abstractions.IServerTransportListener, SharpLink.Runtime.IAnonymousPipeAllocator, System.IAsyncDisposable
+    {
+        public AnonymousPipeServerTransportListener(int offerQueueCapacity = 1024) { }
+        public System.Net.EndPoint? LocalEndPoint { get; }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> AcceptAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask<SharpLink.Runtime.AnonymousPipeOffer> AllocateAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public sealed class BufferWriterPoolOptions
+    {
+        public const long MaximumConfiguredRetainedBytes = 67108864;
+        public const int MaximumRetainedCapacityBytes = 65536;
+        public BufferWriterPoolOptions() { }
+        public int InitialCapacity { get; set; }
+        public int MaxPooledWriters { get; set; }
+        public int MaxRetainedCapacityBytes { get; set; }
+        public SharpLink.Runtime.BufferWriterPoolOptions CloneValidated() { }
+        public void Validate() { }
+    }
+    public interface IAnonymousPipeAllocator
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.Runtime.AnonymousPipeOffer> AllocateAsync(System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface ISharpLinkCompressionProvider
+    {
+        string WireProfile { get; }
+        SharpLink.Runtime.SharpLinkCompressionResult Compress(System.Buffers.ReadOnlySequence<byte> input, System.Buffers.IBufferWriter<byte> output, int maxOutputBytes, System.Threading.CancellationToken cancellationToken = default);
+        SharpLink.Runtime.SharpLinkCompressionResult Decompress(System.Buffers.ReadOnlySequence<byte> input, System.Buffers.IBufferWriter<byte> output, int maxOutputBytes, System.Threading.CancellationToken cancellationToken = default);
+    }
+    public sealed class NamedPipeClientTransportFactory : SharpLink.Abstractions.IClientTransportFactory, System.IAsyncDisposable
+    {
+        public NamedPipeClientTransportFactory(string pipeName, string serverName = ".", System.IO.Pipes.PipeOptions pipeOptions = 1073741824) { }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> ConnectAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public sealed class NamedPipeServerTransportListener : SharpLink.Abstractions.IServerTransportListener, System.IAsyncDisposable
+    {
+        public NamedPipeServerTransportListener(string pipeName, int maxServerInstances = -1, System.IO.Pipes.PipeTransmissionMode transmissionMode = 0, System.IO.Pipes.PipeOptions pipeOptions = 1073741824) { }
+        public System.Net.EndPoint? LocalEndPoint { get; }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> AcceptAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public sealed class PooledAsyncStreamDispatcher<T> : SharpLink.Abstractions.IStreamConsumptionAwareDispatcher, SharpLink.Abstractions.IStreamDispatcher, System.Collections.Generic.IAsyncEnumerable<T>, System.Collections.Generic.IAsyncEnumerator<T>, System.IAsyncDisposable, System.Threading.Tasks.Sources.IValueTaskSource<bool>
+    {
+        public T Current { get; }
+        public void Complete(System.Exception? exception) { }
+        public void Complete(bool isError, string? errorMessage) { }
+        public System.Threading.Tasks.ValueTask DispatchAsync(System.Buffers.ReadOnlySequence<byte> payload) { }
+        public System.Threading.Tasks.ValueTask DispatchAsync(System.Buffers.ReadOnlySequence<byte> payload, int encodedByteCount) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+        public System.Collections.Generic.IAsyncEnumerator<T> GetAsyncEnumerator(System.Threading.CancellationToken cancellationToken = default) { }
+        public bool GetResult(short token) { }
+        public System.Threading.Tasks.Sources.ValueTaskSourceStatus GetStatus(short token) { }
+        public System.Threading.Tasks.ValueTask<bool> MoveNextAsync() { }
+        public void OnCompleted(System.Action<object?> continuation, object? state, short token, System.Threading.Tasks.Sources.ValueTaskSourceOnCompletedFlags flags) { }
+        public void SetBytesConsumedCallback(System.Action<long, ushort, int>? callback, long requestId, ushort streamId) { }
+        public void SetConsumerAbandonedCallback(System.Action<long>? callback, long requestId) { }
+        public static SharpLink.Runtime.PooledAsyncStreamDispatcher<T> Rent(System.Threading.CancellationToken enumerationToken, SharpLink.Abstractions.IRpcCodec<T> codec) { }
+        public static SharpLink.Runtime.PooledAsyncStreamDispatcher<T> Rent(System.Threading.CancellationToken enumerationToken = default, SharpLink.Abstractions.IRpcCodecProvider? codecProvider = null) { }
+        public static SharpLink.Runtime.PooledAsyncStreamDispatcher<T> Rent(System.Threading.CancellationToken enumerationToken, SharpLink.Abstractions.IRpcCodecProvider? codecProvider, bool payloadNullable) { }
+        public static SharpLink.Runtime.PooledAsyncStreamDispatcher<T> Rent(System.Threading.CancellationToken enumerationToken, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable) { }
+    }
+    public sealed class PooledByteBufferWriter : SharpLink.Abstractions.IRpcByteBufferWriter, System.Buffers.IBufferWriter<byte>, System.IDisposable
+    {
+        public PooledByteBufferWriter(int initialCapacity = 1024) { }
+        public int Capacity { get; }
+        public int WrittenCount { get; }
+        public System.ReadOnlyMemory<byte> WrittenMemory { get; }
+        public System.Span<byte> WrittenSpan { get; }
+        public void Advance(int count) { }
+        public void Clear() { }
+        public void Dispose() { }
+        public System.Memory<byte> GetMemory(int sizeHint = 0) { }
+        public System.Span<byte> GetSpan(int sizeHint = 0) { }
+    }
+    public static class ProtocolV2FrameParser
+    {
+        public static bool TryReadFrame(ref System.Buffers.ReadOnlySequence<byte> buffer, SharpLink.Runtime.SharpLinkProtocolOptions limits, out SharpLink.Abstractions.ProtocolV2FrameHeader header, out System.Buffers.ReadOnlySequence<byte> payload) { }
+    }
+    public static class ProtocolV2PayloadCodec
+    {
+        public static SharpLink.Abstractions.ProtocolV2CancelReason ReadCancelReason(System.Buffers.ReadOnlySequence<byte> payload) { }
+        public static SharpLink.Abstractions.ProtocolV2Error ReadError(System.Buffers.ReadOnlySequence<byte> payload, SharpLink.Abstractions.ProtocolV2FrameFlags flags, int maxMessageBytes) { }
+        public static SharpLink.Abstractions.ProtocolV2HandshakeRequest ReadHandshakeRequest(System.Buffers.ReadOnlySequence<byte> payload, SharpLink.Runtime.SharpLinkProtocolOptions limits) { }
+        public static SharpLink.Abstractions.ProtocolV2HandshakeResponse ReadHandshakeResponse(System.Buffers.ReadOnlySequence<byte> payload, SharpLink.Runtime.SharpLinkProtocolOptions limits) { }
+        public static SharpLink.Abstractions.SharpLinkHealthCheckResult ReadHealthResponse(System.Buffers.ReadOnlySequence<byte> payload) { }
+        public static SharpLink.Abstractions.ProtocolV2WindowUpdate ReadWindowUpdate(System.Buffers.ReadOnlySequence<byte> payload) { }
+        public static void WriteCancelReason(System.Buffers.IBufferWriter<byte> writer, SharpLink.Abstractions.ProtocolV2CancelReason reason) { }
+        public static void WriteError(System.Buffers.IBufferWriter<byte> writer, SharpLink.Abstractions.SharpLinkErrorCode code, string? message, int maxMessageBytes, out bool truncated) { }
+        public static void WriteHandshakeRequest(System.Buffers.IBufferWriter<byte> writer, in SharpLink.Abstractions.ProtocolV2HandshakeRequest request, SharpLink.Runtime.SharpLinkProtocolOptions limits) { }
+        public static void WriteHandshakeResponse(System.Buffers.IBufferWriter<byte> writer, in SharpLink.Abstractions.ProtocolV2HandshakeResponse response) { }
+        public static void WriteHealthResponse(System.Buffers.IBufferWriter<byte> writer, SharpLink.Abstractions.SharpLinkHealthStatus status) { }
+        public static void WriteWindowUpdate(System.Buffers.IBufferWriter<byte> writer, in SharpLink.Abstractions.ProtocolV2WindowUpdate update) { }
+    }
+    public sealed class RpcSession : SharpLink.Abstractions.IRpcSession, System.IAsyncDisposable
+    {
+        public RpcSession(SharpLink.Abstractions.ITransportConnection connection, SharpLink.Runtime.RpcSessionFlushOptions? flushOptions = default) { }
+        public RpcSession(string id, System.IO.Pipelines.PipeReader reader, System.IO.Pipelines.PipeWriter writer, System.Action disconnect, System.Func<bool> isConnected, SharpLink.Runtime.RpcSessionFlushOptions? flushOptions = default) { }
+        public string Id { get; }
+        public System.IO.Pipelines.PipeReader Input { get; }
+        public bool IsConnected { get; }
+        public System.DateTime LastActive { get; set; }
+        public SharpLink.Runtime.SharpLinkRuntimeContext RuntimeContext { get; }
+        public SharpLink.Abstractions.IStreamManager StreamManager { get; }
+        public event System.Action? OnConnected;
+        public event System.Action<System.Exception?>? OnDisconnected;
+        public void BindRuntimeContext(SharpLink.Runtime.SharpLinkRuntimeContext runtimeContext) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+        public void NotifyConnected() { }
+        public void NotifyDisconnected(System.Exception? exception = null) { }
+    }
+    public static class RpcSessionExtensions
+    {
+        extension(SharpLink.Abstractions.IRpcSession session)
+        {
+            public System.Threading.Tasks.ValueTask SendHandshakeRequestAndFlushAsync(SharpLink.Abstractions.ProtocolV2HandshakeRequest request, SharpLink.Runtime.SharpLinkProtocolOptions limits, System.Threading.CancellationToken cancellationToken = default) { }
+            public System.Threading.Tasks.ValueTask SendHandshakeResponseAndFlushAsync(SharpLink.Abstractions.ProtocolV2HandshakeResponse response, System.Threading.CancellationToken cancellationToken = default) { }
+            public System.Threading.Tasks.ValueTask SendHandshakeErrorAndFlushAsync(SharpLink.Abstractions.SharpLinkErrorCode code, string? message, int maxMessageBytes, System.Threading.CancellationToken cancellationToken = default) { }
+            public void SendPacketAsync(SharpLink.Abstractions.ProtocolV2FrameType frameType, SharpLink.Abstractions.ProtocolV2FrameFlags flags, long requestId) { }
+            public void SendRpcErrorAsync(long requestId, System.Exception exception) { }
+            public void SendCancelAsync(long requestId, SharpLink.Abstractions.ProtocolV2CancelReason reason) { }
+            public void SendPingAsync() { }
+            public void SendPongAsync(long timestamp) { }
+            public void SendHealthCheck(long requestId) { }
+            public void SendHealthResponse(long requestId, SharpLink.Abstractions.SharpLinkHealthStatus status) { }
+            public System.Threading.Tasks.ValueTask SendStreamChunkAsync<T>(long requestId, ushort streamId, T item, System.Threading.CancellationToken cancellationToken = default) { }
+            public void SendStreamCompleteAsync(long requestId, ushort streamId) { }
+            public void SendStreamErrorAsync(long requestId, ushort streamId, System.Exception exception, long contractId = 0, long methodId = 0) { }
+            public System.Threading.Tasks.ValueTask SendGoAwayAsync(long lastAcceptedRequestId, SharpLink.Abstractions.SharpLinkErrorCode code, string? message, System.Threading.CancellationToken cancellationToken = default) { }
+        }
+    }
+    public readonly struct RpcSessionFlushOptions : System.IEquatable<SharpLink.Runtime.RpcSessionFlushOptions>
+    {
+        public RpcSessionFlushOptions(int FlushSizeThreshold, System.TimeSpan MaxLatency) { }
+        public int FlushSizeThreshold { get; init; }
+        public System.TimeSpan MaxLatency { get; init; }
+        public static SharpLink.Runtime.RpcSessionFlushOptions Default { get; }
+        public static SharpLink.Runtime.RpcSessionFlushOptions Create(int flushSizeThreshold, System.TimeSpan maxLatency) { }
+        public static void Validate(int flushSizeThreshold, System.TimeSpan maxLatency) { }
+    }
+    public sealed class RuntimeConcurrencyOptions
+    {
+        public const int MaximumInitialMapEntries = 1048576;
+        public const int MaximumStripeCount = 1024;
+        public RuntimeConcurrencyOptions() { }
+        public int InitialMapCapacityPerStripe { get; set; }
+        public int StripeCount { get; set; }
+        public SharpLink.Runtime.RuntimeConcurrencyOptions CloneValidated() { }
+        public void Validate() { }
+    }
+    public sealed class SharedMemoryClientTransportFactory : SharpLink.Abstractions.IClientTransportFactory, System.IAsyncDisposable
+    {
+        public SharedMemoryClientTransportFactory(string name, SharpLink.Runtime.SharedMemoryTransportOptions? options = null) { }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> ConnectAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public sealed class SharedMemoryServerTransportListener : SharpLink.Abstractions.IServerTransportListener, System.IAsyncDisposable
+    {
+        public SharedMemoryServerTransportListener(string name, SharpLink.Runtime.SharedMemoryTransportOptions? options = null) { }
+        public System.Net.EndPoint? LocalEndPoint { get; }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> AcceptAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public sealed class SharedMemoryTransportOptions
+    {
+        public SharedMemoryTransportOptions() { }
+        public int? CapacityPerDirectionBytes { get; set; }
+        public System.TimeSpan HandshakeTimeout { get; set; }
+        public int? SpinCount { get; set; }
+        public void Validate() { }
+    }
+    public sealed class SharpLinkBufferWriterPool : SharpLink.Abstractions.IRpcBufferWriterPool, System.IDisposable
+    {
+        public SharpLinkBufferWriterPool(SharpLink.Runtime.BufferWriterPoolOptions options) { }
+        public int InitialCapacity { get; }
+        public void Dispose() { }
+        public SharpLink.Abstractions.IRpcByteBufferWriter Rent() { }
+        public SharpLink.Abstractions.IRpcByteBufferWriter Rent(int maxWrittenBytes) { }
+        public void Return(SharpLink.Abstractions.IRpcByteBufferWriter writer) { }
+    }
+    public sealed class SharpLinkCompressionOptions
+    {
+        public const int MaxProviders = 16;
+        public SharpLinkCompressionOptions() { }
+        public int MinimumPayloadBytes { get; set; }
+        public int MinimumSavingsBytes { get; set; }
+        public double MinimumSavingsRatio { get; set; }
+        public System.Collections.Generic.IList<SharpLink.Runtime.ISharpLinkCompressionProvider> Providers { get; }
+        public void Validate() { }
+    }
+    public static class SharpLinkCompressionProviders
+    {
+        public static SharpLink.Runtime.ISharpLinkCompressionProvider CreateBrotli(System.IO.Compression.CompressionLevel level = 1) { }
+    }
+    public readonly struct SharpLinkCompressionResult : System.IEquatable<SharpLink.Runtime.SharpLinkCompressionResult>
+    {
+        public SharpLinkCompressionResult(int ConsumedBytes, int WrittenBytes) { }
+        public int ConsumedBytes { get; init; }
+        public int WrittenBytes { get; init; }
+    }
+    public sealed class SharpLinkFlowControlOptions
+    {
+        public const int DefaultMaxConcurrentCallsPerServer = 65536;
+        public const int MaximumConcurrentCallsPerConnection = 1048576;
+        public const int MaximumConcurrentCallsPerServer = 1048576;
+        public SharpLinkFlowControlOptions() { }
+        public int ConnectionReceiveWindowBytes { get; set; }
+        public int MaxConcurrentCallsPerConnection { get; set; }
+        public int MaxConcurrentCallsPerServer { get; set; }
+        public int MaxSendQueueBytes { get; set; }
+        public int StreamReceiveWindowBytes { get; set; }
+        public void Validate() { }
+    }
+    public enum SharpLinkPerformanceProfile
+    {
+        Balanced = 0,
+        LowLatency = 1,
+        Throughput = 2,
+    }
+    public sealed class SharpLinkProtocolOptions
+    {
+        public const int DefaultMaxErrorMessageBytes = 65536;
+        public const int DefaultMaxFramePayloadBytes = 4194304;
+        public const int DefaultMaxMetadataBytes = 16384;
+        public const int MaxMaxFramePayloadBytes = 67108864;
+        public const int MaximumPendingRequestsPerConnection = 1048576;
+        public const int MinMaxFramePayloadBytes = 1024;
+        public SharpLinkProtocolOptions() { }
+        public System.TimeSpan HandshakeTimeout { get; set; }
+        public int MaxConcurrentStreamsPerConnection { get; set; }
+        public int MaxErrorMessageBytes { get; set; }
+        public int MaxFramePayloadBytes { get; set; }
+        public int MaxMetadataBytes { get; set; }
+        public int MaxPendingRequestsPerConnection { get; set; }
+        public SharpLink.Runtime.SharpLinkProtocolOptions CloneValidated() { }
+        public void Validate() { }
+    }
+    public sealed class SharpLinkRuntimeContext : SharpLink.Abstractions.IRpcRuntimeContext, System.IDisposable
+    {
+        public SharpLink.Runtime.SharpLinkBufferWriterPool Buffers { get; }
+        public SharpLink.Abstractions.IRpcCodecProvider Codecs { get; }
+        public SharpLink.Runtime.SharpLinkRuntimeOptions Options { get; }
+        public void Dispose() { }
+    }
+    public sealed class SharpLinkRuntimeContextBuilder
+    {
+        public SharpLinkRuntimeContextBuilder() { }
+        public SharpLink.Runtime.SharpLinkRuntimeContextBuilder AddCodec<T>(SharpLink.Abstractions.IRpcCodec<T> codec) { }
+        public SharpLink.Runtime.SharpLinkRuntimeContext Build() { }
+        public SharpLink.Runtime.SharpLinkRuntimeContextBuilder Configure(System.Action<SharpLink.Runtime.SharpLinkRuntimeOptions> configure) { }
+        public SharpLink.Runtime.SharpLinkRuntimeContextBuilder ConfigureBufferPool(System.Action<SharpLink.Runtime.BufferWriterPoolOptions> configure) { }
+        public SharpLink.Runtime.SharpLinkRuntimeContextBuilder ConfigureStateStores(System.Action<SharpLink.Runtime.RuntimeConcurrencyOptions> configure) { }
+        public SharpLink.Runtime.SharpLinkRuntimeContextBuilder UseCodecResolver(System.Func<System.Type, SharpLink.Abstractions.IRpcCodec?>? resolver) { }
+    }
+    public sealed class SharpLinkRuntimeOptions
+    {
+        public SharpLinkRuntimeOptions() { }
+        public SharpLink.Runtime.SharpLinkCompressionOptions Compression { get; }
+        public SharpLink.Runtime.SharpLinkFlowControlOptions FlowControl { get; }
+        public SharpLink.Runtime.SharpLinkPerformanceProfile PerformanceProfile { get; set; }
+        public SharpLink.Runtime.SharpLinkProtocolOptions Protocol { get; }
+    }
+    public sealed class SocketClientTransportFactory : SharpLink.Abstractions.IClientTransportFactory, System.IAsyncDisposable
+    {
+        public SocketClientTransportFactory(System.Net.EndPoint remoteEndPoint, SharpLink.Runtime.SocketTransportOptions? options = null, System.Net.Security.SslClientAuthenticationOptions? tlsOptions = null, System.TimeSpan? tlsHandshakeTimeout = default) { }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> ConnectAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public sealed class SocketServerTransportListener : SharpLink.Abstractions.IServerTransportListener, System.IAsyncDisposable
+    {
+        public SocketServerTransportListener(System.Net.EndPoint localEndPoint, int backlog = 512, SharpLink.Runtime.SocketTransportOptions? options = null, System.Net.Security.SslServerAuthenticationOptions? tlsOptions = null, System.TimeSpan? tlsHandshakeTimeout = default) { }
+        public System.Net.EndPoint? LocalEndPoint { get; }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> AcceptAsync(System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+    }
+    public sealed class SocketTransportOptions
+    {
+        public SocketTransportOptions() { }
+        public bool KeepAlive { get; set; }
+        public System.TimeSpan KeepAliveInterval { get; set; }
+        public int KeepAliveRetryCount { get; set; }
+        public System.TimeSpan KeepAliveTime { get; set; }
+        public bool NoDelay { get; set; }
+        public int? ReceiveBufferBytes { get; set; }
+        public int? SendBufferBytes { get; set; }
+    }
+    public class StreamManager : SharpLink.Abstractions.IStreamManager
+    {
+        public StreamManager() { }
+        public StreamManager(SharpLink.Runtime.RuntimeConcurrencyOptions concurrencyOptions) { }
+        public void CompleteAll(System.Exception? exception) { }
+        public void CompleteAll(bool isError, string? msg) { }
+        public void CompleteStream(long requestId, System.Exception? exception) { }
+        public void CompleteStream(long requestId, bool isError, string? msg) { }
+        public void CompleteStream(long requestId, ushort streamId, System.Exception? exception) { }
+        public void CompleteStream(long requestId, ushort streamId, bool isError, string? msg) { }
+        public System.Threading.Tasks.ValueTask DispatchChunkAsync(long requestId, System.Buffers.ReadOnlySequence<byte> payload) { }
+        public System.Threading.Tasks.ValueTask DispatchChunkAsync(long requestId, ushort streamId, System.Buffers.ReadOnlySequence<byte> payload) { }
+        public void Register(long requestId, SharpLink.Abstractions.IStreamDispatcher dispatcher) { }
+        public void Register(long requestId, ushort streamId, SharpLink.Abstractions.IStreamDispatcher dispatcher) { }
+        public void Unregister(long requestId) { }
+        public void Unregister(long requestId, ushort streamId) { }
+    }
+}

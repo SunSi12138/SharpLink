@@ -1,18 +1,16 @@
 using System;
 using System.Buffers;
 using System.ComponentModel;
-using System.Threading;
 using SharpLink.Abstractions;
 using SharpLink.Sdk;
 using SharpPack;
 
 [assembly: RpcCodecAdapterRegistration(
-    typeof(SharpLink.Runtime.SharpPackRpcCodecAdapter),
-    SharpLink.Runtime.SharpPackRpcCodecAdapter.AdapterIdentity,
-    SharpLink.Runtime.SharpPackRpcCodecAdapter.WireFormatIdentity,
+    typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter),
+    SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter.AdapterIdentity,
     SelectorAttributeType = typeof(SharpPackableAttribute))]
 
-namespace SharpLink.Runtime;
+namespace SharpLink.Serializer.SharpPack;
 
 /// <summary>Creates explicit SharpPack Codecs backed by a caller-owned serializer Context.</summary>
 public static class SharpPackRpcCodec
@@ -28,45 +26,94 @@ public static class SharpPackRpcCodec
     }
 }
 
+/// <summary>
+/// Build-time generated SharpPack integration hook for a generation-owned Adapter Scope.
+/// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public interface ISharpPackRpcCodecAdapterScopeConfiguration
+{
+    /// <summary>Installs one immutable generated formatter graph before any Codec is created.</summary>
+    void Configure(
+        string configurationId,
+        Action<SharpPackSerializerContextBuilder> configure);
+}
+
 /// <summary>SharpPack integration selected by generated Manifest metadata.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
+[RpcCodecSemanticIdentity(0x3fd7540d55dfa977UL, 0xbb67b4932c1a5249UL)]
 public sealed class SharpPackRpcCodecAdapter : IRpcCodecAdapter
 {
     /// <summary>The stable Adapter implementation identity.</summary>
     public const string AdapterIdentity = "sharplink.serializer.sharppack/v1";
 
-    /// <summary>The MemoryPack-compatible wire-format identity.</summary>
-    public const string WireFormatIdentity = "memorypack-binary/v1";
-
     /// <inheritdoc />
     public string AdapterId => AdapterIdentity;
-
-    /// <inheritdoc />
-    public string WireFormatId => WireFormatIdentity;
 
     /// <inheritdoc />
     public IRpcCodecAdapterScope CreateScope() => new SharpPackRpcCodecAdapterScope();
 }
 
-internal sealed class SharpPackRpcCodecAdapterScope : IRpcCodecAdapterScope
+internal sealed class SharpPackRpcCodecAdapterScope :
+    IRpcCodecAdapterScope,
+    ISharpPackRpcCodecAdapterScopeConfiguration
 {
-    private SharpPackSerializerContext? _context = CreateIsolatedContext();
+    private readonly object _gate = new();
+    private SharpPackSerializerContext? _context = CreateIsolatedContextBuilder().Build();
+    private string? _configurationId;
+    private bool _codecCreated;
+
+    public void Configure(
+        string configurationId,
+        Action<SharpPackSerializerContextBuilder> configure)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(configurationId);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_context is null, this);
+            if (_configurationId is not null)
+            {
+                if (string.Equals(_configurationId, configurationId, StringComparison.Ordinal))
+                    return;
+                throw new InvalidOperationException(
+                    "A different generated SharpPack formatter graph is already installed in this Adapter Scope.");
+            }
+            if (_codecCreated)
+            {
+                throw new InvalidOperationException(
+                    "Generated SharpPack formatter configuration must be installed before any Codec is created.");
+            }
+
+            var builder = CreateIsolatedContextBuilder();
+            configure(builder);
+            _context = builder.Build();
+            _configurationId = configurationId;
+        }
+    }
 
     public IRpcCodec<T> CreateCodec<
         [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
             System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>()
     {
-        var context = Volatile.Read(ref _context);
-        ObjectDisposedException.ThrowIf(context is null, this);
-        return new SharpPackRpcCodec<T>(context);
+        lock (_gate)
+        {
+            var context = _context;
+            ObjectDisposedException.ThrowIf(context is null, this);
+            _codecCreated = true;
+            return new SharpPackRpcCodec<T>(context);
+        }
     }
 
-    public void Dispose() => Interlocked.Exchange(ref _context, null);
+    public void Dispose()
+    {
+        lock (_gate)
+            _context = null;
+    }
 
-    private static SharpPackSerializerContext CreateIsolatedContext()
+    private static SharpPackSerializerContextBuilder CreateIsolatedContextBuilder()
         => new SharpPackSerializerContextBuilder()
-            .Register<SharpPackScopeMarker>(new SharpPackScopeMarkerFormatter())
-            .Build();
+            .Register<SharpPackScopeMarker>(new SharpPackScopeMarkerFormatter());
 }
 
 internal sealed class SharpPackScopeMarker;

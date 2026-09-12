@@ -15,6 +15,7 @@ var serverTaskA = DemoTcp.StartServerAsync(serverA, app.Token);
 var serverTaskB = DemoTcp.StartServerAsync(serverB, app.Token);
 
 var client = SharpClientBuilder.Create()
+    .UseRequestTimeout()
     .UseEndpoints(
         [
             new SharpLinkEndpoint { Id = "node-a", Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), portA) },

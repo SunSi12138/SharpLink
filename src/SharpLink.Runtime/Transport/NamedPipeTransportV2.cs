@@ -18,7 +18,7 @@ public sealed class NamedPipeClientTransportFactory : IClientTransportFactory
     public NamedPipeClientTransportFactory(
         string pipeName,
         string serverName = ".",
-        PipeOptions pipeOptions = PipeOptions.Asynchronous)
+        PipeOptions pipeOptions = PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
@@ -27,6 +27,8 @@ public sealed class NamedPipeClientTransportFactory : IClientTransportFactory
         _serverName = serverName;
         _pipeOptions = pipeOptions;
     }
+
+    internal PipeOptions EffectivePipeOptions => _pipeOptions;
 
     /// <inheritdoc />
     public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
@@ -86,7 +88,7 @@ public sealed class NamedPipeServerTransportListener : IServerTransportListener
         string pipeName,
         int maxServerInstances = NamedPipeServerStream.MaxAllowedServerInstances,
         PipeTransmissionMode transmissionMode = PipeTransmissionMode.Byte,
-        PipeOptions pipeOptions = PipeOptions.Asynchronous)
+        PipeOptions pipeOptions = PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         if (maxServerInstances != NamedPipeServerStream.MaxAllowedServerInstances &&
@@ -101,6 +103,8 @@ public sealed class NamedPipeServerTransportListener : IServerTransportListener
         _transmissionMode = transmissionMode;
         _pipeOptions = pipeOptions;
     }
+
+    internal PipeOptions EffectivePipeOptions => _pipeOptions;
 
     /// <inheritdoc />
     public EndPoint? LocalEndPoint => null;

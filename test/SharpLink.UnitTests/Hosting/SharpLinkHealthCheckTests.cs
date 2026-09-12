@@ -27,22 +27,15 @@ public class SharpLinkHealthCheckTests
     {
         var check = new SharpLinkServerHealthCheck(new FixedReadiness(SharpLinkHealthStatus.Ready));
         var context = new HealthCheckContext();
-        for (var index = 0; index < 1_000; index++)
-            _ = check.CheckHealthAsync(context).GetAwaiter().GetResult();
+        var cached = check.CheckHealthAsync(context);
+        if (!cached.IsCompletedSuccessfully || cached.Result.Status != HealthStatus.Healthy)
+            throw new Exception("the cached local health task must complete synchronously as Healthy");
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        var healthy = 0;
         for (var index = 0; index < 100_000; index++)
         {
-            if (check.CheckHealthAsync(context).GetAwaiter().GetResult().Status == HealthStatus.Healthy)
-                healthy++;
+            if (!ReferenceEquals(cached, check.CheckHealthAsync(context)))
+                throw new Exception("local health polling must reuse the cached completed Task");
         }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-
-        if (healthy != 100_000)
-            throw new Exception("every cached local health result must remain Healthy");
-        if (allocated != 0)
-            throw new Exception($"local health polling allocated {allocated} bytes");
     }
 
     private sealed class FixedReadiness(SharpLinkHealthStatus status) : ISharpLinkServerReadiness

@@ -13,6 +13,7 @@ internal sealed class ServerConnectionState
 {
     private readonly CancellationTokenSource _connectionCancellation;
     private readonly CancellationToken _connectionToken;
+    private readonly TimeProvider _timeProvider;
     private readonly TaskCompletionSource _sessionCompleted =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _callsDrained =
@@ -28,22 +29,40 @@ internal sealed class ServerConnectionState
     private int _sessionLoopState;
     private int _closeStarted;
     private Task? _serviceCleanupTask;
+#if DEBUG
+    private readonly Action? _afterLocalCallAdmission;
+#endif
 
     internal ServerConnectionState(
         RpcSession session,
-        RuntimeConcurrencyOptions concurrency,
+        IRpcGeneratedServerBridge generatedBridge,
+        StripedLongMap<ServerCallCancellationState> callCancellations,
         CancellationToken serverToken,
-        int maxConcurrentCalls = 1024)
+        TimeProvider timeProvider,
+        int maxConcurrentCalls = 1024
+#if DEBUG
+        , Action? afterLocalCallAdmission = null
+#endif
+        )
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
-        ArgumentNullException.ThrowIfNull(concurrency);
-        CallCancellations = new StripedLongMap<ServerCallCancellationState>(concurrency);
-        DeadlineScheduler = new ServerCallDeadlineScheduler(CallCancellations, maxConcurrentCalls);
+        GeneratedBridge = generatedBridge ?? throw new ArgumentNullException(nameof(generatedBridge));
+        CallCancellations = callCancellations ?? throw new ArgumentNullException(nameof(callCancellations));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        DeadlineScheduler = new ServerCallDeadlineScheduler(
+            CallCancellations,
+            maxConcurrentCalls,
+            _timeProvider);
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;
+#if DEBUG
+        _afterLocalCallAdmission = afterLocalCallAdmission;
+#endif
     }
 
     internal RpcSession Session { get; }
+
+    internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 
     internal SharpLinkAuthenticationContext? AuthenticationContext
         => Volatile.Read(ref _authenticationContext);
@@ -52,10 +71,10 @@ internal sealed class ServerConnectionState
         => Volatile.Read(ref _defaultCallContext);
 
     internal SharpLinkCallContextSnapshot GetCallContextSnapshot(
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         SharpLinkMetadata? metadata)
     {
-        if (deadline is null && metadata is null &&
+        if (!deadline.HasValue && metadata is null &&
             Volatile.Read(ref _defaultCallContext) is { } defaultCallContext)
         {
             return defaultCallContext;
@@ -65,6 +84,7 @@ internal sealed class ServerConnectionState
             Session.Id,
             Volatile.Read(ref _authenticationContext),
             deadline,
+            _timeProvider,
             metadata);
     }
 
@@ -79,6 +99,32 @@ internal sealed class ServerConnectionState
     internal Task ServiceCleanupTask => Volatile.Read(ref _serviceCleanupTask) ?? Task.CompletedTask;
 
     internal int ActiveCalls => Volatile.Read(ref _activeCalls);
+
+    /// <summary>
+    /// Validates a stable server-connection lifecycle snapshot at a transition or test boundary.
+    /// This intentionally stays outside the request/frame hot path and takes no locks.
+    /// </summary>
+    internal void AssertStateInvariant()
+    {
+        if (ActiveCalls < 0)
+            throw new InvalidOperationException("Server connection active call count became negative.");
+
+        var state = LifecycleState;
+        var sessionAcceptsCalls = Session.CanAcceptCalls;
+        if (state == ServerConnectionLifecycleState.Ready &&
+            (!sessionAcceptsCalls || Session.NegotiatedOptions is null || DefaultCallContext is null))
+        {
+            throw new InvalidOperationException(
+                "A Ready server connection must have a negotiated, call-accepting Session and a published authentication/call-context snapshot at a stable lifecycle boundary.");
+        }
+        if (sessionAcceptsCalls && state is (
+                ServerConnectionLifecycleState.Draining or
+                ServerConnectionLifecycleState.Closed))
+        {
+            throw new InvalidOperationException(
+                "A draining or closed server connection must not reference a Session that accepts new calls at a stable lifecycle boundary.");
+        }
+    }
 
     internal long LastAcceptedRequestId => Volatile.Read(ref _lastAcceptedRequestId);
 
@@ -152,9 +198,29 @@ internal sealed class ServerConnectionState
             _callsDrained.TrySetResult();
     }
 
+#if DEBUG
+    /// <summary>
+    /// Deterministic UnitTests-only seam for the exact local-to-global admission
+    /// transfer. Release builds omit both this method and the nullable observer.
+    /// </summary>
+    internal void NotifyAfterLocalCallAdmissionForTesting()
+        => _afterLocalCallAdmission?.Invoke();
+#endif
+
     internal ValueTask<ServiceLease> AcquireServiceAsync(
         ServiceRegistration registration,
         SharpLinkDynamicModuleLease moduleLease)
+        => AcquireServiceAsync(
+            registration,
+            moduleLease,
+            generatedBridge: null,
+            requestId: 0);
+
+    internal ValueTask<ServiceLease> AcquireServiceAsync(
+        ServiceRegistration registration,
+        SharpLinkDynamicModuleLease moduleLease,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId)
     {
         if (LifecycleState != ServerConnectionLifecycleState.Ready)
         {
@@ -166,7 +232,7 @@ internal sealed class ServerConnectionState
         if (_services.TryGetValue(registration, out var existing))
             return AwaitConnectionServiceAsync(registration, existing, moduleLease);
 
-        var candidate = new ConnectionServiceEntry(registration);
+        var candidate = new ConnectionServiceEntry(registration, generatedBridge, requestId);
         var selected = _services.GetOrAdd(registration, candidate);
         return AwaitConnectionServiceAsync(registration, selected, moduleLease);
     }
@@ -207,25 +273,27 @@ internal sealed class ServerConnectionState
 
     internal ServerConnectionDiagnosticSnapshot CaptureStopDiagnostics(int maximumCalls)
     {
-        var entries = new KeyValuePair<long, ServerCallCancellationState>[maximumCalls];
-        var count = CallCancellations.CopyEntries(entries);
+        var entries = new ServerCallCancellationLease[maximumCalls];
+        var count = CallCancellations.CopyEntries(
+            entries,
+            static (requestId, state) => state.CaptureLease(requestId));
         var calls = new List<ServerCallDiagnosticSnapshot>(count);
         for (var index = 0; index < count; index++)
         {
-            var entry = entries[index];
-            if (!entry.Value.TryAcquire(entry.Key))
+            var callLease = entries[index];
+            if (!callLease.TryAcquire())
                 continue;
             try
             {
+                var call = callLease.State;
                 calls.Add(new ServerCallDiagnosticSnapshot(
-                    entry.Key,
-                    entry.Value.Reason.ToString(),
-                    entry.Value.Deadline,
-                    entry.Value.DeadlineTimestamp));
+                    callLease.RequestId,
+                    call.Reason.ToString(),
+                    call.Deadline.Timestamp));
             }
             finally
             {
-                entry.Value.ReleaseUse();
+                callLease.ReleaseUse();
             }
         }
 
@@ -233,7 +301,7 @@ internal sealed class ServerConnectionState
             Session.Id,
             LifecycleState.ToString(),
             ActiveCalls,
-            Session.StreamManager is StreamManager manager ? manager.ActiveStreamCount : -1,
+            Session.StreamManager.ActiveStreamCount,
             calls);
     }
 
@@ -249,6 +317,7 @@ internal sealed class ServerConnectionState
                     (int)ServerConnectionLifecycleState.Draining,
                     current) == current)
             {
+                Session.MarkDraining();
                 if (ActiveCalls == 0)
                     _callsDrained.TrySetResult();
                 return;
@@ -376,9 +445,12 @@ internal sealed class ServerConnectionState
         private readonly Lock _disposeGate = new();
         private Task? _disposeTask;
 
-        internal ConnectionServiceEntry(ServiceRegistration registration)
+        internal ConnectionServiceEntry(
+            ServiceRegistration registration,
+            IRpcGeneratedServerBridge? generatedBridge,
+            long requestId)
             => _instance = new Lazy<Task<ConnectionServiceInstance>>(
-                () => registration.CreateConnectionServiceAsync().AsTask(),
+                () => registration.CreateConnectionServiceAsync(generatedBridge, requestId).AsTask(),
                 LazyThreadSafetyMode.ExecutionAndPublication);
 
         internal Task<ConnectionServiceInstance> GetServiceAsync() => _instance.Value;
