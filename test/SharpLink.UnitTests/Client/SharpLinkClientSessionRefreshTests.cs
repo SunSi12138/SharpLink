@@ -9,16 +9,24 @@ public sealed class SharpLinkClientSessionRefreshTests
     public async Task FixedRefreshShouldReplaceBeforeRetireAndDrainInflightCall()
     {
         var factory = new RefreshTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(factory);
+        await using var client = ClientBuilderTestHelper.Build(
+            factory,
+            builder => builder.UseConnectionPool(options =>
+            {
+                options.MinConnections = 1;
+                options.MaxConnections = 1;
+            }));
         await client.ConnectAsync();
+        Ensure(client.ReadyConnectionCount == 1 && factory.ConnectCount == 1,
+            $"fixed test must start with one Ready physical connection; ready={client.ReadyConnectionCount}, connects={factory.ConnectCount}");
         var source = factory.GetConnection(0);
         var serverInstanceId = Guid.NewGuid();
 
         await InjectRefreshAsync(source, serverInstanceId, 2);
-        await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForReplacementStartAsync(factory, client, "fixed");
 
         Ensure(client.ReadyConnectionCount == 1,
-            "the old fixed connection must remain Ready while its replacement is still connecting");
+            $"the old fixed connection must remain Ready while its replacement is still connecting; ready={client.ReadyConnectionCount}");
 
         var inflight = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var inflightRequest = await source.WaitForSentPacket(ProtocolV2FrameType.Request)
@@ -36,7 +44,7 @@ public sealed class SharpLinkClientSessionRefreshTests
             .WaitAsync(TimeSpan.FromSeconds(2));
 
         Ensure(client.ReadyConnectionCount == 1,
-            "replacement publication must atomically swap Ready eligibility instead of overshooting the pool");
+            $"replacement publication must atomically swap Ready eligibility instead of overshooting the pool; ready={client.ReadyConnectionCount}");
 
         var next = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var nextRequest = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
@@ -64,17 +72,18 @@ public sealed class SharpLinkClientSessionRefreshTests
         [
             new StaticEndpointConfiguration(firstEndpoint, firstFactory),
             new StaticEndpointConfiguration(secondEndpoint, secondFactory)
-        ]);
+        ],
+        ConfigureTwoEndpointCluster);
         await client.ConnectAsync();
 
         Ensure(client.ReadyConnectionCount == 2 && firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 1,
-            "static topology should begin with one Ready connection per source endpoint");
+            $"static topology should begin with one Ready connection per source endpoint; ready={client.ReadyConnectionCount}, first={firstFactory.ConnectCount}, second={secondFactory.ConnectCount}");
 
         await InjectRefreshAsync(firstFactory.GetConnection(0), Guid.NewGuid(), 2);
-        await firstFactory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForReplacementStartAsync(firstFactory, client, "static");
 
         Ensure(client.ReadyConnectionCount == 2,
-            "a static source must stay Ready while its same-endpoint replacement is connecting");
+            $"a static source must stay Ready while its same-endpoint replacement is connecting; ready={client.ReadyConnectionCount}");
         Ensure(secondFactory.ConnectCount == 1,
             "static refresh must not migrate replacement work to another endpoint");
 
@@ -83,7 +92,7 @@ public sealed class SharpLinkClientSessionRefreshTests
             .WaitAsync(TimeSpan.FromSeconds(2));
 
         Ensure(client.ReadyConnectionCount == 2,
-            "static refresh must preserve the published Ready connection count after the swap");
+            $"static refresh must preserve the published Ready connection count after the swap; ready={client.ReadyConnectionCount}");
         Ensure(firstFactory.ConnectCount == 2 && secondFactory.ConnectCount == 1,
             "static replacement must retain exact source-endpoint transport ownership");
     }
@@ -105,17 +114,18 @@ public sealed class SharpLinkClientSessionRefreshTests
         };
         await using var client = ClientBuilderTestHelper.BuildDynamic(
             resolver,
-            endpoint => factories[endpoint.Id]);
+            endpoint => factories[endpoint.Id],
+            ConfigureTwoEndpointCluster);
         await client.ConnectAsync();
 
         Ensure(client.ReadyConnectionCount == 2 && firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 1,
-            "dynamic topology should begin with one Ready connection per current endpoint generation");
+            $"dynamic topology should begin with one Ready connection per current endpoint generation; ready={client.ReadyConnectionCount}, first={firstFactory.ConnectCount}, second={secondFactory.ConnectCount}");
 
         await InjectRefreshAsync(firstFactory.GetConnection(0), Guid.NewGuid(), 2);
-        await firstFactory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForReplacementStartAsync(firstFactory, client, "dynamic");
 
         Ensure(client.ReadyConnectionCount == 2,
-            "a dynamic source must stay Ready until its replacement for the same generation is Ready");
+            $"a dynamic source must stay Ready until its replacement for the same generation is Ready; ready={client.ReadyConnectionCount}");
         Ensure(secondFactory.ConnectCount == 1,
             "dynamic refresh must not move replacement work to a different endpoint generation");
 
@@ -124,10 +134,19 @@ public sealed class SharpLinkClientSessionRefreshTests
             .WaitAsync(TimeSpan.FromSeconds(2));
 
         Ensure(client.ReadyConnectionCount == 2,
-            "dynamic refresh must preserve Ready capacity across replacement publication");
+            $"dynamic refresh must preserve Ready capacity across replacement publication; ready={client.ReadyConnectionCount}");
         Ensure(firstFactory.ConnectCount == 2 && secondFactory.ConnectCount == 1,
             "dynamic replacement must retain exact current endpoint-generation ownership");
     }
+
+    private static void ConfigureTwoEndpointCluster(SharpClientBuilder builder)
+        => builder.UseCluster(options =>
+        {
+            options.MinReadyEndpoints = 2;
+            options.MaxConnections = 2;
+            options.MaxConnectionsPerEndpoint = 1;
+            options.MaxRetiringConnections = 2;
+        });
 
     private static SharpLinkEndpoint CreateEndpoint(string id, int port)
         => new()
@@ -150,6 +169,23 @@ public sealed class SharpLinkClientSessionRefreshTests
             ProtocolV2FrameFlags.None,
             0,
             writer.WrittenMemory);
+    }
+
+    private static async Task WaitForReplacementStartAsync(
+        RefreshTransportFactory factory,
+        SharpLinkClient client,
+        string topology)
+    {
+        try
+        {
+            await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        catch (TimeoutException exception)
+        {
+            throw new InvalidOperationException(
+                $"{topology} refresh did not start a replacement; ready={client.ReadyConnectionCount}, connects={factory.ConnectCount}, state={client.State}",
+                exception);
+        }
     }
 
     private static void Ensure(bool condition, string message)
