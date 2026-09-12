@@ -128,6 +128,47 @@ public class SharedMemoryLayoutTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    [NotInParallel]
+    public async Task DisposingOneMappingShouldPreservePeerMemoryAndInvalidateOwnedMemory(bool closeServerFirst)
+    {
+        const int capacity = 64 * 1024;
+        var baseline = SharedMemoryMapping.ActiveMappingCount;
+        var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+        var server = SharedMemoryMapping.CreateServer(capacity, nonce, out var path);
+        var client = SharedMemoryMapping.OpenClient(path, capacity, nonce);
+        try
+        {
+            server.UnlinkAfterClientOpened();
+            var owner = closeServerFirst ? server : client;
+            var peer = closeServerFirst ? client : server;
+            var ownedMemory = owner.Memory.Slice(SharedMemoryLayout.HeaderBytes, 64);
+            var peerMemory = peer.Memory.Slice(SharedMemoryLayout.HeaderBytes, 64);
+            var expected = Enumerable.Range(1, 64).Select(value => (byte)value).ToArray();
+            expected.CopyTo(ownedMemory);
+
+            await owner.DisposeAsync();
+
+            await Assert.That(peerMemory.ToArray().SequenceEqual(expected)).IsTrue();
+            peerMemory.Span[0] = 123;
+            await Assert.That(peerMemory.Span[0]).IsEqualTo((byte)123);
+            await Assert.That(() => ownedMemory.Span[0]).Throws<ObjectDisposedException>();
+            await Assert.That(SharedMemoryMapping.ActiveMappingCount).IsEqualTo(baseline + 1);
+
+            await peer.DisposeAsync();
+            await owner.DisposeAsync();
+            await Assert.That(SharedMemoryMapping.ActiveMappingCount).IsEqualTo(baseline);
+            await Assert.That(File.Exists(path)).IsFalse();
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await server.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task MappingPathShouldRejectLocationsOutsideTransportDirectory()
     {
         var outsidePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.shm");

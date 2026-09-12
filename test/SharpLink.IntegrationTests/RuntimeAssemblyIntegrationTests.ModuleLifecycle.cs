@@ -77,6 +77,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(duplicate.Error?.IncomingLoadContext?.Contains("dynamic-call-shapes", StringComparison.Ordinal) == true,
             "duplicate diagnostics contain ALC identity");
 
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var unary = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 7, CancellationToken.None);
         Ensure(unary == 8, "dynamic unary");
