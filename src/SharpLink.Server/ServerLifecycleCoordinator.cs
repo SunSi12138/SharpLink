@@ -429,6 +429,7 @@ internal sealed partial class SharpLinkServer
 
                 if (!frameworkCleanupCompleted)
                 {
+                    Console.Error.WriteLine($"STOP_FRAMEWORK_TIMEOUT listener={listenerDisposeTask.Status}; goAway={goAwayTask.Status}; flush={flushTask.Status}; close={closeSessionsTask.Status}; accept={_acceptObserverTask?.Status}; supervisor={frameworkTasksTask.Status}; aggregate={frameworkCleanupTask.Status}; supervisorSnapshot={System.Text.Json.JsonSerializer.Serialize(_server.FrameworkTaskSnapshotForDiagnostics)}");
                     faulted = true;
                     SharpLinkServer.LogFrameworkCleanupTimeout(
                         _server._logger,
@@ -450,6 +451,7 @@ internal sealed partial class SharpLinkServer
                                 serviceCleanupTask,
                                 finalDeadline).ConfigureAwait(false))
                         {
+                            Console.Error.WriteLine($"STOP_SERVICE_TIMEOUT serviceCleanup={serviceCleanupTask.Status}; pendingAdmissions={_server.PendingCallAdmissionsForDiagnostics}; activeCalls={_server.ActiveCallCountForDiagnostics}");
                             faulted = true;
                             _serviceCleanupObserver = ObserveCleanupFailureAsync(
                                 serviceCleanupTask,
