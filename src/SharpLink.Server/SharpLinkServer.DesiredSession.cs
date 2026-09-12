@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkServer
     private readonly Guid _desiredSessionServerInstanceId = Guid.NewGuid();
     private SharpLinkServerDesiredSessionSnapshot? _desiredSession;
     private readonly AsyncLocal<SharpLinkServerDesiredSessionSnapshot?> _acceptedDesiredSession = new();
-    private readonly ConcurrentDictionary<long, SharpLinkServerDesiredSessionSnapshot> _sessionDesiredSnapshots = new();
+    private readonly ConcurrentDictionary<string, SharpLinkServerDesiredSessionSnapshot> _sessionDesiredSnapshots = new();
 
     public SharpLinkServerDesiredSessionSnapshot DesiredSession => CaptureDesiredSession();
 
