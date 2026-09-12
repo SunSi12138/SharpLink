@@ -5,7 +5,7 @@ internal static class RpcSessionSessionRefreshExtensions
     extension(RpcSession session)
     {
         internal async ValueTask SendSessionRefreshRequestedWithBackpressureAsync(
-            in ProtocolV2SessionRefreshRequested request,
+            ProtocolV2SessionRefreshRequested request,
             CancellationToken cancellationToken)
         {
             if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.SessionRefresh) == 0)
