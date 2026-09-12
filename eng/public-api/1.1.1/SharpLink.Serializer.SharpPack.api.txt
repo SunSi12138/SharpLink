@@ -1,0 +1,16 @@
+namespace SharpLink.Runtime
+{
+    public static class SharpPackRpcCodec
+    {
+        public static SharpLink.Abstractions.IRpcCodec<T> Create<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)]  T>(SharpPack.SharpPackSerializerContext context) { }
+    }
+    public sealed class SharpPackRpcCodecAdapter : SharpLink.Abstractions.IRpcCodecAdapter
+    {
+        public const string AdapterIdentity = "sharplink.serializer.sharppack/v1";
+        public const string WireFormatIdentity = "memorypack-binary/v1";
+        public SharpPackRpcCodecAdapter() { }
+        public string AdapterId { get; }
+        public string WireFormatId { get; }
+        public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() { }
+    }
+}

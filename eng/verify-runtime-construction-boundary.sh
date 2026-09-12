@@ -6,7 +6,7 @@ client_source="$repository_root/src/SharpLink.Client/SharpLinkClient.cs"
 server_source="$repository_root/src/SharpLink.Server/SharpLinkServer.cs"
 client_project="$repository_root/src/SharpLink.Client"
 server_project="$repository_root/src/SharpLink.Server"
-client_builder="$repository_root/src/SharpLink.Client/SharpClientBuilder.cs"
+client_materializer="$repository_root/src/SharpLink.Client/ClientRuntimeMaterializer.cs"
 server_builder="$repository_root/src/SharpLink.Server/SharpLinkServerBuilder.cs"
 
 require_single_constructor() {
@@ -95,7 +95,7 @@ require_no_constructor_resource_creation \
     'FrameworkTaskSupervisor'
 require_constructor_topology_binding
 require_no_post_construction_topology_binding
-require_expected_concrete_creation_site 'new SharpLinkClient\(' "$client_builder"
+require_expected_concrete_creation_site 'new SharpLinkClient\(' "$client_materializer"
 require_expected_concrete_creation_site 'new SharpLinkServer\(' "$server_builder"
 
 echo "Runtime construction boundary verified."

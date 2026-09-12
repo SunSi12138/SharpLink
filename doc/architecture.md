@@ -128,3 +128,11 @@ Streaming 沿用相同边界：Runtime 拥有 frame/stream/flow-control 机制�
 - Interceptor、Activity、Meter 和日志：[`observability.md`](observability.md)
 
 当某个决定需要独立的取舍背景、替代方案或迁移策略时，应放入相应设计/ADR 类文档，而不是把决策历史复制进本页。
+
+## 2.0 public/package 边界
+
+[ADR 0001](adr/0001-2.0-public-api-and-packages.md) 固定业务 API、扩展 SPI 和 generated
+infrastructure 的分类。生成程序集只引用 Abstractions；Catalog 是弱引用 bootstrap，
+`SharpLinkRuntimeContext` 是实例级服务容器，普通应用通过 Client/Server Builder 配置。
+内部 Session/StreamManager 的创建、发布和关闭只能由 owner 完成。八个发布包的实际 public API
+由 [API baseline](../eng/public-api/2.0.0) 和 Release Gate 检查；SharedMemory/Telemetry 本轮不拆包。

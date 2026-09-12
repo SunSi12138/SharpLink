@@ -1,0 +1,973 @@
+namespace SharpLink.Abstractions
+{
+    public static class CompileSymbols
+    {
+        public const string Debug = "DEBUG";
+    }
+    public interface IClientTransportFactory : System.IAsyncDisposable
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> ConnectAsync(System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface IRpcBufferWriterPool
+    {
+        SharpLink.Abstractions.IRpcByteBufferWriter Rent();
+        SharpLink.Abstractions.IRpcByteBufferWriter Rent(int maxWrittenBytes);
+        void Return(SharpLink.Abstractions.IRpcByteBufferWriter writer);
+    }
+    public interface IRpcByteBufferWriter : System.Buffers.IBufferWriter<byte>, System.IDisposable
+    {
+        int Capacity { get; }
+        int WrittenCount { get; }
+        System.ReadOnlyMemory<byte> WrittenMemory { get; }
+        System.Span<byte> WrittenSpan { get; }
+        void Clear();
+    }
+    public interface IRpcChannel : SharpLink.Abstractions.IRpcClientStreamSink
+    {
+        SharpLink.Abstractions.IRpcRuntimeContext RuntimeContext { get; }
+        System.Threading.Tasks.ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, in TStreams streams, SharpLink.Sdk.SharpLinkCallOptions options, System.Threading.CancellationToken cancellationToken = default)
+            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
+        System.Collections.Generic.IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, in TStreams streams, SharpLink.Sdk.SharpLinkCallOptions options, System.Threading.CancellationToken cancellationToken = default)
+            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
+        System.Threading.Tasks.ValueTask InvokeOneWayAsync<TRequest, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLink.Sdk.SharpLinkCallOptions options, System.Threading.CancellationToken cancellationToken = default)
+            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
+        System.Collections.Generic.IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, SharpLink.Sdk.SharpLinkCallOptions options, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, SharpLink.Sdk.SharpLinkCallOptions options, System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface IRpcClientStreamSink
+    {
+        System.Threading.Tasks.Task SendClientStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface IRpcClientStreamWriter
+    {
+        System.Threading.Tasks.ValueTask WriteAsync(SharpLink.Abstractions.IRpcClientStreamSink sink, long requestId, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface IRpcCodec { }
+    public interface IRpcCodecAdapter
+    {
+        string AdapterId { get; }
+        string WireFormatId { get; }
+        SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope();
+    }
+    public interface IRpcCodecAdapterScope : System.IDisposable
+    {
+        SharpLink.Abstractions.IRpcCodec<T> CreateCodec<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)]  T>();
+    }
+    public interface IRpcCodecProvider
+    {
+        SharpLink.Abstractions.IRpcCodec<T> GetCodec<T>();
+    }
+    public interface IRpcCodec<T> : SharpLink.Abstractions.IRpcCodec
+    {
+        T? Deserialize(in System.Buffers.ReadOnlySequence<byte> buffer);
+        void Serialize(in T value, System.Buffers.IBufferWriter<byte> buffer);
+    }
+    public interface IRpcExceptionMapper
+    {
+        SharpLink.Abstractions.SharpLinkException Map(System.Exception exception, SharpLink.Abstractions.SharpLinkServerInvocationContext context);
+    }
+    public interface IRpcGeneratedCodecFactory
+    {
+        SharpLink.Abstractions.IRpcCodecAdapter? Adapter { get; }
+        string? AdapterId { get; }
+        string SchemaId { get; }
+        System.Type TargetType { get; }
+        string WireFormatId { get; }
+        SharpLink.Abstractions.IRpcCodec Create(SharpLink.Abstractions.IRpcCodecProvider provider, SharpLink.Abstractions.IRpcCodecAdapterScope? adapterScope);
+        bool IsCompatibleCodec(SharpLink.Abstractions.IRpcCodec codec);
+    }
+    public interface IRpcRuntimeContext
+    {
+        SharpLink.Abstractions.IRpcBufferWriterPool Buffers { get; }
+        SharpLink.Abstractions.IRpcCodecProvider Codecs { get; }
+    }
+    public interface IRpcSession : System.IAsyncDisposable
+    {
+        string Id { get; }
+        System.IO.Pipelines.PipeReader Input { get; }
+        bool IsConnected { get; }
+        System.DateTime LastActive { get; set; }
+        SharpLink.Abstractions.IRpcRuntimeContext RuntimeContext { get; }
+        SharpLink.Abstractions.IStreamManager StreamManager { get; }
+        event System.Action OnConnected;
+        event System.Action<System.Exception?> OnDisconnected;
+        void NotifyConnected();
+        void NotifyDisconnected(System.Exception? exception = null);
+    }
+    public interface IRpcStub
+    {
+        long InterfaceHash { get; }
+        System.Threading.Tasks.ValueTask InvokeAsync(object service, SharpLink.Abstractions.IRpcSession session, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, SharpLink.Abstractions.IRpcByteBufferWriter output);
+        System.Threading.Tasks.ValueTask InvokeCancellableAsync(object service, SharpLink.Abstractions.IRpcSession session, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, SharpLink.Abstractions.IRpcByteBufferWriter output, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask InvokeNoReturnAsync(object service, SharpLink.Abstractions.IRpcSession session, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args);
+        System.Threading.Tasks.ValueTask InvokeNoReturnCancellableAsync(object service, SharpLink.Abstractions.IRpcSession session, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Threading.CancellationToken cancellationToken);
+        bool SupportsCancellation(long methodHash);
+        bool TryGetMethodDescriptor(long methodHash, out SharpLink.Abstractions.RpcMethodDescriptor descriptor);
+    }
+    public interface IServerTransportListener : System.IAsyncDisposable
+    {
+        System.Net.EndPoint? LocalEndPoint { get; }
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ITransportConnection> AcceptAsync(System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface ISharpLinkClient : System.IAsyncDisposable
+    {
+        SharpLink.Abstractions.SharpLinkConnectionState State { get; }
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkHealthCheckResult> CheckHealthAsync(System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask ConnectAsync(System.Threading.CancellationToken cancellationToken = default);
+        TContract Get<TContract>()
+            where TContract : SharpLink.Sdk.IService;
+        SharpLink.Abstractions.SharpLinkAssemblyRegistrationResult RegisterAssembly(System.Reflection.Assembly assembly);
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask StopAsync(System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(System.Reflection.Assembly assembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface ISharpLinkClientAuthenticator
+    {
+        System.Threading.Tasks.ValueTask<System.ReadOnlyMemory<byte>> CreatePayloadAsync(System.Threading.CancellationToken cancellationToken);
+    }
+    public interface ISharpLinkClientInterceptor
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkClientInvocationResult> InvokeAsync(SharpLink.Abstractions.SharpLinkClientInvocationContext context, SharpLink.Abstractions.SharpLinkClientInvocationDelegate next);
+    }
+    public interface ISharpLinkEndpointAdmissionPolicy
+    {
+        void Report(in SharpLink.Abstractions.SharpLinkEndpointOutcome outcome, long token);
+        SharpLink.Abstractions.SharpLinkEndpointAdmissionDecision TryAcquire(in SharpLink.Abstractions.SharpLinkEndpointCandidate endpoint, in SharpLink.Abstractions.RpcMethodDescriptor method);
+    }
+    public interface ISharpLinkEndpointResolver : System.IAsyncDisposable
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkEndpointSnapshot> ResolveAsync(System.Threading.CancellationToken cancellationToken);
+        System.Collections.Generic.IAsyncEnumerable<SharpLink.Abstractions.SharpLinkEndpointSnapshot> WatchAsync(System.Threading.CancellationToken cancellationToken);
+    }
+    public interface ISharpLinkEndpointSelector
+    {
+        int Select(in SharpLink.Abstractions.SharpLinkEndpointSelectionContext context);
+    }
+    public interface ISharpLinkGeneratedAssemblyManifest
+    {
+        int ApiVersion { get; }
+        System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.IRpcGeneratedCodecFactory> Codecs { get; }
+        string CompileTimeDescriptor { get; }
+        System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedContractDescriptor> Contracts { get; }
+        System.Collections.Generic.IReadOnlyList<string> Dependencies { get; }
+        string GeneratorVersion { get; }
+        System.Reflection.Assembly OwnerAssembly { get; }
+        int ProtocolVersion { get; }
+        System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedServiceDescriptor> Services { get; }
+    }
+    public interface ISharpLinkGeneratedClusterRouteManifest
+    {
+        System.Reflection.Assembly OwnerAssembly { get; }
+        System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedClusterAssemblyRoute> Routes { get; }
+    }
+    public interface ISharpLinkMultiClusterClient : System.IAsyncDisposable
+    {
+        SharpLink.Abstractions.SharpLinkMultiClusterState State { get; }
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkHealthCheckResult> CheckHealthAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask ConnectAsync(System.Threading.CancellationToken cancellationToken = default);
+        TContract Get<TContract>()
+            where TContract : SharpLink.Sdk.IService;
+        SharpLink.Abstractions.SharpLinkConnectionState GetClusterState(SharpLink.Abstractions.SharpLinkClusterKey cluster);
+        SharpLink.Abstractions.SharpLinkAssemblyRegistrationResult RegisterAssembly(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Reflection.Assembly assembly);
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask StopAsync(System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Reflection.Assembly assembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface ISharpLinkRetryPolicy
+    {
+        SharpLink.Abstractions.SharpLinkRetryDecision Evaluate(in SharpLink.Abstractions.SharpLinkRetryContext context);
+    }
+    public interface ISharpLinkServer : System.IAsyncDisposable
+    {
+        SharpLink.Abstractions.SharpLinkHealthStatus HealthStatus { get; }
+        SharpLink.Abstractions.SharpLinkAssemblyRegistrationResult RegisterAssembly(System.Reflection.Assembly assembly);
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask RunAsync(System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask StopAsync(System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(System.Reflection.Assembly assembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface ISharpLinkServerAuthenticator
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAuthenticationResult> AuthenticateAsync(SharpLink.Abstractions.SharpLinkAuthenticationRequest request, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface ISharpLinkServerInterceptor
+    {
+        System.Threading.Tasks.ValueTask InvokeAsync(SharpLink.Abstractions.SharpLinkServerInvocationContext context, SharpLink.Abstractions.SharpLinkServerInvocationDelegate next);
+    }
+    public interface IStreamConsumptionAwareDispatcher : SharpLink.Abstractions.IStreamDispatcher
+    {
+        System.Threading.Tasks.ValueTask DispatchAsync(System.Buffers.ReadOnlySequence<byte> payload, int encodedByteCount);
+        void SetBytesConsumedCallback(System.Action<long, ushort, int>? callback, long requestId, ushort streamId);
+    }
+    public interface IStreamDispatcher
+    {
+        void Complete(System.Exception? exception);
+        void Complete(bool isError, string? errorMessage);
+        System.Threading.Tasks.ValueTask DispatchAsync(System.Buffers.ReadOnlySequence<byte> payload);
+    }
+    public interface IStreamManager
+    {
+        void CompleteAll(System.Exception? exception);
+        void CompleteAll(bool isError, string? msg);
+        void CompleteStream(long requestId, System.Exception? exception);
+        void CompleteStream(long requestId, bool isError, string? msg);
+        void CompleteStream(long requestId, ushort streamId, System.Exception? exception);
+        void CompleteStream(long requestId, ushort streamId, bool isError, string? msg);
+        System.Threading.Tasks.ValueTask DispatchChunkAsync(long requestId, System.Buffers.ReadOnlySequence<byte> payload);
+        System.Threading.Tasks.ValueTask DispatchChunkAsync(long requestId, ushort streamId, System.Buffers.ReadOnlySequence<byte> payload);
+        void Register(long requestId, SharpLink.Abstractions.IStreamDispatcher dispatcher);
+        void Register(long requestId, ushort streamId, SharpLink.Abstractions.IStreamDispatcher dispatcher);
+        void Unregister(long requestId);
+        void Unregister(long requestId, ushort streamId);
+    }
+    public interface ITransportConnection : System.IAsyncDisposable
+    {
+        string Id { get; }
+        System.IO.Pipelines.PipeReader Input { get; }
+        System.Net.EndPoint? LocalEndPoint { get; }
+        System.IO.Pipelines.PipeWriter Output { get; }
+        System.Net.EndPoint? RemoteEndPoint { get; }
+    }
+    public static class LogEvents
+    {
+        public static class Client
+        {
+            public const int BackgroundLoopUnhandledException = 6002;
+            public const int ConnectionAttemptFailed = 6101;
+            public const int MultiClusterMutationStage = 6003;
+            public const int ResolverUpdateFailed = 6102;
+            public const int UnknownOrTimedOutResponse = 6001;
+        }
+        public static class Connection
+        {
+            public const int AuthenticationProviderFailed = 1104;
+            public const int ClientConnected = 1001;
+            public const int ClientDisConnectedWithError = 1201;
+            public const int ClientDisconnected = 1002;
+            public const int HandshakeFailed = 1101;
+            public const int HeartbeatReceived = 1401;
+            public const int HeartbeatTimeout = 1102;
+            public const int TlsHandshakeFailed = 1103;
+        }
+        public static class Rpc
+        {
+            public const int CallAbandoned = 2402;
+            public const int DispatchFailed = 2101;
+            public const int OneWayDispatchFailed = 2102;
+            public const int RequestReceived = 2401;
+            public const int ResourceExhausted = 2103;
+        }
+        public static class Server
+        {
+            public const int BackgroundLoopUnhandledException = 5001;
+            public const int CallCapacityConfigured = 5003;
+            public const int DeferredCleanupFailed = 5201;
+            public const int ForcedCallsRemaining = 5101;
+            public const int FrameworkCleanupTimeout = 5301;
+            public const int HeartbeatLoopUnhandledException = 5002;
+        }
+        public static class Stream
+        {
+            public const int ChunkReceived = 3001;
+            public const int StreamClosed = 3002;
+        }
+        public static class Transport
+        {
+            public const int TlsEstablished = 4001;
+        }
+    }
+    public enum ProtocolV2CancelReason : byte
+    {
+        Unspecified = 0,
+        UserCancellation = 1,
+        DeadlineExceeded = 2,
+        ConsumerAbandoned = 3,
+    }
+    [System.Flags]
+    public enum ProtocolV2Capabilities : ulong
+    {
+        None = 0ul,
+        Metadata = 1ul,
+        Compression = 2ul,
+        FlowControl = 4ul,
+        HealthCheck = 8ul,
+        CancellationReason = 16ul,
+    }
+    public static class ProtocolV2Constants
+    {
+        public const int HeaderBytes = 15;
+        public const byte Magic = 137;
+        public const ushort MinorVersion = 3;
+        public const int RequestPrefixBytes = 16;
+    }
+    public readonly struct ProtocolV2Error : System.IEquatable<SharpLink.Abstractions.ProtocolV2Error>
+    {
+        public ProtocolV2Error(SharpLink.Abstractions.SharpLinkErrorCode Code, string Message, bool IsTruncated) { }
+        public SharpLink.Abstractions.SharpLinkErrorCode Code { get; init; }
+        public bool IsTruncated { get; init; }
+        public string Message { get; init; }
+    }
+    [System.Flags]
+    public enum ProtocolV2FrameFlags : byte
+    {
+        None = 0,
+        Error = 1,
+        Truncated = 2,
+        HasDeadline = 4,
+        HasMetadata = 8,
+        Compressed = 16,
+        Cancellable = 32,
+        OneWay = 64,
+        HasReturn = 128,
+    }
+    public readonly struct ProtocolV2FrameHeader : System.IEquatable<SharpLink.Abstractions.ProtocolV2FrameHeader>
+    {
+        public ProtocolV2FrameHeader(SharpLink.Abstractions.ProtocolV2FrameType Type, SharpLink.Abstractions.ProtocolV2FrameFlags Flags, ulong RequestId) { }
+        public SharpLink.Abstractions.ProtocolV2FrameFlags Flags { get; init; }
+        public ulong RequestId { get; init; }
+        public SharpLink.Abstractions.ProtocolV2FrameType Type { get; init; }
+    }
+    public enum ProtocolV2FrameType : byte
+    {
+        HandshakeRequest = 0,
+        HandshakeResponse = 1,
+        Ping = 2,
+        Pong = 3,
+        Request = 4,
+        Response = 5,
+        Cancel = 6,
+        StreamData = 7,
+        StreamComplete = 8,
+        WindowUpdate = 9,
+        GoAway = 10,
+        HealthCheck = 11,
+        HealthResponse = 12,
+    }
+    public readonly struct ProtocolV2HandshakeRequest : System.IEquatable<SharpLink.Abstractions.ProtocolV2HandshakeRequest>
+    {
+        public ProtocolV2HandshakeRequest(ushort MinorVersion, SharpLink.Abstractions.ProtocolV2Capabilities SupportedCapabilities, SharpLink.Abstractions.ProtocolV2Capabilities RequiredCapabilities, int MaxFramePayloadBytes, int StreamReceiveWindowBytes, int ConnectionReceiveWindowBytes, System.ReadOnlyMemory<byte> AuthenticationPayload, System.ReadOnlyMemory<string> CompressionProfiles = default) { }
+        public System.ReadOnlyMemory<byte> AuthenticationPayload { get; init; }
+        public System.ReadOnlyMemory<string> CompressionProfiles { get; init; }
+        public int ConnectionReceiveWindowBytes { get; init; }
+        public int MaxFramePayloadBytes { get; init; }
+        public ushort MinorVersion { get; init; }
+        public SharpLink.Abstractions.ProtocolV2Capabilities RequiredCapabilities { get; init; }
+        public int StreamReceiveWindowBytes { get; init; }
+        public SharpLink.Abstractions.ProtocolV2Capabilities SupportedCapabilities { get; init; }
+    }
+    public readonly struct ProtocolV2HandshakeResponse : System.IEquatable<SharpLink.Abstractions.ProtocolV2HandshakeResponse>
+    {
+        public ProtocolV2HandshakeResponse(ushort MinorVersion, SharpLink.Abstractions.ProtocolV2Capabilities NegotiatedCapabilities, int MaxFramePayloadBytes, int StreamReceiveWindowBytes, int ConnectionReceiveWindowBytes, string? CompressionProfile = null) { }
+        public string? CompressionProfile { get; init; }
+        public int ConnectionReceiveWindowBytes { get; init; }
+        public int MaxFramePayloadBytes { get; init; }
+        public ushort MinorVersion { get; init; }
+        public SharpLink.Abstractions.ProtocolV2Capabilities NegotiatedCapabilities { get; init; }
+        public int StreamReceiveWindowBytes { get; init; }
+    }
+    public readonly struct ProtocolV2WindowUpdate : System.IEquatable<SharpLink.Abstractions.ProtocolV2WindowUpdate>
+    {
+        public ProtocolV2WindowUpdate(ushort StreamId, uint Credit) { }
+        public uint Credit { get; init; }
+        public ushort StreamId { get; init; }
+    }
+    public readonly struct RpcEmptyRequest { }
+    public sealed class RpcEmptyRequestCodec : SharpLink.Abstractions.IRpcCodec, SharpLink.Abstractions.IRpcCodec<SharpLink.Abstractions.RpcEmptyRequest>
+    {
+        public static SharpLink.Abstractions.RpcEmptyRequestCodec Instance { get; }
+        public SharpLink.Abstractions.RpcEmptyRequest Deserialize(in System.Buffers.ReadOnlySequence<byte> buffer) { }
+        public void Serialize(in SharpLink.Abstractions.RpcEmptyRequest value, System.Buffers.IBufferWriter<byte> buffer) { }
+    }
+    public static class RpcGeneratedCodecWire
+    {
+        public const int MaximumCollectionItems = 1048576;
+        public static SharpLink.Abstractions.RpcGeneratedLengthToken BeginLength(SharpLink.Abstractions.IRpcByteBufferWriter writer) { }
+        public static SharpLink.Abstractions.SharpLinkException DataLoss(string message) { }
+        public static void EndLength(SharpLink.Abstractions.IRpcByteBufferWriter writer, SharpLink.Abstractions.RpcGeneratedLengthToken token) { }
+        public static void EnsureFullyConsumed(in System.Buffers.SequenceReader<byte> reader) { }
+        public static void EnsureWireType(SharpLink.Abstractions.RpcGeneratedWireType actual, SharpLink.Abstractions.RpcGeneratedWireType expected) { }
+        public static SharpLink.Abstractions.RpcGeneratedWireType GetFixedWireType(int size) { }
+        public static bool ReadBoolean(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static int ReadCollectionCount(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static System.DateOnly ReadDateOnly(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static System.DateTime ReadDateTime(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static System.DateTimeOffset ReadDateTimeOffset(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static decimal ReadDecimal(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static System.Buffers.ReadOnlySequence<byte> ReadLengthDelimited(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static bool ReadPresence(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static System.Text.Rune ReadRune(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static string ReadString(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static System.TimeOnly ReadTimeOnly(ref System.Buffers.SequenceReader<byte> reader) { }
+        public static T ReadUnmanaged<T>(ref System.Buffers.SequenceReader<byte> reader)
+            where T :  unmanaged { }
+        public static void SkipField(ref System.Buffers.SequenceReader<byte> reader, SharpLink.Abstractions.RpcGeneratedWireType wireType) { }
+        public static bool TryReadField(ref System.Buffers.SequenceReader<byte> reader, out uint fieldId, out SharpLink.Abstractions.RpcGeneratedWireType wireType) { }
+        public static void WriteBoolean(System.Buffers.IBufferWriter<byte> writer, bool value) { }
+        public static void WriteCollectionCount(System.Buffers.IBufferWriter<byte> writer, int count, bool isNull) { }
+        public static void WriteDateOnly(System.Buffers.IBufferWriter<byte> writer, System.DateOnly value) { }
+        public static void WriteDateTime(System.Buffers.IBufferWriter<byte> writer, System.DateTime value) { }
+        public static void WriteDateTimeOffset(System.Buffers.IBufferWriter<byte> writer, System.DateTimeOffset value) { }
+        public static void WriteDecimal(System.Buffers.IBufferWriter<byte> writer, decimal value) { }
+        public static void WriteFieldKey(System.Buffers.IBufferWriter<byte> writer, uint fieldId, SharpLink.Abstractions.RpcGeneratedWireType wireType) { }
+        public static void WriteObjectEnd(System.Buffers.IBufferWriter<byte> writer) { }
+        public static void WritePresence(System.Buffers.IBufferWriter<byte> writer, bool present) { }
+        public static void WriteRune(System.Buffers.IBufferWriter<byte> writer, System.Text.Rune value) { }
+        public static void WriteString(System.Buffers.IBufferWriter<byte> writer, string value) { }
+        public static void WriteTimeOnly(System.Buffers.IBufferWriter<byte> writer, System.TimeOnly value) { }
+        public static void WriteUnmanaged<T>(System.Buffers.IBufferWriter<byte> writer, in T value)
+            where T :  unmanaged { }
+    }
+    public readonly struct RpcGeneratedLengthToken : System.IEquatable<SharpLink.Abstractions.RpcGeneratedLengthToken>
+    {
+        public RpcGeneratedLengthToken(int Offset) { }
+        public int Offset { get; init; }
+    }
+    public enum RpcGeneratedWireType : byte
+    {
+        Null = 0,
+        Fixed1 = 1,
+        Fixed2 = 2,
+        Fixed4 = 3,
+        Fixed8 = 4,
+        Fixed16 = 5,
+        LengthDelimited = 6,
+    }
+    public static class RpcInvocationExtensions
+    {
+        public static System.Threading.Tasks.ValueTask AsVoid<T>(this System.Threading.Tasks.ValueTask<T> pending) { }
+    }
+    public readonly struct RpcMethodDescriptor : System.IEquatable<SharpLink.Abstractions.RpcMethodDescriptor>
+    {
+        public RpcMethodDescriptor(long ContractId, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool HasResponsePayload, bool HasClientStreams, bool HasMethodTimeout, System.TimeSpan? MethodTimeout, bool IsIdempotent = false, int ClientStreamCount = 0, bool ResponseNullable = false) { }
+        public int ClientStreamCount { get; init; }
+        public long ContractId { get; init; }
+        public bool HasClientStreams { get; init; }
+        public bool HasMethodTimeout { get; init; }
+        public bool HasResponsePayload { get; init; }
+        public bool IsIdempotent { get; init; }
+        public SharpLink.Abstractions.RpcMethodKind Kind { get; init; }
+        public long MethodId { get; init; }
+        public System.TimeSpan? MethodTimeout { get; init; }
+        public bool ResponseNullable { get; init; }
+        public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount) { }
+        public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount, out bool ResponseNullable) { }
+    }
+    public enum RpcMethodKind : byte
+    {
+        Unary = 0,
+        OneWay = 1,
+        ClientStreaming = 2,
+        ServerStreaming = 3,
+        DuplexStreaming = 4,
+    }
+    public readonly struct RpcNoClientStreams : SharpLink.Abstractions.IRpcClientStreamWriter
+    {
+        public System.Threading.Tasks.ValueTask WriteAsync(SharpLink.Abstractions.IRpcClientStreamSink sink, long requestId, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class SharpLinkAnonymousPipeAddress : SharpLink.Abstractions.SharpLinkTransportAddress, System.IEquatable<SharpLink.Abstractions.SharpLinkAnonymousPipeAddress>
+    {
+        public SharpLinkAnonymousPipeAddress(string inHandle, string outHandle) { }
+        public string InHandle { get; }
+        public string OutHandle { get; }
+        public override string ToString() { }
+    }
+    public sealed class SharpLinkAssemblyRegistrationError : System.IEquatable<SharpLink.Abstractions.SharpLinkAssemblyRegistrationError>
+    {
+        public SharpLinkAssemblyRegistrationError(SharpLink.Abstractions.SharpLinkAssemblyRegistrationErrorCode Code, string Message, string? IncomingAssembly = null, string? ExistingAssembly = null, string? IncomingLoadContext = null, string? ExistingLoadContext = null, string? Artifact = null, string? ContractName = null, long? ContractId = default, string? MethodName = null, long? MethodId = default, string? ExistingFingerprint = null, string? IncomingFingerprint = null) { }
+        public string? Artifact { get; init; }
+        public SharpLink.Abstractions.SharpLinkAssemblyRegistrationErrorCode Code { get; init; }
+        public long? ContractId { get; init; }
+        public string? ContractName { get; init; }
+        public string? ExistingAssembly { get; init; }
+        public string? ExistingFingerprint { get; init; }
+        public string? ExistingLoadContext { get; init; }
+        public string? IncomingAssembly { get; init; }
+        public string? IncomingFingerprint { get; init; }
+        public string? IncomingLoadContext { get; init; }
+        public string Message { get; init; }
+        public long? MethodId { get; init; }
+        public string? MethodName { get; init; }
+    }
+    public enum SharpLinkAssemblyRegistrationErrorCode
+    {
+        InvalidArgument = 0,
+        InvalidObjectState = 1,
+        PlatformNotSupported = 2,
+        MissingManifest = 3,
+        InvalidManifest = 4,
+        IncompatibleManifest = 5,
+        DuplicateAssembly = 6,
+        MissingDependency = 7,
+        ContractConflict = 8,
+        MethodConflict = 9,
+        CodecConflict = 10,
+        ServiceConflict = 11,
+        CapacityExceeded = 12,
+    }
+    public readonly struct SharpLinkAssemblyRegistrationResult : System.IEquatable<SharpLink.Abstractions.SharpLinkAssemblyRegistrationResult>
+    {
+        public SharpLink.Abstractions.SharpLinkAssemblyRegistrationError? Error { get; }
+        public bool Succeeded { get; }
+    }
+    public readonly struct SharpLinkAssemblyReplacementResult : System.IEquatable<SharpLink.Abstractions.SharpLinkAssemblyReplacementResult>
+    {
+        public SharpLink.Abstractions.SharpLinkAssemblyRegistrationError? Error { get; init; }
+        public bool ReferencesReleased { get; init; }
+        public int RemainingCalls { get; init; }
+        public int RemainingStreams { get; init; }
+        public bool Succeeded { get; init; }
+    }
+    public readonly struct SharpLinkAssemblyUnregisterResult : System.IEquatable<SharpLink.Abstractions.SharpLinkAssemblyUnregisterResult>
+    {
+        public bool ReferencesReleased { get; init; }
+        public int RemainingCalls { get; init; }
+        public int RemainingStreams { get; init; }
+    }
+    public sealed class SharpLinkAuthenticationContext
+    {
+        public SharpLinkAuthenticationContext(string? subject = null, string? tenantId = null, System.Collections.Generic.IEnumerable<string>? scopes = null, System.DateTimeOffset? expiresAt = default, System.Collections.Generic.IReadOnlyDictionary<string, string>? claims = null) { }
+        public System.Collections.Generic.IReadOnlyDictionary<string, string> Claims { get; }
+        public System.DateTimeOffset? ExpiresAt { get; }
+        public System.Collections.Generic.IReadOnlySet<string> Scopes { get; }
+        public string? Subject { get; }
+        public string? TenantId { get; }
+        public string? GetClaim(string name) { }
+        public bool HasScope(string scope) { }
+        public bool IsExpired(System.DateTimeOffset? now = default) { }
+    }
+    public readonly struct SharpLinkAuthenticationRequest : System.IEquatable<SharpLink.Abstractions.SharpLinkAuthenticationRequest>
+    {
+        public SharpLinkAuthenticationRequest(string ConnectionId, System.ReadOnlyMemory<byte> Payload, System.Net.EndPoint? LocalEndPoint, System.Net.EndPoint? RemoteEndPoint) { }
+        public string ConnectionId { get; init; }
+        public System.Net.EndPoint? LocalEndPoint { get; init; }
+        public System.ReadOnlyMemory<byte> Payload { get; init; }
+        public System.Net.EndPoint? RemoteEndPoint { get; init; }
+    }
+    public readonly struct SharpLinkAuthenticationResult : System.IEquatable<SharpLink.Abstractions.SharpLinkAuthenticationResult>
+    {
+        public SharpLinkAuthenticationResult(bool IsAuthenticated, SharpLink.Abstractions.SharpLinkErrorCode ErrorCode, string? ErrorMessage, SharpLink.Abstractions.SharpLinkAuthenticationContext? Context) { }
+        public SharpLink.Abstractions.SharpLinkAuthenticationContext? Context { get; init; }
+        public SharpLink.Abstractions.SharpLinkErrorCode ErrorCode { get; init; }
+        public string? ErrorMessage { get; init; }
+        public bool IsAuthenticated { get; init; }
+        public static SharpLink.Abstractions.SharpLinkAuthenticationResult Success { get; }
+        public static SharpLink.Abstractions.SharpLinkAuthenticationResult Authenticate(SharpLink.Abstractions.SharpLinkAuthenticationContext context) { }
+        public static SharpLink.Abstractions.SharpLinkAuthenticationResult Reject(SharpLink.Abstractions.SharpLinkErrorCode errorCode = 2, string? errorMessage = null, SharpLink.Abstractions.SharpLinkAuthenticationContext? context = null) { }
+    }
+    public static class SharpLinkAuthenticator
+    {
+        public static SharpLink.Abstractions.ISharpLinkClientAuthenticator CreateClient(System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.ReadOnlyMemory<byte>>> createPayload) { }
+        public static SharpLink.Abstractions.ISharpLinkServerAuthenticator CreateServer(System.Func<SharpLink.Abstractions.SharpLinkAuthenticationRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAuthenticationResult>> authenticate) { }
+    }
+    public static class SharpLinkAuthorization
+    {
+        public static SharpLink.Abstractions.SharpLinkAuthenticationContext GetRequiredAuthentication(string? message = null) { }
+        public static SharpLink.Abstractions.SharpLinkAuthenticationContext RequireActiveToken(System.DateTimeOffset? now = default, string? message = null) { }
+        public static SharpLink.Abstractions.SharpLinkAuthenticationContext RequireScope(string scope, string? message = null) { }
+        public static SharpLink.Abstractions.SharpLinkAuthenticationContext RequireTenant(string tenantId, string? message = null) { }
+    }
+    public static class SharpLinkCallContext
+    {
+        public static SharpLink.Abstractions.SharpLinkCallContextSnapshot? Current { get; }
+    }
+    public class SharpLinkCallContextSnapshot
+    {
+        public SharpLinkCallContextSnapshot(string sessionId, SharpLink.Abstractions.SharpLinkAuthenticationContext? authentication, System.DateTimeOffset? deadline = default, SharpLink.Sdk.SharpLinkMetadata? metadata = null) { }
+        public SharpLink.Abstractions.SharpLinkAuthenticationContext? Authentication { get; }
+        public System.DateTimeOffset? Deadline { get; }
+        public SharpLink.Sdk.SharpLinkMetadata? Metadata { get; }
+        public string SessionId { get; }
+    }
+    public sealed class SharpLinkClientInvocationContext
+    {
+        public System.Threading.CancellationToken CancellationToken { get; }
+        public System.TimeSpan Elapsed { get; }
+        public SharpLink.Abstractions.SharpLinkErrorCode? ErrorCode { get; }
+        public System.Exception? Exception { get; }
+        public SharpLink.Abstractions.RpcMethodDescriptor Method { get; }
+        public SharpLink.Sdk.SharpLinkCallOptions Options { get; set; }
+        public object? Request { get; }
+        public SharpLink.Abstractions.SharpLinkInvocationStatus Status { get; }
+    }
+    public delegate System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkClientInvocationResult> SharpLinkClientInvocationDelegate(SharpLink.Abstractions.SharpLinkClientInvocationContext context);
+    public readonly struct SharpLinkClientInvocationResult : System.IEquatable<SharpLink.Abstractions.SharpLinkClientInvocationResult>
+    {
+        public SharpLinkClientInvocationResult(object? Value) { }
+        public object? Value { get; init; }
+        public T GetValue<T>() { }
+    }
+    public readonly struct SharpLinkClusterKey : System.IEquatable<SharpLink.Abstractions.SharpLinkClusterKey>
+    {
+        public SharpLinkClusterKey(string value) { }
+        public string Value { get; }
+        public override string ToString() { }
+        public static bool IsValid(string? value) { }
+        public static SharpLink.Abstractions.SharpLinkClusterKey op_Implicit(string value) { }
+    }
+    public enum SharpLinkConnectionState
+    {
+        Created = 0,
+        Connecting = 1,
+        Ready = 2,
+        Draining = 3,
+        Reconnecting = 4,
+        Stopped = 5,
+        Faulted = 6,
+    }
+    public sealed class SharpLinkEndpoint
+    {
+        public SharpLinkEndpoint() { }
+        public required SharpLink.Abstractions.SharpLinkTransportAddress Address { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, string> Attributes { get; init; }
+        public string? Authority { get; init; }
+        public required string Id { get; init; }
+    }
+    public readonly struct SharpLinkEndpointAdmissionDecision : System.IEquatable<SharpLink.Abstractions.SharpLinkEndpointAdmissionDecision>
+    {
+        public SharpLinkEndpointAdmissionDecision(bool IsAllowed, long Token, System.TimeSpan? RetryAfter) { }
+        public bool IsAllowed { get; init; }
+        public System.TimeSpan? RetryAfter { get; init; }
+        public long Token { get; init; }
+    }
+    public readonly struct SharpLinkEndpointCandidate : System.IEquatable<SharpLink.Abstractions.SharpLinkEndpointCandidate>
+    {
+        public SharpLinkEndpointCandidate(SharpLink.Abstractions.SharpLinkEndpoint endpoint, int readyConnectionCount, int activeCallCount, long generation) { }
+        public int ActiveCallCount { get; }
+        public SharpLink.Abstractions.SharpLinkEndpoint Endpoint { get; }
+        public long Generation { get; }
+        public int ReadyConnectionCount { get; }
+    }
+    public readonly struct SharpLinkEndpointOutcome : System.IEquatable<SharpLink.Abstractions.SharpLinkEndpointOutcome>
+    {
+        public SharpLinkEndpointOutcome(SharpLink.Abstractions.SharpLinkEndpointCandidate Endpoint, SharpLink.Abstractions.RpcMethodDescriptor Method, SharpLink.Abstractions.SharpLinkEndpointOutcomeKind Kind, SharpLink.Abstractions.SharpLinkErrorCode? ErrorCode, bool ResponseObserved, System.TimeSpan Elapsed) { }
+        public System.TimeSpan Elapsed { get; init; }
+        public SharpLink.Abstractions.SharpLinkEndpointCandidate Endpoint { get; init; }
+        public SharpLink.Abstractions.SharpLinkErrorCode? ErrorCode { get; init; }
+        public SharpLink.Abstractions.SharpLinkEndpointOutcomeKind Kind { get; init; }
+        public SharpLink.Abstractions.RpcMethodDescriptor Method { get; init; }
+        public bool ResponseObserved { get; init; }
+    }
+    public enum SharpLinkEndpointOutcomeKind : byte
+    {
+        Success = 0,
+        RemoteError = 1,
+        SendFailure = 2,
+        ConnectionClosed = 3,
+        GoAway = 4,
+        Cancelled = 5,
+        DeadlineExceeded = 6,
+    }
+    public readonly ref struct SharpLinkEndpointSelectionContext
+    {
+        public SharpLinkEndpointSelectionContext(System.ReadOnlySpan<SharpLink.Abstractions.SharpLinkEndpointCandidate> candidates, ulong excludedMask) { }
+        public int Count { get; }
+        public ulong ExcludedMask { get; }
+        public SharpLink.Abstractions.SharpLinkEndpointCandidate this[int index] { get; }
+    }
+    public sealed class SharpLinkEndpointSnapshot
+    {
+        public SharpLinkEndpointSnapshot(long version, System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkEndpoint> endpoints) { }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkEndpoint> Endpoints { get; }
+        public long Version { get; }
+    }
+    public delegate SharpLink.Abstractions.IClientTransportFactory SharpLinkEndpointTransportFactory(SharpLink.Abstractions.SharpLinkEndpoint endpoint);
+    public enum SharpLinkErrorCode
+    {
+        Unknown = 0,
+        RemoteError = 1,
+        AuthenticationRejected = 2,
+        AuthenticationExpired = 3,
+        AuthorizationDenied = 4,
+        ConnectionClosed = 5,
+        HeartbeatTimeout = 6,
+        ProtocolViolation = 7,
+        DataLoss = 8,
+        ResourceExhausted = 9,
+        Unavailable = 10,
+        Cancelled = 11,
+        InvalidArgument = 12,
+        DeadlineExceeded = 13,
+        NotFound = 14,
+        AlreadyExists = 15,
+        PermissionDenied = 16,
+        FailedPrecondition = 17,
+        Aborted = 18,
+        OutOfRange = 19,
+        Unimplemented = 20,
+        Internal = 21,
+    }
+    public class SharpLinkException : System.Exception
+    {
+        public SharpLinkException(SharpLink.Abstractions.SharpLinkErrorCode code, string message) { }
+        public SharpLinkException(SharpLink.Abstractions.SharpLinkErrorCode code, string message, System.Exception? innerException) { }
+        public SharpLink.Abstractions.SharpLinkErrorCode Code { get; }
+    }
+    public static class SharpLinkGeneratedAssemblyCatalog
+    {
+        public static System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest> CreateSnapshot() { }
+        public static void Register(SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest manifest) { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple=false)]
+    public sealed class SharpLinkGeneratedAssemblyManifestAttribute : System.Attribute
+    {
+        public SharpLinkGeneratedAssemblyManifestAttribute([System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] System.Type manifestType) { }
+        [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+        public System.Type ManifestType { get; }
+    }
+    public sealed class SharpLinkGeneratedClusterAssemblyRoute : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedClusterAssemblyRoute>
+    {
+        public SharpLinkGeneratedClusterAssemblyRoute(SharpLink.Abstractions.SharpLinkClusterKey Cluster, System.Reflection.Assembly ContractAssembly, string ContractAssemblyIdentity) { }
+        public SharpLink.Abstractions.SharpLinkClusterKey Cluster { get; init; }
+        public System.Reflection.Assembly ContractAssembly { get; init; }
+        public string ContractAssemblyIdentity { get; init; }
+    }
+    public static class SharpLinkGeneratedClusterRouteCatalog
+    {
+        public static System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.ISharpLinkGeneratedClusterRouteManifest> CreateSnapshot() { }
+        public static void Register(SharpLink.Abstractions.ISharpLinkGeneratedClusterRouteManifest manifest) { }
+    }
+    public sealed class SharpLinkGeneratedContractDescriptor : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedContractDescriptor>
+    {
+        public SharpLinkGeneratedContractDescriptor(System.Type ContractType, string ContractName, long ContractId, string Fingerprint, System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor> Methods, System.Func<SharpLink.Abstractions.IRpcChannel, object> ProxyFactory, System.Func<SharpLink.Abstractions.IRpcStub> StubFactory) { }
+        public long ContractId { get; init; }
+        public string ContractName { get; init; }
+        public System.Type ContractType { get; init; }
+        public string Fingerprint { get; init; }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor> Methods { get; init; }
+        public System.Func<SharpLink.Abstractions.IRpcChannel, object> ProxyFactory { get; init; }
+        public System.Func<SharpLink.Abstractions.IRpcStub> StubFactory { get; init; }
+    }
+    public static class SharpLinkGeneratedManifestVersions
+    {
+        public const int Api = 3;
+        public const int Protocol = 2;
+    }
+    public sealed class SharpLinkGeneratedMethodDescriptor : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor>
+    {
+        public SharpLinkGeneratedMethodDescriptor(string Name, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool SupportsCancellation, string RequestSchema, string ResponseSchema, string Fingerprint) { }
+        public string Fingerprint { get; init; }
+        public SharpLink.Abstractions.RpcMethodKind Kind { get; init; }
+        public long MethodId { get; init; }
+        public string Name { get; init; }
+        public string RequestSchema { get; init; }
+        public string ResponseSchema { get; init; }
+        public bool SupportsCancellation { get; init; }
+    }
+    public sealed class SharpLinkGeneratedServiceDescriptor : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedServiceDescriptor>
+    {
+        public SharpLinkGeneratedServiceDescriptor(System.Type ContractType, System.Type ImplementationType, string ContractName, string ImplementationName, long ContractId, string Fingerprint, SharpLink.Sdk.SharpLinkServiceLifetime Lifetime, System.Collections.Generic.IReadOnlyList<System.Type> Dependencies, System.Func<System.IServiceProvider, object> Activator) { }
+        public System.Func<System.IServiceProvider, object> Activator { get; init; }
+        public long ContractId { get; init; }
+        public string ContractName { get; init; }
+        public System.Type ContractType { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Type> Dependencies { get; init; }
+        public string Fingerprint { get; init; }
+        public string ImplementationName { get; init; }
+        public System.Type ImplementationType { get; init; }
+        public SharpLink.Sdk.SharpLinkServiceLifetime Lifetime { get; init; }
+    }
+    public readonly struct SharpLinkHealthCheckResult : System.IEquatable<SharpLink.Abstractions.SharpLinkHealthCheckResult>
+    {
+        public SharpLinkHealthCheckResult(SharpLink.Abstractions.SharpLinkHealthStatus Status) { }
+        public SharpLink.Abstractions.SharpLinkHealthStatus Status { get; init; }
+    }
+    public enum SharpLinkHealthStatus : byte
+    {
+        Unhealthy = 0,
+        Ready = 1,
+        Draining = 2,
+    }
+    public enum SharpLinkInvocationStatus : byte
+    {
+        Pending = 0,
+        Succeeded = 1,
+        Failed = 2,
+        Cancelled = 3,
+    }
+    public enum SharpLinkMultiClusterState
+    {
+        Created = 0,
+        Connecting = 1,
+        Ready = 2,
+        Degraded = 3,
+        Draining = 4,
+        Stopped = 5,
+        Faulted = 6,
+    }
+    public sealed class SharpLinkNamedPipeAddress : SharpLink.Abstractions.SharpLinkTransportAddress, System.IEquatable<SharpLink.Abstractions.SharpLinkNamedPipeAddress>
+    {
+        public SharpLinkNamedPipeAddress(string pipeName, string serverName = ".") { }
+        public string PipeName { get; }
+        public string ServerName { get; }
+    }
+    public readonly struct SharpLinkRetryContext : System.IEquatable<SharpLink.Abstractions.SharpLinkRetryContext>
+    {
+        public SharpLinkRetryContext(SharpLink.Abstractions.RpcMethodDescriptor Method, int Attempt, SharpLink.Abstractions.SharpLinkErrorCode? ErrorCode, bool ResponseObserved, System.TimeSpan Elapsed) { }
+        public int Attempt { get; init; }
+        public System.TimeSpan Elapsed { get; init; }
+        public SharpLink.Abstractions.SharpLinkErrorCode? ErrorCode { get; init; }
+        public SharpLink.Abstractions.RpcMethodDescriptor Method { get; init; }
+        public bool ResponseObserved { get; init; }
+    }
+    public readonly struct SharpLinkRetryDecision : System.IEquatable<SharpLink.Abstractions.SharpLinkRetryDecision>
+    {
+        public SharpLinkRetryDecision(bool ShouldRetry, System.TimeSpan Delay) { }
+        public System.TimeSpan Delay { get; init; }
+        public bool ShouldRetry { get; init; }
+    }
+    public sealed class SharpLinkServerInvocationContext : SharpLink.Abstractions.SharpLinkCallContextSnapshot
+    {
+        public System.Threading.CancellationToken CancellationToken { get; }
+        public string ConnectionId { get; }
+        public System.TimeSpan Elapsed { get; }
+        public SharpLink.Abstractions.SharpLinkErrorCode? ErrorCode { get; }
+        public System.Exception? Exception { get; }
+        public System.Net.EndPoint? LocalEndPoint { get; }
+        public SharpLink.Abstractions.RpcMethodDescriptor Method { get; }
+        public System.Net.EndPoint? RemoteEndPoint { get; }
+        public long RequestId { get; }
+        public SharpLink.Abstractions.SharpLinkInvocationStatus Status { get; }
+    }
+    public delegate System.Threading.Tasks.ValueTask SharpLinkServerInvocationDelegate(SharpLink.Abstractions.SharpLinkServerInvocationContext context);
+    public sealed class SharpLinkSharedMemoryAddress : SharpLink.Abstractions.SharpLinkTransportAddress, System.IEquatable<SharpLink.Abstractions.SharpLinkSharedMemoryAddress>
+    {
+        public SharpLinkSharedMemoryAddress(string name) { }
+        public string Name { get; }
+    }
+    public sealed class SharpLinkTcpAddress : SharpLink.Abstractions.SharpLinkTransportAddress, System.IEquatable<SharpLink.Abstractions.SharpLinkTcpAddress>
+    {
+        public SharpLinkTcpAddress(string host, int port) { }
+        public string Host { get; }
+        public int Port { get; }
+    }
+    public static class SharpLinkTelemetry
+    {
+        public static System.Diagnostics.ActivitySource ClientActivitySource { get; }
+        public static System.Diagnostics.Metrics.Meter Meter { get; }
+        public static System.Diagnostics.ActivitySource ServerActivitySource { get; }
+    }
+    public abstract class SharpLinkTransportAddress : System.IEquatable<SharpLink.Abstractions.SharpLinkTransportAddress>
+    {
+        protected SharpLinkTransportAddress() { }
+    }
+    public sealed class SharpLinkUnixDomainSocketAddress : SharpLink.Abstractions.SharpLinkTransportAddress, System.IEquatable<SharpLink.Abstractions.SharpLinkUnixDomainSocketAddress>
+    {
+        public SharpLinkUnixDomainSocketAddress(string path) { }
+        public string Path { get; }
+    }
+}
+namespace SharpLink.Sdk
+{
+    public interface IService { }
+    [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple=false, Inherited=true)]
+    public sealed class IdempotentAttribute : System.Attribute
+    {
+        public IdempotentAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Method, Inherited=false)]
+    public sealed class NonCancellableAttribute : System.Attribute
+    {
+        public NonCancellableAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Method)]
+    public sealed class OnewayAttribute : System.Attribute
+    {
+        public OnewayAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly | System.AttributeTargets.Class | System.AttributeTargets.Struct, AllowMultiple=true, Inherited=false)]
+    public sealed class RpcCodecAdapterAttribute : System.Attribute
+    {
+        public RpcCodecAdapterAttribute(System.Type adapterType) { }
+        public RpcCodecAdapterAttribute(System.Type targetType, System.Type adapterType) { }
+        public System.Type AdapterType { get; }
+        public System.Type? TargetType { get; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple=true)]
+    public sealed class RpcCodecAdapterRegistrationAttribute : System.Attribute
+    {
+        public RpcCodecAdapterRegistrationAttribute(System.Type adapterType, string adapterId, string wireFormatId) { }
+        public string AdapterId { get; }
+        public System.Type AdapterType { get; }
+        public System.Type? SelectorAttributeType { get; init; }
+        public string WireFormatId { get; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Interface)]
+    public sealed class RpcContractAttribute : System.Attribute
+    {
+        public RpcContractAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
+    public sealed class RpcIgnoreAttribute : System.Attribute
+    {
+        public RpcIgnoreAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
+    public sealed class RpcMemberAttribute : System.Attribute
+    {
+        public RpcMemberAttribute(int id) { }
+        public int Id { get; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
+    public sealed class RpcRequiredAttribute : System.Attribute
+    {
+        public RpcRequiredAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Struct)]
+    public sealed class RpcSerializableAttribute : System.Attribute
+    {
+        public RpcSerializableAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Class, Inherited=false)]
+    public sealed class RpcServiceAttribute : System.Attribute
+    {
+        public RpcServiceAttribute() { }
+        public SharpLink.Sdk.SharpLinkServiceLifetime Lifetime { get; init; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Interface, AllowMultiple=true, Inherited=false)]
+    public sealed class RpcUnionCaseAttribute : System.Attribute
+    {
+        public RpcUnionCaseAttribute(int tag, System.Type caseType) { }
+        public System.Type CaseType { get; }
+        public int Tag { get; }
+    }
+    public readonly struct SharpLinkCallOptions : System.IEquatable<SharpLink.Sdk.SharpLinkCallOptions>
+    {
+        public System.DateTimeOffset? Deadline { get; init; }
+        public SharpLink.Sdk.SharpLinkMetadata? Metadata { get; init; }
+        public System.TimeSpan? Timeout { get; init; }
+        public bool WaitForReady { get; init; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple=true)]
+    public sealed class SharpLinkClusterContractAssemblyAttribute : System.Attribute
+    {
+        public SharpLinkClusterContractAssemblyAttribute(string cluster, System.Type assemblyMarker) { }
+        public System.Type AssemblyMarker { get; }
+        public string Cluster { get; }
+    }
+    public sealed class SharpLinkMetadata : System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyCollection<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.IEnumerable
+    {
+        public SharpLinkMetadata(params System.Collections.Generic.KeyValuePair<string, string>[] entries) { }
+        public int Count { get; }
+        public System.Collections.Generic.KeyValuePair<string, string> this[int index] { get; }
+        public System.Collections.Generic.IEnumerator<System.Collections.Generic.KeyValuePair<string, string>> GetEnumerator() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly)]
+    public sealed class SharpLinkRpcContractsAttribute : System.Attribute
+    {
+        public SharpLinkRpcContractsAttribute(params System.Type[] contractTypes) { }
+        public System.Type[] ContractTypes { get; }
+    }
+    public enum SharpLinkServiceLifetime
+    {
+        Singleton = 0,
+        Connection = 1,
+        Call = 2,
+    }
+    [System.AttributeUsage(System.AttributeTargets.Method)]
+    public sealed class TimeoutAttribute : System.Attribute
+    {
+        public TimeoutAttribute() { }
+        public TimeoutAttribute(double seconds) { }
+        public double? Seconds { get; }
+    }
+}

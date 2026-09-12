@@ -198,6 +198,8 @@ internal static class __SharpLinkContractManifest
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true,
+        // This serialization is also the manifest fingerprint input on every platform.
+        NewLine = "\n",
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 

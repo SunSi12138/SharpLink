@@ -358,7 +358,7 @@ public static class ProtocolV2FrameParser
         return message;
     }
 
-    [Conditional(CompileSymbols.Debug)]
+    [Conditional("DEBUG")]
     private static void DebugTraceInvalidMagicPrefix(ReadOnlySequence<byte> buffer, byte actualMagic)
     {
         var prefixLength = (int)Math.Min(buffer.Length, 32);

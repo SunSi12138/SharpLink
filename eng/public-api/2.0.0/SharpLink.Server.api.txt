@@ -1,0 +1,179 @@
+namespace SharpLink.Server
+{
+    public interface ISharpLinkServerBuilder
+    {
+        SharpLink.Abstractions.ISharpLinkServer Build();
+    }
+    public sealed class SharpLinkAdmissionContext
+    {
+        public SharpLink.Abstractions.SharpLinkAuthenticationContext? AuthenticationContext { get; }
+        public string ConnectionId { get; }
+        public long ContractId { get; }
+        public SharpLink.Sdk.SharpLinkMetadata? Metadata { get; }
+        public long MethodId { get; }
+        public SharpLink.Abstractions.RpcMethodKind MethodKind { get; }
+    }
+    public sealed class SharpLinkAdmissionControlOptions
+    {
+        public SharpLinkAdmissionControlOptions() { }
+        public SharpLink.Server.SharpLinkAdmissionRuleOptions Global { get; }
+        public System.TimeSpan MaxQueueDelay { get; set; }
+        public long MaxQueuedBytes { get; set; }
+        public int MaxQueuedCalls { get; set; }
+        public bool QueueOneWayCalls { get; set; }
+        public SharpLink.Server.SharpLinkAdmissionControlOptions AddContract(long contractId, System.Action<SharpLink.Server.SharpLinkAdmissionRuleOptions> configure) { }
+        public SharpLink.Server.SharpLinkAdmissionControlOptions AddContract<TContract>(System.Action<SharpLink.Server.SharpLinkAdmissionRuleOptions> configure)
+            where TContract :  class, SharpLink.Sdk.IService { }
+        public SharpLink.Server.SharpLinkAdmissionControlOptions AddMethod(long contractId, long methodId, System.Action<SharpLink.Server.SharpLinkAdmissionRuleOptions> configure) { }
+        public SharpLink.Server.SharpLinkAdmissionControlOptions AddMethod<TContract>(string methodName, System.Action<SharpLink.Server.SharpLinkAdmissionRuleOptions> configure)
+            where TContract :  class, SharpLink.Sdk.IService { }
+        public SharpLink.Server.SharpLinkAdmissionControlOptions UsePartition(System.Func<SharpLink.Server.SharpLinkAdmissionContext, string?> selector, System.Action<SharpLink.Server.SharpLinkPartitionAdmissionOptions> configure) { }
+    }
+    public class SharpLinkAdmissionRuleOptions
+    {
+        public SharpLinkAdmissionRuleOptions() { }
+        public SharpLink.Server.SharpLinkConcurrencyLimitOptions? Concurrency { get; }
+        public SharpLink.Server.SharpLinkAdmissionRuleOptions UseConcurrency(int permitLimit) { }
+        public SharpLink.Server.SharpLinkAdmissionRuleOptions UseFixedWindow(System.Action<SharpLink.Server.SharpLinkFixedWindowLimitOptions> configure) { }
+        public SharpLink.Server.SharpLinkAdmissionRuleOptions UseSlidingWindow(System.Action<SharpLink.Server.SharpLinkSlidingWindowLimitOptions> configure) { }
+        public SharpLink.Server.SharpLinkAdmissionRuleOptions UseTokenBucket(System.Action<SharpLink.Server.SharpLinkTokenBucketLimitOptions> configure) { }
+    }
+    public sealed class SharpLinkConcurrencyLimitOptions
+    {
+        public SharpLinkConcurrencyLimitOptions() { }
+        public int PermitLimit { get; set; }
+    }
+    public sealed class SharpLinkConnectionAdmissionOptions
+    {
+        public const int DefaultMaxConcurrentConnections = 1024;
+        public const int DefaultMaxConcurrentHandshakes = 64;
+        public SharpLinkConnectionAdmissionOptions() { }
+        public int MaxConcurrentConnections { get; set; }
+        public int MaxConcurrentHandshakes { get; set; }
+    }
+    public sealed class SharpLinkFixedWindowLimitOptions
+    {
+        public SharpLinkFixedWindowLimitOptions() { }
+        public int PermitLimit { get; set; }
+        public SharpLink.Server.SharpLinkFixedWindowUpdateActivation UpdateActivation { get; set; }
+        public System.TimeSpan Window { get; set; }
+    }
+    public enum SharpLinkFixedWindowUpdateActivation
+    {
+        Automatic = 0,
+        Immediate = 1,
+        NextWindow = 2,
+    }
+    public sealed class SharpLinkPartitionAdmissionOptions : SharpLink.Server.SharpLinkAdmissionRuleOptions
+    {
+        public SharpLinkPartitionAdmissionOptions() { }
+        public System.TimeSpan IdleTimeout { get; set; }
+        public int MaxPartitions { get; set; }
+    }
+    public static class SharpLinkServerAdmissionControlExtensions
+    {
+        public static void DisableAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server) { }
+        public static void EnableAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
+        public static void UpdateAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
+    }
+    public class SharpLinkServerBuilder : SharpLink.Server.ISharpLinkServerBuilder
+    {
+        public SharpLinkServerBuilder() { }
+        public SharpLink.Abstractions.IServerTransportListener? Transport { get; }
+        public SharpLink.Server.SharpLinkServerBuilder AddInterceptor(SharpLink.Abstractions.ISharpLinkServerInterceptor interceptor) { }
+        public SharpLink.Server.SharpLinkServerBuilder AllowUnauthenticated() { }
+        public SharpLink.Server.SharpLinkServerBuilder AllowUnencrypted() { }
+        public SharpLink.Abstractions.ISharpLinkServer Build() { }
+        public SharpLink.Server.SharpLinkServerBuilder DisableAutomaticServiceRegistration() { }
+        public SharpLink.Server.SharpLinkServerBuilder EnableDetailedErrors(bool enabled = true) { }
+        public SharpLink.Server.SharpLinkServerBuilder EnableService<TContract>()
+            where TContract :  class, SharpLink.Sdk.IService { }
+        public SharpLink.Server.SharpLinkServerBuilder ExcludeService<TContract>()
+            where TContract :  class, SharpLink.Sdk.IService { }
+        public SharpLink.Server.SharpLinkServerBuilder ListenOn(System.Net.IPAddress address) { }
+        public SharpLink.Server.SharpLinkServerBuilder ListenOnAnyAddress() { }
+        public SharpLink.Server.SharpLinkServerBuilder ListenOnLoopback() { }
+        public SharpLink.Server.SharpLinkServerBuilder ReplaceService<TContract>(TContract instance)
+            where TContract :  class, SharpLink.Sdk.IService { }
+        public SharpLink.Server.SharpLinkServerBuilder ReplaceService<TContract>(System.Func<System.IServiceProvider, TContract> factory, SharpLink.Sdk.SharpLinkServiceLifetime lifetime = 0)
+            where TContract :  class, SharpLink.Sdk.IService { }
+        public SharpLink.Server.SharpLinkServerBuilder RequireAuthentication() { }
+        public SharpLink.Server.SharpLinkServerBuilder UseAdmissionControl(System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseAuthenticator(SharpLink.Abstractions.ISharpLinkServerAuthenticator authenticator) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseBufferWriterPool(System.Action<SharpLink.Runtime.BufferWriterPoolOptions> configure) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseConnectionAdmission(System.Action<SharpLink.Server.SharpLinkConnectionAdmissionOptions> configure) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseExceptionMapper(SharpLink.Abstractions.IRpcExceptionMapper exceptionMapper) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseHeartbeat(System.TimeSpan checkInterval, System.TimeSpan timeout) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseHeartbeatCheckInterval(System.TimeSpan checkInterval) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseHeartbeatTimeout(System.TimeSpan timeout) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
+        public void UseLoggerFactoryIfUnset(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseProtocol(System.Action<SharpLink.Runtime.SharpLinkProtocolOptions> configure) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLink.Abstractions.SharpLinkCompressionSendPolicy policy) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseRpcSessionFlush(int flushSizeThreshold, System.TimeSpan maxLatency) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseRuntime(System.Action<SharpLink.Runtime.SharpLinkRuntimeOptions> configure) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseSerializer(System.Func<System.Type, SharpLink.Abstractions.IRpcCodec?>? codecResolver) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseServiceProvider(System.IServiceProvider serviceProvider) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseStateStoreConcurrency(System.Action<SharpLink.Runtime.RuntimeConcurrencyOptions> configure) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseTimeProvider(System.TimeProvider timeProvider) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseTls(System.Net.Security.SslServerAuthenticationOptions tlsOptions, System.TimeSpan? tlsHandshakeTimeout = default) { }
+        public SharpLink.Server.SharpLinkServerBuilder UseTransport(SharpLink.Abstractions.IServerTransportListener transport) { }
+        public static SharpLink.Server.SharpLinkServerBuilder Create() { }
+    }
+    public static class SharpLinkServerCallCapacityExtensions
+    {
+        public static void UpdateCallCapacity(this SharpLink.Abstractions.ISharpLinkServer server, int maxConcurrentCallsPerConnection, int maxConcurrentCallsPerServer) { }
+    }
+    public static class SharpLinkServerConnectionAdmissionExtensions
+    {
+        public static void UpdateConnectionAdmission(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkConnectionAdmissionOptions> configure) { }
+    }
+    public static class SharpLinkServerRpcSessionFlushExtensions
+    {
+        public static SharpLink.Runtime.SharpLinkRpcSessionFlushPolicySnapshot GetRpcSessionFlushPolicySnapshot(this SharpLink.Abstractions.ISharpLinkServer server) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateRpcSessionFlushPolicy(this SharpLink.Abstractions.ISharpLinkServer server, int flushSizeThreshold, System.TimeSpan maxLatency) { }
+        public static void UpdateRpcSessionFlushPolicy(this SharpLink.Abstractions.ISharpLinkServer server, int flushSizeThreshold, System.TimeSpan maxLatency) { }
+    }
+    public static class SharpLinkServerRuntimeConfigurationExtensions
+    {
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryDisableAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryEnableAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.SharpLinkServerDesiredSessionPublicationResult> TryPublishDesiredSessionAsync(this SharpLink.Abstractions.ISharpLinkServer server, SharpLink.Abstractions.SharpLinkServerDesiredSessionConfiguration configuration, SharpLink.Abstractions.SharpLinkSessionRolloutMode rolloutMode = 0, System.Threading.CancellationToken cancellationToken = default) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryReplaceInterceptors(this SharpLink.Abstractions.ISharpLinkServer server, System.Collections.Generic.IEnumerable<SharpLink.Abstractions.ISharpLinkServerInterceptor> interceptors) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateCallCapacity(this SharpLink.Abstractions.ISharpLinkServer server, int maxConcurrentCallsPerConnection, int maxConcurrentCallsPerServer) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateConnectionAdmission(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkConnectionAdmissionOptions> configure) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateResponseCompressionPolicy(this SharpLink.Abstractions.ISharpLinkServer server, SharpLink.Abstractions.SharpLinkCompressionSendPolicy policy) { }
+        public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateTelemetryDetailPolicy(this SharpLink.Abstractions.ISharpLinkServer server, SharpLink.Abstractions.SharpLinkTelemetryDetailMode mode) { }
+    }
+    public sealed class SharpLinkSlidingWindowLimitOptions
+    {
+        public SharpLinkSlidingWindowLimitOptions() { }
+        public int PermitLimit { get; set; }
+        public int SegmentsPerWindow { get; set; }
+        public System.TimeSpan Window { get; set; }
+    }
+    public sealed class SharpLinkTokenBucketLimitOptions
+    {
+        public SharpLinkTokenBucketLimitOptions() { }
+        public System.TimeSpan ReplenishmentPeriod { get; set; }
+        public int TokenLimit { get; set; }
+        public int TokensPerPeriod { get; set; }
+    }
+    public static class TransportExtensions
+    {
+        extension(SharpLink.Server.SharpLinkServerBuilder builder)
+        {
+            public SharpLink.Server.SharpLinkServerBuilder UseNamedPipe(string name, System.Action<SharpLink.Runtime.NamedPipeTransportOptions>? configure = null) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, int backlog = 512) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.IPAddress address, int backlog = 512) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, string ip, int backlog = 512) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, System.Net.IPAddress address, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, string ip, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseUds(string socketPath, int backlog = 512) { }
+            public SharpLink.Server.SharpLinkServerBuilder UseAnonymousPipe() { }
+            public SharpLink.Server.SharpLinkServerBuilder UseSharedMemory(string name, System.Action<SharpLink.Runtime.SharedMemoryTransportOptions>? configure = null) { }
+        }
+    }
+}

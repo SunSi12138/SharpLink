@@ -160,3 +160,11 @@ The preferred progression is:
 4. promote an environment to Guaranteed / release-gated only when SharpLink intentionally accepts the infrastructure cost and product commitment.
 
 Build-only, emulator, simulator, and physical-device results must always be labeled as the environment that actually executed the probe.
+
+## 2.0 release evidence boundary
+
+The six desktop CoreCLR identities are the blocking compatibility matrix. Browser/Mono/WASM
+remains an investigation lane tracked by #253; a green desktop summary is not a claim that the
+Browser bidirectional evidence passed. In candidate run 34708344598, Browser production succeeded
+but Browser and desktop consumption of that corpus failed. Keep those failures visible; do not
+promote Browser/Mono interoperability to a supported guarantee from this release's desktop result.

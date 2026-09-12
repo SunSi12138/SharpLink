@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 5
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '32'
     steps:
       - name: Start Fast validation timing
         run: echo "FAST_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"

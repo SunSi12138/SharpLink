@@ -6,7 +6,7 @@ namespace SharpLink.UnitTests;
 public class BuiltinCollectionWireStrategyTests
 {
     [Test]
-    public async Task DateTimeCollectionShouldUseRawElementLayoutRatherThanScalarCodec()
+    public async Task DateTimeScalarAndCollectionShouldPreserveRawTicksAndKind()
     {
         using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
         var scalarCodec = provider.GetCodec<DateTime>();
@@ -19,8 +19,11 @@ public class BuiltinCollectionWireStrategyTests
         var value = new DateTime(2026, 8, 31, 13, 45, 12, DateTimeKind.Local);
         var scalarBytes = Serialize(scalarCodec, value);
         Ensure(scalarBytes.Length == sizeof(long), "DateTime scalar wire size");
-        Ensure(BinaryPrimitives.ReadInt64LittleEndian(scalarBytes) == value.ToBinary(),
-            "DateTime scalar wire must encode ToBinary semantics");
+        // DateTime raw layout stores local ticks plus Kind=Local (bit 63), not
+        // ToBinary(), which converts local ticks using the machine time zone.
+        var expectedRaw = (ulong)value.Ticks | (1UL << 63);
+        Ensure(BinaryPrimitives.ReadUInt64LittleEndian(scalarBytes) == expectedRaw,
+            "DateTime scalar wire must preserve raw local ticks and Kind bits");
 
         var values = new[] { value };
         var arrayBytes = Serialize(arrayCodec, values);
