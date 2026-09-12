@@ -83,7 +83,7 @@ internal sealed partial class SharpLinkClient
                                 (stale ??= []).Add(candidate);
                                 continue;
                             }
-                            if (source is null && CanPlanRefreshLocked(candidate))
+                            if (source is null && CanPlanRefreshLocked())
                             {
                                 source = candidate;
                                 endpoint = ownerEndpoint;
@@ -150,10 +150,10 @@ internal sealed partial class SharpLinkClient
             _sessionRefreshTask = null;
         }
 
-        private bool CanPlanRefreshLocked(ClientConnection source)
+        private bool CanPlanRefreshLocked()
         {
-            if (source.ActiveCallCount == 0)
-                return true;
+            // An idle source can admit work while the replacement dial is in flight.
+            // Check retirement capacity regardless of its current active-call count.
 
             var planned = 0;
             foreach (var state in _current.States)
@@ -182,7 +182,7 @@ internal sealed partial class SharpLinkClient
                 if (endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                     !ReferenceEquals(FindEndpointLocked(source), endpoint) || !source.CanAcceptCalls)
                     return true;
-                if (!CanPlanRefreshLocked(source))
+                if (!CanPlanRefreshLocked())
                     return false;
                 endpoint.ConnectingCount++;
             }
@@ -248,7 +248,7 @@ internal sealed partial class SharpLinkClient
 
                     sourceGone = endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                                  !ReferenceEquals(FindEndpointLocked(source), endpoint) || !source.CanAcceptCalls;
-                    if (!sourceGone && !CanPlanRefreshLocked(source))
+                    if (!sourceGone && !CanPlanRefreshLocked())
                     {
                         retryReplacement = true;
                     }

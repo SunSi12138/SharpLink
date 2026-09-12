@@ -81,7 +81,7 @@ internal sealed partial class SharpLinkClient
                                 (stale ??= []).Add(candidate);
                                 continue;
                             }
-                            if (source is null && CanPlanRefreshLocked(candidate))
+                            if (source is null && CanPlanRefreshLocked())
                             {
                                 source = candidate;
                                 endpoint = ownerEndpoint;
@@ -148,10 +148,10 @@ internal sealed partial class SharpLinkClient
             _sessionRefreshTask = null;
         }
 
-        private bool CanPlanRefreshLocked(ClientConnection source)
+        private bool CanPlanRefreshLocked()
         {
-            if (source.ActiveCallCount == 0)
-                return true;
+            // An idle source can admit work while the replacement dial is in flight.
+            // Check retirement capacity regardless of its current active-call count.
 
             var planned = 0;
             for (var endpointIndex = 0; endpointIndex < _endpoints.Length; endpointIndex++)
@@ -179,7 +179,7 @@ internal sealed partial class SharpLinkClient
                     return true;
                 if (!ReferenceEquals(FindEndpointLocked(source), endpoint) || !source.CanAcceptCalls)
                     return true;
-                if (!CanPlanRefreshLocked(source))
+                if (!CanPlanRefreshLocked())
                     return false;
                 endpoint.ConnectingCount++;
             }
@@ -243,7 +243,7 @@ internal sealed partial class SharpLinkClient
                         throw CreateConnectionClosedException("Client stopped while refreshing a session.");
 
                     sourceGone = !ReferenceEquals(FindEndpointLocked(source), endpoint) || !source.CanAcceptCalls;
-                    if (!sourceGone && !CanPlanRefreshLocked(source))
+                    if (!sourceGone && !CanPlanRefreshLocked())
                     {
                         retryReplacement = true;
                     }

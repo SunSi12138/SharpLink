@@ -8,7 +8,8 @@ internal sealed partial class SharpLinkServer
     private SharpLinkServerDesiredSessionSnapshot? _desiredSession;
     private ulong _desiredSessionRollingGeneration;
     private ulong _desiredSessionRolloutRequestEpoch;
-    private readonly ConcurrentDictionary<string, SharpLinkServerDesiredSessionSnapshot> _sessionDesiredSnapshots = new();
+    private readonly ConcurrentDictionary<RpcSession, SharpLinkServerDesiredSessionSnapshot> _sessionDesiredSnapshots =
+        new(ReferenceEqualityComparer.Instance);
     private object? _desiredSessionRolloutWorker;
     private Task? _desiredSessionRolloutTask;
 
@@ -198,12 +199,13 @@ internal sealed partial class SharpLinkServer
 
     private void BindDesiredSessionSnapshot(RpcSession session, SharpLinkServerDesiredSessionSnapshot snapshot)
     {
-        _sessionDesiredSnapshots[session.Id] = snapshot;
+        // Stable transport IDs may be reused before the old session finishes disconnecting.
+        _sessionDesiredSnapshots[session] = snapshot;
         session.OnDisconnected += _ => UnbindDesiredSessionSnapshot(session);
     }
 
     private void UnbindDesiredSessionSnapshot(RpcSession session)
-        => _sessionDesiredSnapshots.TryRemove(session.Id, out _);
+        => _sessionDesiredSnapshots.TryRemove(session, out _);
 
     private async ValueTask RequestRollingSessionRefreshAsync(
         ulong targetGeneration,
@@ -220,7 +222,7 @@ internal sealed partial class SharpLinkServer
             if (CurrentState != ServerState.Running)
                 return;
             var session = connection.Session;
-            if (!_sessionDesiredSnapshots.TryGetValue(session.Id, out var pinned) ||
+            if (!_sessionDesiredSnapshots.TryGetValue(session, out var pinned) ||
                 pinned.ServerInstanceId != _desiredSessionServerInstanceId ||
                 pinned.Generation >= targetGeneration ||
                 !session.IsConnected ||

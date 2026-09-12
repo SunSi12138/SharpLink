@@ -18,17 +18,56 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
     [Arguments(false)]
     [Arguments(true)]
     public async Task FixedRefreshShouldWaitForPlannedSourceBudgetThenResume(bool latestSourceHasCall)
+        => await VerifyRefreshBudgetAsync("fixed", 1, latestSourceHasCall);
+
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(0, true)]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    public async Task StaticRefreshShouldWaitForPlannedSourceBudgetThenResume(int budget, bool latestSourceHasCall)
+        => await VerifyRefreshBudgetAsync("static", budget, latestSourceHasCall);
+
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(0, true)]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    public async Task DynamicRefreshShouldWaitForPlannedSourceBudgetThenResume(int budget, bool latestSourceHasCall)
+        => await VerifyRefreshBudgetAsync("dynamic", budget, latestSourceHasCall);
+
+    private static async Task VerifyRefreshBudgetAsync(string pool, int budget, bool latestSourceHasCall)
     {
         var factory = new RepeatedRefreshTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(
-            factory,
-            builder => builder.UseConnectionPool(options =>
+        var spareFactory = new RepeatedRefreshTransportFactory();
+        var endpoint = CreateEndpoint("budget-active", 7101);
+        var resolver = new DelegateSharpLinkEndpointResolver(
+            _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1, [endpoint])), TimeSpan.FromHours(1));
+        Action<SharpLinkClusterOptions> configure = options =>
+        {
+            options.MinReadyEndpoints = 1;
+            options.MaxConnections = 1;
+            options.MaxConnectionsPerEndpoint = 1;
+            options.MaxRetiringConnections = budget;
+        };
+        await using var client = pool switch
+        {
+            "static" => ClientBuilderTestHelper.BuildStatic(
+                [new StaticEndpointConfiguration(endpoint, factory),
+                 new StaticEndpointConfiguration(CreateEndpoint("budget-spare", 7102), spareFactory)],
+                builder => builder.UseCluster(configure)),
+            "dynamic" => ClientBuilderTestHelper.BuildDynamic(resolver, _ => factory,
+                builder => builder.UseCluster(configure)),
+            _ => ClientBuilderTestHelper.Build(factory, builder => builder.UseConnectionPool(options =>
             {
                 options.MinConnections = 1;
                 options.MaxConnections = 1;
-            }));
+            }))
+        };
         await client.ConnectAsync();
         using var cancellation = new CancellationTokenSource();
+        ClientConnection? firstSource = null;
+        client._callAdmissionReservedTestHook = connection => firstSource = connection;
         var firstCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
         Task<int>? secondCall = null;
         var firstTransport = factory.GetConnection(0);
@@ -41,6 +80,8 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
         {
             await InjectRefreshAsync(firstTransport, serverInstanceId, 2);
             await firstCut.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            client._callAdmissionReservedTestHook = null;
+            var latest = firstSource!.SessionRefreshRedirect!.Current;
             var secondTransport = factory.GetConnection(1);
             ProtocolV2FrameHeader secondRequest = default;
             if (latestSourceHasCall)
@@ -50,21 +91,24 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
                     .WaitAsync(TimeSpan.FromSeconds(5));
             }
 
-            var poolGate = (Lock)typeof(SharpLinkClient).GetField("_poolGate", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(client)!;
-            lock (poolGate)
+            var owner = pool == "fixed" ? client : typeof(SharpLinkClient)
+                .GetField("_cluster", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!;
+            var ownerType = owner.GetType();
+            var gate = (Lock)ownerType.GetField(pool == "fixed" ? "_poolGate" : "_gate",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owner)!;
+            lock (gate)
             {
-                var canPlan = (bool)typeof(SharpLinkClient).GetMethod(
-                    "CanPlanFixedRefreshLocked", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(client, null)!;
+                var canPlan = (bool)ownerType.GetMethod(
+                    pool == "fixed" ? "CanPlanFixedRefreshLocked" : "CanPlanRefreshLocked",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(owner, null)!;
                 Ensure(!canPlan,
-                    "a physically Ready planned source consumes the fixed retirement budget, even when the next source is idle");
+                    "a physically Ready planned source consumes the retirement budget, even when the next source is idle");
             }
 
             var nextCut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var requestReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             client._afterSessionRefreshEligibilitySwapTestHook = () => nextCut.TrySetResult();
-            var latest = ((ClientConnection[])typeof(SharpLinkClient).GetField(
-                "_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!)[0];
             latest.Session.SessionRefreshRequested += _ => requestReceived.TrySetResult();
             await InjectRefreshAsync(secondTransport, serverInstanceId, 3);
             await requestReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -86,6 +130,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
         finally
         {
             client._afterSessionRefreshEligibilitySwapTestHook = null;
+            client._callAdmissionReservedTestHook = null;
             cancellation.Cancel();
             try { await firstCall.WaitAsync(TimeSpan.FromSeconds(5)); }
             catch (OperationCanceledException) { }
@@ -129,7 +174,8 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             options.MinReadyEndpoints = 1;
             options.MaxConnections = 1;
             options.MaxConnectionsPerEndpoint = 1;
-            options.MaxRetiringConnections = 1;
+            // One slot stays pinned; another permits the transient generation to retire.
+            options.MaxRetiringConnections = 2;
         }));
         await client.ConnectAsync();
         Ensure(activeFactory.ConnectCount == 1,
@@ -156,7 +202,8 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
                 options.MinReadyEndpoints = 1;
                 options.MaxConnections = 1;
                 options.MaxConnectionsPerEndpoint = 1;
-                options.MaxRetiringConnections = 1;
+                // One slot stays pinned; another permits the transient generation to retire.
+                options.MaxRetiringConnections = 2;
             }));
         await client.ConnectAsync();
 

@@ -18,6 +18,84 @@ public sealed class SharpLinkServerDesiredSessionBackpressureTests
     public Task ServerCancellationShouldCancelPendingRefreshEnqueue()
         => VerifyBoundedRolloutAsync(stopServer: true);
 
+    [Test]
+    public async Task DelayedDisconnectWithReusedIdShouldPreserveNewSessionPinAndRollout()
+    {
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(new IdleListener())
+            .Build();
+        var context = GetField<SharpLinkRuntimeContext>(server, "_runtimeContext");
+        var registry = GetField<ServerConnectionRegistry>(server, "_connectionRegistry");
+        var snapshots = GetField<ConcurrentDictionary<RpcSession, SharpLinkServerDesiredSessionSnapshot>>(
+            server, "_sessionDesiredSnapshots");
+        var bind = typeof(SharpLinkServer).GetMethod(
+            "BindDesiredSessionSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var oldInput = new Pipe();
+        var oldOutput = new Pipe();
+        var newInput = new Pipe();
+        var newOutput = new Pipe();
+        await using var oldSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "reused-id", oldInput.Reader, oldOutput.Writer, RpcSessionTestFixture.ServerOptions(context));
+        await using var newSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "reused-id", newInput.Reader, newOutput.Writer, RpcSessionTestFixture.ServerOptions(context),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(newSession, ProtocolV2Capabilities.SessionRefresh);
+        var pinned = server.DesiredSession;
+        bind.Invoke(server, [oldSession, pinned]);
+        var connection = new ServerConnectionState(newSession, new RpcSessionGeneratedServerBridge(newSession),
+            new StripedLongMap<ServerCallCancellationState>(context.Concurrency),
+            CancellationToken.None, context.TimeProvider);
+        using var releaseCancellation = new ManualResetEventSlim();
+        var cancellationEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = oldSession.LifetimeToken.Register(() =>
+        {
+            cancellationEntered.TrySetResult();
+            if (!releaseCancellation.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("old session cancellation was not released");
+        });
+        var disconnect = Task.Run(() => oldSession.NotifyDisconnected());
+        try
+        {
+            await cancellationEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(!oldSession.IsConnected && !disconnect.IsCompleted,
+                "old session is terminal while its cancellation delays the disconnect callback");
+            bind.Invoke(server, [newSession, pinned]);
+            Ensure(connection.MarkReady(null) && registry.TryAdd(newSession.Id, connection),
+                "a new session with the same stable ID owns the registry entry");
+            releaseCancellation.Set();
+            await disconnect.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(snapshots.Count == 1,
+                "old disconnect removes only its own pin and preserves the new session's snapshot");
+
+            typeof(SharpLinkServer).GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(server, 2);
+            var desired = await server.PublishDesiredSessionAsync(new SharpLinkServerDesiredSessionConfiguration
+            {
+                MaxFramePayloadBytes = pinned.Configuration.MaxFramePayloadBytes / 2
+            }, SharpLinkSessionRolloutMode.RollingRefresh).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            var refresh = await ReadRefreshAsync(newOutput.Reader, context.Protocol);
+            Ensure(refresh.ServerInstanceId == desired.ServerInstanceId &&
+                   refresh.DesiredGeneration == desired.Generation && newSession.IsConnected,
+                "rolling scan still notifies the live replacement after the old disconnect finishes");
+            newSession.NotifyDisconnected();
+            Ensure(snapshots.Count == 0,
+                "the new session's own disconnect releases its pin without retaining either session");
+        }
+        finally
+        {
+            releaseCancellation.Set();
+            await disconnect.WaitAsync(TimeSpan.FromSeconds(5));
+            registry.TryRemove(newSession.Id, out _);
+            await connection.CloseAsync();
+            await oldInput.Writer.CompleteAsync();
+            await oldOutput.Reader.CompleteAsync();
+            await newInput.Writer.CompleteAsync();
+            await newOutput.Reader.CompleteAsync();
+        }
+    }
+
     private static async Task VerifyBoundedRolloutAsync(bool stopServer)
     {
         var clock = new ManualTimeProvider();
@@ -30,7 +108,7 @@ public sealed class SharpLinkServerDesiredSessionBackpressureTests
             .Build();
         var context = GetField<SharpLinkRuntimeContext>(server, "_runtimeContext");
         var registry = GetField<ServerConnectionRegistry>(server, "_connectionRegistry");
-        var snapshots = GetField<ConcurrentDictionary<string, SharpLinkServerDesiredSessionSnapshot>>(
+        var snapshots = GetField<ConcurrentDictionary<RpcSession, SharpLinkServerDesiredSessionSnapshot>>(
             server, "_sessionDesiredSnapshots");
         var pinned = server.DesiredSession;
         var pipes = new Dictionary<string, (Pipe Input, Pipe Output)>();
@@ -48,7 +126,7 @@ public sealed class SharpLinkServerDesiredSessionBackpressureTests
                 CancellationToken.None, clock);
             Ensure(connection.MarkReady(null) && registry.TryAdd(session.Id, connection),
                 "test connections enter the active cohort");
-            snapshots[session.Id] = pinned;
+            snapshots[session] = pinned;
             pipes.Add(session.Id, (input, output));
         }
         typeof(SharpLinkServer).GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
