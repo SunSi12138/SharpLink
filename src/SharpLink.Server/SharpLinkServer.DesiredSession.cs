@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkServer
     private readonly Lock _desiredSessionGate = new();
     private readonly Guid _desiredSessionServerInstanceId = Guid.NewGuid();
     private SharpLinkServerDesiredSessionSnapshot? _desiredSession;
+    private readonly AsyncLocal<SharpLinkServerDesiredSessionSnapshot?> _acceptedDesiredSession = new();
     private readonly ConcurrentDictionary<long, SharpLinkServerDesiredSessionSnapshot> _sessionDesiredSnapshots = new();
 
     public SharpLinkServerDesiredSessionSnapshot DesiredSession => CaptureDesiredSession();
@@ -34,10 +35,9 @@ internal sealed partial class SharpLinkServer
             if (current.Configuration.MaxFramePayloadBytes == configuration.MaxFramePayloadBytes)
                 return current;
 
-            var generation = checked(current.Generation + 1);
             published = new SharpLinkServerDesiredSessionSnapshot(
                 _desiredSessionServerInstanceId,
-                generation,
+                checked(current.Generation + 1),
                 configuration with { });
             _desiredSession = published;
         }
@@ -74,8 +74,34 @@ internal sealed partial class SharpLinkServer
             throw new InvalidOperationException("Desired session configuration cannot be published after server shutdown has started.");
     }
 
+    private async Task HandleAcceptedConnectionAsync(
+        ITransportConnection acceptedConnection,
+        ServerConnectionAdmission.Lease connectionLease,
+        SharpLinkServerDesiredSessionSnapshot desiredSession,
+        CancellationToken cancellationToken)
+    {
+        var previous = _acceptedDesiredSession.Value;
+        _acceptedDesiredSession.Value = desiredSession;
+        try
+        {
+            await HandleAcceptedConnectionAsync(acceptedConnection, connectionLease, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _acceptedDesiredSession.Value = previous;
+        }
+    }
+
+    private SharpLinkServerDesiredSessionSnapshot GetAcceptedDesiredSession()
+        => _acceptedDesiredSession.Value ??
+           throw new InvalidOperationException("Accepted connection is missing its pinned desired-session snapshot.");
+
     private void BindDesiredSessionSnapshot(RpcSession session, SharpLinkServerDesiredSessionSnapshot snapshot)
-        => _sessionDesiredSnapshots[session.Id] = snapshot;
+    {
+        _sessionDesiredSnapshots[session.Id] = snapshot;
+        session.OnDisconnected += _ => UnbindDesiredSessionSnapshot(session);
+    }
 
     private void UnbindDesiredSessionSnapshot(RpcSession session)
         => _sessionDesiredSnapshots.TryRemove(session.Id, out _);
@@ -84,9 +110,7 @@ internal sealed partial class SharpLinkServer
         SharpLinkServerDesiredSessionSnapshot desired,
         CancellationToken cancellationToken)
     {
-        var request = new ProtocolV2SessionRefreshRequested(
-            desired.ServerInstanceId,
-            desired.Generation);
+        var request = new ProtocolV2SessionRefreshRequested(desired.ServerInstanceId, desired.Generation);
         foreach (var connection in _connectionRegistry.Values)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -98,9 +122,7 @@ internal sealed partial class SharpLinkServer
                 pinned.Generation >= desired.Generation ||
                 !session.IsConnected ||
                 (session.NegotiatedCapabilities & ProtocolV2Capabilities.SessionRefresh) == 0)
-            {
                 continue;
-            }
 
             try
             {
@@ -113,7 +135,6 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception) when (IsExpectedConnectionTermination(exception, connection.ConnectionToken))
             {
-                // A concurrently ending session needs no planned refresh.
             }
         }
     }
