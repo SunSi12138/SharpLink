@@ -116,7 +116,7 @@ public class ResponseCompressionPreferenceCohortTests
                 options.FlowControl.MaxSendQueueBytes = maxSendQueueBytes;
                 options.Compression.Providers.Add(new ControlOnlyCompressionProvider());
             })
-            .Build();
+            .Build(includeGeneratedAssemblyCatalog: false);
 
     private static RpcSession CreateClientSession(
         string name,

@@ -534,7 +534,7 @@ internal sealed partial class RpcSession
         RecordTelemetryConnectionClosed();
         CancelSession();
         Volatile.Read(ref _protocolState).FlowController?.Complete(structured);
-        Volatile.Read(ref _pump)?.Stop();
+        CapturePumpForStop()?.Stop();
         CompleteReceiveStreams(structured);
         ObserveTransportDispose(StartTransportDispose());
         try
@@ -568,7 +568,7 @@ internal sealed partial class RpcSession
                 cleanupException = exception;
             }
 
-            var pump = Volatile.Read(ref _pump);
+            var pump = CapturePumpForStop();
             try
             {
                 pump?.Stop();
@@ -635,7 +635,7 @@ internal sealed partial class RpcSession
             {
             }
         }
-        Volatile.Read(ref _pump)?.Stop();
+        CapturePumpForStop()?.Stop();
     }
 
     private void CancelSession()
@@ -687,51 +687,6 @@ internal sealed partial class RpcSession
 
     private void ReturnBuffer(IRpcByteBufferWriter writer)
         => RuntimeContext.Buffers.Return(writer);
-
-    private SendPump GetOrCreatePump()
-    {
-        var pump = Volatile.Read(ref _pump);
-        if (pump is not null)
-            return pump;
-
-        lock (_pumpGate)
-        {
-            pump = _pump;
-            if (pump is not null)
-                return pump;
-            if (Volatile.Read(ref _terminal) is not null)
-                throw GetTerminalException();
-
-            var flushPolicyState = _compressionSendPolicyState.GetOrCreateSessionFlushPolicyState(
-                _flushOptions,
-                RuntimeContext.PerformanceProfile);
-            pump = new SendPump(
-                Output,
-                flushPolicyState,
-                RuntimeContext.FlowControl.MaxSendQueueBytes,
-                RuntimeContext.TimeProvider,
-                _cts.Token,
-                ReturnBuffer,
-                Fault);
-            Volatile.Write(ref _pump, pump);
-            return pump;
-        }
-    }
-
-    private SendPump GetOrCreatePumpOrReturn(IRpcByteBufferWriter packet)
-    {
-        try
-        {
-            if (Volatile.Read(ref _terminal) is { } terminal)
-                throw terminal.Exception;
-            return GetOrCreatePump();
-        }
-        catch
-        {
-            RuntimeContext.Buffers.Return(packet);
-            throw;
-        }
-    }
 
     private Task StartTransportDispose()
     {
