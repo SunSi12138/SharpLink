@@ -75,7 +75,7 @@ jobs:
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       # Race tests create dedicated workers; bound simultaneous cases on hosted runners.
-      TUNIT_MAX_PARALLEL_TESTS: '32'
+      TUNIT_MAX_PARALLEL_TESTS: ${{ matrix.os == 'macos-latest' && '8' || '32' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

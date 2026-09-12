@@ -6,6 +6,12 @@
 
 ## [2.0.0] - 2026-09-13
 
+### Release boundaries
+
+- Added immutable operation-specific runtime configuration update results with stable failure codes; callers can distinguish rejected updates from committed configuration without parsing exception messages.
+- Added desired-session snapshots and bounded connection refresh across fixed, static, and dynamic pools; publication, readiness, old-session retirement, and current negotiated settings remain distinct outcomes.
+- Froze all eight shipping package API snapshots and calibrated version axes against published 1.1.1. The first-release diagnostic schema is 1; Generated API is 4, Protocol minor is 4, and Contract Manifest format is 2.
+
 ### Changed
 
 - Runtime multi-cluster `AddClusterAsync`, `ReplaceClusterAsync`, and `RemoveClusterAsync` now return operation-specific immutable results with stable `SharpLinkClusterMutationFailureCode` values for expected control-plane rejection. Add reports publication only (not readiness); Replace separates pre-publication failure from committed publication plus old-child cleanup; Remove preserves cleanup outcome while adding structured `NotFound`/`Busy`/`LifecycleClosed`. Programmer/configuration errors, cancellation, and unexpected failures remain exceptions.

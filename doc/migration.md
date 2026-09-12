@@ -170,6 +170,14 @@ SDK 中的 type forwards 也参与审计。下表补充上述专题，覆盖签�
 | SharpPack adapter 的 Runtime namespace、`WireFormatIdentity` | 移至 `SharpLink.Serializer.SharpPack`，以 semantic identity / CodecHash 管理兼容性。 |
 | public Session/StreamManager/raw dispatcher 及全部构造与 mutator | 删除直接 engine 调用；传输扩展实现 factory/listener/connection，流操作使用契约 `IAsyncEnumerable<T>`。 |
 
+## Runtime 配置更新与 Session 刷新
+
+需要处理配置拒绝的调用方使用 operation-specific `TryUpdate*` result 与稳定 failure code，
+不要依赖异常消息；现有 throwing API 仍用于错误属于编程错误的入口，详见
+[control-plane-results](control-plane-results.md)。连接的 desired session 配置与当前连接实际
+协商结果分别报告；配置发布成功不等于已有 Session 已应用。需要主动换代时使用
+[session-refresh](session-refresh.md) 的有界刷新流程，检查 Ready/retirement 结果。
+
 ## RuntimeContext、Catalog 与释放所有权
 
 普通应用通过 Client/Server Builder 配置 Runtime、时间和协议策略。独立 codec 工具仍可用
