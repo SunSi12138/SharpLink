@@ -130,6 +130,7 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.ContractManifest => ProtocolV2FrameType.ContractManifest,
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
+        (byte)ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameType.SessionRefreshRequested,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -153,7 +154,8 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.GoAway or
             ProtocolV2FrameType.ContractManifest or
             ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
-            ProtocolV2FrameType.ResponseCompressionPreferenceAck;
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck or
+            ProtocolV2FrameType.SessionRefreshRequested;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
         if (!controlFrame && requestId == 0)
@@ -184,6 +186,7 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameFlags.None,
             _ => ProtocolV2FrameFlags.None
         };
         if ((flags & ~allowed) != 0)
@@ -300,6 +303,9 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                 _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload);
+                break;
+            case ProtocolV2FrameType.SessionRefreshRequested:
+                _ = ProtocolV2PayloadCodec.ReadSessionRefreshRequested(payload);
                 break;
         }
     }
