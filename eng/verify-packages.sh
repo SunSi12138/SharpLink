@@ -82,9 +82,8 @@ if ! unzip -p "$ARTIFACT_DIR/SharpLink.Hosting.$EXPECTED_VERSION.nupkg" SharpLin
   exit 1
 fi
 
-# #86 tracks repository-wide vNext public API baselines, which are not committed yet. Until that
-# infrastructure exists, keep new public Runtime configuration covered by the current package gate:
-# the packed XML documentation must expose the member that source/tests compile against.
+# Full public/protected signatures are checked by verify-public-api.sh against eng/public-api/2.0.0.
+# Keep this independent packed XML documentation check for the documented Runtime configuration.
 unzip -p "$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg" lib/net10.0/SharpLink.Runtime.xml |
   grep -F '<member name="P:SharpLink.Runtime.SharpLinkFlowControlOptions.MaxPreCreditSerializedBytes">' >/dev/null
 

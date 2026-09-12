@@ -1,0 +1,158 @@
+namespace SharpLink.Client
+{
+    public sealed class DelegateSharpLinkEndpointResolver : SharpLink.Abstractions.ISharpLinkEndpointResolver, System.IAsyncDisposable
+    {
+        public DelegateSharpLinkEndpointResolver(System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkEndpointSnapshot>> resolve, System.TimeSpan? pollingInterval = default) { }
+        public DelegateSharpLinkEndpointResolver(System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkEndpointSnapshot>> resolve, System.Func<System.Threading.CancellationToken, System.Collections.Generic.IAsyncEnumerable<SharpLink.Abstractions.SharpLinkEndpointSnapshot>>? watch, System.TimeSpan? pollingInterval = default) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkEndpointSnapshot> ResolveAsync(System.Threading.CancellationToken cancellationToken) { }
+        public System.Collections.Generic.IAsyncEnumerable<SharpLink.Abstractions.SharpLinkEndpointSnapshot> WatchAsync([System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken) { }
+    }
+    public class SharpClientBuilder
+    {
+        public SharpClientBuilder() { }
+        public SharpLink.Client.SharpClientBuilder AddInterceptor(SharpLink.Abstractions.ISharpLinkClientInterceptor interceptor) { }
+        public SharpLink.Abstractions.ISharpLinkClient Build() { }
+        public SharpLink.Client.SharpClientBuilder DisableRequestTimeout() { }
+        public SharpLink.Client.SharpClientBuilder UseAuthenticator(SharpLink.Abstractions.ISharpLinkClientAuthenticator authenticator) { }
+        public SharpLink.Client.SharpClientBuilder UseBufferWriterPool(System.Action<SharpLink.Runtime.BufferWriterPoolOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseCircuitBreaker(System.Action<SharpLink.Client.SharpLinkCircuitBreakerOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseCluster(System.Action<SharpLink.Client.SharpLinkClusterOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseCodec<T>(SharpLink.Abstractions.IRpcCodec<T> codec) { }
+        public SharpLink.Client.SharpClientBuilder UseConnectionPool(System.Action<SharpLink.Client.SharpLinkConnectionPoolOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseDnsEndpoints(string host, int port, SharpLink.Abstractions.SharpLinkEndpointTransportFactory transportFactory, System.Action<SharpLink.Client.SharpLinkDnsResolverOptions>? configure = null) { }
+        public SharpLink.Client.SharpClientBuilder UseEndpoint(SharpLink.Abstractions.SharpLinkEndpoint endpoint, SharpLink.Abstractions.SharpLinkEndpointTransportFactory transportFactory) { }
+        public SharpLink.Client.SharpClientBuilder UseEndpointAdmission(SharpLink.Abstractions.ISharpLinkEndpointAdmissionPolicy policy) { }
+        public SharpLink.Client.SharpClientBuilder UseEndpointResolver(SharpLink.Abstractions.ISharpLinkEndpointResolver resolver, SharpLink.Abstractions.SharpLinkEndpointTransportFactory transportFactory) { }
+        public SharpLink.Client.SharpClientBuilder UseEndpointSelector(SharpLink.Abstractions.ISharpLinkEndpointSelector selector) { }
+        public SharpLink.Client.SharpClientBuilder UseEndpoints(System.Collections.Generic.IEnumerable<SharpLink.Abstractions.SharpLinkEndpoint> endpoints, SharpLink.Abstractions.SharpLinkEndpointTransportFactory transportFactory) { }
+        public SharpLink.Client.SharpClientBuilder UseHeartbeat(System.TimeSpan interval, System.TimeSpan timeout) { }
+        public SharpLink.Client.SharpClientBuilder UseHeartbeatInterval(System.TimeSpan interval) { }
+        public SharpLink.Client.SharpClientBuilder UseHeartbeatTimeout(System.TimeSpan timeout) { }
+        public SharpLink.Client.SharpClientBuilder UseLoadBalancing(SharpLink.Client.SharpLinkLoadBalancingStrategy strategy) { }
+        public SharpLink.Client.SharpClientBuilder UseLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
+        public void UseLoggerFactoryIfUnset(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
+        public SharpLink.Client.SharpClientBuilder UseProtocol(System.Action<SharpLink.Runtime.SharpLinkProtocolOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseRequestTimeout(System.TimeSpan timeout) { }
+        public SharpLink.Client.SharpClientBuilder UseRetry() { }
+        public SharpLink.Client.SharpClientBuilder UseRetry(SharpLink.Abstractions.ISharpLinkRetryPolicy policy) { }
+        public SharpLink.Client.SharpClientBuilder UseRetry(System.Action<SharpLink.Client.SharpLinkRetryOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseRpcSessionFlush(int flushSizeThreshold, System.TimeSpan maxLatency) { }
+        public SharpLink.Client.SharpClientBuilder UseRuntime(System.Action<SharpLink.Runtime.SharpLinkRuntimeOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseSerializer(System.Func<System.Type, SharpLink.Abstractions.IRpcCodec?>? codecResolver) { }
+        public SharpLink.Client.SharpClientBuilder UseStateStoreConcurrency(System.Action<SharpLink.Runtime.RuntimeConcurrencyOptions> configure) { }
+        public SharpLink.Client.SharpClientBuilder UseTransport(SharpLink.Abstractions.IClientTransportFactory transport) { }
+        public static SharpLink.Client.SharpClientBuilder Create() { }
+    }
+    public sealed class SharpLinkCircuitBreakerOptions
+    {
+        public SharpLinkCircuitBreakerOptions() { }
+        public System.TimeSpan BreakDuration { get; set; }
+        public double FailureRatio { get; set; }
+        public int HalfOpenMaxCalls { get; set; }
+        public int MinimumThroughput { get; set; }
+        public System.TimeSpan SamplingDuration { get; set; }
+    }
+    public sealed class SharpLinkClusterOptions
+    {
+        public const int MaximumEndpoints = 64;
+        public SharpLinkClusterOptions() { }
+        public int MaxConnections { get; set; }
+        public int MaxConnectionsPerEndpoint { get; set; }
+        public int MaxEndpoints { get; set; }
+        public int MaxRetiringConnections { get; set; }
+        public int MinReadyEndpoints { get; set; }
+    }
+    public readonly struct SharpLinkClusterRemovalResult : System.IEquatable<SharpLink.Client.SharpLinkClusterRemovalResult>
+    {
+        public bool ForcedStop { get; init; }
+        public bool ReferencesReleased { get; init; }
+        public bool Succeeded { get; init; }
+    }
+    public sealed class SharpLinkConnectionPoolOptions
+    {
+        public const int MaximumConnections = 64;
+        public SharpLinkConnectionPoolOptions() { }
+        public int MaxConnections { get; set; }
+        public int MinConnections { get; set; }
+        public void Validate() { }
+    }
+    public sealed class SharpLinkDnsEndpointResolver : SharpLink.Abstractions.ISharpLinkEndpointResolver, System.IAsyncDisposable
+    {
+        public SharpLinkDnsEndpointResolver(string host, int port, SharpLink.Client.SharpLinkDnsResolverOptions? options = null) { }
+        public System.Threading.Tasks.ValueTask DisposeAsync() { }
+        public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkEndpointSnapshot> ResolveAsync(System.Threading.CancellationToken cancellationToken) { }
+        public System.Collections.Generic.IAsyncEnumerable<SharpLink.Abstractions.SharpLinkEndpointSnapshot> WatchAsync([System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class SharpLinkDnsResolverOptions
+    {
+        public SharpLinkDnsResolverOptions() { }
+        public System.Net.Sockets.AddressFamily? AddressFamily { get; set; }
+        public double JitterRatio { get; set; }
+        public System.TimeSpan MaximumRefreshInterval { get; set; }
+        public System.TimeSpan MinimumRefreshInterval { get; set; }
+        public System.TimeSpan RefreshInterval { get; set; }
+    }
+    public enum SharpLinkLoadBalancingStrategy
+    {
+        PowerOfTwoChoices = 0,
+        Random = 1,
+        RoundRobin = 2,
+        LeastPending = 3,
+    }
+    public sealed class SharpLinkMultiClusterClientBuilder
+    {
+        public SharpLinkMultiClusterClientBuilder() { }
+        public SharpLink.Client.SharpLinkMultiClusterClientBuilder AddCluster(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Action<SharpLink.Client.SharpClientBuilder> configure) { }
+        public SharpLink.Client.SharpLinkMultiClusterClientBuilder AddCluster(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Action<SharpLink.Client.SharpClientBuilder> configure, System.Action<SharpLink.Client.SharpLinkMultiClusterSlotOptions>? configureSlot) { }
+        public SharpLink.Abstractions.ISharpLinkMultiClusterClient Build() { }
+        public SharpLink.Client.SharpLinkMultiClusterClientBuilder Configure(System.Action<SharpLink.Client.SharpLinkMultiClusterOptions> configure) { }
+        public void UseLoggerFactoryIfUnset(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
+        public static SharpLink.Client.SharpLinkMultiClusterClientBuilder Create() { }
+    }
+    public static class SharpLinkMultiClusterClientExtensions
+    {
+        public static System.Threading.Tasks.ValueTask AddClusterAsync(this SharpLink.Abstractions.ISharpLinkMultiClusterClient client, SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Action<SharpLink.Client.SharpClientBuilder> configure, System.Action<SharpLink.Client.SharpLinkMultiClusterSlotOptions>? configureSlot = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.Client.SharpLinkClusterRemovalResult> RemoveClusterAsync(this SharpLink.Abstractions.ISharpLinkMultiClusterClient client, SharpLink.Abstractions.SharpLinkClusterKey cluster, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.ValueTask ReplaceClusterAsync(this SharpLink.Abstractions.ISharpLinkMultiClusterClient client, SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Action<SharpLink.Client.SharpClientBuilder> configure, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class SharpLinkMultiClusterOptions
+    {
+        public SharpLinkMultiClusterOptions() { }
+        public int MaxClusters { get; set; }
+        public int MaxConcurrentClusterConnects { get; set; }
+        public int MaxTotalConfiguredConnections { get; set; }
+    }
+    public sealed class SharpLinkMultiClusterSlotOptions
+    {
+        public SharpLinkMultiClusterSlotOptions() { }
+        public bool AllowDynamicContracts { get; set; }
+    }
+    public sealed class SharpLinkRetryOptions
+    {
+        public SharpLinkRetryOptions() { }
+        public System.TimeSpan InitialBackoff { get; set; }
+        public double JitterRatio { get; set; }
+        public int MaxAttempts { get; set; }
+        public System.TimeSpan MaxBackoff { get; set; }
+    }
+    public static class SharpLinkTransportFactories
+    {
+        public static SharpLink.Abstractions.SharpLinkEndpointTransportFactory NamedPipes() { }
+        public static SharpLink.Abstractions.SharpLinkEndpointTransportFactory SharedMemory(System.Action<SharpLink.Runtime.SharedMemoryTransportOptions>? configure = null) { }
+        public static SharpLink.Abstractions.SharpLinkEndpointTransportFactory Sockets(SharpLink.Runtime.SocketTransportOptions? options = null) { }
+        public static SharpLink.Abstractions.SharpLinkEndpointTransportFactory Sockets(System.Net.Security.SslClientAuthenticationOptions tlsOptions, SharpLink.Runtime.SocketTransportOptions? options = null, System.TimeSpan? tlsHandshakeTimeout = default) { }
+    }
+    public static class TransportExtensions
+    {
+        extension(SharpLink.Client.SharpClientBuilder builder)
+        {
+            public SharpLink.Client.SharpClientBuilder UseNamedPipe(string name) { }
+            public SharpLink.Client.SharpClientBuilder UseTcp(string ip, int port) { }
+            public SharpLink.Client.SharpClientBuilder UseTcp(string ip, int port, System.Net.Security.SslClientAuthenticationOptions tlsOptions, System.TimeSpan? tlsHandshakeTimeout = default) { }
+            public SharpLink.Client.SharpClientBuilder UseUds(string socketPath) { }
+            public SharpLink.Client.SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle) { }
+            public SharpLink.Client.SharpClientBuilder UseSharedMemory(string name, System.Action<SharpLink.Runtime.SharedMemoryTransportOptions>? configure = null) { }
+        }
+    }
+}

@@ -1,0 +1,15 @@
+namespace SharpLink.Compression.Zstd
+{
+    public sealed class SharpLinkZstdCompressionProvider : SharpLink.Runtime.ISharpLinkCompressionProvider
+    {
+        public const int DefaultCompressionLevel = 3;
+        public const string Profile = "zstd-rfc8878-w23-checksum/v1";
+        public const int WindowLog2 = 23;
+        public SharpLinkZstdCompressionProvider() { }
+        public SharpLinkZstdCompressionProvider(int compressionLevel) { }
+        public int CompressionLevel { get; }
+        public string WireProfile { get; }
+        public void Decompress(System.Buffers.ReadOnlySequence<byte> input, System.Buffers.IBufferWriter<byte> output, int maxOutputBytes, System.Threading.CancellationToken cancellationToken = default) { }
+        public bool TryCompress(System.Buffers.ReadOnlySequence<byte> input, System.Buffers.IBufferWriter<byte> output, int maxOutputBytes, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+}

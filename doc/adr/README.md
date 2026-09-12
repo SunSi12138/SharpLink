@@ -45,3 +45,7 @@ Review ADR 时重点确认：
 - ADR 是否避免复制会演进的阈值、允许边和完整工具规则。
 
 从 [`0000-template.md`](0000-template.md) 复制最小结构即可；不适用的可选小节可以删除。
+
+## Accepted records
+
+- [0001: 2.0 public API 与包边界](0001-2.0-public-api-and-packages.md)

@@ -88,28 +88,7 @@ public sealed record SharpLinkGeneratedContractDescriptor(
     string Fingerprint,
     IReadOnlyList<SharpLinkGeneratedMethodDescriptor> Methods,
     Func<IRpcChannel, IRpcCodecProvider, object> ProxyFactory,
-    Func<IRpcCodecProvider, IRpcStub> StubFactory)
-{
-    /// <summary>Compatibility constructor for descriptors that do not consume an injected Codec provider.</summary>
-    public SharpLinkGeneratedContractDescriptor(
-        Type contractType,
-        string contractName,
-        long contractId,
-        string fingerprint,
-        IReadOnlyList<SharpLinkGeneratedMethodDescriptor> methods,
-        Func<IRpcChannel, object> proxyFactory,
-        Func<IRpcStub> stubFactory)
-        : this(
-            contractType,
-            contractName,
-            contractId,
-            fingerprint,
-            methods,
-            (channel, _) => proxyFactory(channel),
-            _ => stubFactory())
-    {
-    }
-}
+    Func<IRpcCodecProvider, IRpcStub> StubFactory);
 
 /// <summary>Describes one service-owned generated activator.</summary>
 public sealed record SharpLinkGeneratedServiceDescriptor(
@@ -181,7 +160,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 4;
 
     /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
-    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v4";
+    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v1";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;
@@ -190,7 +169,10 @@ public static class SharpLinkGeneratedManifestVersions
 /// <summary>
 /// Stores bounded weak references to generated manifests. Each generated assembly anchors
 /// its own manifest; this catalog therefore does not keep a collectible load context alive.
+/// This is a generated bootstrap entry point. Application code registers assemblies through
+/// the Client/Server assembly registry; adding a catalog entry does not mutate a built runtime.
 /// </summary>
+[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 public static class SharpLinkGeneratedAssemblyCatalog
 {
     private const int MaximumEntries = 16_384;

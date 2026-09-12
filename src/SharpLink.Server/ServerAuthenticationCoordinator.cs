@@ -110,7 +110,7 @@ internal sealed partial class ServerAuthenticationCoordinator
     /// builds never persist provider exception payloads; this exists solely for in-process
     /// debugging when the DEBUG symbol is defined.
     /// </summary>
-    [Conditional(CompileSymbols.Debug)]
+    [Conditional("DEBUG")]
     private static void DebugTraceAuthenticationProviderException(Exception exception)
         => Debug.WriteLine(exception);
 }

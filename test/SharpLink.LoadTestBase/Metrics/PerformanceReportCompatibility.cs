@@ -4,7 +4,7 @@ namespace SharpLink.LoadTestBase;
 
 public static class PerformanceReportCompatibility
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 1;
 
     public static void EnsureComparable(
         int baselineSchemaVersion,

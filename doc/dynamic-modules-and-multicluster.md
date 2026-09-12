@@ -155,3 +155,12 @@ NativeAOT 不支持运行时加载未知插件，动态模块只适用于 JIT �
 动态模块的 runnable 证据位于 `test/SharpLink.DynamicContracts`、`SharpLink.DynamicServices`、`SharpLink.RollbackPlugin` 和 `RuntimeAssemblyIntegrationTests`，覆盖注册、冲突、替换、调用排空、取消、回滚、cleanup failure、弱引用与 collectible ALC 回收。
 
 运行时 slot 的 unit 与真实 TCP 证据位于 `test/SharpLink.UnitTests/Client/SharpLinkMultiCluster*Tests.cs` 和 `RuntimeMultiClusterIntegrationTests`，覆盖 Created/Running 状态、Add publication 与 readiness 解耦、structured expected rejection、Replace ready-before-swap、publication-vs-cleanup 结果、取消/Stop race、预算、Proxy 一次绑定、Add/Replace/Remove 和删除后的资源释放结果。
+
+## 2.0 Generated ABI 和发布门禁
+
+所有契约/服务/插件必须用 2.0 SDK 重新生成 API 4，并携带当前 ABI identity。
+locator 在 manifest materialization 之前 fail fast；Catalog 是 generated bootstrap，
+应用只通过 `ISharpLinkAssemblyRegistry` 注册、替换和注销。
+`ReferencesReleased` 描述框架引用释放，不保证应用自身 Assembly/Type/proxy 引用已清空，
+因此 ALC 卸载仍需调用方释放引用并验证回收。版本/identity 与完整公开签名由
+[API baseline](../eng/public-api/2.0.0) 和 [版本清单](../eng/release-versions.json) 检查。

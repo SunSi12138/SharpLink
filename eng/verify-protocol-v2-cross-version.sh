@@ -58,7 +58,14 @@ if [[ -z "$port" ]]; then
   exit 1
 fi
 
-dotnet "$client_dll" client "$port" >"$client_log" 2>&1
+if dotnet "$client_dll" client "$port" >"$client_log" 2>&1; then
+  :
+else
+  client_status=$?
+  tail -n 60 "$client_log" >&2
+  tail -n 60 "$server_log" >&2
+  exit "$client_status"
+fi
 wait "$ACTIVE_SERVER_PID"
 ACTIVE_SERVER_PID=""
 grep -Fx "CLIENT_PASS" "$client_log" >/dev/null

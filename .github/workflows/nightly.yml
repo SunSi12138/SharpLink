@@ -9,6 +9,12 @@ on:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
+    inputs:
+      release_soak:
+        description: Run the five-hour release soak alongside the other validation jobs
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   codec-compatibility:
@@ -68,6 +74,8 @@ jobs:
     timeout-minutes: 35
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      # Race tests create dedicated workers; bound simultaneous cases on hosted runners.
+      TUNIT_MAX_PARALLEL_TESTS: ${{ matrix.os == 'macos-latest' && '8' || '32' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,7 +193,7 @@ jobs:
           retention-days: 30
 
   chaos-soak:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && !inputs.release_soak
     strategy:
       fail-fast: false
       matrix:
@@ -253,3 +261,34 @@ jobs:
           path: artifacts/p3-generated-abi/dynamic-module-soak
           if-no-files-found: warn
           retention-days: 14
+
+  release-soak:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_soak
+    strategy:
+      fail-fast: false
+      matrix:
+        transport: [tcp, sharedmemory]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      SHARPLINK_SOAK_DURATION: 5h
+      SHARPLINK_SOAK_TRANSPORT: ${{ matrix.transport }}
+      SHARPLINK_SOAK_OUTPUT: artifacts/chaos/release-5h-${{ matrix.transport }}.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Five-hour release soak
+        run: ./eng/run-release-soak.sh
+
+      - name: Upload release soak evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-soak-5h-${{ matrix.transport }}-${{ github.sha }}
+          path: artifacts/chaos
+          if-no-files-found: error
+          retention-days: 30

@@ -19,14 +19,14 @@ public class PerformanceReportCompatibilityTests
     public void SchemaMismatchShouldFailFastBeforePercentageComparison()
     {
         var failure = CaptureFailure(() => PerformanceReportCompatibility.EnsureComparable(
-            baselineSchemaVersion: 1,
+            baselineSchemaVersion: 0,
             baselineRecorderVersion: "legacy-histogram-v1",
             candidateSchemaVersion: PerformanceReportCompatibility.CurrentSchemaVersion,
             candidateRecorderVersion: StageLatencyRecorder.Version));
 
         Ensure(failure is InvalidOperationException &&
                failure.Message.Contains("schema mismatch", StringComparison.OrdinalIgnoreCase) &&
-               failure.Message.Contains("baseline=1", StringComparison.Ordinal),
+               failure.Message.Contains("baseline=0", StringComparison.Ordinal),
             "old and current report schemas fail before any percentage can be computed");
     }
 

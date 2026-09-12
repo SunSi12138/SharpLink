@@ -36,7 +36,7 @@ internal static class UnsafeBlitPaddingEvidenceRunner
         };
 
         var report = new PaddingEvidenceReport(
-            SchemaVersion: 2,
+            SchemaVersion: 1,
             CheckedOutCommit: Environment.GetEnvironmentVariable("SHARPLINK_COMMIT") ?? "unknown",
             SourceHeadCommit: Environment.GetEnvironmentVariable("SHARPLINK_HEAD_COMMIT") ?? "unknown",
             FrameworkDescription: RuntimeInformation.FrameworkDescription,

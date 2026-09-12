@@ -124,7 +124,7 @@ serverBuilder.UseConnectionAdmission(options =>
 
 ## Client readiness API
 
-`ISharpLinkClient` 新增 `GetReadinessSnapshot()` 和 `WaitForReadinessAsync(...)`。内置 Client 提供固定、静态与 resolver 拓扑的精确快照；`ConnectAsync` 仍只承担 connectivity，不会等待多 endpoint 收敛。已有第三方 `ISharpLinkClient` 实现无需重新编译即可继续加载：接口默认实现会明确抛出 `NotSupportedException`，不会伪造单 endpoint 数据。包装或代理实现如果希望支持 readiness，应转发这两个成员并保留调用方独立取消与终止状态语义。
+`ISharpLinkClient` 新增 `GetReadinessSnapshot()` 和 `WaitForReadinessAsync(...)`。内置 Client 提供固定、静态与 resolver 拓扑的精确快照；`ConnectAsync` 仍只承担 connectivity，不会等待多 endpoint 收敛。第三方 `ISharpLinkClient` 实现必须随本次 major 升级重新编译，并实现新继承的 capability/registry 接口。readiness 的接口默认实现会明确抛出 `NotSupportedException`，不会伪造单 endpoint 数据；默认实现不是跨 major 二进制兼容承诺。包装或代理实现如果希望支持 readiness，应转发这两个成员并保留调用方独立取消与终止状态语义。
 
 ## 包依赖变化
 
@@ -137,6 +137,59 @@ serverBuilder.UseConnectionAdmission(options =>
     typeof(ThirdPartyGraph),
     typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]
 ```
+
+## 1.1.1 公共 API 迁移对照
+
+以实际 NuGet 1.1.1 包为基线的完整 public/protected 差异保存在
+[`eng/public-api/1.1.1-to-2.0.0.diff`](../eng/public-api/1.1.1-to-2.0.0.diff)。
+SDK 中的 type forwards 也参与审计。下表补充上述专题，覆盖签名删除、替换与默认值变化；
+新增 capability 的精确成员以 [`2.0.0 API 基线`](../eng/public-api/2.0.0) 为准。
+
+| 1.1.1 入口或行为 | 2.0 迁移 |
+| --- | --- |
+| `CompileSymbols.Debug` | 使用 C# 自带的 `[Conditional("DEBUG")]`；构建符号常量不再作为 RPC 公共 API。 |
+| `IRpcChannel.Invoke*` options、`SendClientStreamAsync` | 重新生成 API 4；metadata 进入窄参数，client stream 通过 `IRpcClientStreamSink`。业务代码只调用契约 proxy。 |
+| `IRpcStub.Invoke*` 的 Session/专用 writer 参数 | 改为 `IRpcGeneratedServerBridge` 和 `IBufferWriter<byte>`，由 Generator 生成。 |
+| `IRpcGeneratedCodecFactory.SchemaId/WireFormatId`、adapter `WireFormatId`、registration attribute 的第三参数 | 采用 `CodecHash` 与 `[RpcCodecSemanticIdentity]`；改变 wire 含义时改变 semantic identity。详见 [契约与 Codec](contracts-and-codecs.md)。 |
+| Client/Server `UseCodec<T>`、Client `UseSerializer` | Generated RPC 在契约中用 `[RpcCodec]`/`[RpcCodecImplementation]` 或 adapter attribute 绑定；不能用运行时 resolver 覆盖冻结的 generated Codec。Standalone Context 的 `AddCodec`/resolver 仍供独立 codec 使用。 |
+| `SharpLinkGeneratedAssemblyManifestAttribute(Type)` | 重新生成携带 API、Protocol、Generator version 和 ABI identity 的 locator。 |
+| `SharpLinkGeneratedContractDescriptor` 旧构造函数和 factories | 重新生成 provider-aware proxy/stub factory；无 legacy 构造函数或 adapter。 |
+| `ISharpLinkClient` / `ISharpLinkServer` 直接声明的 assembly registry 方法 | 统一继承 `ISharpLinkAssemblyRegistry`；普通调用语法不变，显式接口实现需要重编译并调整所属接口。 |
+| Server `RunAsync` | `await StartAsync()` 后由应用等待 `WaitForShutdownAsync()`；关闭时等待 `StopAsync()`，最终 `DisposeAsync()`。Generic Host 使用 Hosting 集成。 |
+| `SharpLinkCallContextSnapshot.Deadline`、Server invocation `Deadline`、Client invocation `Options` | 删除 absolute UTC deadline；使用 cancellation、metadata 与相对 timeout policy，详见本页调用选项章节。 |
+| `ProtocolV2FrameFlags.HasDeadline` | `HasTimeBudget`；禁止把旧 deadline 字节当作新字段。双方整体升级至 minor 4。 |
+| `ProtocolV2Error` / `ProtocolV2HandshakeRequest` 构造签名 | 使用新结构的 error detail / handshake 字段，勿手工拼旧 wire frame；参见 [协议](protocol-v2.md) 与 [错误详情](error-details.md)。 |
+| `SharpLinkHealthCheckResult.Status` 可写非空状态 | 先检查 `Outcome`；仅 `Success` 含远端 `Status`。NotReady/Unavailable/Unsupported 不伪造远端状态，禁止写 `Status` init 属性。 |
+| MultiCluster Add/Replace 无返回值的 extension、Remove 旧结果 | 检查 operation-specific result；忽略返回值的 await 语句仍可编译，方法组/委托须更新返回类型。 |
+| `SharpLinkCircuitBreakerOptions` / `SharpLinkRetryOptions` | 保留具体配置类，并实现对应 Abstractions 接口；runtime update 使用 capability/result API，不操作内部 engine。 |
+| `NamedPipes()` / `UseNamedPipe(name)`、factory/listener 构造函数默认值 | 重新编译可选参数调用；默认启用 `CurrentUserOnly`。需要自定义策略时传 `NamedPipeTransportOptions`，参见 [传输](transports.md)。 |
+| Server `UseTcp(port, ip = "0.0.0.0", ...)` | port-only 现在只监听 loopback；对外监听显式传地址或使用 `ListenOn*`。非 loopback 必须配置 TLS 和 required authentication，或分别显式选择 `AllowUnencrypted()` / `AllowUnauthenticated()`；见 [安全配置](security.md)。TLS overload 同样显式选择监听范围。 |
+| `ISharpLinkCompressionProvider.Compress` / `Decompress` 返回 `SharpLinkCompressionResult` | 实现 `TryCompress -> bool` 和 `Decompress -> void`，完整消费输入并遵守有界 writer；false 表示候选压缩不适用。 |
+| `SharpLinkCompressionOptions.MinimumPayloadBytes/MinimumSavingsBytes/MinimumSavingsRatio` | 删除手动阈值，使用 Runtime 自适应压缩策略；注册 provider 即可。 |
+| 内置 Brotli factory、`SharpLinkCompressionResult`、旧压缩 profile | 引用独立 `SharpLink.Compression.Zstd` 或实现 provider。不得复用不兼容的旧 profile identity。 |
+| SharpPack adapter 的 Runtime namespace、`WireFormatIdentity` | 移至 `SharpLink.Serializer.SharpPack`，以 semantic identity / CodecHash 管理兼容性。 |
+| public Session/StreamManager/raw dispatcher 及全部构造与 mutator | 删除直接 engine 调用；传输扩展实现 factory/listener/connection，流操作使用契约 `IAsyncEnumerable<T>`。 |
+
+## Runtime 配置更新与 Session 刷新
+
+需要处理配置拒绝的调用方使用 operation-specific `TryUpdate*` result 与稳定 failure code，
+不要依赖异常消息；现有 throwing API 仍用于错误属于编程错误的入口，详见
+[control-plane-results](control-plane-results.md)。连接的 desired session 配置与当前连接实际
+协商结果分别报告；配置发布成功不等于已有 Session 已应用。需要主动换代时使用
+[session-refresh](session-refresh.md) 的有界刷新流程，检查 Ready/retirement 结果。
+
+## RuntimeContext、Catalog 与释放所有权
+
+普通应用通过 Client/Server Builder 配置 Runtime、时间和协议策略。独立 codec 工具仍可用
+`SharpLinkRuntimeContextBuilder.Build()` 创建实例，并由创建者 `Dispose()`；没有 process-default
+Context，也不能把 Context 在构造后绑定到 Session。Context 拥有其 buffer pool、generated codec
+registration 和 adapter scopes；传入的 `TimeProvider` 仍属调用方，框架不释放它。
+Client/Server 持有的 Context 随 owner 关闭释放，不由业务代码提前释放。
+
+`SharpLinkGeneratedAssemblyCatalog` 是 generated bootstrap 基础设施（隐藏于 IntelliSense），
+不是应用动态注册入口。动态模块用 client/server 的 `ISharpLinkAssemblyRegistry`；等待返回的
+references-released 结果之后，应用才释放自身 Assembly/Type/proxy 引用并请求卸载 ALC。
+Catalog 保留弱引用不代表应用引用已经释放。详见 [边界 ADR](adr/0001-2.0-public-api-and-packages.md)。
 
 ## 从 0.7.x
 

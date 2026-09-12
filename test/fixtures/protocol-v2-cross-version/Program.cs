@@ -60,6 +60,7 @@ public static class Program
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var client = SharpClientBuilder.Create()
+            .DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
         try

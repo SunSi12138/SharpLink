@@ -308,9 +308,6 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             throw new AggregateException(failures);
     }
 
-    internal static SharpLinkRuntimeContext Default { get; } =
-        new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
-
     private readonly record struct ManifestCodecProviderEntry(
         RpcGeneratedManifestRegistration Registration,
         IRpcCodecProvider Provider);

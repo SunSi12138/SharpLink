@@ -1,8 +1,9 @@
-# Latency recorder baseline (schema 2)
+# Latency recorder baseline (release schema 1)
 
 This baseline replaces shared per-request latency histograms for formal load-test
-evidence. Reports using schema 1 or another recorder version are not directly
-comparable with schema 2 reports. `PerformanceReportCompatibility` fails fast
+evidence. The 2.0 release introduces schema 1. Historical development reports with schema 2,
+unversioned 1.1.1 reports, or another recorder version are not directly comparable
+with the released format. `PerformanceReportCompatibility` fails fast
 when either semantic version differs.
 
 ## Recorder contract
@@ -25,7 +26,7 @@ The default formal hard bound is 30,000,000 samples for both runners. Each
 worker owns its own preallocated buffer. The merged sort buffer is allocated
 only after measurement and drain, so it cannot perturb workload timing.
 
-Schema 2 records `sourceCommit`, `recorderMode`, `recorderVersion`,
+Release schema 1 records `sourceCommit`, `recorderMode`, `recorderVersion`,
 `stopwatchFrequency`, `warmupDuration`, `measurementDuration`, `drainDuration`,
 `workerCount`, `sampleCount`, `maximumSampleCapacity`, and `formalComparable`.
 Recorder-interference runs additionally expose an opt-in tail observer. It uses
@@ -34,7 +35,10 @@ and runs identically beside recording-off and formal workloads. Its sample
 count, failures, P99, and P99.9 are separate from workload latency fields, so
 recording-off still omits unavailable workload percentiles.
 
-## Current dev evidence
+## Historical development evidence
+
+The retained measurements below predate the 2.0 version calibration and used
+development schema 2. Their original artifact headers remain unchanged.
 
 - Integration base: `0dd56ddc833ea3b0953beaa4be236952065047ff`
 - Host: Apple arm64, 10 logical CPUs

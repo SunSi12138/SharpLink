@@ -307,7 +307,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                client.ActiveClientCallCount == 0 &&
                client.ActiveClientStreamCount == 0 &&
                serverActiveCalls == 0,
-            $"{name} leaves client pending/call/stream and server call counters at zero");
+            $"{name} leaves client pending/call/stream and server call counters at zero; " +
+            $"pending={client.PendingCallCount}, calls={client.ActiveClientCallCount}, " +
+            $"streams={client.ActiveClientStreamCount}, serverCalls={serverActiveCalls}");
     }
 
     private static ClientAssemblyRegistry GetClientAssemblyRegistry(ISharpLinkClient client)

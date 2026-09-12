@@ -221,7 +221,7 @@ public interface IAliasOnlyAdapterContract : IService
 using System;
 
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute(typeof(Referenced.Payload), 0x5555555555555555UL, {{low}}UL)]
-[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v4")]
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
 
 namespace SharpLink.Abstractions
 {
@@ -371,7 +371,7 @@ public interface IReferencedCodecContract : IService
 
         var current = GeneratedPayloadReference(
             "CurrentGeneratedPayload",
-            "sharplink-2.0-api4-rpcchannel-codec-provider-v4");
+            "sharplink-2.0-api4-rpcchannel-codec-provider-v1");
         var currentDiagnostics = RunGenerator(consumer, sdk, current);
         Ensure(
             !currentDiagnostics.Any(static diagnostic =>

@@ -67,7 +67,7 @@ public class PerformanceReportValidatorTests
             WriteReport(
                 Path.Combine(root, "broken.json"),
                 result,
-                schemaVersion: 1,
+                schemaVersion: 0,
                 sourceCommit: "wrong-commit");
 
             var validation = PerformanceReportValidator.AnalyzeDirectories(

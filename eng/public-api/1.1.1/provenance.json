@@ -1,0 +1,51 @@
+[
+  {
+    "package": "SharpLink.Abstractions",
+    "version": "1.1.1",
+    "source": "https://api.nuget.org/v3-flatcontainer/sharplink.abstractions/1.1.1/sharplink.abstractions.1.1.1.nupkg",
+    "sha256": "b3840552ec8a41842c4b158f77db591e69b66420cf6769e072a91abdaf698067",
+    "assembly": "lib/net10.0/SharpLink.Abstractions.dll"
+  },
+  {
+    "package": "SharpLink.Runtime",
+    "version": "1.1.1",
+    "source": "https://api.nuget.org/v3-flatcontainer/sharplink.runtime/1.1.1/sharplink.runtime.1.1.1.nupkg",
+    "sha256": "f6a164236f38abdd5b8a2619980c442217fa30a46ca726c922e89cf2841f6c75",
+    "assembly": "lib/net10.0/SharpLink.Runtime.dll"
+  },
+  {
+    "package": "SharpLink.Client",
+    "version": "1.1.1",
+    "source": "https://api.nuget.org/v3-flatcontainer/sharplink.client/1.1.1/sharplink.client.1.1.1.nupkg",
+    "sha256": "957896f7427e177e5a18ae522c44f03780137db0f1d96bfb36dd3ad7744f962b",
+    "assembly": "lib/net10.0/SharpLink.Client.dll"
+  },
+  {
+    "package": "SharpLink.Server",
+    "version": "1.1.1",
+    "source": "https://api.nuget.org/v3-flatcontainer/sharplink.server/1.1.1/sharplink.server.1.1.1.nupkg",
+    "sha256": "21d07bcd030e1a58eb5961cdcd3b146376acfdab2781fa0b898091cdbfcbacd2",
+    "assembly": "lib/net10.0/SharpLink.Server.dll"
+  },
+  {
+    "package": "SharpLink.Hosting",
+    "version": "1.1.1",
+    "source": "https://api.nuget.org/v3-flatcontainer/sharplink.hosting/1.1.1/sharplink.hosting.1.1.1.nupkg",
+    "sha256": "6cdf1f649f68deccd535c46f43cf15c2970920f23e1cabee5c0f7269dc7a033a",
+    "assembly": "lib/net10.0/SharpLink.Hosting.dll"
+  },
+  {
+    "package": "SharpLink.Sdk",
+    "version": "1.1.1",
+    "source": "https://api.nuget.org/v3-flatcontainer/sharplink.sdk/1.1.1/sharplink.sdk.1.1.1.nupkg",
+    "sha256": "9406feb133f3b306c493fc419d16255190c64fed3a3ed1f75b96e248ce45227b",
+    "assembly": "lib/net10.0/SharpLink.Sdk.dll"
+  },
+  {
+    "package": "SharpLink.Serializer.SharpPack",
+    "version": "1.1.1",
+    "source": "https://api.nuget.org/v3-flatcontainer/sharplink.serializer.sharppack/1.1.1/sharplink.serializer.sharppack.1.1.1.nupkg",
+    "sha256": "4bc51717e425fe4a3074a0518e8e03b646d6d40e197de0bcc1c8fbd44789fefc",
+    "assembly": "lib/net10.0/SharpLink.Serializer.SharpPack.dll"
+  }
+]

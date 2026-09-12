@@ -63,7 +63,7 @@ var complexMethods = orderedMethods
     .ToArray();
 
 var report = new Report(
-    SchemaVersion: 3,
+    SchemaVersion: 1,
     SourceRef: sourceRef,
     ToolRef: toolRef,
     Definitions: new Definitions(

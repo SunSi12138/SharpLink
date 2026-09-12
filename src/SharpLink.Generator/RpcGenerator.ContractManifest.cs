@@ -5,7 +5,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const int ContractManifestFormatVersion = 3;
+    private const int ContractManifestFormatVersion = 2;
     private const string ContractManifestFormat = "SharpLink.Contracts";
 
     private static RpcUnionModel? GetUnionModelOrNull(

@@ -13,7 +13,7 @@ internal sealed partial class SharpLinkServer
         LoggerMessage.DefineScope<long>("RequestId:{RequestId}");
 
 
-    [Conditional(CompileSymbols.Debug)]
+    [Conditional("DEBUG")]
     private static void DebugLogClientHeartbeatReceived(ILogger logger) => LogClientHeartbeatReceived(logger);
 
     private static IDisposable? BeginSessionLogScope(ILogger logger, string sessionId) => SSessionScope(logger, sessionId);

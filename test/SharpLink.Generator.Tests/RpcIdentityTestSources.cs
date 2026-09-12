@@ -19,6 +19,7 @@ public partial class RpcAnalyzerTests
 
     private static string UseCurrentIdentitySdk(string source)
     {
+        source = source.ReplaceLineEndings("\n");
         source = source.Replace(
             "public RpcCodecAdapterRegistrationAttribute(Type adapterType, string adapterId, string wireFormatId) { }",
             "public RpcCodecAdapterRegistrationAttribute(Type adapterType, string adapterId) { }",
@@ -34,14 +35,14 @@ public partial class RpcAnalyzerTests
     {
         public RpcCodecImplementationAttribute(string wireFormatId, string schemaId) { }
     }
-""",
+""".ReplaceLineEndings("\n"),
             """
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
     public sealed class RpcCodecSemanticIdentityAttribute : Attribute
     {
         public RpcCodecSemanticIdentityAttribute(ulong high, ulong low) { }
     }
-""",
+""".ReplaceLineEndings("\n"),
             StringComparison.Ordinal);
 
         var registrations = LegacyAdapterRegistrationPattern.Matches(source)

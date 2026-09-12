@@ -50,6 +50,8 @@ jobs:
     timeout-minutes: 45
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      # Preserve per-test race concurrency without exhausting hosted native threads.
+      TUNIT_MAX_PARALLEL_TESTS: ${{ matrix.os == 'macos-latest' && '8' || '32' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,6 +161,15 @@ jobs:
 
       - name: Verify NuGet package contracts
         uses: ./.github/actions/verify-packages
+
+      - name: Install architecture guard prerequisite
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Verify reviewed public API and release versions
+        run: |
+          bash ./eng/verify-public-api.sh
+          python3 ./eng/verify-release-versions.py
+          bash ./eng/verify-runtime-architecture.sh
 
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
