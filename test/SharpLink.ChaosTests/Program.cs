@@ -153,10 +153,21 @@ public static class Program
         await restarter.ConfigureAwait(false);
         await memorySampler.ConfigureAwait(false);
 
+        await AwaitDiagnosticCaptureAsync().ConfigureAwait(false);
+
         phase = "StoppingClient";
         await client.StopAsync().ConfigureAwait(false);
         phase = "StoppingServer";
-        serverStops.Enqueue(await server.StopAsync("FinalStop").ConfigureAwait(false));
+        try
+        {
+            serverStops.Enqueue(await server.StopAsync("FinalStop").ConfigureAwait(false));
+        }
+        catch (Exception exception)
+        {
+            RecordUnexpectedFailure(exception);
+            await AwaitDiagnosticCaptureAsync().ConfigureAwait(false);
+            throw;
+        }
         phase = "DrainingMetrics";
         var drain = await metrics.WaitForZeroAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
         if (options.InjectUnobservedTaskException)
@@ -176,11 +187,7 @@ public static class Program
             clientLogs.InjectErrorForGateProbe("client");
         if (options.InjectServerError)
             serverLogs.InjectErrorForGateProbe("server");
-        Task<ChaosDiagnosticArtifact>? activeDiagnosticCapture;
-        lock (diagnosticGate)
-            activeDiagnosticCapture = diagnosticCaptureTask;
-        if (activeDiagnosticCapture is not null)
-            diagnosticArtifact = await activeDiagnosticCapture.ConfigureAwait(false);
+        await AwaitDiagnosticCaptureAsync().ConfigureAwait(false);
         var exitCode = 0;
         ChaosFailure? terminalFailure = null;
         if (!drain.Drained)
@@ -281,6 +288,15 @@ public static class Program
         foreach (var error in serverLogs.AllSnapshot())
             Console.WriteLine($"CHAOS_SERVER_ERROR {error}");
         return exitCode;
+
+        async Task AwaitDiagnosticCaptureAsync()
+        {
+            Task<ChaosDiagnosticArtifact>? activeDiagnosticCapture;
+            lock (diagnosticGate)
+                activeDiagnosticCapture = diagnosticCaptureTask;
+            if (activeDiagnosticCapture is not null)
+                diagnosticArtifact = await activeDiagnosticCapture.ConfigureAwait(false);
+        }
 
         async Task RestartLoopAsync()
         {
@@ -849,7 +865,10 @@ public static class Program
             : Path.ChangeExtension(Path.GetFullPath(reportPath), ".dmp");
         Directory.CreateDirectory(Path.GetDirectoryName(dumpPath)!);
         var executableName = OperatingSystem.IsWindows() ? "createdump.exe" : "createdump";
-        var toolPath = Path.Combine(
+        var externalTool = OperatingSystem.IsWindows()
+            ? Environment.GetEnvironmentVariable("SHARPLINK_CHAOS_DUMP_TOOL")
+            : null;
+        var toolPath = externalTool ?? Path.Combine(
             System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
             executableName);
         if (!File.Exists(toolPath))
@@ -870,12 +889,18 @@ public static class Program
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            info.ArgumentList.Add("--withheap");
-            info.ArgumentList.Add("--crashreport");
-            info.ArgumentList.Add("--name");
-            info.ArgumentList.Add(dumpPath);
-            info.ArgumentList.Add(Environment.ProcessId.ToString(
-                System.Globalization.CultureInfo.InvariantCulture));
+            var processId = Environment.ProcessId.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+            if (externalTool is not null)
+            {
+                foreach (var argument in new[] { "collect", "--process-id", processId, "--type", "Heap", "--output", dumpPath })
+                    info.ArgumentList.Add(argument);
+            }
+            else
+            {
+                foreach (var argument in new[] { "--withheap", "--crashreport", "--name", dumpPath, processId })
+                    info.ArgumentList.Add(argument);
+            }
             using var process = Process.Start(info);
             if (process is null)
             {

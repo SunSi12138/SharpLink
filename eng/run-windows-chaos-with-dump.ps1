@@ -18,6 +18,7 @@ for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.Environment['SHARPLINK_CHAOS_DUMP_TOOL'] = $collector
     foreach ($argument in @($dll, '--duration-seconds', '120', '--transport', 'sharedmemory', '--concurrency', '32', '--restart-interval-seconds', '10', '--json-output', $report)) {
         $info.ArgumentList.Add($argument)
     }
@@ -28,16 +29,8 @@ for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
     $failure = $null
     try {
         while (-not $process.WaitForExit(1000)) {
-            if (Test-Path $report) {
-                try {
-                    $checkpoint = Get-Content $report -Raw | ConvertFrom-Json
-                    if ($checkpoint.UnexpectedFailures -gt 0) {
-                        $failure = "Unexpected chaos failure: $($checkpoint.TerminalFailure.Message)"
-                    }
-                } catch {
-                    # The application atomically rewrites the checkpoint; re-read on the next tick.
-                }
-            }
+            # The application captures unexpected failures before shutdown. This
+            # collector is the fallback for a process that cannot reach that path.
             if ($clock.Elapsed.TotalSeconds -gt 180) {
                 $failure = 'Chaos exceeded its 120-second workload plus 60-second shutdown bound.'
             }
