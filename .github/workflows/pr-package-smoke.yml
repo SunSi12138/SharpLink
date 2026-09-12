@@ -1,0 +1,55 @@
+name: PR Package Smoke
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'README.md'
+      - 'samples/**'
+      - '.github/actions/package-smoke/**'
+      - '.github/actions/verify-packages/**'
+      - '.github/workflows/pr-package-smoke.yml'
+      - 'eng/run-quickstart-package-smoke.sh'
+      - 'src/SharpLink.Sdk/**'
+      - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.Client/**'
+      - 'src/SharpLink.Server/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'Sharplink.slnx'
+  workflow_dispatch:
+
+concurrency:
+  group: pr-package-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
