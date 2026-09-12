@@ -23,6 +23,8 @@ namespace SharpLink.ChaosTests;
 
 internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port)
 {
+    private static int _slowStopCaptured;
+
     internal int Port { get; } = port;
 
     internal static Task<ChaosServer> StartAsync(
@@ -72,7 +74,15 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
 
     internal async Task<ChaosServerStopObservation> StopAsync(string reason)
     {
-        await server.StopAsync(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+        var stop = server.StopAsync(TimeSpan.FromMilliseconds(100)).AsTask();
+        await Task.WhenAny(stop, Task.Delay(TimeSpan.FromSeconds(1))).ConfigureAwait(false);
+        if (!stop.IsCompleted && Interlocked.CompareExchange(ref _slowStopCaptured, 1, 0) == 0)
+        {
+            Console.WriteLine("SLOW_STOP_CAPTURE " + JsonSerializer.Serialize(server.FrameworkTaskSnapshotForDiagnostics));
+            Console.WriteLine(JsonSerializer.Serialize(await Program.CaptureProcessDumpAsync(
+                "artifacts/chaos/slow-stop.json").ConfigureAwait(false)));
+        }
+        await stop.ConfigureAwait(false);
         await runTask.WaitAsync(TimeSpan.FromSeconds(6)).ConfigureAwait(false);
         return new ChaosServerStopObservation(
             DateTimeOffset.UtcNow,

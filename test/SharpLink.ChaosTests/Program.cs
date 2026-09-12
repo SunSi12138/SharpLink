@@ -862,7 +862,7 @@ public static class Program
         }
     }
 
-    private static async Task<ChaosDiagnosticArtifact> CaptureProcessDumpAsync(string? reportPath)
+    internal static async Task<ChaosDiagnosticArtifact> CaptureProcessDumpAsync(string? reportPath)
     {
         var dumpPath = string.IsNullOrWhiteSpace(reportPath)
             ? Path.GetFullPath($"artifacts/chaos/chaos-failure-{Environment.ProcessId}.dmp")

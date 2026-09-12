@@ -17,15 +17,16 @@ jobs:
       - name: Frequent rolling restarts with failure dump capture
         shell: pwsh
         run: ./eng/run-windows-chaos-with-dump.ps1 -Attempts 1 -DurationSeconds 300 -RestartSeconds 1
-      - name: Extract failed Windows wait diagnostics
-        if: failure()
+      - name: Extract captured Windows wait diagnostics
+        if: always()
         continue-on-error: true
         shell: pwsh
         run: |
-          if (Test-Path artifacts/chaos/release-smoke.dmp) {
-            & ./.tools/chaos-diagnostics/dotnet-dump.exe analyze artifacts/chaos/release-smoke.dmp `
+          Get-ChildItem artifacts/chaos/*.dmp | ForEach-Object {
+            $tracePath = $_.FullName + '.waits.txt'
+            & ./.tools/chaos-diagnostics/dotnet-dump.exe analyze $_.FullName `
               --command "threads" --command "clrstack -all" --command "syncblk" --command "dumpasync" --command "exit" `
-              *> artifacts/chaos/release-smoke-waits.txt
+              *> $tracePath
           }
       - name: Upload diagnostic evidence
         if: always()
