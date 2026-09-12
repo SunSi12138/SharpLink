@@ -62,6 +62,7 @@ internal sealed partial class SharpLinkClient
                 while (!_client._shutdownCts.IsCancellationRequested)
                 {
                     ClientConnection? source = null;
+                    ProtocolV2SessionRefreshRequested processedRequest = default;
                     StaticClientRuntimeEndpointState? endpoint = null;
                     lock (_gate)
                     {
@@ -84,6 +85,7 @@ internal sealed partial class SharpLinkClient
                             if (source is null && CanPlanRefreshLocked())
                             {
                                 source = candidate;
+                                processedRequest = pair.Value;
                                 endpoint = ownerEndpoint;
                             }
                         }
@@ -109,12 +111,15 @@ internal sealed partial class SharpLinkClient
                     try
                     {
                         await Task.Delay(Random.Shared.Next(10, 76), _client._shutdownCts.Token).ConfigureAwait(false);
-                        var completed = await ReplaceSessionAsync(source, endpoint, _client._shutdownCts.Token)
+                        var completed = await ReplaceSessionAsync(source, endpoint, processedRequest, _client._shutdownCts.Token)
                             .ConfigureAwait(false);
                         if (completed)
                         {
                             lock (_gate)
-                                _sessionRefreshDebt.Remove(source);
+                            {
+                                if (_sessionRefreshDebt.TryGetValue(source, out var current) && current == processedRequest)
+                                    _sessionRefreshDebt.Remove(source);
+                            }
                             continue;
                         }
                     }
@@ -171,6 +176,7 @@ internal sealed partial class SharpLinkClient
         private async Task<bool> ReplaceSessionAsync(
             ClientConnection source,
             StaticClientRuntimeEndpointState endpoint,
+            ProtocolV2SessionRefreshRequested processedRequest,
             CancellationToken cancellationToken)
         {
             lock (_gate)
@@ -288,6 +294,8 @@ internal sealed partial class SharpLinkClient
                             }
                             else
                             {
+                                CompleteSessionRefreshDebtLocked(
+                                    _sessionRefreshDebt, source, publishedReplacement, processedRequest);
                                 PublishReadySnapshotLocked();
                                 endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
                                 Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();

@@ -113,6 +113,7 @@ internal sealed partial class SharpLinkClient
             while (!_shutdownCts.IsCancellationRequested)
             {
                 ClientConnection? source = null;
+                ProtocolV2SessionRefreshRequested processedRequest = default;
                 lock (_poolGate)
                 {
                     if (_poolStopping || Volatile.Read(ref _stopStarted) != 0)
@@ -133,7 +134,10 @@ internal sealed partial class SharpLinkClient
                             continue;
                         }
                         if (source is null && CanPlanFixedRefreshLocked())
+                        {
                             source = candidate;
+                            processedRequest = pair.Value;
+                        }
                     }
                     if (stale is not null)
                     {
@@ -157,11 +161,14 @@ internal sealed partial class SharpLinkClient
                 try
                 {
                     await Task.Delay(Random.Shared.Next(10, 76), _shutdownCts.Token).ConfigureAwait(false);
-                    var completed = await ReplaceFixedSessionAsync(source, _shutdownCts.Token).ConfigureAwait(false);
+                    var completed = await ReplaceFixedSessionAsync(source, processedRequest, _shutdownCts.Token).ConfigureAwait(false);
                     if (completed)
                     {
                         lock (_poolGate)
-                            _sessionRefreshDebt.Remove(source);
+                        {
+                            if (_sessionRefreshDebt.TryGetValue(source, out var current) && current == processedRequest)
+                                _sessionRefreshDebt.Remove(source);
+                        }
                         continue;
                     }
                 }
@@ -183,6 +190,27 @@ internal sealed partial class SharpLinkClient
             lock (_poolGate)
                 ReleaseFixedSessionRefreshWorkerLocked(owner);
         }
+    }
+
+    private static void CompleteSessionRefreshDebtLocked(
+        Dictionary<ClientConnection, ProtocolV2SessionRefreshRequested> debt,
+        ClientConnection source,
+        ClientConnection replacement,
+        ProtocolV2SessionRefreshRequested processedRequest)
+    {
+        if (!debt.Remove(source, out var current) || current == processedRequest)
+            return;
+
+        // The replacement handshake may predate a request received during this attempt.
+        // Transfer that unfulfilled intent at the cut, before source cleanup can remove it.
+        // A notification from the replacement's own server takes precedence across instances.
+        if (debt.TryGetValue(replacement, out var replacementRequest) &&
+            (replacementRequest.ServerInstanceId != current.ServerInstanceId ||
+             replacementRequest.DesiredGeneration >= current.DesiredGeneration))
+        {
+            return;
+        }
+        debt[replacement] = current;
     }
 
     private void ReleaseFixedSessionRefreshWorkerLocked(object owner)
@@ -208,6 +236,7 @@ internal sealed partial class SharpLinkClient
 
     private async Task<bool> ReplaceFixedSessionAsync(
         ClientConnection source,
+        ProtocolV2SessionRefreshRequested processedRequest,
         CancellationToken cancellationToken)
     {
         lock (_poolGate)
@@ -303,6 +332,8 @@ internal sealed partial class SharpLinkClient
                         }
                         else
                         {
+                            CompleteSessionRefreshDebtLocked(
+                                _sessionRefreshDebt, source, publishedReplacement, processedRequest);
                             // Deliberately place the deterministic cut hook before immutable snapshot
                             // publication. A reader retaining the old source-only snapshot must redirect
                             // through source admission to this already-Ready replacement instead of seeing

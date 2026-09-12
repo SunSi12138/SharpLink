@@ -34,9 +34,8 @@ public sealed class SharpLinkClientSessionRefreshTests
 
         await InjectRefreshAsync(source, serverInstanceId, 2);
         await InjectRefreshAsync(source, serverInstanceId, 1);
-        await InjectRefreshAsync(source, serverInstanceId, 3);
         Ensure(factory.ConnectCount == 2,
-            "stale, duplicate, and newer requests for one source must share the in-flight replacement");
+            "stale and duplicate requests for one source must share the in-flight replacement");
 
         await ReleaseReplacementAndWaitForEligibilityCutAsync(factory, client, "fixed");
         var replacement = factory.GetConnection(1);

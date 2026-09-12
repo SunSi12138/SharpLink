@@ -336,7 +336,10 @@ internal sealed class ClientConnection :
     {
         Interlocked.Increment(ref _auxiliaryActiveCallCount);
         ReleaseCallAdmissionReservation();
-        if (State == ClientConnectionState.Ready && Session.IsConnected)
+        // A pre-cut reservation may start on a planned source, but never after a fatal
+        // observation even while physical teardown is waiting for the topology gate.
+        if (!HasObservedFatalFailureForAdmission &&
+            State == ClientConnectionState.Ready && Session.IsConnected)
             return true;
 
         ReleaseAuxiliaryActiveCall();
