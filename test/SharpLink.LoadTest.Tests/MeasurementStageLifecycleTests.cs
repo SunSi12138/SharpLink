@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SharpLink.LoadTestBase;
 
 namespace SharpLink.LoadTest.Tests;
@@ -159,13 +160,19 @@ public class MeasurementStageLifecycleTests
         lifecycle.StartMeasurement();
         await worker.WaitAsync(TimeSpan.FromSeconds(2));
 
-        for (var index = 0; index < 100; index++)
-        {
-            Ensure(lifecycle.TryBeginOperationStart(0, out var warmupAdmission),
-                "warmup admission remains open");
-            warmupAdmission.Dispose();
-        }
+        // Warm the exact measured method, including its loop and allocation counter, outside
+        // the asserted sample. A different short loop leaves first-use/tiering work in that sample.
+        _ = MeasureOperationAdmissionAllocation(lifecycle);
+        var allocated = MeasureOperationAdmissionAllocation(lifecycle);
 
+        Ensure(allocated == 0,
+            $"operation admission must not allocate in the measurement hot path; allocated={allocated}");
+        lifecycle.StopStartingNewOperations();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureOperationAdmissionAllocation(MeasurementStageLifecycle lifecycle)
+    {
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 10_000; index++)
         {
@@ -173,11 +180,7 @@ public class MeasurementStageLifecycleTests
                 throw new Exception("Measurement unexpectedly stopped during allocation validation.");
             admission.Dispose();
         }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
-
-        Ensure(allocated == 0,
-            $"operation admission must not allocate in the measurement hot path; allocated={allocated}");
-        lifecycle.StopStartingNewOperations();
+        return GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
     }
 
     [Test]
