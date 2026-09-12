@@ -51,7 +51,7 @@ jobs:
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       # Preserve per-test race concurrency without exhausting hosted native threads.
-      TUNIT_MAX_PARALLEL_TESTS: ${{ matrix.os == 'macos-latest' && '8' || '32' }}
+      TUNIT_MAX_PARALLEL_TESTS: 8
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,6 +208,7 @@ jobs:
         uses: ./.github/actions/setup-dotnet
 
       - name: Run Release Chaos Smoke
+        if: runner.os != 'Windows'
         run: >-
           dotnet run -c Release
           --project test/SharpLink.ChaosTests
@@ -218,6 +219,22 @@ jobs:
           --restart-interval-seconds 10
           --json-output artifacts/chaos/release-smoke.json
 
+      - name: Run Windows Chaos with bounded dump collection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./eng/run-windows-chaos-with-dump.ps1 -Attempts ${{ github.event_name == 'workflow_dispatch' && 3 || 1 }}
+
+      - name: Extract failed Windows wait diagnostics
+        if: failure() && runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          if (Test-Path artifacts/chaos/release-smoke.dmp) {
+            & ./.tools/chaos-diagnostics/dotnet-dump.exe analyze artifacts/chaos/release-smoke.dmp `
+              --command "threads" --command "clrstack -all" --command "syncblk" --command "dumpasync" --command "exit" `
+              *> artifacts/chaos/release-smoke-waits.txt
+          }
+
       - name: Upload Chaos Report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -227,6 +244,9 @@ jobs:
             artifacts/chaos/release-smoke.json
             artifacts/chaos/release-smoke.dmp
             artifacts/chaos/release-smoke.dmp.crashreport.json
+            artifacts/chaos/release-smoke-*.json
+            artifacts/chaos/release-smoke-*.log
+            artifacts/chaos/release-smoke-waits.txt
           if-no-files-found: warn
           retention-days: 30
 
@@ -283,9 +303,9 @@ jobs:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: |
           packages=(
-            SharpLink.Sdk
             SharpLink.Abstractions
             SharpLink.Runtime
+            SharpLink.Sdk
             SharpLink.Serializer.SharpPack
             SharpLink.Client
             SharpLink.Compression.Zstd

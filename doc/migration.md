@@ -2,6 +2,14 @@
 
 SharpLink 2.0 将进程内 Generated ABI 从已发布的 1.1.1/API 3 原子升级一次到 API 4，同时把 Protocol v2 minor 升到 4，并以剩余 `TimeBudget` 取代跨机器绝对 deadline。2.0 的版本计算只以已发布的 1.1.1 为基线；开发期间出现过的中间 ABI 编号不构成兼容边界，也不会继续累加版本号。由于 `IRpcChannel` 调用 ABI 在 #287 中发生破坏性变化，所有 1.1.1/API 3 生成程序集都必须使用 2.0 SDK 重新生成。升级前让同一进程中的全部 SharpLink 包使用 2.0，并在独立环境完成 Client/Server 互操作、AOT、负载和故障测试。
 
+## 同进程匿名管道
+
+同进程客户端改用 `builder.UseTransport(offer.CreateLocalClientTransportFactory())`，不要继续调用
+`UseAnonymousPipe(offer.InHandle, offer.OutHandle)`。local factory 只接受 listener 分配且尚未消费的
+一次性 offer，复制 offer 不产生新连接许可。双方共用安全句柄对象，任一连接先释放都不会重复关闭
+底层句柄。创建 local factory 后可以立即 Dispose offer；连接拥有句柄清理责任。
+跨进程仍将继承的句柄字符串传给子进程，并由父进程在继承完成后调用 `CompleteHandleTransfer`。
+
 ## Generated ABI（API 4）与重新生成
 
 2.0 Generator 只生成 API 4，2.0 Runtime 只接受 `Generated API = 4`、`Protocol = 2`，并要求 locator 携带当前 `SharpLinkGeneratedManifestVersions.AbiIdentity`。已发布的 1.1.1 生成程序集是 API 3，升级到 2.0 时会在 materialize Manifest 或发布任何运行时资源前明确拒绝 API 3，并要求重新生成。开发分支曾使用过的中间 ABI 编号不属于受支持输入，也不作为发布兼容性资产；如果旧开发 artifact 曾复用整数 API 4，但它没有当前 ABI identity，同样会在 materialize 前拒绝，避免同一整数误识别两种不兼容 binary shape。版本与 identity 校验只发生在 assembly load / registration / startup 边界，不进入任何调用热路径。

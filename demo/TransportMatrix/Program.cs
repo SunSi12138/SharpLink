@@ -67,14 +67,14 @@ static async Task RunAnonymousPipeAsync()
     var server = serverBuilder.Build();
     var serverTask = DemoTcp.StartServerAsync(server, app.Token);
     var client = SharpClientBuilder.Create()
-        .UseAnonymousPipe(offer.InHandle, offer.OutHandle)
+        .UseTransport(offer.CreateLocalClientTransportFactory())
         .UseRequestTimeout()
         .Build();
     try
     {
         await client.ConnectAsync(app.Token);
-        // This demo runs both peers in one process, so keep the offered handle copies alive
-        // until the client is disposed. A parent launching a child process should instead call
+        // Local peers share safe-handle ownership through the offer factory.
+        // When launching a child process instead, pass the inherited handle strings and call
         // CompleteHandleTransfer immediately after the child inherits both handles.
         await VerifyAsync("anonymous-pipe", client, app.Token);
     }

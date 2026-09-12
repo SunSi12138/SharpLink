@@ -8,7 +8,8 @@ public sealed class GeneratedCatalogTestIsolationTests
 {
     [Test]
     // The test deliberately mutates both process-wide weak catalogs to prove exact restoration.
-    [NotInParallel("generated-catalog")]
+    // Synthetic entries omit RPC identity; unconstrained default-source consumers must not see them.
+    [NotInParallel]
     public void IdentityRemovalShouldPreserveOtherEntriesAndTreatMissingEntriesAsNoOp()
     {
         var assemblySnapshotBefore = RollbackTestIsolation.AssemblyManifestSnapshot;

@@ -41,7 +41,7 @@ NamedPipe 适合同机 IPC。Windows 地址包含 server name 和 pipe name；�
 
 ## AnonymousPipe
 
-Server 通过 `IAnonymousPipeAllocator.AllocateAsync` 创建一次性 offer，再把两个句柄安全传给子进程。句柄是凭据：不要记录、复用或放入异常文本。子进程继承后，父进程调用 `CompleteHandleTransfer` 关闭本地 client-handle 副本；同进程测试应保持 offer 到 client 释放。
+Server 通过 `IAnonymousPipeAllocator.AllocateAsync` 创建一次性 offer，再把两个句柄安全传给子进程。句柄是凭据：不要记录、复用或放入异常文本。子进程继承后，父进程调用 `CompleteHandleTransfer` 关闭本地 client-handle 副本；同进程客户端必须调用 `offer.CreateLocalClientTransportFactory()` 并将工厂传给 `UseTransport`，以共用安全句柄所有权；不要把两个句柄字符串交给同进程客户端，否则双方可能重复关闭同一个底层句柄。local factory 消费 offer 后，`CompleteHandleTransfer` / offer Dispose 不关闭连接句柄，连接释放负责清理。
 
 AnonymousPipe 不支持自动重连或多 endpoint 池。每个新连接都需要新 offer。
 

@@ -14,6 +14,8 @@
 
 ### Changed
 
+- Same-process anonymous-pipe clients now use `AnonymousPipeOffer.CreateLocalClientTransportFactory()` to share safe-handle ownership with the server. This prevents duplicate native handle closure during teardown; child-process inherited-handle construction remains available.
+
 - Runtime multi-cluster `AddClusterAsync`, `ReplaceClusterAsync`, and `RemoveClusterAsync` now return operation-specific immutable results with stable `SharpLinkClusterMutationFailureCode` values for expected control-plane rejection. Add reports publication only (not readiness); Replace separates pre-publication failure from committed publication plus old-child cleanup; Remove preserves cleanup outcome while adding structured `NotFound`/`Busy`/`LifecycleClosed`. Programmer/configuration errors, cancellation, and unexpected failures remain exceptions.
 - Running multi-cluster `AddClusterAsync` now commits after local child runtime startup and snapshot revalidation instead of waiting for remote readiness; unavailable added clusters publish as NotReady/Reconnecting and converge under their own connectivity supervisor, while Replace remains ready-before-swap.
 - Server lifetime now uses `StartAsync / WaitForShutdownAsync / StopAsync` as its single public lifecycle model; public `RunAsync` is removed, the Server owns and observes its accept/background runtime, and Generic Host no longer maintains a separate Server run-loop task or lifetime CTS.
@@ -106,6 +108,8 @@
 - Server startup logs the effective per-connection and per-server call limits through `LogEvents.Server.CallCapacityConfigured`; capacity rejection continues to preserve healthy connections for reuse after slots are released.
 
 ### Fixed
+
+- Connection teardown now runs outside fixed/static/dynamic pool locks while remaining registered for shutdown. This prevents pending-call registration from deadlocking with disconnect cleanup; ordinary calls also skip session-refresh retirement locks when no retirement is planned.
 
 - Server applications now emit deterministic static bootstrap calls for referenced generated service manifests. A normal Server-to-Service project reference roots and registers even an internal service implementation before `Build()` snapshots the catalog, without marker types, runtime assembly scanning, or reflection discovery; the path is covered by clean-package, JIT, and NativeAOT process smokes.
 - Server-stream failures caused by deadline, remote cancellation, module drain, Server stop, or connection closure now preserve the call state's first terminal reason instead of remapping every `OperationCanceledException` to `Cancelled`. Forced Server stop therefore remains `Unavailable` or `ConnectionClosed`, while `Cancelled` continues to identify caller cancellation or consumer abandonment.
