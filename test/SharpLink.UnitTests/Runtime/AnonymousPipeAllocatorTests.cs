@@ -10,6 +10,70 @@ namespace SharpLink.UnitTests.Runtime;
 public class AnonymousPipeAllocatorTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LocalClientShouldShareSafeHandlesAndAllowEitherPeerToDisposeFirst(bool serverFirst)
+    {
+        await using var listener = new AnonymousPipeServerTransportListener(1);
+        var offer = await listener.AllocateAsync();
+        await using var server = await listener.AcceptAsync();
+        await using var factory = offer.CreateLocalClientTransportFactory();
+        offer.CompleteHandleTransfer();
+        offer.Dispose();
+        await using var client = await factory.ConnectAsync();
+        var serverInput = (AnonymousPipeServerStream)GetStream(server, "_inputStream");
+        var serverOutput = (AnonymousPipeServerStream)GetStream(server, "_outputStream");
+        var clientInput = (AnonymousPipeClientStream)GetStream(client, "_inputStream");
+        var clientOutput = (AnonymousPipeClientStream)GetStream(client, "_outputStream");
+        var inputHandle = serverOutput.ClientSafePipeHandle;
+        var outputHandle = serverInput.ClientSafePipeHandle;
+
+        Ensure(ReferenceEquals(inputHandle, clientInput.SafePipeHandle) &&
+               ReferenceEquals(outputHandle, clientOutput.SafePipeHandle),
+            "local peers must share the same safe-handle objects, preventing duplicate native closes");
+        Ensure(!inputHandle.IsClosed && !outputHandle.IsClosed,
+            "completing or disposing a locally consumed offer must preserve both client handles");
+        await ExpectException<InvalidOperationException>(factory.ConnectAsync().AsTask());
+
+        await (serverFirst ? server : client).DisposeAsync();
+        Ensure(inputHandle.IsClosed && outputHandle.IsClosed,
+            "the first peer's disposal must close both shared client handles");
+        await (serverFirst ? client : server).DisposeAsync();
+    }
+
+    [Test]
+    public async Task LocalClientFactoryShouldRejectCopiedConsumedCompletedAndUnallocatedOffers()
+    {
+        await using var listener = new AnonymousPipeServerTransportListener(2);
+        var offer = await listener.AllocateAsync();
+        var copy = offer;
+        await using var factory = offer.CreateLocalClientTransportFactory();
+        ExpectLocalFactoryRejection(copy);
+        var completed = await listener.AllocateAsync();
+        completed.CompleteHandleTransfer();
+        ExpectLocalFactoryRejection(completed);
+        ExpectLocalFactoryRejection(new AnonymousPipeOffer("1", "2"));
+    }
+
+    private static Stream GetStream(ITransportConnection connection, string field)
+        => (Stream)(typeof(AnonymousPipeTransportConnection)
+            .GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(connection) ?? throw new Exception($"missing anonymous-pipe stream {field}"));
+
+    private static void ExpectLocalFactoryRejection(AnonymousPipeOffer offer)
+    {
+        try
+        {
+            _ = offer.CreateLocalClientTransportFactory();
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+        throw new Exception("an unavailable offer must reject local factory creation");
+    }
+
+    [Test]
     public async Task OfferShouldRedactHandlesAndCompleteParentHandleTransfer()
     {
         await using var transport = new AnonymousPipeServerTransportListener(1);
@@ -43,7 +107,8 @@ public class AnonymousPipeAllocatorTests
     {
         await using var serverOutput = new AnonymousPipeServerStream(
             PipeDirection.Out,
-            HandleInheritability.Inheritable);
+            // With no inheritance, exposing the string transfers this test's client-handle ownership.
+            HandleInheritability.None);
         await using var factory = new AnonymousPipeClientTransportFactory(
             serverOutput.GetClientHandleAsString(),
             "invalid-anonymous-pipe-handle");

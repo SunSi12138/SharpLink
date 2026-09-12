@@ -11,7 +11,7 @@ public sealed class ProtocolV2SessionRefreshNegotiationTests
         var offer = await listener.AllocateAsync();
         await using var peer = await listener.AcceptAsync();
         await using var client = ClientBuilderTestHelper.Build(
-            new AnonymousPipeClientTransportFactory(offer.InHandle, offer.OutHandle));
+            offer.CreateLocalClientTransportFactory());
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var connecting = client.ConnectAsync(cancellation.Token);
         try

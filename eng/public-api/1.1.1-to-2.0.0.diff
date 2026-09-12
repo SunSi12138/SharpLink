@@ -1343,7 +1343,15 @@
 +}
 --- 1.1.1/SharpLink.Runtime.api.txt
 +++ 2.0.0/SharpLink.Runtime.api.txt
-@@ -43,41 +43,26 @@
+@@ -12,6 +12,7 @@
+         public string InHandle { get; init; }
+         public string OutHandle { get; init; }
+         public void CompleteHandleTransfer() { }
++        public SharpLink.Abstractions.IClientTransportFactory CreateLocalClientTransportFactory() { }
+         public void Dispose() { }
+         public bool Equals(SharpLink.Runtime.AnonymousPipeOffer other) { }
+         public override int GetHashCode() { }
+@@ -43,41 +44,26 @@
      public interface ISharpLinkCompressionProvider
      {
          string WireProfile { get; }
@@ -1397,7 +1405,7 @@
      }
      public sealed class PooledByteBufferWriter : SharpLink.Abstractions.IRpcByteBufferWriter, System.Buffers.IBufferWriter<byte>, System.IDisposable
      {
-@@ -103,50 +88,25 @@
+@@ -103,50 +89,25 @@
          public static SharpLink.Abstractions.ProtocolV2HandshakeRequest ReadHandshakeRequest(System.Buffers.ReadOnlySequence<byte> payload, SharpLink.Runtime.SharpLinkProtocolOptions limits) { }
          public static SharpLink.Abstractions.ProtocolV2HandshakeResponse ReadHandshakeResponse(System.Buffers.ReadOnlySequence<byte> payload, SharpLink.Runtime.SharpLinkProtocolOptions limits) { }
          public static SharpLink.Abstractions.SharpLinkHealthCheckResult ReadHealthResponse(System.Buffers.ReadOnlySequence<byte> payload) { }
@@ -1459,7 +1467,7 @@
      }
      public readonly struct RpcSessionFlushOptions : System.IEquatable<SharpLink.Runtime.RpcSessionFlushOptions>
      {
-@@ -201,31 +161,27 @@
+@@ -201,31 +162,27 @@
      {
          public const int MaxProviders = 16;
          public SharpLinkCompressionOptions() { }
@@ -1500,7 +1508,7 @@
          public int MaxSendQueueBytes { get; set; }
          public int StreamReceiveWindowBytes { get; set; }
          public void Validate() { }
-@@ -254,11 +210,19 @@
+@@ -254,11 +211,19 @@
          public SharpLink.Runtime.SharpLinkProtocolOptions CloneValidated() { }
          public void Validate() { }
      }
@@ -1521,7 +1529,7 @@
          public void Dispose() { }
      }
      public sealed class SharpLinkRuntimeContextBuilder
-@@ -270,6 +234,7 @@
+@@ -270,6 +235,7 @@
          public SharpLink.Runtime.SharpLinkRuntimeContextBuilder ConfigureBufferPool(System.Action<SharpLink.Runtime.BufferWriterPoolOptions> configure) { }
          public SharpLink.Runtime.SharpLinkRuntimeContextBuilder ConfigureStateStores(System.Action<SharpLink.Runtime.RuntimeConcurrencyOptions> configure) { }
          public SharpLink.Runtime.SharpLinkRuntimeContextBuilder UseCodecResolver(System.Func<System.Type, SharpLink.Abstractions.IRpcCodec?>? resolver) { }
@@ -1529,7 +1537,7 @@
      }
      public sealed class SharpLinkRuntimeOptions
      {
-@@ -303,21 +268,4 @@
+@@ -303,21 +269,4 @@
          public int? ReceiveBufferBytes { get; set; }
          public int? SendBufferBytes { get; set; }
      }
