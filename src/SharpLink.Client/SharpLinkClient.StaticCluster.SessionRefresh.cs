@@ -300,6 +300,15 @@ internal sealed partial class SharpLinkClient
             {
                 lock (_gate)
                     endpoint.ConnectingCount--;
+
+                // A just-published replacement can disconnect before this attempt relinquishes
+                // ConnectingCount. Reconcile after the count reaches zero so that disconnect cannot
+                // lose the only reconnect trigger for an otherwise empty endpoint.
+                if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+                {
+                    EnsureReconnect(endpoint);
+                    EnsureMinimumReadyEndpoints();
+                }
             }
         }
 

@@ -309,6 +309,15 @@ internal sealed partial class SharpLinkClient
                     if (endpoint.Retiring && _connections.CanRelease(endpoint))
                         ScheduleRetiredStateReleaseLocked(endpoint);
                 }
+
+                // A replacement can disconnect after publication but before this attempt clears
+                // ConnectingCount. Reconcile once the count is zero so the disconnect callback's
+                // earlier no-op cannot strand a current endpoint with no Ready connection.
+                if (!_lifecycle.IsStopping && !_client._shutdownCts.IsCancellationRequested)
+                {
+                    _reconnect.EnsureReconnect(endpoint);
+                    _reconnect.EnsureMinimumReadyEndpoints();
+                }
             }
         }
 
