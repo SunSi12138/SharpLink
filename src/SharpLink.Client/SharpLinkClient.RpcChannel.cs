@@ -288,7 +288,7 @@ internal sealed partial class SharpLinkClient
 
             if (selected.TryReserveCallAdmission(out var admitted))
             {
-                if (admitted.ActiveCallCount > 1)
+                if (admitted.ActiveCallCount != 0)
                     EnsureExpansion();
                 return admitted;
             }

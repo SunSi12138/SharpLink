@@ -35,7 +35,7 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
             await cutEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
             var replacement = factory.GetConnection(1);
-            var next = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(client));
+            var next = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
             var request = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -269,11 +269,13 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
         await InjectRefreshAsync(factory.GetConnection(0), Guid.NewGuid(), 2);
         await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(3));
         factory.ReleaseReplacement();
-        await WaitForConditionAsync(
-            () => factory.ConnectCount >= 2 && client.ReadyConnectionCount == 1,
-            "replacement should become the sole published Ready connection");
 
         var replacement = factory.GetConnection(1);
+        _ = await replacement.WaitForSentPacket(ProtocolV2FrameType.Ping)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(client.ReadyConnectionCount == 1,
+            "after replacement publication the refreshed connection should be the sole Ready connection");
+
         var pending = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         _ = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(2));
