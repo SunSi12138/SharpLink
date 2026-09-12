@@ -139,6 +139,25 @@ internal sealed partial class SharpLinkServer
         }
     }
 
+    private async Task RunSessionRefreshIfStaleAsync(
+        RpcSession session,
+        SharpLinkServerDesiredSessionSnapshot pinned)
+    {
+        try
+        {
+            await RequestSessionRefreshIfStaleAsync(session, pinned, session.LifetimeToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsExpectedConnectionTermination(exception, session.LifetimeToken))
+        {
+        }
+        catch (Exception exception)
+        {
+            // A best-effort administrative catch-up must not fault an otherwise healthy server.
+            LogDeferredCleanupFailed(_logger, "SessionRefreshCatchUp", exception);
+        }
+    }
+
     private async ValueTask RequestSessionRefreshIfStaleAsync(
         RpcSession session,
         SharpLinkServerDesiredSessionSnapshot pinned,
