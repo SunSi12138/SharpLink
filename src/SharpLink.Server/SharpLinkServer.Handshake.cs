@@ -2,14 +2,19 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
+    private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(
+        RpcSession session,
+        SharpLinkServerDesiredSessionSnapshot desiredSession,
+        CancellationToken ct)
     {
+        BindDesiredSessionSnapshot(session, desiredSession);
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
         var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
-            _protocolOptions.MaxFramePayloadBytes,
+            desiredSession.Configuration.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
-            compressionProviders);
+            compressionProviders,
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
         var reader = session.Input;
         SharpLinkAuthenticationResult? handshakeResult = null;
 
@@ -77,18 +82,23 @@ internal sealed partial class SharpLinkServer
                         {
                             if (!runtimeSession.IsConnected)
                             {
-                                // The session terminated concurrently (shutdown/teardown):
-                                // an expected connection-termination race, not a protocol bug.
                                 throw new SharpLinkException(
                                     SharpLinkErrorCode.ConnectionClosed,
                                     "The handshake session terminated during completion.");
                             }
-                            // A connected session whose handshake phase is already gone is a
-                            // genuine server-side state bug; classify it as internal so the
-                            // connection loop keeps the full Error path for it.
                             throw new SharpLinkProtocolViolationException(
                                 ProtocolViolationReason.InternalState,
                                 "The handshake result was already completed.");
+                        }
+
+                        // A desired-generation update can race this handshake. Delay the catch-up
+                        // refresh until NotifyConnected, which occurs only after the bootstrap
+                        // ContractManifest has been published and flushed to the client.
+                        if ((acceptedNegotiation.Options.Capabilities & ProtocolV2Capabilities.SessionRefresh) != 0)
+                        {
+                            runtimeSession.OnConnected += () => TrackFrameworkTask(
+                                RunSessionRefreshIfStaleAsync(runtimeSession, desiredSession),
+                                "SessionRefreshCatchUp");
                         }
                     }
                     else
@@ -96,10 +106,6 @@ internal sealed partial class SharpLinkServer
                         if (authResult.ErrorCode == SharpLinkErrorCode.ProtocolViolation)
                         {
                             SharpLinkTelemetry.RecordProtocolFailure("server");
-                            // Hostile-input rejection during the handshake gets the same
-                            // bounded, classified, exception-free Warning as a thrown
-                            // violation; the generic handshake-failed Warning is skipped
-                            // below so an attacker cannot grow the log per connection.
                             LogProtocolViolationRateLimited(
                                 violationReason ?? ProtocolViolationReason.Other);
                         }
@@ -121,9 +127,6 @@ internal sealed partial class SharpLinkServer
             }
             finally
             {
-                // The first request can be coalesced with the handshake request. Preserve the
-                // unconsumed remainder as unexamined when handing the reader to the request loop.
-                // The finally also releases transport read ownership when parsing throws.
                 reader.AdvanceTo(buffer.Start, handshakeResult.HasValue ? buffer.Start : buffer.End);
             }
 

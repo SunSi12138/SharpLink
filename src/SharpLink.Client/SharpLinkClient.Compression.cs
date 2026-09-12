@@ -95,6 +95,11 @@ internal sealed partial class SharpLinkClient
 
     private void ReconcileResponseCompressionPreferenceAfterReadyPublication(RpcSession session)
     {
+        // Every topology funnels ready publication through this method. Attach the refresh
+        // owner here so the session-level parser can stay topology-agnostic while a refresh
+        // received after bootstrap is routed back to the exact physical connection.
+        session.SessionRefreshRequested += request => HandleSessionRefreshRequest(session, request);
+
         BeforeResponseCompressionReadyReconciliationTestHook?.Invoke();
         if (!session.HasNegotiatedCompression)
             return;

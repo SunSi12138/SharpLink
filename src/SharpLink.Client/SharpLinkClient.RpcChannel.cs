@@ -1,6 +1,3 @@
-
-
-
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -51,7 +48,6 @@ internal sealed partial class SharpLinkClient
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
                 if (deadline.HasValue)
                 {
-                    // Placeholder only; the send pump stamps the remaining budget at emission.
                     BinaryPrimitives.WriteInt64LittleEndian(
                         span[ProtocolV2Constants.RequestPrefixBytes..], 0L);
                 }
@@ -64,7 +60,6 @@ internal sealed partial class SharpLinkClient
                 payloadWriter?.Invoke(writer);
             }
 
-            // SendPacket takes ownership even when enqueueing detects a terminal session.
             ownsWriter = false;
             session.SendPacket(writer, deadline);
         }
@@ -82,8 +77,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<T> codec,
         CancellationToken cancellationToken = default)
         => Task.FromException(new InvalidOperationException(
-  "Client streams must use the connection-bound sink supplied to generated stream writers."));
-
+            "Client streams must use the connection-bound sink supplied to generated stream writers."));
 
     private static ValueTask DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
@@ -153,6 +147,13 @@ internal sealed partial class SharpLinkClient
 
     private void HandleDisconnected(ClientConnection connection, Exception ex)
     {
+        connection.ObserveFatalFailureForAdmission();
+        if (_cluster is not null)
+        {
+            _cluster.HandleConnectionFailure(connection, ex);
+            return;
+        }
+
         if (!TryStartConnectionCleanup(connection, "DisconnectedConnectionCleanup", ex))
             return;
 
@@ -272,9 +273,12 @@ internal sealed partial class SharpLinkClient
         if (_cluster is not null)
             return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null);
 
-        var connections = Volatile.Read(ref _readyConnections);
-        if (!_shutdownCts.IsCancellationRequested && connections.Length != 0)
+        for (var snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++)
         {
+            var connections = Volatile.Read(ref _readyConnections);
+            if (_shutdownCts.IsCancellationRequested || connections.Length == 0)
+                break;
+
             ClientConnection selected;
             if (connections.Length == 1)
             {
@@ -289,13 +293,14 @@ internal sealed partial class SharpLinkClient
                 selected = EndpointSelectionKernel.SelectLeastLoaded(connections, first, second);
             }
 
-            if (selected.CanAcceptCalls)
+            if (selected.TryReserveCallAdmission(out var admitted))
             {
-                if (selected.ActiveCallCount != 0)
+                if (admitted.ActiveCallCount != 0)
                     EnsureExpansion();
-                return selected;
+                return admitted;
             }
         }
+
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
         throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
@@ -324,8 +329,7 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            var connection = GetReadyConnection();
-            return connection;
+            return GetReadyConnection();
         }
         catch (Exception exception)
         {
@@ -352,9 +356,6 @@ internal sealed partial class SharpLinkClient
     {
         lock (_poolGate)
         {
-            // Once Stop has closed the pool admission gate, the connection remains published
-            // for StopCore to snapshot and dispose. Before that point, task start and Track are
-            // one indivisible owner transition relative to Seal.
             if (_poolStopping || !_connections.Remove(connection))
                 return false;
 
@@ -463,13 +464,6 @@ internal sealed partial class SharpLinkClient
         {
             using var scope = BeginSessionLogScope(_logger, "pool-expand");
             LogClientConnectionAttemptFailed(_logger, nameof(ExpandOneAsync), ex);
-
-            // Expansion is opportunistic while the pool still has a ready connection, but
-            // that connection can start draining while ConnectOneAsync is in flight. Once
-            // the failed expansion observes that the pool fell below its minimum it must
-            // hand ownership to the persistent reconnect worker. Otherwise a coalesced
-            // reconnect signal can leave the client permanently stranded with zero ready
-            // connections after a rolling restart.
             if (!_shutdownCts.IsCancellationRequested &&
                 ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
@@ -489,5 +483,4 @@ internal sealed partial class SharpLinkClient
         {
         }
     }
-
 }

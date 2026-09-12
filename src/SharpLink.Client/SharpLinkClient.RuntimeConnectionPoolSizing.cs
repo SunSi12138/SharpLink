@@ -157,8 +157,10 @@ internal sealed partial class SharpLinkClient : ISharpLinkConnectionPoolSizingRu
             if (_poolStopping)
                 return false;
 
+            // Planned sources stay physically Ready to finish admitted work. They are
+            // outside selectable capacity and must not make their replacement look surplus.
             var ready = _connections
-                .Where(static connection => connection.State == ClientConnectionState.Ready)
+                .Where(static connection => connection.CanAcceptCalls)
                 .OrderBy(static connection => connection.ActiveCallCount == 0 ? 0 : 1)
                 .ThenBy(static connection => connection.ActiveCallCount)
                 .ToArray();
@@ -205,7 +207,7 @@ internal sealed partial class SharpLinkClient : ISharpLinkConnectionPoolSizingRu
         for (var groupIndex = 0; groupIndex < groups.Length; groupIndex++)
         {
             var group = groups[groupIndex]
-                .Where(static connection => connection.State == ClientConnectionState.Ready)
+                .Where(static connection => connection.CanAcceptCalls)
                 .OrderBy(static connection => connection.ActiveCallCount == 0 ? 0 : 1)
                 .ThenBy(static connection => connection.ActiveCallCount)
                 .ToArray();
@@ -263,7 +265,7 @@ internal sealed partial class SharpLinkClient : ISharpLinkConnectionPoolSizingRu
         ClientConnection connection,
         int maxRetiringConnections)
     {
-        if (connection.State != ClientConnectionState.Ready)
+        if (!connection.CanAcceptCalls)
             return false;
 
         // Serialize the capacity check and the normal cluster retirement transition under the
@@ -273,7 +275,7 @@ internal sealed partial class SharpLinkClient : ISharpLinkConnectionPoolSizingRu
         var gate = GetClusterGate(cluster);
         lock (gate)
         {
-            if (connection.State != ClientConnectionState.Ready)
+            if (!connection.CanAcceptCalls)
                 return false;
             if (connection.ActiveCallCount != 0 &&
                 GetClusterRetiringConnectionCountLocked(cluster) >= maxRetiringConnections)

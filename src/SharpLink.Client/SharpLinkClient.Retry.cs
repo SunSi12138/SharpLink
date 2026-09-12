@@ -213,20 +213,41 @@ internal sealed partial class SharpLinkClient
         AttemptOutcomeState? outcome,
         CancellationToken cancellationToken)
     {
+        ClientConnection? connection = null;
         try
         {
             EnsureLogicalCallProgress(control);
-            var connection = GetReadyConnection(method, selection, outcome);
-            EnsureLogicalCallProgress(control);
-            var operation = connection.PendingCalls.Rent(
-                responseCodec,
-                PendingCallKind.Unary,
-                control.Deadline,
-                cancellationToken,
-                out var requestId,
-                outcome,
-                hasResponsePayload: hasResponsePayload,
-                responseNullable: method.ResponseNullable);
+            connection = GetReadyConnection(method, selection, outcome);
+            try
+            {
+                EnsureLogicalCallProgress(control);
+            }
+            catch
+            {
+                connection.ReleaseCallAdmissionReservation();
+                throw;
+            }
+
+            RpcRequestOperation<TResponse> operation;
+            long requestId;
+            try
+            {
+                operation = connection.PendingCalls.Rent(
+                    responseCodec,
+                    PendingCallKind.Unary,
+                    control.Deadline,
+                    cancellationToken,
+                    out requestId,
+                    outcome,
+                    hasResponsePayload: hasResponsePayload,
+                    responseNullable: method.ResponseNullable);
+            }
+            catch
+            {
+                connection.ReleaseCallAdmissionReservation();
+                throw;
+            }
+
             return StartUnaryCall(
                 connection,
                 contractId,

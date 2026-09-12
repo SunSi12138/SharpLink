@@ -11,9 +11,13 @@ internal sealed partial class SharpLinkClient
         if (!TryGetHealthProbeConnection(out var connection))
             return SharpLinkHealthCheckResult.NotReady;
 
+        var reservationOwned = true;
         var session = connection.Session;
         if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.HealthCheck) == 0)
+        {
+            connection.ReleaseCallAdmissionReservation();
             return SharpLinkHealthCheckResult.Unsupported;
+        }
 
         var timeProvider = _runtimeContext.TimeProvider;
         var deadline = _hasRequestTimeout
@@ -27,6 +31,7 @@ internal sealed partial class SharpLinkClient
                 deadline,
                 cancellationToken,
                 out var requestId);
+            reservationOwned = false;
             try
             {
                 if (connection.PendingCalls.Contains(requestId))
@@ -44,13 +49,23 @@ internal sealed partial class SharpLinkClient
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            if (reservationOwned)
+                connection.ReleaseCallAdmissionReservation();
             throw;
         }
         catch (Exception exception) when (IsHealthProbeUnavailable(exception))
         {
+            if (reservationOwned)
+                connection.ReleaseCallAdmissionReservation();
             if (IsHealthProbeTerminalLifecycle())
                 throw;
             return SharpLinkHealthCheckResult.Unavailable;
+        }
+        catch
+        {
+            if (reservationOwned)
+                connection.ReleaseCallAdmissionReservation();
+            throw;
         }
     }
 
@@ -96,11 +111,8 @@ internal sealed partial class SharpLinkClient
         for (var offset = 0; offset < connections.Length; offset++)
         {
             var candidate = connections[(start + offset) % connections.Length];
-            if (!candidate.CanAcceptCalls)
-                continue;
-
-            connection = candidate;
-            return true;
+            if (candidate.TryReserveCallAdmission(out connection))
+                return true;
         }
 
         connection = null!;

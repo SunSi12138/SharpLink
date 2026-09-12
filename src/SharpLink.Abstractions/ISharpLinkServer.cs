@@ -9,6 +9,42 @@ public interface ISharpLinkServer : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <summary>Gets local RPC readiness independently of the lifecycle state.</summary>
     SharpLinkHealthStatus HealthStatus { get; }
 
+    /// <summary>Gets the currently published desired configuration for newly accepted sessions.</summary>
+    /// <exception cref="NotSupportedException">This implementation does not expose desired-session publication.</exception>
+    SharpLinkServerDesiredSessionSnapshot DesiredSession
+        => throw new NotSupportedException(
+            "This ISharpLinkServer implementation does not expose desired-session publication.");
+
+    /// <summary>
+    /// Atomically publishes one fully validated desired configuration for future sessions and optionally asks
+    /// capable existing sessions to perform blue-green replacement.
+    /// </summary>
+    /// <remarks>
+    /// This is the compatibility throwing convenience API. Built-in callers that treat lifecycle closure or
+    /// implementation support as expected control-plane outcomes can use the structured
+    /// <c>TryPublishDesiredSessionAsync</c> extension. A RollingRefresh rollout is server-owned once started;
+    /// caller cancellation stops only this caller's wait and does not cancel the underlying rollout scan.
+    /// Repeating RollingRefresh for the current generation performs or joins a stale-session scan.
+    /// </remarks>
+    /// <param name="configuration">The complete replacement desired configuration.</param>
+    /// <param name="rolloutMode">Whether existing capable sessions should also be asked to refresh.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait for the server-owned rollout.</param>
+    /// <returns>The immutable desired-session snapshot that is current when the operation completes.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="configuration"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A desired value is outside the server's immutable hard envelope.</exception>
+    /// <exception cref="InvalidOperationException">The server is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support desired-session publication.</exception>
+    ValueTask<SharpLinkServerDesiredSessionSnapshot> PublishDesiredSessionAsync(
+        SharpLinkServerDesiredSessionConfiguration configuration,
+        SharpLinkSessionRolloutMode rolloutMode = SharpLinkSessionRolloutMode.FutureOnly,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        return ValueTask.FromException<SharpLinkServerDesiredSessionSnapshot>(
+            new NotSupportedException(
+                "This ISharpLinkServer implementation does not support desired-session publication."));
+    }
+
     /// <summary>
     /// Atomically replaces the server interceptor pipeline for service invocations that start after this call returns.
     /// Calls already in progress retain the interceptor generation captured at their dispatch boundary.

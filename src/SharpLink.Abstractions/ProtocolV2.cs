@@ -53,7 +53,9 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Updates the client's desired server-to-client response compression preference.</summary>
     ResponseCompressionPreferenceUpdate = 14,
     /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
-    ResponseCompressionPreferenceAck = 15
+    ResponseCompressionPreferenceAck = 15,
+    /// <summary>Requests blue-green replacement of this healthy physical session.</summary>
+    SessionRefreshRequested = 16
 }
 
 /// <summary>Protocol v2 frame flags.</summary>
@@ -97,7 +99,9 @@ public enum ProtocolV2Capabilities : ulong
     /// <summary>Negotiates an explicit one-byte reason on Cancel frames.</summary>
     CancellationReason = 1UL << 4,
     /// <summary>Publishes deterministic contract-assembly identities for bind-time compatibility checks.</summary>
-    ContractManifest = 1UL << 5
+    ContractManifest = 1UL << 5,
+    /// <summary>Supports server-requested blue-green physical-session replacement.</summary>
+    SessionRefresh = 1UL << 6
 }
 
 /// <summary>Identifies why a client abandoned an active RPC call.</summary>
@@ -172,6 +176,13 @@ public readonly record struct ProtocolV2ResponseCompressionPreferenceUpdate(
 /// <param name="AppliedGeneration">The greatest preference generation published by the server for this session.</param>
 public readonly record struct ProtocolV2ResponseCompressionPreferenceAck(
     ulong AppliedGeneration);
+
+/// <summary>Requests replacement of one healthy physical session to converge to a server desired generation.</summary>
+/// <param name="ServerInstanceId">Stable authority identity for this server process; generations are comparable only within it.</param>
+/// <param name="DesiredGeneration">Monotonic desired-session generation owned by that server instance.</param>
+public readonly record struct ProtocolV2SessionRefreshRequested(
+    Guid ServerInstanceId,
+    ulong DesiredGeneration);
 
 /// <summary>Returns consumed byte credit for one request stream.</summary>
 /// <param name="StreamId">The request-local stream identifier, or zero for connection-level credit.</param>

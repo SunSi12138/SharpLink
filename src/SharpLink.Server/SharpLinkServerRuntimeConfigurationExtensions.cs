@@ -71,6 +71,40 @@ public static class SharpLinkServerRuntimeConfigurationExtensions
             ? runtime.TryUpdateTelemetryDetailPolicyCore(mode)
             : Unsupported(nameof(TryUpdateTelemetryDetailPolicy));
 
+    /// <summary>
+    /// Attempts to publish the immutable desired configuration captured by future sessions and,
+    /// when requested, waits for the server-owned rolling-refresh scan.
+    /// </summary>
+    /// <remarks>
+    /// Lifecycle closure and unsupported custom implementations are structured outcomes. Invalid
+    /// configuration, caller cancellation, generation exhaustion, and internal invariants remain exceptions.
+    /// Caller cancellation stops only this wait; it does not cancel an already-started server-owned rollout.
+    /// </remarks>
+    public static ValueTask<SharpLinkServerDesiredSessionPublicationResult> TryPublishDesiredSessionAsync(
+        this ISharpLinkServer server,
+        SharpLinkServerDesiredSessionConfiguration configuration,
+        SharpLinkSessionRolloutMode rolloutMode = SharpLinkSessionRolloutMode.FutureOnly,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        if (rolloutMode is not SharpLinkSessionRolloutMode.FutureOnly and
+            not SharpLinkSessionRolloutMode.RollingRefresh)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rolloutMode));
+        }
+        if (configuration.MaxFramePayloadBytes is < SharpLinkProtocolOptions.MinMaxFramePayloadBytes or
+            > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(configuration));
+        }
+
+        return GetRuntime(server) is { } runtime
+            ? runtime.TryPublishDesiredSessionCoreAsync(configuration, rolloutMode, cancellationToken)
+            : ValueTask.FromResult(SharpLinkServerDesiredSessionPublicationResult.Failure(
+                SharpLinkRuntimeConfigurationUpdateFailureCode.UnsupportedByImplementation,
+                "This ISharpLinkServer implementation does not expose structured desired-session publication."));
+    }
+
     private static SharpLinkServer? GetRuntime(ISharpLinkServer server)
     {
         ArgumentNullException.ThrowIfNull(server);

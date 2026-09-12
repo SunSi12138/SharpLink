@@ -21,8 +21,6 @@ internal static class EndpointSelectionKernel
     {
         if (availableCount <= 0 || target < 0 || target >= availableCount)
             return -1;
-        // With no exclusions the available ordinal is already the physical index.
-        // Keep length validation even for direct callers with inconsistent counts.
         if (excluded == 0)
             return target < length ? target : -1;
         for (var index = 0; index < length; index++)
@@ -53,17 +51,25 @@ internal static class EndpointSelectionKernel
         if (connections.Length == 0)
             return null;
         if (connections.Length == 1)
-            return connections[0].CanAcceptCalls ? connections[0] : null;
+            return connections[0].TryReserveCallAdmission(out var admitted) ? admitted : null;
+
         var first = Random.Shared.Next(connections.Length);
         var second = Random.Shared.Next(connections.Length - 1);
         if (second >= first)
             second++;
         var selected = SelectLeastLoaded(connections, first, second);
-        if (selected.CanAcceptCalls)
-            return selected;
+        if (selected.TryReserveCallAdmission(out var admittedSelected))
+            return admittedSelected;
+
         for (var index = 0; index < connections.Length; index++)
-            if (connections[index].CanAcceptCalls)
-                return connections[index];
+        {
+            var candidate = connections[index];
+            if (!ReferenceEquals(candidate, selected) &&
+                candidate.TryReserveCallAdmission(out var admittedCandidate))
+            {
+                return admittedCandidate;
+            }
+        }
         return null;
     }
 
