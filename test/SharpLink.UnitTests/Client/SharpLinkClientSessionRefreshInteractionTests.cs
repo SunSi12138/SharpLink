@@ -279,6 +279,45 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
             "detached cleanup releases all call ownership");
     }
 
+    [Test]
+    [Arguments("fixed")]
+    [Arguments("static")]
+    [Arguments("dynamic")]
+    public async Task StopShouldFailConnectionsOutsideTopologyGate(string pool)
+    {
+        var factory = new RefreshFactory();
+        await using var client = Build(pool, factory, maxConnections: 1);
+        await client.ConnectAsync();
+        ClientConnection? source = null;
+        client._callAdmissionReservedTestHook = connection => source = connection;
+        await CompleteUnary(client, factory.Get(0));
+        client._callAdmissionReservedTestHook = null;
+        var gate = GetGate(GetOwner(client, pool), pool);
+        var teardownObserved = 0;
+        var heldGate = 0;
+        client._beforeFatalFailurePublicationTestHook = connection =>
+        {
+            if (!ReferenceEquals(connection, source))
+                return;
+            Interlocked.Exchange(ref teardownObserved, 1);
+            if (gate.IsHeldByCurrentThread)
+                Interlocked.Exchange(ref heldGate, 1);
+        };
+        try
+        {
+            await client.StopAsync().AsTask().WaitAsync(Timeout);
+            Ensure(Volatile.Read(ref teardownObserved) == 1 && Volatile.Read(ref heldGate) == 0,
+                "stop must fail and dispose connections without retaining its caller's topology lock");
+            Ensure(source!.State == ClientConnectionState.Closed &&
+                   client.FrameworkTaskSnapshotForDiagnostics.IsDrained,
+                "stop returns only after connection teardown and supervised cleanup complete");
+        }
+        finally
+        {
+            client._beforeFatalFailurePublicationTestHook = null;
+        }
+    }
+
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static T GetField<T>(object owner, string name)

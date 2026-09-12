@@ -256,7 +256,8 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                _stopTask ??= StopCoreAsync();
+                // StopCore can synchronously fail pending calls; never inherit this topology lock.
+                _stopTask ??= Task.Run(StopCoreAsync);
                 return new ValueTask(_stopTask);
             }
         }

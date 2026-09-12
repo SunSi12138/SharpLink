@@ -114,7 +114,8 @@ internal sealed partial class SharpLinkClient
             ArgumentNullException.ThrowIfNull(detachForStopLocked);
             lock (_gate)
             {
-                _stopTask ??= StopCoreAsync(detachForStopLocked);
+                // The stop task owns cleanup; only its publication belongs under the topology lock.
+                _stopTask ??= Task.Run(() => StopCoreAsync(detachForStopLocked));
                 return new ValueTask(_stopTask);
             }
         }
