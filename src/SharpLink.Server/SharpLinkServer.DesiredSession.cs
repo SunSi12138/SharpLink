@@ -5,7 +5,6 @@ internal sealed partial class SharpLinkServer
     private readonly Lock _desiredSessionGate = new();
     private readonly Guid _desiredSessionServerInstanceId = Guid.NewGuid();
     private SharpLinkServerDesiredSessionSnapshot? _desiredSession;
-    private readonly AsyncLocal<SharpLinkServerDesiredSessionSnapshot?> _acceptedDesiredSession = new();
     private readonly ConcurrentDictionary<string, SharpLinkServerDesiredSessionSnapshot> _sessionDesiredSnapshots = new();
 
     public SharpLinkServerDesiredSessionSnapshot DesiredSession => CaptureDesiredSession();
@@ -73,29 +72,6 @@ internal sealed partial class SharpLinkServer
         if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             throw new InvalidOperationException("Desired session configuration cannot be published after server shutdown has started.");
     }
-
-    private async Task HandleAcceptedConnectionAsync(
-        ITransportConnection acceptedConnection,
-        ServerConnectionAdmission.Lease connectionLease,
-        SharpLinkServerDesiredSessionSnapshot desiredSession,
-        CancellationToken cancellationToken)
-    {
-        var previous = _acceptedDesiredSession.Value;
-        _acceptedDesiredSession.Value = desiredSession;
-        try
-        {
-            await HandleAcceptedConnectionAsync(acceptedConnection, connectionLease, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            _acceptedDesiredSession.Value = previous;
-        }
-    }
-
-    private SharpLinkServerDesiredSessionSnapshot GetAcceptedDesiredSession()
-        => _acceptedDesiredSession.Value ??
-           throw new InvalidOperationException("Accepted connection is missing its pinned desired-session snapshot.");
 
     private void BindDesiredSessionSnapshot(RpcSession session, SharpLinkServerDesiredSessionSnapshot snapshot)
     {
