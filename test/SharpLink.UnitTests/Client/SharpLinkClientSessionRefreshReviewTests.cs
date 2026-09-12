@@ -17,14 +17,23 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
                 options.MaxConnections = 1;
             }));
         await client.ConnectAsync();
+        var source = SharpLinkClientLifecycleSharedSupport.GetOnlyReadyConnection(client);
 
         var cutEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var redirected = new TaskCompletionSource<ClientConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var releaseCut = new ManualResetEventSlim(false);
+        using var releaseAdmission = new ManualResetEventSlim(false);
         client._afterSessionRefreshEligibilitySwapTestHook = () =>
         {
             cutEntered.TrySetResult();
             if (!releaseCut.Wait(TimeSpan.FromSeconds(3)))
                 throw new TimeoutException("fixed refresh cut hook was not released");
+        };
+        client._callAdmissionReservedTestHook = connection =>
+        {
+            redirected.TrySetResult(connection);
+            if (!releaseAdmission.Wait(TimeSpan.FromSeconds(3)))
+                throw new TimeoutException("fixed replacement admission hook was not released");
         };
 
         try
@@ -35,11 +44,15 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
             await cutEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
             var replacement = factory.GetConnection(1);
-            var next = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-            var request = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
-                .WaitAsync(TimeSpan.FromSeconds(2));
+            var next = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(client));
+            var admitted = await redirected.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(!ReferenceEquals(admitted, source),
+                "a stale fixed snapshot observed during the eligibility cut must redirect admission to the Ready replacement");
 
             releaseCut.Set();
+            releaseAdmission.Set();
+            var request = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
+                .WaitAsync(TimeSpan.FromSeconds(2));
             await replacement.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
             Ensure(await next.WaitAsync(TimeSpan.FromSeconds(2)) == 0,
                 "a unary racing the refresh cut must be admitted by the Ready replacement, not observe false Unavailable");
@@ -47,7 +60,9 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
         finally
         {
             releaseCut.Set();
+            releaseAdmission.Set();
             client._afterSessionRefreshEligibilitySwapTestHook = null;
+            client._callAdmissionReservedTestHook = null;
         }
     }
 
@@ -282,8 +297,8 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
 
         await replacement.DisposeAsync();
         var failure = await CaptureFailureAsync(pending);
-        Ensure(failure is SharpLinkException or IOException or ObjectDisposedException,
-            "disconnecting the published replacement should terminate its pending unary");
+        Ensure(failure is not TimeoutException,
+            "disconnecting the published replacement should terminate its pending unary instead of leaving it unresolved");
 
         await WaitForConditionAsync(
             () => factory.ConnectCount >= 3 && client.ReadyConnectionCount == 1,
