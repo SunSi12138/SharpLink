@@ -440,7 +440,9 @@ internal sealed partial class SharpLinkClient
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
-                transport = await endpoint.Configuration.TransportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
+                transport = await _client.ConnectTransportAsync(
+                    endpoint.Configuration.TransportFactory,
+                    attemptCts.Token).ConfigureAwait(false);
                 if (transport is ITransportSecurityInfo securityInfo)
                     LogTlsEstablished(_client._logger, securityInfo.Protocol, securityInfo.CipherSuite);
                 failureStage = SharpLinkConnectionFailureStage.Handshake;

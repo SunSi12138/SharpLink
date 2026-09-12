@@ -101,6 +101,7 @@ internal sealed partial class SharpLinkMultiClusterClient
         SharpLinkClusterSlot candidate,
         CancellationToken cancellationToken)
     {
+        BindClusterDialLimiter(candidate);
         var lifecycle = LifecycleState;
         if (lifecycle == SharpLinkClientLifecycleState.Created)
             return new CandidateActivationOutcome(false, null);
@@ -142,6 +143,7 @@ internal sealed partial class SharpLinkMultiClusterClient
         SharpLinkClusterSlot candidate,
         CancellationToken cancellationToken)
     {
+        BindClusterDialLimiter(candidate);
         SharpLinkMultiClusterState state;
         SharpLinkClientLifecycleState lifecycle;
         lock (_gate)

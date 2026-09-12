@@ -43,6 +43,40 @@ public sealed class SharpLinkClientRuntimeRpcSessionFlushTests
         }
     }
 
+    [Test]
+    public async Task TryUpdateShouldPublishOrReturnLifecycleClosedWithoutPartialMutation()
+    {
+        await using var client = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
+        var initial = client.GetRpcSessionFlushPolicySnapshot();
+
+        EnsureThrows<ArgumentOutOfRangeException>(() =>
+            client.TryUpdateRpcSessionFlushPolicy(0, TimeSpan.FromMilliseconds(1)));
+        Ensure(client.GetRpcSessionFlushPolicySnapshot() == initial,
+            "invalid structured flush candidate must not publish");
+
+        var publishedResult = client.TryUpdateRpcSessionFlushPolicy(
+            4096,
+            TimeSpan.FromMilliseconds(5));
+        Ensure(publishedResult.Succeeded &&
+               publishedResult.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.None,
+            "valid structured flush update should succeed");
+        var published = client.GetRpcSessionFlushPolicySnapshot();
+        Ensure(published.Generation == initial.Generation + 1 &&
+               published.FlushSizeThreshold == 4096 &&
+               published.MaxLatency == TimeSpan.FromMilliseconds(5),
+            "structured flush update should atomically publish one generation");
+
+        await client.StopAsync();
+        var rejected = client.TryUpdateRpcSessionFlushPolicy(
+            2048,
+            TimeSpan.FromMilliseconds(2));
+        Ensure(!rejected.Succeeded &&
+               rejected.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.LifecycleClosed,
+            "post-Stop structured flush update should return LifecycleClosed");
+        Ensure(client.GetRpcSessionFlushPolicySnapshot() == published,
+            "structured lifecycle rejection must preserve the published flush generation");
+    }
+
     private static void EnsureThrows<TException>(Action action)
         where TException : Exception
     {
