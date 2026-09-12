@@ -163,7 +163,7 @@ SDK 中的 type forwards 也参与审计。下表补充上述专题，覆盖签�
 | MultiCluster Add/Replace 无返回值的 extension、Remove 旧结果 | 检查 operation-specific result；忽略返回值的 await 语句仍可编译，方法组/委托须更新返回类型。 |
 | `SharpLinkCircuitBreakerOptions` / `SharpLinkRetryOptions` | 保留具体配置类，并实现对应 Abstractions 接口；runtime update 使用 capability/result API，不操作内部 engine。 |
 | `NamedPipes()` / `UseNamedPipe(name)`、factory/listener 构造函数默认值 | 重新编译可选参数调用；默认启用 `CurrentUserOnly`。需要自定义策略时传 `NamedPipeTransportOptions`，参见 [传输](transports.md)。 |
-| Server `UseTcp(port, ip = "0.0.0.0", ...)` | 选择 port-only、显式 `IPAddress` 或 string overload；需要固定监听范围时显式传地址。TLS overload 同样处理。 |
+| Server `UseTcp(port, ip = "0.0.0.0", ...)` | port-only 现在只监听 loopback；对外监听显式传地址或使用 `ListenOn*`。非 loopback 必须配置 TLS 和 required authentication，或分别显式选择 `AllowUnencrypted()` / `AllowUnauthenticated()`；见 [安全配置](security.md)。TLS overload 同样显式选择监听范围。 |
 | `ISharpLinkCompressionProvider.Compress` / `Decompress` 返回 `SharpLinkCompressionResult` | 实现 `TryCompress -> bool` 和 `Decompress -> void`，完整消费输入并遵守有界 writer；false 表示候选压缩不适用。 |
 | `SharpLinkCompressionOptions.MinimumPayloadBytes/MinimumSavingsBytes/MinimumSavingsRatio` | 删除手动阈值，使用 Runtime 自适应压缩策略；注册 provider 即可。 |
 | 内置 Brotli factory、`SharpLinkCompressionResult`、旧压缩 profile | 引用独立 `SharpLink.Compression.Zstd` 或实现 provider。不得复用不兼容的旧 profile identity。 |
