@@ -1,4 +1,4 @@
-param([int]$Attempts = 1)
+param([int]$Attempts = 1, [int]$DurationSeconds = 300, [int]$RestartSeconds = 1)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $output = Join-Path $root 'artifacts/chaos'
@@ -19,7 +19,7 @@ for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     $info.Environment['SHARPLINK_CHAOS_DUMP_TOOL'] = $collector
-    foreach ($argument in @($dll, '--duration-seconds', '120', '--transport', 'sharedmemory', '--concurrency', '32', '--restart-interval-seconds', '10', '--json-output', $report)) {
+    foreach ($argument in @($dll, '--duration-seconds', $DurationSeconds.ToString(), '--transport', 'sharedmemory', '--concurrency', '32', '--restart-interval-seconds', $RestartSeconds.ToString(), '--json-output', $report)) {
         $info.ArgumentList.Add($argument)
     }
     $process = [System.Diagnostics.Process]::Start($info)
@@ -31,8 +31,8 @@ for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
         while (-not $process.WaitForExit(1000)) {
             # The application captures unexpected failures before shutdown. This
             # collector is the fallback for a process that cannot reach that path.
-            if ($clock.Elapsed.TotalSeconds -gt 180) {
-                $failure = 'Chaos exceeded its 120-second workload plus 60-second shutdown bound.'
+            if ($clock.Elapsed.TotalSeconds -gt ($DurationSeconds + 60)) {
+                $failure = 'Chaos exceeded its workload duration plus 60-second shutdown bound.'
             }
             if ($failure) {
                 Write-Host "$failure Capturing owned test process $($process.Id)."
