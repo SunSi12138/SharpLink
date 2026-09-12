@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkServer
     private async Task HandleAcceptedConnectionAsync(
         ITransportConnection acceptedConnection,
         ServerConnectionAdmission.Lease connectionLease,
+        SharpLinkServerDesiredSessionSnapshot desiredSession,
         CancellationToken cancellationToken)
     {
         ITransportConnection? connection = acceptedConnection;
@@ -60,7 +61,7 @@ internal sealed partial class SharpLinkServer
             connectionState.MarkSessionLoopStarted();
             connection = null;
             await ReplaceConnectionAsync(connectionState).ConfigureAwait(false);
-            await HandleSessionLifecycleAsync(connectionState, connectionLease).ConfigureAwait(false);
+            await HandleSessionLifecycleAsync(connectionState, connectionLease, desiredSession).ConfigureAwait(false);
         }
         catch (Exception exception) when (IsExpectedCancellation(exception, cancellationToken))
         {
@@ -102,7 +103,8 @@ internal sealed partial class SharpLinkServer
 
     private async Task HandleSessionLifecycleAsync(
         ServerConnectionState connection,
-        ServerConnectionAdmission.Lease connectionLease)
+        ServerConnectionAdmission.Lease connectionLease,
+        SharpLinkServerDesiredSessionSnapshot desiredSession)
     {
         var session = connection.Session;
         var ct = connection.ConnectionToken;
@@ -117,7 +119,7 @@ internal sealed partial class SharpLinkServer
             SharpLinkAuthenticationResult authResult;
             try
             {
-                authResult = await ProcessHandshakeAsync(session, handshakeCts.Token);
+                authResult = await ProcessHandshakeAsync(session, desiredSession, handshakeCts.Token);
             }
             catch (OperationCanceledException) when (handshakeTimeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
