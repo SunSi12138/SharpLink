@@ -252,6 +252,7 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
             _pointer = null;
         }
         var diagnosticClock = System.Diagnostics.Stopwatch.StartNew();
+        _view.SafeMemoryMappedViewHandle.Dispose();
         _view.Dispose();
         if (diagnosticClock.ElapsedMilliseconds > 100)
             Console.Error.WriteLine($"STOP_STAGE mapping-view-dispose {diagnosticClock.ElapsedMilliseconds}ms");
