@@ -28,6 +28,10 @@ internal sealed partial class RpcSession
             throw ProtocolV2FrameParser.Violation("SessionRefreshRequested must be an unflagged connection-level frame.");
 
         var request = ProtocolV2PayloadCodec.ReadSessionRefreshRequested(payload);
+        // This frame is consumed inside TryReadInboundFrame rather than returned to the
+        // receive loop, so account for it here exactly once before notifying its owner.
+        SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
+        MarkActive();
         SessionRefreshRequested?.Invoke(request);
     }
 }

@@ -2,6 +2,7 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+    private static readonly TimeSpan SessionRefreshEnqueueTimeout = TimeSpan.FromSeconds(1);
     private readonly Lock _desiredSessionGate = new();
     private readonly Guid _desiredSessionServerInstanceId = Guid.NewGuid();
     private SharpLinkServerDesiredSessionSnapshot? _desiredSession;
@@ -228,7 +229,7 @@ internal sealed partial class SharpLinkServer
 
             try
             {
-                await session.SendSessionRefreshRequestedWithBackpressureAsync(request, cancellationToken)
+                await SendSessionRefreshWithBoundedWaitAsync(session, request, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -268,8 +269,29 @@ internal sealed partial class SharpLinkServer
             return;
         if (!TryCreateRollingSessionRefreshRequest(pinned, out var request))
             return;
-        await session.SendSessionRefreshRequestedWithBackpressureAsync(request, cancellationToken)
+        await SendSessionRefreshWithBoundedWaitAsync(session, request, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private async ValueTask SendSessionRefreshWithBoundedWaitAsync(
+        RpcSession session,
+        ProtocolV2SessionRefreshRequested request,
+        CancellationToken cancellationToken)
+    {
+        // Administrative convergence must not wait indefinitely for one session's send queue.
+        // Cancel the enqueue itself so a timed-out scan leaves no abandoned waiter or frame.
+        // The pinned snapshot remains stale, allowing a later explicit RollingRefresh to retry.
+        using var timeout = new CancellationTokenSource(SessionRefreshEnqueueTimeout, _runtimeContext.TimeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            await session.SendSessionRefreshRequestedWithBackpressureAsync(request, linked.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+        }
     }
 
     private bool TryCreateRollingSessionRefreshRequest(
