@@ -1,15 +1,19 @@
 namespace SharpLink.Abstractions;
 
-/// <summary>Captures one point-in-time status projection for a configured multi-cluster slot.</summary>
+/// <summary>Captures immutable status values observed for one configured multi-cluster slot.</summary>
 public readonly record struct SharpLinkClusterStatusSnapshot
 {
-    /// <summary>Creates a status snapshot from one observed child-client connection state.</summary>
+    /// <summary>Creates a status snapshot from independently observed child-client state domains.</summary>
     /// <param name="cluster">The configured cluster key represented by this snapshot.</param>
-    /// <param name="connectionState">The observed child-client connection state.</param>
+    /// <param name="connectionState">The observed legacy child-client connection state.</param>
+    /// <param name="runtimeState">The observed canonical child-client cluster runtime state.</param>
+    /// <param name="readiness">The observed canonical child-client readiness state.</param>
     /// <exception cref="ArgumentException"><paramref name="cluster"/> is the default or otherwise invalid.</exception>
     public SharpLinkClusterStatusSnapshot(
         SharpLinkClusterKey cluster,
-        SharpLinkConnectionState connectionState)
+        SharpLinkConnectionState connectionState,
+        SharpLinkClusterState runtimeState,
+        SharpLinkReadinessState readiness)
     {
         if (!SharpLinkClusterKey.IsValid(cluster.Value))
         {
@@ -20,6 +24,8 @@ public readonly record struct SharpLinkClusterStatusSnapshot
 
         Cluster = cluster;
         ConnectionState = connectionState;
+        RuntimeState = runtimeState;
+        Readiness = readiness;
     }
 
     /// <summary>Gets the cluster key represented by this snapshot.</summary>
@@ -28,20 +34,9 @@ public readonly record struct SharpLinkClusterStatusSnapshot
     /// <summary>Gets the legacy connection-oriented state observed for the cluster slot.</summary>
     public SharpLinkConnectionState ConnectionState { get; }
 
-    /// <summary>Gets the connectivity state projected from <see cref="ConnectionState"/>.</summary>
-    public SharpLinkClusterState RuntimeState => ConnectionState switch
-    {
-        SharpLinkConnectionState.Created => SharpLinkClusterState.Inactive,
-        SharpLinkConnectionState.Connecting => SharpLinkClusterState.Connecting,
-        SharpLinkConnectionState.Ready => SharpLinkClusterState.Ready,
-        SharpLinkConnectionState.Draining => SharpLinkClusterState.Draining,
-        SharpLinkConnectionState.Reconnecting => SharpLinkClusterState.Reconnecting,
-        SharpLinkConnectionState.Stopped => SharpLinkClusterState.Stopped,
-        _ => SharpLinkClusterState.Unavailable
-    };
+    /// <summary>Gets the canonical connectivity state observed for the cluster runtime.</summary>
+    public SharpLinkClusterState RuntimeState { get; }
 
-    /// <summary>Gets readiness projected from <see cref="ConnectionState"/>.</summary>
-    public SharpLinkReadinessState Readiness => ConnectionState == SharpLinkConnectionState.Ready
-        ? SharpLinkReadinessState.Ready
-        : SharpLinkReadinessState.NotReady;
+    /// <summary>Gets the canonical readiness observed for the cluster slot.</summary>
+    public SharpLinkReadinessState Readiness { get; }
 }
