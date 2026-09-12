@@ -345,12 +345,16 @@ public static class Program
             }
             catch (Exception exception)
             {
-                RecordUnexpectedFailure(exception);
+                RecordUnexpectedFailureCore(exception, cancelWorkload: false);
+                await AwaitDiagnosticCaptureAsync().ConfigureAwait(false);
                 await duration.CancelAsync().ConfigureAwait(false);
             }
         }
 
         void RecordUnexpectedFailure(Exception exception)
+            => RecordUnexpectedFailureCore(exception, cancelWorkload: true);
+
+        void RecordUnexpectedFailureCore(Exception exception, bool cancelWorkload)
         {
             var unexpectedCount = Interlocked.Increment(ref unexpectedFailures);
             var key = DescribeFailure(exception);
@@ -372,7 +376,7 @@ public static class Program
                 ChaosFailure.FromException(exception),
                 drain: null,
                 isFinal: false);
-            if (options.StopOnUnexpectedFailure)
+            if (options.StopOnUnexpectedFailure && cancelWorkload)
                 duration.Cancel();
         }
 
