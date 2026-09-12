@@ -75,14 +75,15 @@ internal sealed partial class SharpLinkClient
     {
         if (!Enum.IsDefined(strategy))
             throw new ArgumentOutOfRangeException(nameof(strategy));
-        if (_cluster is null)
-            return ModeConflict("Fixed-endpoint clients do not support endpoint-selection policy updates.");
 
         lock (_stateGate)
         {
             var state = State;
             if (IsRuntimeConfigurationPublicationClosed(state))
                 return LifecycleClosed($"Endpoint selection policy cannot be updated while the client is {state}.");
+            if (_cluster is null)
+                return ModeConflict("Fixed-endpoint clients do not support endpoint-selection policy updates.");
+
             _cluster.UpdateLoadBalancing(strategy);
             return SharpLinkRuntimeConfigurationUpdateResult.Success();
         }
@@ -92,14 +93,15 @@ internal sealed partial class SharpLinkClient
         ISharpLinkEndpointSelector selector)
     {
         ArgumentNullException.ThrowIfNull(selector);
-        if (_cluster is null)
-            return ModeConflict("Fixed-endpoint clients do not support endpoint-selection policy updates.");
 
         lock (_stateGate)
         {
             var state = State;
             if (IsRuntimeConfigurationPublicationClosed(state))
                 return LifecycleClosed($"Endpoint selection policy cannot be updated while the client is {state}.");
+            if (_cluster is null)
+                return ModeConflict("Fixed-endpoint clients do not support endpoint-selection policy updates.");
+
             _cluster.UpdateEndpointSelector(selector);
             return SharpLinkRuntimeConfigurationUpdateResult.Success();
         }

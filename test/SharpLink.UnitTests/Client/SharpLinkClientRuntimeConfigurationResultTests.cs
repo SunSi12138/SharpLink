@@ -101,6 +101,24 @@ public sealed class SharpLinkClientRuntimeConfigurationResultTests
             "mode-conflict rejection must not publish a breaker generation");
     }
 
+    [Test]
+    public async Task ClosedLifecycleShouldTakePrecedenceOverTopologyModeConflict()
+    {
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(transport);
+
+        var modeConflict = client.TryUpdateLoadBalancing(SharpLinkLoadBalancingStrategy.Random);
+        Ensure(!modeConflict.Succeeded &&
+               modeConflict.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.ModeConflict,
+            "running fixed-endpoint client should report topology mode conflict");
+
+        await client.StopAsync();
+        var lifecycleClosed = client.TryUpdateLoadBalancing(SharpLinkLoadBalancingStrategy.Random);
+        Ensure(!lifecycleClosed.Succeeded &&
+               lifecycleClosed.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.LifecycleClosed,
+            "after Stop, lifecycle seal should take precedence over topology mode conflict");
+    }
+
     private static async Task<SharpLinkException> CaptureSharpLinkException(Task task)
     {
         try

@@ -110,14 +110,23 @@ internal sealed partial class SharpLinkServer
         Action<SharpLinkAdmissionControlOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
-        var source = ReadAdmissionPublication();
-        if (!source.IsEnabled)
-            return ModeConflict("Admission control must be enabled before it can be updated.");
-        if (!source.TryAcquireUse())
+        AdmissionProgram source;
+
+        lock (_registryGate)
         {
-            if (_admissionController?.Kernel.IsDraining == true)
+            var state = CurrentState;
+            if (IsRuntimeConfigurationPublicationClosed(state))
                 return LifecycleClosed("Admission publication is sealed because the server is stopping.");
-            throw new InvalidOperationException("The current admission publication could not be acquired.");
+
+            source = ReadAdmissionPublication();
+            if (!source.IsEnabled)
+                return ModeConflict("Admission control must be enabled before it can be updated.");
+            if (!source.TryAcquireUse())
+            {
+                if (_admissionController?.Kernel.IsDraining == true)
+                    return LifecycleClosed("Admission publication is sealed because the server is stopping.");
+                throw new InvalidOperationException("The current admission publication could not be acquired.");
+            }
         }
 
         AdmissionProgram? candidate = null;

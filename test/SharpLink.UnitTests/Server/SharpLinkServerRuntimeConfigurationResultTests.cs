@@ -38,6 +38,26 @@ public sealed class SharpLinkServerRuntimeConfigurationResultTests
     }
 
     [Test]
+    public async Task AdmissionModeCheckShouldYieldToClosedLifecycle()
+    {
+        await using var server = CreateAdmissionServer();
+        var publicServer = (ISharpLinkServer)server;
+
+        var modeConflict = publicServer.TryUpdateAdmissionControl(options =>
+            options.Global.UseConcurrency(1));
+        Ensure(!modeConflict.Succeeded &&
+               modeConflict.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.ModeConflict,
+            "disabled admission should report a mode conflict while the lifecycle is open");
+
+        await server.StopAsync(TimeSpan.Zero);
+        var lifecycleClosed = publicServer.TryUpdateAdmissionControl(options =>
+            options.Global.UseConcurrency(1));
+        Ensure(!lifecycleClosed.Succeeded &&
+               lifecycleClosed.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.LifecycleClosed,
+            "after Stop, lifecycle seal should take precedence over admission mode conflict");
+    }
+
+    [Test]
     public async Task AdmissionUpdateRacingStopShouldReturnLifecycleClosedAndNeverPublishCandidate()
     {
         await using var server = CreateAdmissionServer();
