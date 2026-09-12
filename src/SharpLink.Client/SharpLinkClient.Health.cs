@@ -48,23 +48,37 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception) when (IsHealthProbeUnavailable(exception))
         {
+            if (IsHealthProbeTerminalLifecycle())
+                throw;
             return SharpLinkHealthCheckResult.Unavailable;
         }
     }
 
     private void ThrowIfHealthProbeCannotRun()
     {
+        var lifecycle = LifecycleState;
         if (_shutdownCts.IsCancellationRequested ||
-            State is SharpLinkConnectionState.Draining or SharpLinkConnectionState.Stopped)
+            lifecycle is SharpLinkClientLifecycleState.Draining or SharpLinkClientLifecycleState.Stopped)
         {
             throw CreateConnectionClosedException("Client is not accepting health probes.");
         }
-        if (State == SharpLinkConnectionState.Faulted)
+        if (lifecycle == SharpLinkClientLifecycleState.Faulted)
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
-                "Client connectivity has faulted.");
+                "Client runtime has faulted.");
         }
+    }
+
+    private bool IsHealthProbeTerminalLifecycle()
+    {
+        if (_shutdownCts.IsCancellationRequested)
+            return true;
+
+        return LifecycleState is
+            SharpLinkClientLifecycleState.Draining or
+            SharpLinkClientLifecycleState.Stopped or
+            SharpLinkClientLifecycleState.Faulted;
     }
 
     private bool TryGetHealthProbeConnection(out ClientConnection connection)
