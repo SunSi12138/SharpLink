@@ -104,17 +104,21 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
         var second = client.UnregisterAssemblyAsync(
             cluster, TestManifestAssembly, TimeSpan.Zero).AsTask();
         var rejectedTransport = new ControlledMutationTransportFactory();
-        var replacementFailure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
+        var replacementResult = await client.ReplaceClusterAsync(
             cluster,
             childBuilder => childBuilder.DisableRequestTimeout().UseTransport(rejectedTransport),
-            TimeSpan.Zero).AsTask());
+            TimeSpan.Zero);
         child.RejectUnregister(new InvalidOperationException("controlled child unregister failed"));
         var firstFailure = await CaptureExceptionAsync(first);
         var secondFailure = await CaptureExceptionAsync(second);
 
-        Ensure(replacementFailure is InvalidOperationException replacementException &&
-               replacementException.Message.Contains("lifecycle operation", StringComparison.OrdinalIgnoreCase),
-            "slot replacement must reject while assembly unregister/drain owns the generation");
+        Ensure(replacementResult is
+        {
+            Succeeded: false,
+            Published: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.Busy
+        },
+            "slot replacement must return Busy while assembly unregister/drain owns the generation");
         Ensure(rejectedTransport.DisposeCount == 1,
             "assembly-lifecycle rejection must dispose the unbuilt replacement transport");
         Ensure(child.UnregisterCallCount == 1,

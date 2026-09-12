@@ -76,7 +76,7 @@ public abstract class SharpLinkMultiClusterClientTestBase
         return (IRpcChannel)snapshot.Clusters[cluster].Client;
     }
 
-    protected static ValueTask AddClusterWithFixedDiscoveryAsync(
+    protected static ValueTask<SharpLinkClusterAddResult> AddClusterWithFixedDiscoveryAsync(
         ISharpLinkMultiClusterClient client,
         SharpLinkClusterKey cluster,
         Action<SharpClientBuilder> configure,

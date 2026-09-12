@@ -63,6 +63,22 @@ builder.DisableRequestTimeout();
 
 MultiCluster coordinator 同样必须显式选择 policy。静态 child slot 以及运行时 Add/Replace child 在没有自行选择 timeout policy 时继承 coordinator 在 Build 后冻结的 policy；child 显式调用 `UseRequestTimeout(...)` 或 `DisableRequestTimeout()` 时覆盖 coordinator policy。迁移时应在 coordinator builder 上做一次明确选择，只在确有不同 lifetime 需求的 child 上覆盖。
 
+## Multi-cluster runtime mutation result
+
+运行时 slot mutation 的 public return contract 已收敛为 operation-specific structured result：
+
+```text
+AddClusterAsync     -> ValueTask<SharpLinkClusterAddResult>
+ReplaceClusterAsync -> ValueTask<SharpLinkClusterReplacementResult>
+RemoveClusterAsync  -> ValueTask<SharpLinkClusterRemovalResult>
+```
+
+旧代码若只是 `await client.AddClusterAsync(...);` / `await client.ReplaceClusterAsync(...);` 并忽略返回值，可以继续按语句形式调用；需要处理正常 control-plane rejection 的代码应改为检查 `Succeeded` 与 `FailureCode`，不要再依赖 `InvalidOperationException` / `ArgumentException` message。稳定分支包括 `AlreadyExists`、`NotFound`、`Busy`、`LifecycleClosed`、`RouteConflict`、`CapacityExceeded` 和 replacement 的 `CandidateUnavailable`。诊断 `Message` 不是机器分支 contract。
+
+Add 的 `Succeeded = true` 只表示本地 slot/routes publication 已提交，不代表远端 Ready；需要立即发起 RPC 时继续显式 `WaitForReadyAsync(cluster)`。Replace 保持 ready-before-swap：`Published = false` 的 expected failure 保留旧 generation；swap 已提交时 `Succeeded = true` / `Published = true`，旧资源的 bounded retirement 另由 `ReferencesReleased` / `ForcedStop` 报告。Remove 保留相同 cleanup 字段，并把 valid-but-missing / Busy / lifecycle closed 收敛为 structured rejection。
+
+明显非法参数、configure/builder/manifest 错误、caller cancellation、内部 invariant、unexpected cleanup/runtime failure 仍然抛异常。不要用 catch-all 把这些异常转成普通 result；也不要引入旧 throwing overload 或 generic `Result<T>` compatibility shim。
+
 ## Runtime engine API boundary
 
 `IRpcSession`、`IStreamManager`、raw stream dispatcher interfaces、`PooledAsyncStreamDispatcher<T>`、

@@ -185,7 +185,7 @@ public sealed class SharpLinkMultiClusterTimeoutPolicyTests
                 new FixedGeneratedManifestSource([]),
                 new FixedGeneratedClusterRouteSource([]));
 
-    private static ValueTask AddDynamicClusterAsync(
+    private static ValueTask<SharpLinkClusterAddResult> AddDynamicClusterAsync(
         ISharpLinkMultiClusterClient client,
         SharpLinkClusterKey cluster,
         Action<SharpClientBuilder> configure)

@@ -37,11 +37,14 @@ public sealed class SharpLinkMultiClusterAddRaceTests : SharpLinkMultiClusterCli
 
         winnerTransport.ReleaseConnect();
         await winner.WaitAsync(RaceCoordinationTimeout);
-        var loserFailure = await CaptureExceptionAsync(loser.WaitAsync(RaceCoordinationTimeout));
+        var loserResult = await loser.WaitAsync(RaceCoordinationTimeout);
 
-        Ensure(loserFailure is InvalidOperationException exception &&
-               exception.Message.Contains("already configured", StringComparison.Ordinal),
-            "the serialized loser must observe the first Add publication");
+        Ensure(loserResult is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.AlreadyExists
+        },
+            "the serialized loser must observe the first Add publication as a structured duplicate rejection");
         Ensure(winnerTransport.ConnectCount == 1 && winnerTransport.DisposeCount == 0,
             "the winning candidate must remain coordinator-owned after publication");
         Ensure(loserTransport.ConnectCount == 0 && loserTransport.DisposeCount == 1,
@@ -64,17 +67,20 @@ public sealed class SharpLinkMultiClusterAddRaceTests : SharpLinkMultiClusterCli
         Task? stop = null;
         candidateTransport.OnConnect = () => stop = client.StopAsync().AsTask();
 
-        var addFailure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(
+        var addResult = await AddClusterWithFixedDiscoveryAsync(
             client,
             "candidate",
             child => child.UseTransport(candidateTransport),
-            slot => slot.AllowDynamicContracts = true).AsTask());
+            slot => slot.AllowDynamicContracts = true);
 
         Ensure(candidateTransport.ConnectStarted.Task.IsCompleted,
             "the child runtime must start before the parent Stop wins the publication race");
-        Ensure(addFailure is InvalidOperationException exception &&
-               exception.Message.Contains("Draining", StringComparison.Ordinal),
-            "parent Stop must make the post-Start publication revalidation reject the Add");
+        Ensure(addResult is
+        {
+            Succeeded: false,
+            FailureCode: SharpLinkClusterMutationFailureCode.LifecycleClosed
+        },
+            "parent Stop must make the post-Start publication revalidation return LifecycleClosed");
         Ensure(candidateTransport.DisposeCount == 1,
             "the started but unpublished candidate must be stopped and disposed exactly once");
         await EnsureThrows<ArgumentException>(() =>
