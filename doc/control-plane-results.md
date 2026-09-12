@@ -33,12 +33,29 @@ Legacy custom `ISharpLinkMultiClusterClient` implementation 若要提供同样�
 
 `GetClusterState`、`GetClusterRuntimeState` 和 `GetClusterReadiness` 保留为 convenience getter。当调用方把“cluster 必须存在”视为自身 invariant 时可以继续使用它们；cluster 缺失时这些 getter 仍可以抛异常。需要处理正常存在性竞争的 orchestration 代码应使用支持该 capability 的 `TryGetClusterStatus` implementation。
 
+## Runtime configuration updates
+
+Client 和 Server 的 live runtime configuration 继续保留现有 throwing API 以兼容调用方，同时提供对应的 `Try...` structured path。built-in runtime 在预期 control-plane 拒绝时返回 `SharpLinkRuntimeConfigurationUpdateResult`；调用方应根据 `Succeeded` 与 `FailureCode` 分支，而不是捕获并解析 `InvalidOperationException`。
+
+稳定 failure code 包括：
+
+- `LifecycleClosed`：draining、Stop/Dispose 已封口或 terminal lifecycle 不再允许 publication；
+- `ModeConflict`：互斥 runtime mode 阻止更新，例如 custom endpoint admission 与 built-in circuit breaker；
+- `PublicationConflict`：候选生成期间 publication 已发生并发变化；
+- `UnsupportedByImplementation`：custom `ISharpLinkClient` / `ISharpLinkServer` 未提供 built-in structured runtime update capability；
+- `CandidateRejected`：合法候选被 runtime policy 拒绝且没有 publication。
+
+参数/配置错误、application callback/provider 抛出的异常、caller cancellation、generation exhaustion、内部 invariant 与 fatal runtime failure 仍保持 exception 语义。`Try...` 不负责把这些异常降格成普通 failure result。
+
+Runtime update 的 publication 不变量与 throwing API 相同：候选必须先完整 build/validate，再以一个 generation/immutable snapshot 原子发布；任何 structured rejection 都不得产生 partial publication 或推进 generation。已经开始的 logical call、attempt、message 或 session 继续使用各自 capture boundary 上取得的 generation；成功更新只影响既有契约定义的未来 capture。Stop/Dispose seal 之后不允许新 publication，且 structured path 不引入新的 supervisor、timer、state owner，也不增加 ordinary RPC hot path 的固定开销。
+
+Custom implementation 不会因为调用 structured path 而抛 `NotSupportedException` 作为正常分支。扩展方法会返回 `UnsupportedByImplementation`；如果 custom implementation 需要自己的 live-update capability，应提供对应的显式 contract，而不是依赖 built-in runtime 类型转换或异常消息。
+
 ## Audit scope and follow-up boundaries
 
 本契约只统一 expected runtime outcome 的建模规则，不把相邻问题合并成一个大改动。以下行为保持独立演进：
 
 - coordinator running 时新增 cluster 的 readiness / publication 语义；
-- runtime configuration update 的 structured result；
 - health-check API 的 structured result。
 
-这些能力可以在各自实现中复用同一条 review rule：expected runtime state 使用 typed result/status，调用方错误和非预期故障继续使用异常。这样可以避免为了“消除异常”而扩大热路径、改变 RPC wire contract，或把互不相关的 control-plane 行为耦合在一次变更中。
+Runtime configuration update 的 structured result 已按本页契约纳入统一 control-plane 模型。后续能力可以复用同一条 review rule：expected runtime state 使用 typed result/status，调用方错误和非预期故障继续使用异常。这样可以避免为了“消除异常”而扩大热路径、改变 RPC wire contract，或把互不相关的 control-plane 行为耦合在一次变更中。

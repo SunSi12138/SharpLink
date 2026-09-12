@@ -4,6 +4,9 @@ internal interface ISharpLinkServerRpcSessionFlushRuntime
 {
     SharpLinkRpcSessionFlushPolicySnapshot GetRpcSessionFlushPolicySnapshot();
     void UpdateRpcSessionFlushPolicy(int flushSizeThreshold, TimeSpan maxLatency);
+    SharpLinkRuntimeConfigurationUpdateResult TryUpdateRpcSessionFlushPolicy(
+        int flushSizeThreshold,
+        TimeSpan maxLatency);
 }
 
 /// <summary>Runtime RPC session flush controls for <see cref="ISharpLinkServer"/>.</summary>
@@ -38,6 +41,24 @@ public static class SharpLinkServerRpcSessionFlushExtensions
         }
         runtime.UpdateRpcSessionFlushPolicy(flushSizeThreshold, maxLatency);
     }
+
+    /// <summary>
+    /// Attempts to atomically publish the RPC session flush policy, returning a structured result for
+    /// expected lifecycle or implementation-support rejection.
+    /// </summary>
+    public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateRpcSessionFlushPolicy(
+        this ISharpLinkServer server,
+        int flushSizeThreshold,
+        TimeSpan maxLatency)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+        RpcSessionFlushOptions.Validate(flushSizeThreshold, maxLatency);
+        return server is ISharpLinkServerRpcSessionFlushRuntime runtime
+            ? runtime.TryUpdateRpcSessionFlushPolicy(flushSizeThreshold, maxLatency)
+            : SharpLinkRuntimeConfigurationUpdateResult.Failure(
+                SharpLinkRuntimeConfigurationUpdateFailureCode.UnsupportedByImplementation,
+                "This ISharpLinkServer implementation does not support structured runtime RPC session flush configuration.");
+    }
 }
 
 internal sealed partial class SharpLinkServer : ISharpLinkServerRpcSessionFlushRuntime
@@ -69,6 +90,25 @@ internal sealed partial class SharpLinkServer : ISharpLinkServerRpcSessionFlushR
                     $"RPC session flush configuration cannot be updated while the server is {CurrentState}.");
             }
             GetRpcSessionFlushPolicyState().Publish(flushSizeThreshold, maxLatency);
+        }
+    }
+
+    SharpLinkRuntimeConfigurationUpdateResult ISharpLinkServerRpcSessionFlushRuntime.TryUpdateRpcSessionFlushPolicy(
+        int flushSizeThreshold,
+        TimeSpan maxLatency)
+    {
+        RpcSessionFlushOptions.Validate(flushSizeThreshold, maxLatency);
+        lock (_stateGate)
+        {
+            var state = CurrentState;
+            if (_lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
+            {
+                return LifecycleClosed(
+                    $"RPC session flush configuration cannot be updated while the server is {state}.");
+            }
+
+            GetRpcSessionFlushPolicyState().Publish(flushSizeThreshold, maxLatency);
+            return SharpLinkRuntimeConfigurationUpdateResult.Success();
         }
     }
 
