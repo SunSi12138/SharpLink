@@ -6,6 +6,7 @@ internal sealed partial class SharpLinkServer
     private readonly Guid _desiredSessionServerInstanceId = Guid.NewGuid();
     private SharpLinkServerDesiredSessionSnapshot? _desiredSession;
     private ulong _desiredSessionRollingGeneration;
+    private ulong _desiredSessionRolloutRequestEpoch;
     private readonly ConcurrentDictionary<string, SharpLinkServerDesiredSessionSnapshot> _sessionDesiredSnapshots = new();
     private object? _desiredSessionRolloutWorker;
     private Task? _desiredSessionRolloutTask;
@@ -68,6 +69,7 @@ internal sealed partial class SharpLinkServer
                 {
                     if (_desiredSessionRollingGeneration < published.Generation)
                         _desiredSessionRollingGeneration = published.Generation;
+                    _desiredSessionRolloutRequestEpoch = checked(_desiredSessionRolloutRequestEpoch + 1);
                     rolloutTask = EnsureDesiredSessionRolloutWorkerLocked();
                 }
             }
@@ -145,13 +147,19 @@ internal sealed partial class SharpLinkServer
             while (true)
             {
                 ulong targetGeneration;
+                ulong requestEpoch;
+                SharpLinkServerDesiredSessionConfiguration targetConfiguration;
                 lock (_desiredSessionGate)
+                {
                     targetGeneration = _desiredSessionRollingGeneration;
+                    requestEpoch = _desiredSessionRolloutRequestEpoch;
+                    targetConfiguration = GetOrCreateDesiredSessionLocked().Configuration with { };
+                }
 
                 var target = new SharpLinkServerDesiredSessionSnapshot(
                     _desiredSessionServerInstanceId,
                     targetGeneration,
-                    CaptureDesiredSession().Configuration);
+                    targetConfiguration);
                 if (_desiredSessionRolloutTestHook is { } hook)
                     await hook(target, _forceStopCts.Token).ConfigureAwait(false);
                 await RequestRollingSessionRefreshAsync(targetGeneration, _forceStopCts.Token)
@@ -161,8 +169,11 @@ internal sealed partial class SharpLinkServer
                 {
                     if (!ReferenceEquals(_desiredSessionRolloutWorker, owner))
                         return;
-                    if (_desiredSessionRollingGeneration != targetGeneration)
+                    if (_desiredSessionRollingGeneration != targetGeneration ||
+                        _desiredSessionRolloutRequestEpoch != requestEpoch)
+                    {
                         continue;
+                    }
                     _desiredSessionRolloutWorker = null;
                     _desiredSessionRolloutTask = null;
                     return;
