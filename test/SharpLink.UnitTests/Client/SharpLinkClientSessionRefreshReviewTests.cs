@@ -281,13 +281,24 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
         SharpLinkClient client,
         ReviewRefreshTransportFactory factory)
     {
-        await InjectRefreshAsync(factory.GetConnection(0), Guid.NewGuid(), 2);
-        await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(3));
-        factory.ReleaseReplacement();
+        var eligibilityCut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client._afterSessionRefreshEligibilitySwapTestHook = () => eligibilityCut.TrySetResult();
+        try
+        {
+            await InjectRefreshAsync(factory.GetConnection(0), Guid.NewGuid(), 2);
+            await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(3));
+            factory.ReleaseReplacement();
+            // The replacement can send its first Ping before the source loses call eligibility.
+            // Observe the actual routing cut before issuing a call intended for the replacement.
+            await eligibilityCut.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            factory.ReleaseReplacement();
+            client._afterSessionRefreshEligibilitySwapTestHook = null;
+        }
 
         var replacement = factory.GetConnection(1);
-        _ = await replacement.WaitForSentPacket(ProtocolV2FrameType.Ping)
-            .WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(client.ReadyConnectionCount == 1,
             "after replacement publication the refreshed connection should be the sole Ready connection");
 
