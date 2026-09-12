@@ -8,7 +8,6 @@ namespace SharpLink.Server;
 /// </remarks>
 public static class SharpLinkServerRuntimeConfigurationExtensions
 {
-    /// <summary>Attempts to replace the server interceptor generation.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryReplaceInterceptors(
         this ISharpLinkServer server,
         IEnumerable<ISharpLinkServerInterceptor> interceptors)
@@ -16,7 +15,6 @@ public static class SharpLinkServerRuntimeConfigurationExtensions
             ? runtime.TryReplaceInterceptorsCore(interceptors)
             : Unsupported(nameof(TryReplaceInterceptors));
 
-    /// <summary>Attempts to publish the response-compression send policy.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateResponseCompressionPolicy(
         this ISharpLinkServer server,
         SharpLinkCompressionSendPolicy policy)
@@ -24,7 +22,6 @@ public static class SharpLinkServerRuntimeConfigurationExtensions
             ? runtime.TryUpdateResponseCompressionPolicyCore(policy)
             : Unsupported(nameof(TryUpdateResponseCompressionPolicy));
 
-    /// <summary>Attempts to publish server call-capacity limits.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateCallCapacity(
         this ISharpLinkServer server,
         int maxConcurrentCallsPerConnection,
@@ -33,7 +30,6 @@ public static class SharpLinkServerRuntimeConfigurationExtensions
             ? runtime.TryUpdateCallCapacityCore(maxConcurrentCallsPerConnection, maxConcurrentCallsPerServer)
             : Unsupported(nameof(TryUpdateCallCapacity));
 
-    /// <summary>Attempts to publish pre-session connection-admission targets.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateConnectionAdmission(
         this ISharpLinkServer server,
         Action<SharpLinkConnectionAdmissionOptions> configure)
@@ -41,7 +37,6 @@ public static class SharpLinkServerRuntimeConfigurationExtensions
             ? runtime.TryUpdateConnectionAdmissionCore(configure)
             : Unsupported(nameof(TryUpdateConnectionAdmission));
 
-    /// <summary>Attempts to enable admission control.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryEnableAdmissionControl(
         this ISharpLinkServer server,
         Action<SharpLinkAdmissionControlOptions> configure)
@@ -49,7 +44,6 @@ public static class SharpLinkServerRuntimeConfigurationExtensions
             ? runtime.TryEnableAdmissionControlCore(configure)
             : Unsupported(nameof(TryEnableAdmissionControl));
 
-    /// <summary>Attempts to replace the enabled admission-control generation.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateAdmissionControl(
         this ISharpLinkServer server,
         Action<SharpLinkAdmissionControlOptions> configure)
@@ -57,19 +51,51 @@ public static class SharpLinkServerRuntimeConfigurationExtensions
             ? runtime.TryUpdateAdmissionControlCore(configure)
             : Unsupported(nameof(TryUpdateAdmissionControl));
 
-    /// <summary>Attempts to disable admission control.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryDisableAdmissionControl(this ISharpLinkServer server)
         => GetRuntime(server) is { } runtime
             ? runtime.TryDisableAdmissionControlCore()
             : Unsupported(nameof(TryDisableAdmissionControl));
 
-    /// <summary>Attempts to publish the server telemetry detail policy.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateTelemetryDetailPolicy(
         this ISharpLinkServer server,
         SharpLinkTelemetryDetailMode mode)
         => GetRuntime(server) is { } runtime
             ? runtime.TryUpdateTelemetryDetailPolicyCore(mode)
             : Unsupported(nameof(TryUpdateTelemetryDetailPolicy));
+
+    /// <summary>
+    /// Attempts to publish the immutable desired configuration captured by future sessions and,
+    /// when requested, waits for the server-owned rolling-refresh scan.
+    /// </summary>
+    /// <remarks>
+    /// Lifecycle closure and unsupported custom implementations are structured outcomes. Invalid
+    /// configuration, caller cancellation, generation exhaustion, and internal invariants remain exceptions.
+    /// Caller cancellation stops only this wait; it does not cancel an already-started server-owned rollout.
+    /// </remarks>
+    public static ValueTask<SharpLinkServerDesiredSessionPublicationResult> TryPublishDesiredSessionAsync(
+        this ISharpLinkServer server,
+        SharpLinkServerDesiredSessionConfiguration configuration,
+        SharpLinkSessionRolloutMode rolloutMode = SharpLinkSessionRolloutMode.FutureOnly,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        if (rolloutMode is not SharpLinkSessionRolloutMode.FutureOnly and
+            not SharpLinkSessionRolloutMode.RollingRefresh)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rolloutMode));
+        }
+        if (configuration.MaxFramePayloadBytes is < SharpLinkProtocolOptions.MinMaxFramePayloadBytes or
+            > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(configuration));
+        }
+
+        return GetRuntime(server) is { } runtime
+            ? runtime.TryPublishDesiredSessionCoreAsync(configuration, rolloutMode, cancellationToken)
+            : ValueTask.FromResult(SharpLinkServerDesiredSessionPublicationResult.Failure(
+                SharpLinkRuntimeConfigurationUpdateFailureCode.UnsupportedByImplementation,
+                "This ISharpLinkServer implementation does not expose structured desired-session publication."));
+    }
 
     private static SharpLinkServer? GetRuntime(ISharpLinkServer server)
     {

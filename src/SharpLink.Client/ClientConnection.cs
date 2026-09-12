@@ -21,6 +21,11 @@ internal sealed class ClientConnection :
     private LateResponseLogLimiter _lateResponseLogLimiter;
     private int _state = (int)ClientConnectionState.Ready;
     private int _auxiliaryActiveCallCount;
+    private int _callAdmissionReservations;
+    private int _callAdmissionClosed;
+    private int _selectionEligible = 1;
+    private int _plannedSessionRefreshRetirement;
+    private ClientConnection? _sessionRefreshReplacement;
     private int _disposed;
 
     public ClientConnection(
@@ -49,28 +54,106 @@ internal sealed class ClientConnection :
     }
 
     public RpcSession Session { get; }
-
     public PendingRequestTable PendingCalls { get; }
-
-    /// <summary>Gets the owning endpoint identity when this connection belongs to a cluster.</summary>
     public string? EndpointId { get; }
-
-    /// <summary>Gets the owning endpoint generation when this connection belongs to a dynamic cluster.</summary>
     public long EndpointGeneration { get; }
 
     public ClientConnectionState State
         => (ClientConnectionState)Volatile.Read(ref _state);
 
     public bool CanAcceptCalls
-        => State == ClientConnectionState.Ready && Session.CanAcceptCalls;
+        => Volatile.Read(ref _selectionEligible) != 0 &&
+           State == ClientConnectionState.Ready &&
+           Session.CanAcceptCalls;
 
     public int ActiveCallCount
-        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
+        => PendingCalls.ActiveCount +
+           Volatile.Read(ref _auxiliaryActiveCallCount) +
+           Volatile.Read(ref _callAdmissionReservations);
+
+    internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
+
+    internal bool HasPlannedSessionRefreshRetirement
+        => Volatile.Read(ref _plannedSessionRefreshRetirement) != 0;
+
+    internal bool TryReserveCallAdmission(out ClientConnection admitted)
+    {
+        ClientConnection? candidate = this;
+        for (var redirects = 0; candidate is not null && redirects < 32; redirects++)
+        {
+            if (candidate.TryReserveOwnCallAdmission())
+            {
+                admitted = candidate;
+                return true;
+            }
+            candidate = Volatile.Read(ref candidate._sessionRefreshReplacement);
+        }
+
+        admitted = null!;
+        return false;
+    }
+
+    private bool TryReserveOwnCallAdmission()
+    {
+        if (Volatile.Read(ref _callAdmissionClosed) != 0 ||
+            State != ClientConnectionState.Ready || !Session.CanAcceptCalls)
+        {
+            return false;
+        }
+
+        var reservations = Interlocked.Increment(ref _callAdmissionReservations);
+        if (PendingCalls.ActiveCount + reservations > PendingCalls.Capacity ||
+            Volatile.Read(ref _callAdmissionClosed) != 0 ||
+            State != ClientConnectionState.Ready || !Session.CanAcceptCalls)
+        {
+            ReleaseCallAdmissionReservation();
+            return false;
+        }
+
+        _client.NotifyCallAdmissionReservedForTest(this);
+        return true;
+    }
 
     /// <summary>
-    /// Validates a stable connection lifecycle snapshot at a transition or test boundary.
-    /// This intentionally stays outside the per-frame and selection hot paths.
+    /// Releases one anonymous selection reservation if present. Pending-call registration invokes
+    /// this as a transfer into pending capacity; test-only direct table registrations therefore
+    /// remain valid when no selection reservation exists.
     /// </summary>
+    internal void ReleaseCallAdmissionReservation()
+    {
+        while (true)
+        {
+            var observed = Volatile.Read(ref _callAdmissionReservations);
+            if (observed == 0)
+                return;
+            if (Interlocked.CompareExchange(
+                    ref _callAdmissionReservations,
+                    observed - 1,
+                    observed) != observed)
+            {
+                continue;
+            }
+            if (observed == 1)
+                _client.TryAdvancePlannedSessionRefreshRetirement(this);
+            return;
+        }
+    }
+
+    internal void BeginPlannedSessionRefreshRetirement(ClientConnection replacement)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (ReferenceEquals(this, replacement))
+            throw new ArgumentException("A session-refresh source cannot replace itself.", nameof(replacement));
+
+        Volatile.Write(ref _sessionRefreshReplacement, replacement);
+        Volatile.Write(ref _selectionEligible, 0);
+        Volatile.Write(ref _callAdmissionClosed, 1);
+        Volatile.Write(ref _plannedSessionRefreshRetirement, 1);
+    }
+
+    internal void CompletePlannedSessionRefreshRetirement()
+        => Volatile.Write(ref _plannedSessionRefreshRetirement, 0);
+
     internal void AssertStateInvariant()
     {
         var activeCalls = ActiveCallCount;
@@ -120,11 +203,11 @@ internal sealed class ClientConnection :
     public void Fail(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        Volatile.Write(ref _selectionEligible, 0);
+        Volatile.Write(ref _callAdmissionClosed, 1);
         var previousState = Interlocked.Exchange(ref _state, (int)ClientConnectionState.Closed);
         if (previousState == (int)ClientConnectionState.Closed)
-        {
             return;
-        }
         if (previousState == (int)ClientConnectionState.Draining)
             SharpLinkTelemetry.AddClientRetiringConnections(-1);
 
@@ -148,11 +231,9 @@ internal sealed class ClientConnection :
 
     public bool TryBeginUntrackedCall()
     {
-        if (!CanAcceptCalls)
-            return false;
-
         Interlocked.Increment(ref _auxiliaryActiveCallCount);
-        if (CanAcceptCalls)
+        ReleaseCallAdmissionReservation();
+        if (State == ClientConnectionState.Ready && Session.IsConnected)
             return true;
 
         ReleaseAuxiliaryActiveCall();
@@ -179,8 +260,6 @@ internal sealed class ClientConnection :
             await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
             while (true)
             {
-                // MoveNextAsync is user-code re-entry. Claim progress before invoking it so an
-                // already-terminal/expired call cannot execute another producer side effect.
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!PendingCalls.TryAcceptProducerProgress(requestId))
                     throw new SharpLinkException(
@@ -230,8 +309,6 @@ internal sealed class ClientConnection :
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                // The owning pending call already selected a terminal result. Error-form
-                // StreamComplete is cleanup and cannot publish after that terminal.
             }
             catch (SharpLinkException sendException) when (sendException.Code is
                 SharpLinkErrorCode.DeadlineExceeded or
@@ -251,9 +328,6 @@ internal sealed class ClientConnection :
         if (PendingCalls.TryComplete(requestId, PendingCallCompletionReason.ConsumerAbandoned))
             return ValueTask.CompletedTask;
 
-        // A response/complete path may already own the pending slot but not yet have
-        // flushed receive credit and detached its dispatcher. Remove the map entry if it
-        // is still published, then join the winning completion before a late Cancel.
         Session.StreamManager.Unregister(requestId, 0);
         if (dispatchState is null || dispatchState.IsDetached)
         {
@@ -270,8 +344,7 @@ internal sealed class ClientConnection :
 
     void IPendingCallOwner.OnPendingCallRegistered()
     {
-        // PendingRequestTable owns the capacity count, which also supplies the connection's
-        // pending-call contribution to ActiveCallCount. Avoid a second atomic increment here.
+        ReleaseCallAdmissionReservation();
     }
 
     void IPendingCallOwner.OnPendingCallCompleted(in PendingCallCompletion completion)
@@ -294,9 +367,6 @@ internal sealed class ClientConnection :
                 ValueTask drain;
                 try
                 {
-                    // Local lifetime termination is stronger than peer StreamComplete: publish
-                    // it to the dispatcher before route teardown so buffered delivery and the
-                    // terminal result arbitrate at the same dequeue boundary.
                     localAbort?.CompleteLocalAbort(completion.Exception);
                     drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(
                         completion.RequestId,
@@ -319,9 +389,6 @@ internal sealed class ClientConnection :
                 }
                 if (!drain.IsCompletedSuccessfully)
                 {
-                    // PendingRequestTable releases its capacity only after this callback returns.
-                    // Transfer lifecycle ownership to an auxiliary count before that release so a
-                    // draining connection cannot retire while dispatch cleanup is still running.
                     Interlocked.Increment(ref _auxiliaryActiveCallCount);
                     try
                     {
@@ -350,8 +417,6 @@ internal sealed class ClientConnection :
             }
         }
 
-        // Return all receive credit before Cancel. Both frames share the session send pump,
-        // so the peer observes the final WindowUpdate before it reclaims the aborted stream.
         if (shouldSendCancel)
             TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason));
     }
@@ -360,7 +425,10 @@ internal sealed class ClientConnection :
         => _client.ReportProducerCancellationCallbackFailure(exception);
 
     void IPendingCallOwner.OnPendingCallCapacityIdle()
-        => _client.RetireDrainingConnectionIfIdle(this);
+    {
+        _client.TryAdvancePlannedSessionRefreshRetirement(this);
+        _client.RetireDrainingConnectionIfIdle(this);
+    }
 
     private async Task FinishCancellationAfterDispatchesAsync(
         ValueTask drain,
@@ -427,7 +495,10 @@ internal sealed class ClientConnection :
         if (remaining < 0)
             throw new InvalidOperationException("Client connection auxiliary active call count underflowed.");
         if (remaining == 0)
+        {
+            _client.TryAdvancePlannedSessionRefreshRetirement(this);
             _client.RetireDrainingConnectionIfIdle(this);
+        }
     }
 
     private static ProtocolV2CancelReason GetCancelReason(PendingCallCompletionReason reason)

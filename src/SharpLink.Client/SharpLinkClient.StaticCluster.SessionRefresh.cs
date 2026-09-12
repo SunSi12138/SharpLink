@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkClient
     private sealed partial class StaticClusterRuntime
     {
         private readonly Dictionary<ClientConnection, ProtocolV2SessionRefreshRequested> _sessionRefreshDebt = [];
+        private object? _sessionRefreshWorker;
         private Task? _sessionRefreshTask;
 
         public void RequestSessionRefresh(
@@ -39,15 +40,22 @@ internal sealed partial class SharpLinkClient
                 }
 
                 _sessionRefreshDebt[source] = request;
-                if (_sessionRefreshTask is { IsCompleted: false })
-                    return;
-
-                _sessionRefreshTask = RunSessionRefreshRolloutAsync();
-                _client.TrackFrameworkTask(_sessionRefreshTask, "StaticClusterSessionRefreshRollout");
+                EnsureSessionRefreshWorkerLocked();
             }
         }
 
-        private async Task RunSessionRefreshRolloutAsync()
+        private void EnsureSessionRefreshWorkerLocked()
+        {
+            if (_sessionRefreshWorker is not null)
+                return;
+            var owner = new object();
+            _sessionRefreshWorker = owner;
+            var task = RunSessionRefreshRolloutAsync(owner);
+            _sessionRefreshTask = task;
+            _client.TrackFrameworkTask(task, "StaticClusterSessionRefreshRollout");
+        }
+
+        private async Task RunSessionRefreshRolloutAsync(object owner)
         {
             try
             {
@@ -58,14 +66,17 @@ internal sealed partial class SharpLinkClient
                     lock (_gate)
                     {
                         if (Volatile.Read(ref _stopping) != 0)
+                        {
+                            ReleaseSessionRefreshWorkerLocked(owner);
                             return;
+                        }
 
                         List<ClientConnection>? stale = null;
                         foreach (var pair in _sessionRefreshDebt)
                         {
                             var candidate = pair.Key;
-                            var owner = FindEndpointLocked(candidate);
-                            if (owner is null || !candidate.CanAcceptCalls)
+                            var ownerEndpoint = FindEndpointLocked(candidate);
+                            if (ownerEndpoint is null || candidate.HasPlannedSessionRefreshRetirement || !candidate.CanAcceptCalls)
                             {
                                 (stale ??= []).Add(candidate);
                                 continue;
@@ -73,7 +84,7 @@ internal sealed partial class SharpLinkClient
                             if (source is null && CanPlanRefreshLocked(candidate))
                             {
                                 source = candidate;
-                                endpoint = owner;
+                                endpoint = ownerEndpoint;
                             }
                         }
                         if (stale is not null)
@@ -82,7 +93,11 @@ internal sealed partial class SharpLinkClient
                                 _sessionRefreshDebt.Remove(stale[index]);
                         }
                         if (_sessionRefreshDebt.Count == 0)
+                        {
+                            Volatile.Read(ref _client._beforeSessionRefreshWorkerReleaseTestHook)?.Invoke();
+                            ReleaseSessionRefreshWorkerLocked(owner);
                             return;
+                        }
                     }
 
                     if (source is null || endpoint is null)
@@ -93,12 +108,8 @@ internal sealed partial class SharpLinkClient
 
                     try
                     {
-                        await Task.Delay(Random.Shared.Next(10, 76), _client._shutdownCts.Token)
-                            .ConfigureAwait(false);
-                        var completed = await ReplaceSessionAsync(
-                                source,
-                                endpoint,
-                                _client._shutdownCts.Token)
+                        await Task.Delay(Random.Shared.Next(10, 76), _client._shutdownCts.Token).ConfigureAwait(false);
+                        var completed = await ReplaceSessionAsync(source, endpoint, _client._shutdownCts.Token)
                             .ConfigureAwait(false);
                         if (completed)
                         {
@@ -125,14 +136,37 @@ internal sealed partial class SharpLinkClient
             finally
             {
                 lock (_gate)
-                    _sessionRefreshTask = null;
+                    ReleaseSessionRefreshWorkerLocked(owner);
             }
         }
 
+        private void ReleaseSessionRefreshWorkerLocked(object owner)
+        {
+            if (!ReferenceEquals(_sessionRefreshWorker, owner))
+                return;
+            _sessionRefreshWorker = null;
+            _sessionRefreshTask = null;
+        }
+
         private bool CanPlanRefreshLocked(ClientConnection source)
-            => source.ActiveCallCount == 0 ||
-               (_options.MaxRetiringConnections != 0 &&
-                _retiringConnections.Count < _options.MaxRetiringConnections);
+        {
+            if (source.ActiveCallCount == 0)
+                return true;
+
+            var planned = 0;
+            for (var endpointIndex = 0; endpointIndex < _endpoints.Length; endpointIndex++)
+            {
+                foreach (var connection in _endpoints[endpointIndex].Connections)
+                {
+                    if (connection.HasPlannedSessionRefreshRetirement)
+                        planned++;
+                }
+            }
+
+            if (_options.MaxRetiringConnections == 0)
+                return planned == 0;
+            return _retiringConnections.Count + planned < _options.MaxRetiringConnections;
+        }
 
         private async Task<bool> ReplaceSessionAsync(
             ClientConnection source,
@@ -159,8 +193,9 @@ internal sealed partial class SharpLinkClient
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken,
                     _client._shutdownCts.Token);
-                transport = await endpoint.Configuration.TransportFactory.ConnectAsync(attemptCts.Token)
-                    .ConfigureAwait(false);
+                transport = await _client.ConnectTransportAsync(
+                    endpoint.Configuration.TransportFactory,
+                    attemptCts.Token).ConfigureAwait(false);
                 if (transport is ITransportSecurityInfo securityInfo)
                     LogTlsEstablished(_client._logger, securityInfo.Protocol, securityInfo.CipherSuite);
 
@@ -173,8 +208,7 @@ internal sealed partial class SharpLinkClient
                         _client._rpcSessionFlushOptions,
                         _client._requestCompressionPolicy));
                 transport = null;
-                await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
-                    .ConfigureAwait(false);
+                await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken).ConfigureAwait(false);
 
                 failureStage = SharpLinkConnectionFailureStage.Readiness;
                 if (_client._beforeReadyPublicationTestHook is not null)
@@ -188,16 +222,16 @@ internal sealed partial class SharpLinkClient
                     _client._protocolOptions.MaxPendingRequestsPerConnection,
                     _client._runtimeContext,
                     endpoint.Configuration.Endpoint.Id);
-                var readySession = replacement.Session;
+                var publishedReplacement = replacement;
+                var readySession = publishedReplacement.Session;
                 readySession.OnDisconnected += exception => HandleDisconnected(
                     endpoint,
-                    replacement,
+                    publishedReplacement,
                     exception ?? CreateConnectionClosedException("Transport closed."));
 
                 var published = false;
                 var sourceGone = false;
-                var retryForRetiringCapacity = false;
-                var retireImmediately = false;
+                var retryForCapacity = false;
                 lock (_gate)
                 {
                     if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
@@ -206,46 +240,33 @@ internal sealed partial class SharpLinkClient
                     sourceGone = !ReferenceEquals(FindEndpointLocked(source), endpoint) || !source.CanAcceptCalls;
                     if (!sourceGone && !CanPlanRefreshLocked(source))
                     {
-                        retryForRetiringCapacity = true;
+                        retryForCapacity = true;
                     }
                     else if (!sourceGone)
                     {
-                        endpoint.Connections.Add(replacement);
+                        endpoint.Connections.Add(publishedReplacement);
                         try
                         {
                             _client.ReconcileResponseCompressionPreferenceAfterReadyPublication(readySession);
                         }
                         catch
                         {
-                            endpoint.Connections.Remove(replacement);
+                            endpoint.Connections.Remove(publishedReplacement);
                             throw;
                         }
 
-                        if (!source.MarkDraining())
-                        {
-                            endpoint.Connections.Remove(replacement);
-                            throw new InvalidOperationException(
-                                "The refresh source stopped being Ready before replacement publication.");
-                        }
-                        if (source.ActiveCallCount == 0)
-                        {
-                            endpoint.Connections.Remove(source);
-                            retireImmediately = true;
-                        }
-                        else
-                        {
-                            _retiringConnections.Add(source);
-                        }
-
-                        PublishReadySnapshotLocked();
-                        endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
                         readySession.NotifyConnected();
                         _client.TrackFrameworkTask(
-                            _client.RunHeartbeatSendLoopAsync(replacement, sessionCts.Token),
+                            _client.RunHeartbeatSendLoopAsync(publishedReplacement, sessionCts.Token),
                             "StaticClusterHeartbeatSendLoop");
                         _client.TrackFrameworkTask(
-                            _client.RunProcessRequestLoopAsync(replacement, sessionCts.Token),
+                            _client.RunProcessRequestLoopAsync(publishedReplacement, sessionCts.Token),
                             "StaticClusterProcessRequestLoop");
+
+                        source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
+                        PublishReadySnapshotLocked();
+                        endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
+                        Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
                         published = true;
                     }
                 }
@@ -253,19 +274,14 @@ internal sealed partial class SharpLinkClient
                 if (!published)
                 {
                     session = null;
-                    await DisposeConnectionAsync(replacement).ConfigureAwait(false);
+                    await DisposeConnectionAsync(publishedReplacement).ConfigureAwait(false);
                     replacement = null;
-                    return sourceGone || !retryForRetiringCapacity;
+                    return sourceGone || !retryForCapacity;
                 }
 
                 session = null;
                 replacement = null;
-                if (retireImmediately)
-                {
-                    _client.TrackFrameworkTask(
-                        DisposeConnectionAsync(source),
-                        "StaticClusterRefreshRetiredConnectionCleanup");
-                }
+                TryAdvancePlannedSessionRefreshRetirement(source);
                 PublishClientReadiness();
                 return true;
             }
@@ -276,11 +292,8 @@ internal sealed partial class SharpLinkClient
                 {
                     _client.RecordClusterConnectionFailure(failureStage, exception, endpoint.Index);
                 }
-                await RethrowAfterFailedConnectionCleanupAsync(
-                    exception,
-                    transport,
-                    replacement,
-                    session).ConfigureAwait(false);
+                await RethrowAfterFailedConnectionCleanupAsync(exception, transport, replacement, session)
+                    .ConfigureAwait(false);
                 throw new UnreachableException();
             }
             finally
@@ -290,12 +303,47 @@ internal sealed partial class SharpLinkClient
             }
         }
 
+        public void TryAdvancePlannedSessionRefreshRetirement(ClientConnection source)
+        {
+            StaticClientRuntimeEndpointState? endpoint;
+            var dispose = false;
+            lock (_gate)
+            {
+                if (!source.HasPlannedSessionRefreshRetirement)
+                    return;
+                endpoint = FindEndpointLocked(source);
+                if (endpoint is null)
+                {
+                    source.CompletePlannedSessionRefreshRetirement();
+                    return;
+                }
+                if (source.ActiveCallCount != 0)
+                    return;
+
+                source.CompletePlannedSessionRefreshRetirement();
+                _ = source.MarkDraining();
+                if (endpoint.Connections.Remove(source))
+                {
+                    _retiringConnections.Remove(source);
+                    PublishReadySnapshotLocked();
+                    dispose = true;
+                }
+            }
+
+            if (dispose)
+            {
+                _client.TrackFrameworkTask(
+                    DisposeConnectionAsync(source),
+                    "StaticClusterSessionRefreshRetiredConnectionCleanup");
+                EnsureReconnect(endpoint!);
+            }
+        }
+
         private async Task DelayRefreshRetryAsync()
         {
             try
             {
-                await Task.Delay(Random.Shared.Next(250, 751), _client._shutdownCts.Token)
-                    .ConfigureAwait(false);
+                await Task.Delay(Random.Shared.Next(250, 751), _client._shutdownCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
             {

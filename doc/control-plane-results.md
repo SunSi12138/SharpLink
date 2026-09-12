@@ -47,9 +47,24 @@ Client 和 Server 的 live runtime configuration 继续保留现有 throwing API
 
 参数/配置错误、application callback/provider 抛出的异常、caller cancellation、generation exhaustion、内部 invariant 与 fatal runtime failure 仍保持 exception 语义。`Try...` 不负责把这些异常降格成普通 failure result。
 
-Runtime update 的 publication 不变量与 throwing API 相同：候选必须先完整 build/validate，再以一个 generation/immutable snapshot 原子发布；任何 structured rejection 都不得产生 partial publication 或推进 generation。已经开始的 logical call、attempt、message 或 session 继续使用各自 capture boundary 上取得的 generation；成功更新只影响既有契约定义的未来 capture。Stop/Dispose seal 之后不允许新 publication，且 structured path 不引入新的 supervisor、timer、state owner，也不增加 ordinary RPC hot path 的固定开销。
+Runtime update 的 publication 不变量与 throwing API 相同：候选必须先完整 build/validate，再以一个 generation/immutable snapshot 原子发布；任何 structured rejection 都不得产生 partial publication 或推进 generation。已经开始的 logical call、attempt、message 或 session 继续使用各自 capture boundary 上取得的 generation；成功更新只影响既有契约定义的未来 capture。Stop/Dispose seal 之后不允许新 publication，且 structured path 不引入新的 supervisor、timer、state owner，也不增加 ordinary RPC hot path 的固定分配。
 
 Custom implementation 不会因为调用 structured path 而抛 `NotSupportedException` 作为正常分支。扩展方法会返回 `UnsupportedByImplementation`；如果 custom implementation 需要自己的 live-update capability，应提供对应的显式 contract，而不是依赖 built-in runtime 类型转换或异常消息。
+
+## Desired-session publication and rolling refresh
+
+Desired-session publication 同样遵循上述边界。`ISharpLinkServer.PublishDesiredSessionAsync(...)` 保留为 throwing convenience API；对 orchestration 来说，canonical path 是 `TryPublishDesiredSessionAsync(...)`，返回 `SharpLinkServerDesiredSessionPublicationResult`：
+
+- 成功时 `Succeeded=true`，并携带当前 immutable `SharpLinkServerDesiredSessionSnapshot`；
+- Server 已 Draining/Stopped/Faulted 或 stop seal 已建立时返回 `LifecycleClosed`；
+- custom `ISharpLinkServer` 未实现 built-in desired-session capability 时返回 `UnsupportedByImplementation`；
+- 非法 `MaxFramePayloadBytes`、非法 rollout mode、caller cancellation、generation overflow/invariant failure 继续抛异常。
+
+Desired configuration generation 与 rolling-refresh intent 是两个不同的 control-plane state。`FutureOnly` 可以推进 desired generation，但不会创建 rolling intent；因此 accept 时固定在旧 generation、之后才完成 handshake 的 session 不会因为 FutureOnly publication 被 catch-up refresh。`RollingRefresh` 才会把当前 desired generation 标记为 rolling target。
+
+同配置的 `RollingRefresh` 不是 no-op：它可以 join 正在进行的 server-owned scan，或在之前 scan 已结束后重新扫描 stale sessions。这允许 `FutureOnly -> same-config RollingRefresh`，也允许 caller 在之前等待被取消后用同一 generation 重试。Rollout 一旦启动由 Server ownership 持有；caller cancellation 只取消该 caller 的 wait，不取消底层 rollout。Server shutdown 才是该工作者的终止边界。
+
+这种语义避免把“desired configuration 已提交”与“某个 caller 是否成功等到通知 cohort 完成”混为一个事务：配置 publication 保持原子，rolling notification 是可重复、幂等趋近的后续 control-plane operation。
 
 ## Audit scope and follow-up boundaries
 
@@ -58,4 +73,4 @@ Custom implementation 不会因为调用 structured path 而抛 `NotSupportedExc
 - coordinator running 时新增 cluster 的 readiness / publication 语义；
 - health-check API 的 structured result。
 
-Runtime configuration update 的 structured result 已按本页契约纳入统一 control-plane 模型。后续能力可以复用同一条 review rule：expected runtime state 使用 typed result/status，调用方错误和非预期故障继续使用异常。这样可以避免为了“消除异常”而扩大热路径、改变 RPC wire contract，或把互不相关的 control-plane 行为耦合在一次变更中。
+Runtime configuration update 与 desired-session publication 的 structured result 已按本页契约纳入统一 control-plane 模型。后续能力可以复用同一条 review rule：expected runtime state 使用 typed result/status，调用方错误和非预期故障继续使用异常。这样可以避免为了“消除异常”而扩大热路径、改变 RPC wire contract，或把互不相关的 control-plane 行为耦合在一次变更中。

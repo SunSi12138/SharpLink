@@ -3,7 +3,26 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkClient
 {
     private readonly Dictionary<ClientConnection, ProtocolV2SessionRefreshRequested> _sessionRefreshDebt = [];
+    private object? _sessionRefreshWorker;
     private Task? _sessionRefreshTask;
+
+    // Deterministic review-race hooks. They are null in production and stay off the ordinary RPC path.
+    internal Action? _afterSessionRefreshEligibilitySwapTestHook;
+    internal Action? _beforeSessionRefreshWorkerReleaseTestHook;
+    internal Action<ClientConnection>? _callAdmissionReservedTestHook;
+
+    internal void NotifyCallAdmissionReservedForTest(ClientConnection connection)
+        => Volatile.Read(ref _callAdmissionReservedTestHook)?.Invoke(connection);
+
+    internal void TryAdvancePlannedSessionRefreshRetirement(ClientConnection connection)
+    {
+        if (_cluster is not null)
+        {
+            _cluster.TryAdvancePlannedSessionRefreshRetirement(connection);
+            return;
+        }
+        TryAdvanceFixedSessionRefreshRetirement(connection);
+    }
 
     private void HandleSessionRefreshRequest(
         RpcSession session,
@@ -15,9 +34,6 @@ internal sealed partial class SharpLinkClient
             return;
         }
 
-        // Anonymous-pipe offers are one-shot. The server-side negotiation gate prevents this
-        // capability from being selected for them; retain this defensive check so a custom peer
-        // cannot turn an administrative request into a reconnect loop.
         if (transportFactory is AnonymousPipeClientTransportFactory)
             return;
 
@@ -46,15 +62,23 @@ internal sealed partial class SharpLinkClient
             }
 
             _sessionRefreshDebt[source] = request;
-            if (_sessionRefreshTask is { IsCompleted: false })
-                return;
-
-            _sessionRefreshTask = RunFixedSessionRefreshRolloutAsync();
-            TrackFrameworkTask(_sessionRefreshTask, "SessionRefreshRollout");
+            EnsureFixedSessionRefreshWorkerLocked();
         }
     }
 
-    private async Task RunFixedSessionRefreshRolloutAsync()
+    private void EnsureFixedSessionRefreshWorkerLocked()
+    {
+        if (_sessionRefreshWorker is not null)
+            return;
+
+        var owner = new object();
+        _sessionRefreshWorker = owner;
+        var task = RunFixedSessionRefreshRolloutAsync(owner);
+        _sessionRefreshTask = task;
+        TrackFrameworkTask(task, "SessionRefreshRollout");
+    }
+
+    private async Task RunFixedSessionRefreshRolloutAsync(object owner)
     {
         try
         {
@@ -64,13 +88,18 @@ internal sealed partial class SharpLinkClient
                 lock (_poolGate)
                 {
                     if (_poolStopping || Volatile.Read(ref _stopStarted) != 0)
+                    {
+                        ReleaseFixedSessionRefreshWorkerLocked(owner);
                         return;
+                    }
 
                     List<ClientConnection>? stale = null;
                     foreach (var pair in _sessionRefreshDebt)
                     {
                         var candidate = pair.Key;
-                        if (!_connections.Contains(candidate) || !candidate.CanAcceptCalls)
+                        if (!_connections.Contains(candidate) ||
+                            candidate.HasPlannedSessionRefreshRetirement ||
+                            !candidate.CanAcceptCalls)
                         {
                             (stale ??= []).Add(candidate);
                             continue;
@@ -84,7 +113,11 @@ internal sealed partial class SharpLinkClient
                             _sessionRefreshDebt.Remove(stale[index]);
                     }
                     if (_sessionRefreshDebt.Count == 0)
+                    {
+                        Volatile.Read(ref _beforeSessionRefreshWorkerReleaseTestHook)?.Invoke();
+                        ReleaseFixedSessionRefreshWorkerLocked(owner);
                         return;
+                    }
                 }
 
                 if (source is null)
@@ -95,11 +128,8 @@ internal sealed partial class SharpLinkClient
 
                 try
                 {
-                    // Small client-side jitter avoids turning a server broadcast into a perfectly
-                    // synchronized reconnect wave while keeping the old session fully Ready.
                     await Task.Delay(Random.Shared.Next(10, 76), _shutdownCts.Token).ConfigureAwait(false);
-                    var completed = await ReplaceFixedSessionAsync(source, _shutdownCts.Token)
-                        .ConfigureAwait(false);
+                    var completed = await ReplaceFixedSessionAsync(source, _shutdownCts.Token).ConfigureAwait(false);
                     if (completed)
                     {
                         lock (_poolGate)
@@ -114,10 +144,7 @@ internal sealed partial class SharpLinkClient
                 catch (Exception exception)
                 {
                     using var scope = BeginSessionLogScope(_logger, source.Session.Id);
-                    LogClientConnectionAttemptFailed(
-                        _logger,
-                        nameof(RunFixedSessionRefreshRolloutAsync),
-                        exception);
+                    LogClientConnectionAttemptFailed(_logger, nameof(RunFixedSessionRefreshRolloutAsync), exception);
                 }
 
                 await DelaySessionRefreshRetryAsync().ConfigureAwait(false);
@@ -126,22 +153,27 @@ internal sealed partial class SharpLinkClient
         finally
         {
             lock (_poolGate)
-                _sessionRefreshTask = null;
+                ReleaseFixedSessionRefreshWorkerLocked(owner);
         }
+    }
+
+    private void ReleaseFixedSessionRefreshWorkerLocked(object owner)
+    {
+        if (!ReferenceEquals(_sessionRefreshWorker, owner))
+            return;
+        _sessionRefreshWorker = null;
+        _sessionRefreshTask = null;
     }
 
     private bool CanPlanFixedRefreshLocked(ClientConnection source)
     {
-        if (source.ActiveCallCount == 0)
-            return true;
-
         var retiring = 0;
         foreach (var connection in _connections)
         {
             if (connection.State == ClientConnectionState.Draining)
                 retiring++;
         }
-        return retiring < _connectionPoolOptions.MaxConnections;
+        return retiring < _connectionPoolOptions.MaxConnections || source.ActiveCallCount == 0;
     }
 
     private async Task<bool> ReplaceFixedSessionAsync(
@@ -158,15 +190,13 @@ internal sealed partial class SharpLinkClient
                 return false;
         }
 
-        using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _shutdownCts.Token);
+        using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
         RpcSession? session = null;
         ITransportConnection? transport = null;
         ClientConnection? replacement = null;
         try
         {
-            transport = await transportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
+            transport = await ConnectTransportAsync(transportFactory, attemptCts.Token).ConfigureAwait(false);
             if (transport is ITransportSecurityInfo securityInfo)
                 LogTlsEstablished(_logger, securityInfo.Protocol, securityInfo.CipherSuite);
             session = new RpcSession(
@@ -189,12 +219,13 @@ internal sealed partial class SharpLinkClient
                 sessionCts,
                 _protocolOptions.MaxPendingRequestsPerConnection,
                 _runtimeContext);
-            var readySession = replacement.Session;
+            var publishedReplacement = replacement;
+            var readySession = publishedReplacement.Session;
             readySession.OnDisconnected += exception => HandleDisconnected(
-                replacement,
+                publishedReplacement,
                 exception ?? CreateConnectionClosedException("Transport closed."));
 
-            var publishReplacement = false;
+            var published = false;
             var sourceStillEligible = false;
             lock (_poolGate)
             {
@@ -204,49 +235,43 @@ internal sealed partial class SharpLinkClient
                 sourceStillEligible = _connections.Contains(source) && source.CanAcceptCalls;
                 if (sourceStillEligible && CanPlanFixedRefreshLocked(source))
                 {
-                    _connections.Add(replacement);
+                    _connections.Add(publishedReplacement);
                     try
                     {
-                        // Reconcile connection-local control state before the atomic eligibility
-                        // swap. No business call can select the replacement until the snapshot below.
                         ReconcileResponseCompressionPreferenceAfterReadyPublication(readySession);
                     }
                     catch
                     {
-                        _connections.Remove(replacement);
+                        _connections.Remove(publishedReplacement);
                         throw;
                     }
 
-                    if (!source.MarkDraining())
-                    {
-                        _connections.Remove(replacement);
-                        throw new InvalidOperationException(
-                            "The refresh source stopped being Ready before replacement publication.");
-                    }
-
-                    PublishReadySnapshotLocked();
                     readySession.NotifyConnected();
                     TrackFrameworkTask(
-                        RunHeartbeatSendLoopAsync(replacement, sessionCts.Token),
+                        RunHeartbeatSendLoopAsync(publishedReplacement, sessionCts.Token),
                         "HeartbeatSendLoop");
                     TrackFrameworkTask(
-                        RunProcessRequestLoopAsync(replacement, sessionCts.Token),
+                        RunProcessRequestLoopAsync(publishedReplacement, sessionCts.Token),
                         "ProcessRequestLoop");
-                    publishReplacement = true;
+
+                    source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
+                    PublishReadySnapshotLocked();
+                    Volatile.Read(ref _afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
+                    published = true;
                 }
             }
 
-            if (!publishReplacement)
+            if (!published)
             {
                 session = null;
-                await replacement.DisposeAsync().ConfigureAwait(false);
+                await publishedReplacement.DisposeAsync().ConfigureAwait(false);
                 replacement = null;
                 return !sourceStillEligible;
             }
 
             session = null;
             replacement = null;
-            RetireDrainingConnectionIfIdle(source);
+            TryAdvanceFixedSessionRefreshRetirement(source);
             PublishReadyState();
             return true;
         }
@@ -259,6 +284,36 @@ internal sealed partial class SharpLinkClient
                 session).ConfigureAwait(false);
             throw new UnreachableException();
         }
+    }
+
+    private void TryAdvanceFixedSessionRefreshRetirement(ClientConnection source)
+    {
+        var dispose = false;
+        lock (_poolGate)
+        {
+            if (!source.HasPlannedSessionRefreshRetirement)
+                return;
+            if (!_connections.Contains(source))
+            {
+                source.CompletePlannedSessionRefreshRetirement();
+                return;
+            }
+            // Pending capacity and untracked-call ownership are the formal admission boundary.
+            // Keep the source protocol Ready but hidden from selection until admitted work drains.
+            if (source.ActiveCallCount != 0)
+                return;
+
+            source.CompletePlannedSessionRefreshRetirement();
+            _ = source.MarkDraining();
+            if (_connections.Remove(source))
+            {
+                PublishReadySnapshotLocked();
+                dispose = true;
+            }
+        }
+
+        if (dispose)
+            TrackFrameworkTask(DisposeDisconnectedConnectionAsync(source), "SessionRefreshRetiredConnectionCleanup");
     }
 
     private async Task DelaySessionRefreshRetryAsync()
