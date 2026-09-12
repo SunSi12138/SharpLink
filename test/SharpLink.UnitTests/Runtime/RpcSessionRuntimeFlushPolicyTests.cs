@@ -1,11 +1,64 @@
 using System.Diagnostics;
 using System.IO.Pipelines;
+using System.Reflection;
 
 namespace SharpLink.UnitTests.Runtime;
 
 [NotInParallel]
 public sealed class RpcSessionRuntimeFlushPolicyTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TimedBatchShouldIgnoreDelayedDataWakeAfterQueueWasDrained(bool publishRuntimePolicy)
+    {
+        var clock = new ManualTimeProvider();
+        var provider = new TimerCountingTimeProvider(clock);
+        var initial = new RpcSessionFlushOptions(1024, TimeSpan.FromSeconds(30));
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var owner = CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
+        var policy = owner.GetOrCreateSessionFlushPolicyState(initial, context.PerformanceProfile);
+        if (publishRuntimePolicy)
+            Ensure(policy.Publish(4096, TimeSpan.FromSeconds(30)), "runtime threshold publication");
+        var input = new Pipe();
+        var output = new Pipe();
+        var session = CreateSession("delayed-data-wake", context, owner, initial, input, output);
+        try
+        {
+            var readTask = output.Reader.ReadAsync().AsTask();
+            session.SendPacket(CreateFrame(session, 64, 1));
+            await WaitUntilAsync(() => provider.TimerCount > 0);
+            var armedCount = provider.TimerCount;
+            var pump = typeof(RpcSession).GetField("_pump", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(session)!;
+            var wakeup = (WakeupSignal)pump.GetType()
+                .GetField("_wakeup", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(pump)!;
+
+            // Model an enqueuer delayed between queue publication and Signal: the
+            // pump already consumed its frame through a previous wake.
+            wakeup.Signal();
+            await WaitUntilAsync(() => readTask.IsCompleted || provider.TimerCount > armedCount);
+            Ensure(!readTask.IsCompleted && session.QueuedSendBytes > 0,
+                "a delayed data wake must preserve the timed batch and retained frame");
+
+            clock.Advance(TimeSpan.FromSeconds(30));
+            var read = await readTask.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(read.Buffer.Length == ProtocolV2Constants.HeaderBytes + 64,
+                "the original deadline must publish the complete retained frame");
+            output.Reader.AdvanceTo(read.Buffer.End);
+            await session.FlushSendQueueAsync();
+            Ensure(session.QueuedSendBytes == 0, "the deadline flush must release queued byte ownership");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
     [Test]
     public async Task ThresholdDecreaseShouldWakeArmedExistingSessionAndFutureSessionShouldShareGeneration()
     {
@@ -173,6 +226,20 @@ public sealed class RpcSessionRuntimeFlushPolicyTests
             await session.DisposeAsync();
             await output.Reader.CompleteAsync();
             await input.Writer.CompleteAsync();
+        }
+    }
+
+    private sealed class TimerCountingTimeProvider(ManualTimeProvider clock) : TimeProvider
+    {
+        private int _timerCount;
+        internal int TimerCount => Volatile.Read(ref _timerCount);
+        public override long TimestampFrequency => clock.TimestampFrequency;
+        public override long GetTimestamp() => clock.GetTimestamp();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = clock.CreateTimer(callback, state, dueTime, period);
+            Interlocked.Increment(ref _timerCount);
+            return timer;
         }
     }
 

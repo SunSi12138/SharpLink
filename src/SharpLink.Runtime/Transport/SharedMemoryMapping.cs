@@ -251,6 +251,11 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
             _view.SafeMemoryMappedViewHandle.ReleasePointer();
             _pointer = null;
         }
+        // This mapping carries transient IPC data; peers observe the shared pages directly.
+        // Close the view handle before the accessor so its Dispose does not explicitly flush
+        // the backing file. On Windows that flush can block/retry for seconds and exhaust
+        // the server shutdown budget, even though this file is deleted when peers close.
+        _view.SafeMemoryMappedViewHandle.Dispose();
         _view.Dispose();
         _mappedFile.Dispose();
         _file.Dispose();
