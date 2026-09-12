@@ -18,7 +18,8 @@ jobs:
     timeout-minutes: 5
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
-      TUNIT_MAX_PARALLEL_TESTS: '32'
+      # Keep the same bounded test concurrency as the three-platform release gate.
+      TUNIT_MAX_PARALLEL_TESTS: '8'
     steps:
       - name: Start Fast validation timing
         run: echo "FAST_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"

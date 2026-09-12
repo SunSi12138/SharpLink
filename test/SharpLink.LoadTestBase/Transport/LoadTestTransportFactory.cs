@@ -162,9 +162,9 @@ public static class LoadTestTransportFactory
         var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
         var serverAnonymous = serverBuilder.Build();
 
-        var (inHandler, outHandler) = await anonymousPipeAllocator.AllocateAsync();
+        using var offer = await anonymousPipeAllocator.AllocateAsync();
         var clientAnonymous = SharpClientBuilder.Create()
-            .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
+            .UseTransport(offer.CreateLocalClientTransportFactory())
 
             .UseRuntime(options =>
             {

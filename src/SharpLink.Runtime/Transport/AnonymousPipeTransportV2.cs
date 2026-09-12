@@ -1,22 +1,34 @@
+using Microsoft.Win32.SafeHandles;
+
 namespace SharpLink.Runtime;
 
 /// <summary>Creates the client side of one anonymous-pipe offer.</summary>
 public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactory
 {
-    private readonly string _inHandle;
-    private readonly string _outHandle;
+    private readonly string? _inHandle;
+    private readonly string? _outHandle;
+    private readonly SafePipeHandle? _localInHandle;
+    private readonly SafePipeHandle? _localOutHandle;
     private int _connectStarted;
     private int _disposed;
 
     /// <summary>Creates a one-shot factory for one pair of inherited anonymous-pipe handles.</summary>
     /// <param name="inHandle">The handle from which the client reads.</param>
     /// <param name="outHandle">The handle to which the client writes.</param>
+    /// <remarks>Use inherited handles in a child process. For a client in the server's process, use
+    /// <see cref="AnonymousPipeOffer.CreateLocalClientTransportFactory"/> to share safe-handle ownership.</remarks>
     public AnonymousPipeClientTransportFactory(string inHandle, string outHandle)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(inHandle);
         ArgumentException.ThrowIfNullOrWhiteSpace(outHandle);
         _inHandle = inHandle;
         _outHandle = outHandle;
+    }
+
+    internal AnonymousPipeClientTransportFactory(SafePipeHandle inHandle, SafePipeHandle outHandle)
+    {
+        _localInHandle = inHandle;
+        _localOutHandle = outHandle;
     }
 
     /// <inheritdoc />
@@ -35,8 +47,12 @@ public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactor
         AnonymousPipeClientStream? output = null;
         try
         {
-            input = new AnonymousPipeClientStream(PipeDirection.In, _inHandle);
-            output = new AnonymousPipeClientStream(PipeDirection.Out, _outHandle);
+            input = _localInHandle is { } localIn
+                ? new AnonymousPipeClientStream(PipeDirection.In, localIn)
+                : new AnonymousPipeClientStream(PipeDirection.In, _inHandle!);
+            output = _localOutHandle is { } localOut
+                ? new AnonymousPipeClientStream(PipeDirection.Out, localOut)
+                : new AnonymousPipeClientStream(PipeDirection.Out, _outHandle!);
             return new AnonymousPipeTransportConnection(input, output);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)

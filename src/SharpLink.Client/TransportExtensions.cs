@@ -62,7 +62,11 @@ public static class TransportExtensions
         }
 
         /// <summary>Connects through a one-time anonymous-pipe handle pair.</summary>
-        /// <remarks>Handle values are secrets and must not be logged or reused.</remarks>
+        /// <remarks>
+        /// Use inherited handles in a child process. For a client in the server's process, pass
+        /// <see cref="AnonymousPipeOffer.CreateLocalClientTransportFactory"/> to <c>UseTransport</c>.
+        /// Handle values are secrets and must not be logged or reused.
+        /// </remarks>
         public SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(inHandle);

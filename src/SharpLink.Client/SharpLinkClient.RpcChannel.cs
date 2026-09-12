@@ -360,14 +360,27 @@ internal sealed partial class SharpLinkClient
                 return false;
 
             PublishReadySnapshotLocked();
-            if (failure is not null)
-                connection.Fail(failure);
-            TrackFrameworkTask(
-                DisposeDisconnectedConnectionAsync(connection),
-                operation);
+            QueueConnectionCleanup(connection, operation, failure);
             return true;
         }
     }
+
+    // Call while owning the topology gate that detaches the connection. Register before stop
+    // can seal supervision, but never execute Fail/Dispose synchronously under that gate:
+    // pending completion can wait for registration, which may need the same topology gate.
+    private void QueueConnectionCleanup(ClientConnection connection, string operation, Exception? failure = null)
+        => TrackFrameworkTask(Task.Run(async () =>
+        {
+            try
+            {
+                if (failure is not null)
+                    connection.Fail(failure);
+            }
+            finally
+            {
+                await DisposeDisconnectedConnectionAsync(connection).ConfigureAwait(false);
+            }
+        }), operation);
 
     private void MarkConnectionDraining(ClientConnection connection)
     {

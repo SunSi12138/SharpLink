@@ -356,6 +356,8 @@ internal sealed partial class SharpLinkClient
 
         public void TryAdvancePlannedSessionRefreshRetirement(ClientConnection source)
         {
+            if (!source.HasPlannedSessionRefreshRetirement)
+                return;
             StaticClientRuntimeEndpointState? endpoint;
             var dispose = false;
             lock (_gate)
@@ -377,15 +379,13 @@ internal sealed partial class SharpLinkClient
                 {
                     _retiringConnections.Remove(source);
                     PublishReadySnapshotLocked();
+                    _client.QueueConnectionCleanup(source, "StaticClusterSessionRefreshRetiredConnectionCleanup");
                     dispose = true;
                 }
             }
 
             if (dispose)
             {
-                _client.TrackFrameworkTask(
-                    DisposeConnectionAsync(source),
-                    "StaticClusterSessionRefreshRetiredConnectionCleanup");
                 EnsureReconnect(endpoint!);
             }
         }

@@ -12,6 +12,7 @@ namespace SharpLink.Runtime
         public string InHandle { get; init; }
         public string OutHandle { get; init; }
         public void CompleteHandleTransfer() { }
+        public SharpLink.Abstractions.IClientTransportFactory CreateLocalClientTransportFactory() { }
         public void Dispose() { }
         public bool Equals(SharpLink.Runtime.AnonymousPipeOffer other) { }
         public override int GetHashCode() { }

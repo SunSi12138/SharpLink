@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using SharpLink.Client;
 
@@ -184,6 +185,136 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         finally
         {
             client._callAdmissionReservedTestHook = null;
+        }
+    }
+
+    [Test]
+    [Arguments("fixed")]
+    [Arguments("static")]
+    [Arguments("dynamic")]
+    public async Task OrdinaryRegistrationShouldProceedWhileTopologyGateIsHeld(string pool)
+    {
+        var factory = new RefreshFactory();
+        await using var client = Build(pool, factory, maxConnections: 1);
+        await client.ConnectAsync();
+        var gate = GetGate(GetOwner(client, pool), pool);
+        var gateHeld = Signal();
+        using var releaseGate = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
+        var holder = Task.Run(() =>
+        {
+            lock (gate)
+            {
+                gateHeld.TrySetResult();
+                Ensure(releaseGate.Wait(Timeout * 2), "test releases the topology gate");
+            }
+        });
+        await gateHeld.Task.WaitAsync(Timeout);
+        var call = Task.Run(async () =>
+            await ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token));
+        try
+        {
+            var request = await factory.Get(0).WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(Timeout);
+            await factory.Get(0).InjectInt32ResponseAsync(unchecked((long)request.RequestId));
+            Ensure(await call.WaitAsync(Timeout) == 0,
+                "ordinary registration and completion do not need the unrelated topology gate");
+        }
+        finally
+        {
+            releaseGate.Set();
+            await holder.WaitAsync(Timeout);
+            cancellation.Cancel();
+            try { await call.WaitAsync(Timeout); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    [Test]
+    [Arguments("fixed")]
+    [Arguments("static")]
+    [Arguments("dynamic")]
+    public async Task DisconnectedCleanupShouldReleaseTopologyGateAndRemainSupervised(string pool)
+    {
+        var factory = new RefreshFactory();
+        await using var client = Build(pool, factory, maxConnections: 1);
+        await client.ConnectAsync();
+        ClientConnection? source = null;
+        client._callAdmissionReservedTestHook = connection => source = connection;
+        var call = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        await factory.Get(0).WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(Timeout);
+        client._callAdmissionReservedTestHook = null;
+        var gate = GetGate(GetOwner(client, pool), pool);
+        var cleanupEntered = Signal();
+        using var releaseCleanup = new ManualResetEventSlim();
+        var cleanupHeldGate = false;
+        using var callback = source!.CancellationToken.Register(() =>
+        {
+            cleanupHeldGate = gate.IsHeldByCurrentThread;
+            cleanupEntered.TrySetResult();
+            Ensure(releaseCleanup.Wait(Timeout * 2), "test releases disconnected cleanup");
+        });
+        var failure = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "controlled disconnect");
+        var disconnected = Task.Run(() => client.HandleConnectionFatalFailure(source!, failure));
+        try
+        {
+            await cleanupEntered.Task.WaitAsync(Timeout);
+            Ensure(!cleanupHeldGate,
+                "pending-call failure and synchronous disposal must run outside the topology gate");
+            await disconnected.WaitAsync(Timeout);
+            Ensure(client.FrameworkTaskSnapshotForDiagnostics.Operations.Any(operation =>
+                    operation.Operation.EndsWith("DisconnectedConnectionCleanup", StringComparison.Ordinal)),
+                "detached cleanup is supervised before the disconnection handler returns");
+            Ensure(!call.IsCompleted, "the pending call remains owned while cleanup is paused");
+        }
+        finally
+        {
+            releaseCleanup.Set();
+            await disconnected.WaitAsync(Timeout);
+        }
+        SharpLinkException? observed = null;
+        try { await call.WaitAsync(Timeout); }
+        catch (SharpLinkException exception) { observed = exception; }
+        Ensure(ReferenceEquals(observed, failure), "cleanup preserves the originating connection failure");
+        Ensure(source!.CallAdmissionReservationCount == 0 && source.ActiveCallCount == 0,
+            "detached cleanup releases all call ownership");
+    }
+
+    [Test]
+    [Arguments("fixed")]
+    [Arguments("static")]
+    [Arguments("dynamic")]
+    public async Task StopShouldFailConnectionsOutsideTopologyGate(string pool)
+    {
+        var factory = new RefreshFactory();
+        await using var client = Build(pool, factory, maxConnections: 1);
+        await client.ConnectAsync();
+        ClientConnection? source = null;
+        client._callAdmissionReservedTestHook = connection => source = connection;
+        await CompleteUnary(client, factory.Get(0));
+        client._callAdmissionReservedTestHook = null;
+        var gate = GetGate(GetOwner(client, pool), pool);
+        var teardownObserved = 0;
+        var heldGate = 0;
+        client._beforeFatalFailurePublicationTestHook = connection =>
+        {
+            if (!ReferenceEquals(connection, source))
+                return;
+            Interlocked.Exchange(ref teardownObserved, 1);
+            if (gate.IsHeldByCurrentThread)
+                Interlocked.Exchange(ref heldGate, 1);
+        };
+        try
+        {
+            await client.StopAsync().AsTask().WaitAsync(Timeout);
+            Ensure(Volatile.Read(ref teardownObserved) == 1 && Volatile.Read(ref heldGate) == 0,
+                "stop must fail and dispose connections without retaining its caller's topology lock");
+            Ensure(source!.State == ClientConnectionState.Closed &&
+                   client.FrameworkTaskSnapshotForDiagnostics.IsDrained,
+                "stop returns only after connection teardown and supervised cleanup complete");
+        }
+        finally
+        {
+            client._beforeFatalFailurePublicationTestHook = null;
         }
     }
 
