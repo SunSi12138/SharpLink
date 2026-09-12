@@ -91,6 +91,35 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>
     TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
 
+    /// <summary>Attempts to capture the current status values for a configured cluster slot.</summary>
+    /// <remarks>
+    /// Built-in SharpLink coordinators return <see langword="false"/> for a valid cluster key that is not currently
+    /// configured, including one concurrently removed before the lookup. Invalid or default keys remain programmer
+    /// errors and throw <see cref="ArgumentException"/>. Legacy custom implementations must override this member to
+    /// expose non-throwing cluster-presence semantics; the default implementation deliberately does not infer a
+    /// missing cluster from legacy exception types or messages.
+    /// </remarks>
+    /// <param name="cluster">The cluster key to query.</param>
+    /// <param name="status">Receives the status snapshot when the cluster is present; otherwise the default value.</param>
+    /// <returns><see langword="true"/> when the cluster is currently configured; otherwise <see langword="false"/>.</returns>
+    /// <exception cref="ArgumentException"><paramref name="cluster"/> is the default or otherwise invalid.</exception>
+    /// <exception cref="NotSupportedException">
+    /// This custom implementation does not expose non-throwing cluster status queries.
+    /// </exception>
+    bool TryGetClusterStatus(SharpLinkClusterKey cluster, out SharpLinkClusterStatusSnapshot status)
+    {
+        if (!SharpLinkClusterKey.IsValid(cluster.Value))
+        {
+            throw new ArgumentException(
+                "A valid non-default SharpLinkClusterKey is required.",
+                nameof(cluster));
+        }
+
+        status = default;
+        throw new NotSupportedException(
+            "This custom multi-cluster client does not expose non-throwing cluster status queries.");
+    }
+
     /// <summary>Gets the legacy connection-oriented state of one configured cluster slot.</summary>
     SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster);
 
