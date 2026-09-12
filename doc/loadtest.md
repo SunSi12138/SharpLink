@@ -168,9 +168,6 @@ LoadTest 专有：
 - `--concurrency-per-client`: `hold` 每个客户端一次性发起的调用数（默认 1,024）
 - `--hold-duration`: `hold` 达到预计容量后的保持秒数（默认 30）
 - `--payload-size`: `echo` 字符串长度（默认 `64`）
-- `--compression`: `none | brotli`（默认 `none`）
-- `--compression-level`: `fastest | optimal | smallest | nocompression`（默认 `fastest`，仅影响本地编码）
-- `--compression-min-payload`、`--compression-min-savings-bytes`、`--compression-min-savings-ratio`: 压缩收益策略（默认 `1024 / 64 / 0.05`）
 - `--payload-pattern`: `compressible | random`，随机输入使用固定 seed
 - `--metrics-port`: Prometheus 端口（`<=0` 关闭，默认 `9464`）
 

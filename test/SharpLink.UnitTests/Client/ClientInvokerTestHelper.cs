@@ -46,7 +46,7 @@ internal static class ClientInvokerTestHelper
 
     public static ValueTask<int> InvokeUnaryAsync(
         SharpLinkClient client,
-        SharpLinkCallOptions options = default,
+        SharpLinkMetadata? metadata = null,
         CancellationToken cancellationToken = default)
     {
         var channel = (IRpcChannel)client;
@@ -56,13 +56,13 @@ internal static class ClientInvokerTestHelper
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
-            options,
+            metadata,
             cancellationToken);
     }
 
     public static ValueTask<int> InvokeIdempotentUnaryAsync(
         SharpLinkClient client,
-        SharpLinkCallOptions options = default,
+        SharpLinkMetadata? metadata = null,
         CancellationToken cancellationToken = default)
     {
         var channel = (IRpcChannel)client;
@@ -72,7 +72,7 @@ internal static class ClientInvokerTestHelper
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
-            options,
+            metadata,
             cancellationToken);
     }
 

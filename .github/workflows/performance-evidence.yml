@@ -16,7 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       SHARPLINK_MATRIX_TIER: smoke
       SHARPLINK_MATRIX_REPETITIONS: ${{ inputs.repetitions }}
       SHARPLINK_MATRIX_OUTPUT: ${{ github.workspace }}/artifacts/performance/smoke/${{ github.sha }}
@@ -24,10 +23,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
 
       - name: Record environment
         shell: bash

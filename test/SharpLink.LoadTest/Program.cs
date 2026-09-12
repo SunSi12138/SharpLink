@@ -63,10 +63,11 @@ public static class Program
             $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections} " +
             $"staticEndpoints={options.StaticEndpointCount} dynamicEndpoints={options.DynamicEndpointCount} dynamicResolver={options.UseDynamicResolver} lb={options.StaticLoadBalancingStrategy} " +
             $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode} " +
-            $"admission={options.AdmissionMode} compression={options.CompressionAlgorithm}/{options.CompressionLevel} " +
-            $"thresholds={options.CompressionMinimumPayloadBytes}B/{options.CompressionMinimumSavingsBytes}B/{options.CompressionMinimumSavingsRatio:P0} " +
+            $"admission={options.AdmissionMode} " +
             $"sendQueue={options.MaxSendQueueBytes?.ToString(CultureInfo.InvariantCulture) ?? "profile-default"}B " +
-            $"pattern={options.PayloadPattern}");
+            $"pattern={options.PayloadPattern} recording={options.RecordingMode} " +
+            $"sampleCapacity={options.MaximumRecordedOperations} drainTimeout={options.DrainTimeoutSeconds}s " +
+            $"tailObserver={options.TailObserver}");
         if (options.Operation == "hold")
         {
             Console.WriteLine(
@@ -102,12 +103,13 @@ public static class Program
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
         Console.WriteLine("  --admission disabled|immediate|queue|reject");
-        Console.WriteLine("  --compression none|brotli --compression-level fastest|optimal|smallest|nocompression");
-        Console.WriteLine("  --compression-min-payload 1024 --compression-min-savings-bytes 64 --compression-min-savings-ratio 0.05");
         Console.WriteLine("  --max-send-queue-bytes 33554432 (optional bounded throughput-test override)");
         Console.WriteLine("  --payload-pattern compressible|random");
         Console.WriteLine("  --shm-name sharplink-loadtest --shm-capacity 8388608 --shm-spin-count 8");
         Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
+        Console.WriteLine("  --recording off|formal|diagnostic|validation-dual");
+        Console.WriteLine("  --maximum-recorded-operations 30000000 --drain-timeout 5");
+        Console.WriteLine("  --tail-observer (dedicated Add probe used only by the recorder interference gate)");
         Console.WriteLine("  --json-output artifacts/perf/load.json");
         Console.WriteLine("  --metrics-port 9464");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
@@ -186,7 +188,9 @@ public static class Program
                     .UseHeartbeat(
                         TimeSpan.FromSeconds(options.HeartbeatCheckIntervalSeconds),
                         TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds))
-                    .UseTcp(0, options.BindIp);
+                    .UseTcp(0, IPAddress.Parse(options.BindIp))
+                    .AllowUnencrypted()
+                    .AllowUnauthenticated();
                 var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
                 servers[index] = builder.Build();
                 endpoints[index] = new SharpLinkEndpoint
@@ -263,7 +267,7 @@ public static class Program
     {
         try
         {
-            await server.RunAsync(token);
+            await server.RunUntilStoppedAsync(token);
         }
         catch (OperationCanceledException)
         {
@@ -296,7 +300,7 @@ public static class Program
             options.SharedMemorySpinCount,
             runtime => ConfigureRuntime(runtime, options));
         Console.WriteLine("[Server] started.");
-        await server.RunAsync(cancelScope.Token);
+        await server.RunUntilStoppedAsync(cancelScope.Token);
     }
 
     private static async Task RunClientOnlyAsync(LoadTestOptions options, MetricsRegistry metrics, ISharpLinkClient? clientOverride = null)
@@ -333,37 +337,62 @@ public static class Program
                 runtime => ConfigureRuntime(runtime, options))
             : null;
         var client = clientOverride ?? ownedClient!;
+        var tailObserverClient = options.TailObserver
+            ? LoadTestTransportFactory.CreateClient(
+                options.Transport,
+                options.Host,
+                options.Port,
+                options.UdsPath,
+                options.PipeName,
+                options.HeartbeatIntervalSeconds,
+                options.HeartbeatTimeoutSeconds,
+                1,
+                1,
+                options.PerformanceProfile,
+                options.DisableRequestTimeout,
+                options.RequestTimeout,
+                options.SharedMemoryName,
+                options.SharedMemoryCapacity,
+                options.SharedMemorySpinCount,
+                runtime => ConfigureRuntime(runtime, options))
+            : null;
         var results = new List<StageResult>();
         try
         {
             await client.ConnectAsync();
+            if (tailObserverClient is not null)
+                await tailObserverClient.ConnectAsync();
 
             var rpc = client.Get<ILoadTestService>();
+            var tailObserverRpc = tailObserverClient?.Get<ILoadTestService>();
             var retryOneWaySendQueueBackpressure =
                 options.Operation == "oneway" && options.MaxSendQueueBytes.HasValue;
             foreach (var concurrency in options.ConcurrencyConfig)
             {
+                var warmupDurationSeconds = 0d;
                 if (options.WarmupSeconds > 0)
                 {
                     Console.WriteLine($"[Client] warmup {options.WarmupSeconds}s @ c={concurrency}");
+                    var warmupStarted = Stopwatch.GetTimestamp();
                     _ = await ExecuteStageAsync(
                         rpc,
-                        options.Operation,
-                        options.PayloadSize,
-                        options.PayloadPattern,
+                        tailObserverRpc,
+                        options,
                         options.WarmupSeconds,
+                        0,
                         concurrency,
                         metrics,
                         retryOneWaySendQueueBackpressure,
                         isWarmup: true);
+                    warmupDurationSeconds = Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
                 }
 
                 var result = await ExecuteStageAsync(
                     rpc,
-                    options.Operation,
-                    options.PayloadSize,
-                    options.PayloadPattern,
+                    tailObserverRpc,
+                    options,
                     options.DurationSeconds,
+                    warmupDurationSeconds,
                     concurrency,
                     metrics,
                     retryOneWaySendQueueBackpressure,
@@ -372,8 +401,8 @@ public static class Program
                 Console.WriteLine(
                     $"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} " +
                     $"sendQueueRetries={result.SendQueueBackpressureRetries} " +
-                    $"err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us p999={result.P999Us:F2}us " +
-                    $"avg={result.AvgUs:F2}us min={result.MinUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s " +
+                    $"err={result.ErrorRatePercent:F2}% p50={FormatLatency(result.P50Us)} p95={FormatLatency(result.P95Us)} p99={FormatLatency(result.P99Us)} p999={FormatLatency(result.P999Us)} " +
+                    $"avg={FormatLatency(result.AvgUs)} min={FormatLatency(result.MinUs)} max={FormatLatency(result.MaxUs)} measurement={result.MeasurementDurationSeconds:F2}s drain={result.DrainDurationSeconds:F3}s " +
                     $"payload={result.OneWayPayloadMegabytesPerSecond:F2}/{result.RoundTripPayloadMegabytesPerSecond:F2} MiB/s(one-way/round-trip)");
 
                 if (!string.IsNullOrEmpty(result.TopFailures))
@@ -392,56 +421,68 @@ public static class Program
         {
             if (ownedClient is not null)
                 await ownedClient.DisposeAsync();
+            if (tailObserverClient is not null)
+                await tailObserverClient.DisposeAsync();
         }
     }
 
     private static async Task<StageResult> ExecuteStageAsync(
         ILoadTestService rpc,
-        string operation,
-        int payloadSize,
-        string payloadPattern,
+        ILoadTestService? tailObserverRpc,
+        LoadTestOptions options,
         int durationSeconds,
+        double warmupDurationSeconds,
         int concurrency,
         MetricsRegistry metrics,
         bool retryOneWaySendQueueBackpressure,
         bool isWarmup)
     {
-        var histogram = new LatencyHistogram();
-        var realtimeHistogram = new LatencyHistogram(200_000);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(durationSeconds));
-        var token = cts.Token;
+        var operation = options.Operation;
+        var recordingMode = isWarmup ? LatencyRecordingMode.Off : options.RecordingMode;
+        var formalRecorder = LatencyRecordingPolicy.CreatesFormalRecorder(recordingMode)
+            ? new StageLatencyRecorder(concurrency, options.MaximumRecordedOperations)
+            : null;
+        var diagnosticHistogram = LatencyRecordingPolicy.CreatesDiagnosticRecorder(recordingMode)
+            ? new SharpLink.LoadTestBase.LatencyHistogram()
+            : null;
+        SharpLink.LoadTestBase.LatencyHistogram? realtimeRef = LatencyRecordingPolicy.StartsRealtimeReporter(recordingMode)
+            ? new SharpLink.LoadTestBase.LatencyHistogram(200_000)
+            : null;
+        var lifecycle = new MeasurementStageLifecycle(
+            concurrency,
+            options.TailObserver && !isWarmup ? 1 : 0);
+        var tailObserverRecorder = options.TailObserver && !isWarmup
+            ? new StageLatencyRecorder(1, options.TailObserverMaximumRecordedOperations)
+            : null;
         var failures = new FailureRecorder();
-        long success = 0;
-        long failure = 0;
-        long sendQueueBackpressureRetries = 0;
         long realtimeSuccess = 0;
-        var workers = new Task[concurrency];
-        var stageTimer = Stopwatch.StartNew();
-        var evidenceBefore = s_evidenceCollector!.Capture();
-        var lastRealtimeUpdate = stageTimer.Elapsed;
-        var realtimeRef = realtimeHistogram;
+        var workers = new Task<WorkerStageOutcome>[concurrency];
+        using var reporterStop = new CancellationTokenSource();
 
         Task? realtimeReporter = null;
-        if (!isWarmup)
+        if (LatencyRecordingPolicy.StartsRealtimeReporter(recordingMode))
         {
             realtimeReporter = Task.Run(async () =>
             {
-                while (!token.IsCancellationRequested)
+                var lastUpdate = Stopwatch.GetTimestamp();
+                while (!reporterStop.IsCancellationRequested)
                 {
                     try
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(1), token);
+                        await Task.Delay(TimeSpan.FromSeconds(1), reporterStop.Token);
                     }
                     catch (OperationCanceledException)
                     {
                         break;
                     }
 
-                    var now = stageTimer.Elapsed;
-                    var windowSeconds = Math.Max(0.001, (now - lastRealtimeUpdate).TotalSeconds);
-                    lastRealtimeUpdate = now;
+                    var now = Stopwatch.GetTimestamp();
+                    var windowSeconds = Math.Max(0.001, Stopwatch.GetElapsedTime(lastUpdate, now).TotalSeconds);
+                    lastUpdate = now;
                     var windowSuccess = Interlocked.Exchange(ref realtimeSuccess, 0);
-                    var windowHistogram = Interlocked.Exchange(ref realtimeRef, new LatencyHistogram(200_000));
+                    var windowHistogram = Interlocked.Exchange(
+                        ref realtimeRef,
+                        new SharpLink.LoadTestBase.LatencyHistogram(200_000))!;
 
                     metrics.UpdateRealtime(new RealtimeResult(
                         operation,
@@ -455,93 +496,211 @@ public static class Program
             }, CancellationToken.None);
         }
 
+        Task<TailObserverOutcome>? tailObserverTask = null;
+        TaskCompletionSource? tailObserverReady = null;
+        if (tailObserverRecorder is not null)
+        {
+            var observer = tailObserverRecorder.GetWorker(0);
+            var observerReady = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            tailObserverReady = observerReady;
+            tailObserverTask = Task.Run(async () =>
+            {
+                long failure = 0;
+                observerReady.TrySetResult();
+                await lifecycle.WaitForStartAsync().ConfigureAwait(false);
+                while (lifecycle.TryBeginOperationStart(concurrency, out var admission))
+                {
+                    try
+                    {
+                        long started;
+                        ValueTask<int> completion;
+                        using (admission)
+                        {
+                            started = Stopwatch.GetTimestamp();
+                            completion = tailObserverRpc!.AddAsync(7, 9);
+                        }
+
+                        var value = await completion.ConfigureAwait(false);
+                        if (value != 16)
+                            throw new InvalidOperationException($"Tail observer received {value}, expected 16.");
+                        observer.RecordTicks(0, Stopwatch.GetTimestamp() - started);
+                    }
+                    catch (LatencySampleCapacityExceededException)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        failure++;
+                    }
+                }
+
+                return new TailObserverOutcome(observer.Count, failure);
+            }, CancellationToken.None);
+        }
+
         for (var i = 0; i < workers.Length; i++)
         {
+            var workerIndex = i;
+            var workerRecorder = formalRecorder?.GetWorker(workerIndex);
             // StringCodec writes UTF-16 bytes; keep the requested business payload size exact.
             var echoPayload = operation == "echo"
-                ? CreateEchoPayload(payloadSize, payloadPattern, i)
+                ? CreateEchoPayload(options.PayloadSize, options.PayloadPattern, workerIndex)
                 : string.Empty;
             workers[i] = Task.Run(async () =>
             {
-                while (!token.IsCancellationRequested)
+                long success = 0;
+                long failure = 0;
+                long sendQueueBackpressureRetries = 0;
+                long operationsStarted = 0;
+                await lifecycle.ReadyAndWaitForStartAsync(workerIndex).ConfigureAwait(false);
+
+                while (lifecycle.TryBeginOperationStart(workerIndex, out var admission))
                 {
-                    var start = Stopwatch.GetTimestamp();
-                    while (!token.IsCancellationRequested)
+                    operationsStarted++;
+                    var start = workerRecorder is not null || diagnosticHistogram is not null
+                        ? Stopwatch.GetTimestamp()
+                        : 0;
+                    while (true)
                     {
                         try
                         {
-                            if (operation == "echo")
+                            PendingLoadOperation pendingOperation;
+                            using (admission)
+                                pendingOperation = StartLoadOperation(rpc, operation, echoPayload);
+                            switch (pendingOperation.Kind)
                             {
-                                _ = await rpc.EchoAsync(echoPayload);
-                            }
-                            else if (operation == "empty")
-                            {
-                                await rpc.PingAsync();
-                            }
-                            else if (operation == "yield")
-                            {
-                                _ = await rpc.YieldAsync(7, 9);
-                            }
-                            else if (operation == "delay")
-                            {
-                                _ = await rpc.DelayAsync(7, 9);
-                            }
-                            else if (operation == "oneway")
-                            {
-                                await rpc.NotifyAsync(7, 9);
-                            }
-                            else
-                            {
-                                _ = await rpc.AddAsync(7, 9);
+                                case PendingLoadOperationKind.Void:
+                                    await pendingOperation.VoidCompletion.ConfigureAwait(false);
+                                    break;
+                                case PendingLoadOperationKind.Int32:
+                                    _ = await pendingOperation.Int32Completion.ConfigureAwait(false);
+                                    break;
+                                case PendingLoadOperationKind.String:
+                                    _ = await pendingOperation.StringCompletion.ConfigureAwait(false);
+                                    break;
+                                default:
+                                    throw new InvalidOperationException("Unknown pending load operation kind.");
                             }
 
-                            var elapsedUs = Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
-                            histogram.Record(elapsedUs);
-                            Volatile.Read(ref realtimeRef).Record(elapsedUs);
-                            Interlocked.Increment(ref success);
-                            Interlocked.Increment(ref realtimeSuccess);
+                            if (workerRecorder is not null)
+                            {
+                                var elapsedTicks = Stopwatch.GetTimestamp() - start;
+                                workerRecorder.RecordTicks(workerIndex, elapsedTicks);
+                                if (diagnosticHistogram is not null)
+                                    diagnosticHistogram.Record(formalRecorder!.TicksToMicroseconds(elapsedTicks));
+                            }
+                            else if (diagnosticHistogram is not null)
+                            {
+                                var elapsedUs = Stopwatch.GetElapsedTime(start).TotalMicroseconds;
+                                diagnosticHistogram.Record(elapsedUs);
+                                Volatile.Read(ref realtimeRef)!.Record(elapsedUs);
+                            }
+
+                            success++;
+                            if (recordingMode == LatencyRecordingMode.Diagnostic)
+                                Interlocked.Increment(ref realtimeSuccess);
                             break;
+                        }
+                        catch (LatencySampleCapacityExceededException)
+                        {
+                            throw;
                         }
                         catch (Exception ex)
                         {
-                            if (token.IsCancellationRequested)
-                                break;
-
                             if (ShouldRetryOneWaySendQueueBackpressure(
                                     retryOneWaySendQueueBackpressure,
                                     operation,
                                     ex))
                             {
-                                Interlocked.Increment(ref sendQueueBackpressureRetries);
+                                sendQueueBackpressureRetries++;
                                 await Task.Yield();
+                                if (!lifecycle.TryBeginOperationStart(workerIndex, out admission))
+                                {
+                                    failures.Record(ex);
+                                    failure++;
+                                    break;
+                                }
+
                                 continue;
                             }
 
                             failures.Record(ex);
-                            Interlocked.Increment(ref failure);
+                            failure++;
                             if (ShouldYieldAfterBackpressure(operation, ex))
                                 await Task.Yield();
                             break;
                         }
                     }
                 }
+
+                return new WorkerStageOutcome(
+                    success,
+                    failure,
+                    sendQueueBackpressureRetries,
+                    operationsStarted);
             }, CancellationToken.None);
         }
 
         var workersTask = Task.WhenAll(workers);
-        var gracefulStopTask = Task.Delay(TimeSpan.FromSeconds(durationSeconds + 5), CancellationToken.None);
-        var completed = await Task.WhenAny(workersTask, gracefulStopTask);
-        if (completed != workersTask)
-            throw new TimeoutException("Load test stage did not stop in grace window; possible in-flight RPC stall.");
-
-        await workersTask;
+        Task allActivityTask = tailObserverTask is null
+            ? workersTask
+            : Task.WhenAll(workersTask, tailObserverTask);
+        await lifecycle.AllWorkersReady.ConfigureAwait(false);
+        if (tailObserverReady is not null)
+            await tailObserverReady.Task.ConfigureAwait(false);
+        var evidenceBefore = s_evidenceCollector!.Capture();
+        var measurementStarted = lifecycle.StartMeasurement();
+        var measurementDelay = Task.Delay(TimeSpan.FromSeconds(durationSeconds), CancellationToken.None);
+        var firstWorkerFinished = Task.WhenAny(workers);
+        var boundary = await Task.WhenAny(measurementDelay, firstWorkerFinished).ConfigureAwait(false);
+        var measurementStopped = lifecycle.StopStartingNewOperations();
+        var drainTask = lifecycle.WaitForDrainAsync(
+            allActivityTask,
+            TimeSpan.FromSeconds(options.DrainTimeoutSeconds));
+        reporterStop.Cancel();
         if (realtimeReporter is not null)
-            await realtimeReporter;
+            await realtimeReporter.ConfigureAwait(false);
 
-        var elapsedSeconds = Math.Max(0.001, stageTimer.Elapsed.TotalSeconds);
-        var qps = success / elapsedSeconds;
+        double drainSeconds;
+        try
+        {
+            drainSeconds = await drainTask.ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException(
+                $"Load test drain exceeded {options.DrainTimeoutSeconds}s; the run is invalid because in-flight RPCs did not complete.");
+        }
+
+        if (boundary == firstWorkerFinished)
+        {
+            var first = await firstWorkerFinished.ConfigureAwait(false);
+            await first.ConfigureAwait(false);
+            throw new InvalidOperationException("A load-test worker exited before the measurement boundary.");
+        }
+
+        var outcomes = await workersTask.ConfigureAwait(false);
+        long success = 0;
+        long failure = 0;
+        long sendQueueBackpressureRetries = 0;
+        long operationsStarted = 0;
+        foreach (var outcome in outcomes)
+        {
+            success = checked(success + outcome.Success);
+            failure = checked(failure + outcome.Failure);
+            sendQueueBackpressureRetries = checked(
+                sendQueueBackpressureRetries + outcome.SendQueueBackpressureRetries);
+            operationsStarted = checked(operationsStarted + outcome.OperationsStarted);
+        }
+
+        var measurementSeconds = Math.Max(
+            0.001,
+            Stopwatch.GetElapsedTime(measurementStarted, measurementStopped).TotalSeconds);
+        var qps = LatencyRecordingPolicy.CalculateThroughput(success, measurementSeconds);
         var oneWayPayloadMegabytesPerSecond = operation == "echo"
-            ? qps * payloadSize / (1024d * 1024d)
+            ? qps * options.PayloadSize / (1024d * 1024d)
             : 0;
         var roundTripPayloadMegabytesPerSecond = oneWayPayloadMegabytesPerSecond * 2;
         var total = success + failure;
@@ -549,6 +708,15 @@ public static class Program
         var evidence = PerformanceEvidenceCollector.Delta(
             evidenceBefore,
             s_evidenceCollector.Capture());
+        LatencyStatistics? formalStatistics = formalRecorder?.Complete();
+        var tailObserverOutcome = tailObserverTask is null
+            ? TailObserverOutcome.Empty
+            : await tailObserverTask.ConfigureAwait(false);
+        LatencyStatistics? tailObserverStatistics = tailObserverRecorder?.Complete();
+        if (recordingMode == LatencyRecordingMode.ValidationDual)
+            LatencyRecorderValidation.ValidateAgainstLegacy(
+                formalStatistics!.Value,
+                diagnosticHistogram!);
         var result = new StageResult(
             operation,
             concurrency,
@@ -558,14 +726,34 @@ public static class Program
             qps,
             oneWayPayloadMegabytesPerSecond,
             roundTripPayloadMegabytesPerSecond,
-            histogram.Percentile(50),
-            histogram.Percentile(95),
-            histogram.Percentile(99),
-            histogram.Percentile(99.9),
-            histogram.Average,
-            histogram.Min,
-            histogram.Max,
-            elapsedSeconds,
+            formalStatistics?.P50Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(50)),
+            formalStatistics?.P95Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(95)),
+            formalStatistics?.P99Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(99)),
+            formalStatistics?.P999Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(99.9)),
+            formalStatistics?.AverageUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Average),
+            formalStatistics?.MinUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Min),
+            formalStatistics?.MaxUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Max),
+            warmupDurationSeconds,
+            measurementSeconds,
+            drainSeconds,
+            operationsStarted,
+            success + failure,
+            formalStatistics?.Count ?? diagnosticHistogram?.Count ?? 0,
+            formalRecorder?.MaximumTotalSamples ?? 0,
+            recordingMode.ToString().ToLowerInvariant(),
+            recordingMode switch
+            {
+                LatencyRecordingMode.Formal => StageLatencyRecorder.Version,
+                LatencyRecordingMode.Off => "off-v1",
+                LatencyRecordingMode.Diagnostic => "legacy-diagnostic-v1",
+                _ => "validation-dual-v1"
+            },
+            Stopwatch.Frequency,
+            LatencyRecordingPolicy.IsFormalComparable(recordingMode),
+            tailObserverStatistics?.Count ?? 0,
+            tailObserverOutcome.Failure,
+            tailObserverStatistics?.P99Us,
+            tailObserverStatistics?.P999Us,
             errorRate,
             failures.Top(3),
             evidence);
@@ -575,6 +763,25 @@ public static class Program
 
         return result;
     }
+
+    private static string FormatLatency(double? microseconds)
+        => microseconds.HasValue
+            ? $"{microseconds.Value.ToString("F2", CultureInfo.InvariantCulture)}us"
+            : "n/a";
+
+    private static PendingLoadOperation StartLoadOperation(
+        ILoadTestService rpc,
+        string operation,
+        string echoPayload)
+        => operation switch
+        {
+            "echo" => PendingLoadOperation.From(rpc.EchoAsync(echoPayload)),
+            "empty" => PendingLoadOperation.From(rpc.PingAsync()),
+            "yield" => PendingLoadOperation.From(rpc.YieldAsync(7, 9)),
+            "delay" => PendingLoadOperation.From(rpc.DelayAsync(7, 9)),
+            "oneway" => PendingLoadOperation.From(rpc.NotifyAsync(7, 9)),
+            _ => PendingLoadOperation.From(rpc.AddAsync(7, 9))
+        };
 
     internal static bool ShouldYieldAfterBackpressure(string operation, Exception exception)
         => operation == "oneway" &&
@@ -625,20 +832,6 @@ public static class Program
         runtime.FlowControl.MaxConcurrentCallsPerConnection = options.MaxConcurrentCallsPerConnection;
         runtime.FlowControl.MaxConcurrentCallsPerServer = options.MaxConcurrentCallsPerServer;
         runtime.Protocol.MaxPendingRequestsPerConnection = options.MaxPendingRequestsPerConnection;
-        runtime.Compression.MinimumPayloadBytes = options.CompressionMinimumPayloadBytes;
-        runtime.Compression.MinimumSavingsBytes = options.CompressionMinimumSavingsBytes;
-        runtime.Compression.MinimumSavingsRatio = options.CompressionMinimumSavingsRatio;
-        if (options.CompressionAlgorithm == "none")
-            return;
-        var level = options.CompressionLevel switch
-        {
-            "fastest" => CompressionLevel.Fastest,
-            "optimal" => CompressionLevel.Optimal,
-            "smallest" => CompressionLevel.SmallestSize,
-            "nocompression" => CompressionLevel.NoCompression,
-            _ => throw new ArgumentOutOfRangeException(nameof(options.CompressionLevel))
-        };
-        runtime.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli(level));
     }
 
     private static string CreateEchoPayload(int payloadSize, string pattern, int worker)
@@ -653,630 +846,4 @@ public static class Program
         return new string(chars);
     }
 
-}
-
-public sealed class LoadTestOptions
-{
-    public RunMode Mode { get; private init; } = RunMode.Local;
-    public TransportMode Transport { get; private init; } = TransportMode.Tcp;
-    public string Host { get; private init; } = "127.0.0.1";
-    public string BindIp { get; private init; } = "0.0.0.0";
-    public int Port { get; private init; } = 19100;
-    public string UdsPath { get; private init; } = TransportDefaults.GetDefaultUdsPath("sharplink-loadtest");
-    public string PipeName { get; private init; } = TransportDefaults.GetDefaultPipeName("sharplink-loadtest");
-    public string SharedMemoryName { get; private init; } = TransportDefaults.GetDefaultSharedMemoryName("sharplink-loadtest");
-    public int? SharedMemoryCapacity { get; private init; }
-    public int? SharedMemorySpinCount { get; private init; }
-    public bool DetailedSharedMemoryEvidence { get; private init; }
-    public int DurationSeconds { get; private init; } = 20;
-    public int WarmupSeconds { get; private init; } = 5;
-    public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16, 32];
-    public string Operation { get; private init; } = "add";
-    public int PayloadSize { get; private init; } = 64;
-    public int MetricsPort { get; private init; } = 9464;
-    public int HeartbeatIntervalSeconds { get; private init; } = 10;
-    public int HeartbeatCheckIntervalSeconds { get; private init; } = 10;
-    public int HeartbeatTimeoutSeconds { get; private init; } = 120;
-    public int MinConnections { get; private init; } = 1;
-    public int MaxConnections { get; private init; } = 1;
-    public int ClientCount { get; private init; } = 1;
-    public int ConcurrencyPerClient { get; private init; } = 1024;
-    public int HoldDurationSeconds { get; private init; } = 30;
-    public int MaxConcurrentCallsPerConnection { get; private init; } = 1024;
-    public int MaxConcurrentCallsPerServer { get; private init; } = SharpLinkFlowControlOptions.DefaultMaxConcurrentCallsPerServer;
-    public int MaxPendingRequestsPerConnection { get; private init; } = 65_536;
-    public bool UseStaticEndpoints { get; private init; }
-    public int StaticEndpointCount { get; private init; } = 1;
-    public bool UseDynamicResolver { get; private init; }
-    public int DynamicEndpointCount { get; private init; } = 1;
-    public int EndpointCount => UseDynamicResolver ? DynamicEndpointCount : StaticEndpointCount;
-    public SharpLinkLoadBalancingStrategy StaticLoadBalancingStrategy { get; private init; } = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices;
-    public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
-    public string RequestTimeoutMode { get; private init; } = "default";
-    public string AdmissionMode { get; private init; } = "disabled";
-    public string CompressionAlgorithm { get; private init; } = "none";
-    public string CompressionLevel { get; private init; } = "fastest";
-    public int CompressionMinimumPayloadBytes { get; private init; } = 1024;
-    public int CompressionMinimumSavingsBytes { get; private init; } = 64;
-    public double CompressionMinimumSavingsRatio { get; private init; } = 0.05;
-    public int? MaxSendQueueBytes { get; private init; }
-    public string PayloadPattern { get; private init; } = "compressible";
-    public string? JsonOutputPath { get; private init; }
-    public bool DisableRequestTimeout => RequestTimeoutMode == "disabled";
-    public TimeSpan? RequestTimeout => RequestTimeoutMode switch
-    {
-        "1ms" => TimeSpan.FromMilliseconds(1),
-        "10ms" => TimeSpan.FromMilliseconds(10),
-        "100ms" => TimeSpan.FromMilliseconds(100),
-        _ => null
-    };
-
-    public static LoadTestOptions Parse(string[] args)
-    {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < args.Length; i++)
-        {
-            if (!args[i].StartsWith("--", StringComparison.Ordinal))
-                continue;
-
-            var key = args[i][2..];
-            var value = i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal) ? args[++i] : "true";
-            map[key] = value;
-        }
-
-        var mode = map.TryGetValue("mode", out var modeStr) && Enum.TryParse<RunMode>(modeStr, true, out var parsedMode)
-            ? parsedMode
-            : RunMode.Local;
-
-        var transport = map.TryGetValue("transport", out var transportStr) && TransportDefaults.TryParseTransport(transportStr, out var parsedTransport)
-            ? parsedTransport
-            : TransportMode.Tcp;
-        var staticEndpointCount = int.Parse(map.GetValueOrDefault("static-endpoints", "1"));
-        if (staticEndpointCount is < 1 or > SharpLinkClusterOptions.MaximumEndpoints)
-            throw new ArgumentOutOfRangeException(nameof(staticEndpointCount));
-        var useStaticEndpoints = map.ContainsKey("static-endpoints");
-        var dynamicEndpointCount = int.Parse(map.GetValueOrDefault("dynamic-endpoints", "1"));
-        if (dynamicEndpointCount is < 1 or > SharpLinkClusterOptions.MaximumEndpoints)
-            throw new ArgumentOutOfRangeException(nameof(dynamicEndpointCount));
-        var useDynamicResolver = map.ContainsKey("dynamic-endpoints");
-        if (useStaticEndpoints && useDynamicResolver)
-            throw new ArgumentException("Static and dynamic endpoint load-test modes are mutually exclusive.");
-        if ((useStaticEndpoints || useDynamicResolver) && (mode != RunMode.Local || transport != TransportMode.Tcp))
-        {
-            throw new ArgumentException(
-                "Endpoint topology load tests currently support only --mode local --transport tcp.");
-        }
-        var staticLoadBalancingStrategy = map.GetValueOrDefault("load-balancing", "p2c").ToLowerInvariant() switch
-        {
-            "p2c" => SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
-            "random" => SharpLinkLoadBalancingStrategy.Random,
-            "roundrobin" => SharpLinkLoadBalancingStrategy.RoundRobin,
-            "leastpending" => SharpLinkLoadBalancingStrategy.LeastPending,
-            _ => throw new ArgumentException("Unsupported static load-balancing strategy.")
-        };
-
-        var concurrencyNum = map.TryGetValue("concurrency", out var concurrencyStr)
-            ? concurrencyStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(int.Parse)
-                .Where(v => v > 0)
-                .Distinct()
-                .OrderBy(v => v)
-                .ToArray()
-            : [1, 2, 4, 8, 16, 32];
-
-        var operation = map.GetValueOrDefault("operation", "add").ToLowerInvariant();
-        if (operation is not ("empty" or "add" or "echo" or "oneway" or "yield" or "delay" or "hold"))
-            throw new ArgumentException(
-                $"Unsupported operation: {operation}. Supported: empty, add, echo, oneway, yield, delay, hold.");
-
-        var profileText = map.GetValueOrDefault("profile", "balanced");
-        var profile = profileText.ToLowerInvariant() switch
-        {
-            "balanced" => SharpLinkPerformanceProfile.Balanced,
-            "lowlatency" => SharpLinkPerformanceProfile.LowLatency,
-            "throughput" => SharpLinkPerformanceProfile.Throughput,
-            _ => throw new ArgumentException($"Unsupported performance profile: {profileText}.")
-        };
-        var requestTimeoutMode = map.GetValueOrDefault(
-            "request-timeout",
-            operation == "hold" ? "disabled" : "default").ToLowerInvariant();
-        if (requestTimeoutMode is not ("default" or "disabled" or "1ms" or "10ms" or "100ms"))
-            throw new ArgumentException($"Unsupported request timeout mode: {requestTimeoutMode}.");
-        var admissionMode = map.GetValueOrDefault("admission", "disabled").ToLowerInvariant();
-        if (admissionMode is not ("disabled" or "immediate" or "queue" or "reject"))
-            throw new ArgumentException($"Unsupported admission mode: {admissionMode}.");
-        var compressionAlgorithm = map.GetValueOrDefault("compression", "none").ToLowerInvariant();
-        if (compressionAlgorithm is not ("none" or "brotli"))
-            throw new ArgumentException($"Unsupported compression algorithm: {compressionAlgorithm}.");
-        var compressionLevel = map.GetValueOrDefault("compression-level", "fastest").ToLowerInvariant();
-        if (compressionLevel is not ("fastest" or "optimal" or "smallest" or "nocompression"))
-            throw new ArgumentException($"Unsupported compression level: {compressionLevel}.");
-        var compressionMinimumPayloadBytes = int.Parse(
-            map.GetValueOrDefault("compression-min-payload", "1024"),
-            CultureInfo.InvariantCulture);
-        var compressionMinimumSavingsBytes = int.Parse(
-            map.GetValueOrDefault("compression-min-savings-bytes", "64"),
-            CultureInfo.InvariantCulture);
-        var compressionMinimumSavingsRatio = double.Parse(
-            map.GetValueOrDefault("compression-min-savings-ratio", "0.05"),
-            CultureInfo.InvariantCulture);
-        var compressionValidation = new SharpLinkCompressionOptions
-        {
-            MinimumPayloadBytes = compressionMinimumPayloadBytes,
-            MinimumSavingsBytes = compressionMinimumSavingsBytes,
-            MinimumSavingsRatio = compressionMinimumSavingsRatio
-        };
-        compressionValidation.Validate();
-        var maxSendQueueBytes = ParseOptionalInt(map, "max-send-queue-bytes");
-        if (maxSendQueueBytes is <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maxSendQueueBytes));
-        var payloadPattern = map.GetValueOrDefault("payload-pattern", "compressible").ToLowerInvariant();
-        if (payloadPattern is not ("compressible" or "random"))
-            throw new ArgumentException($"Unsupported payload pattern: {payloadPattern}.");
-
-        var minConnections = int.Parse(map.GetValueOrDefault("min-connections", "1"));
-        var maxConnections = int.Parse(map.GetValueOrDefault("max-connections", "1"));
-        var connectionPool = new SharpLinkConnectionPoolOptions
-        {
-            MinConnections = minConnections,
-            MaxConnections = maxConnections
-        };
-        connectionPool.Validate();
-        if (transport == TransportMode.AnonymousPipe && maxConnections != 1)
-            throw new ArgumentException("Anonymous-pipe load tests require --max-connections 1.");
-
-        var clientCount = int.Parse(map.GetValueOrDefault("client-count", operation == "hold" ? "4" : "1"));
-        if (clientCount is < 1 or > 1024)
-            throw new ArgumentOutOfRangeException(nameof(clientCount));
-        var concurrencyPerClient = int.Parse(map.GetValueOrDefault("concurrency-per-client", "1024"));
-        if (concurrencyPerClient is < 1 or > SharpLinkProtocolOptions.MaximumPendingRequestsPerConnection)
-            throw new ArgumentOutOfRangeException(nameof(concurrencyPerClient));
-        var holdDurationSeconds = int.Parse(map.GetValueOrDefault("hold-duration", "30"));
-        if (holdDurationSeconds is < 1 or > 3600)
-            throw new ArgumentOutOfRangeException(nameof(holdDurationSeconds));
-        var maxConcurrentCallsPerConnection = int.Parse(
-            map.GetValueOrDefault("max-concurrent-calls-per-connection", "1024"));
-        var maxConcurrentCallsPerServer = int.Parse(
-            map.GetValueOrDefault(
-                "max-concurrent-calls-per-server",
-                SharpLinkFlowControlOptions.DefaultMaxConcurrentCallsPerServer.ToString(CultureInfo.InvariantCulture)));
-        var maxPendingRequestsPerConnection = int.Parse(
-            map.GetValueOrDefault("max-pending-requests-per-connection", "65536"));
-        new SharpLinkFlowControlOptions
-        {
-            MaxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection,
-            MaxConcurrentCallsPerServer = maxConcurrentCallsPerServer
-        }.Validate();
-        new SharpLinkProtocolOptions
-        {
-            MaxPendingRequestsPerConnection = maxPendingRequestsPerConnection
-        }.Validate();
-        if (operation == "hold")
-        {
-            if (transport == TransportMode.AnonymousPipe)
-                throw new ArgumentException("The hold operation requires a transport that supports independent clients.");
-            if (minConnections != 1 || maxConnections != 1)
-                throw new ArgumentException("The hold operation requires exactly one connection per client so pooled routing cannot mask call capacity.");
-            if (useStaticEndpoints || useDynamicResolver)
-                throw new ArgumentException("The hold operation measures one server instance and cannot use endpoint-topology mode.");
-            if (admissionMode != "disabled")
-                throw new ArgumentException("The hold operation requires --admission disabled so admission limits do not mask call capacity.");
-            if (requestTimeoutMode != "disabled")
-                throw new ArgumentException("The hold operation requires --request-timeout disabled so client deadlines cannot expire before gate release.");
-            var attemptedCalls = checked(clientCount * concurrencyPerClient);
-            if (attemptedCalls > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerServer)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(concurrencyPerClient),
-                    $"The hold operation supports at most {SharpLinkFlowControlOptions.MaximumConcurrentCallsPerServer} attempted calls per run.");
-            }
-        }
-        var sharedMemoryCapacity = ParseOptionalInt(map, "shm-capacity");
-        var sharedMemorySpinCount = ParseOptionalInt(map, "shm-spin-count");
-        if (transport == TransportMode.SharedMemory)
-        {
-            new SharedMemoryTransportOptions
-            {
-                CapacityPerDirectionBytes = sharedMemoryCapacity,
-                SpinCount = sharedMemorySpinCount
-            }.Validate();
-        }
-
-        return new LoadTestOptions
-        {
-            Mode = mode,
-            Transport = transport,
-            Host = map.GetValueOrDefault("host", "127.0.0.1"),
-            BindIp = map.GetValueOrDefault("bind-ip", "0.0.0.0"),
-            Port = int.Parse(map.GetValueOrDefault("port", "19100")),
-            UdsPath = map.GetValueOrDefault("uds-path", TransportDefaults.GetDefaultUdsPath("sharplink-loadtest")),
-            PipeName = map.GetValueOrDefault("pipe-name", TransportDefaults.GetDefaultPipeName("sharplink-loadtest")),
-            SharedMemoryName = map.GetValueOrDefault("shm-name", TransportDefaults.GetDefaultSharedMemoryName("sharplink-loadtest")),
-            SharedMemoryCapacity = sharedMemoryCapacity,
-            SharedMemorySpinCount = sharedMemorySpinCount,
-            DetailedSharedMemoryEvidence = map.TryGetValue("detailed-shm-evidence", out var detailedEvidence) &&
-                                           bool.Parse(detailedEvidence),
-            DurationSeconds = int.Parse(map.GetValueOrDefault("duration", "20")),
-            WarmupSeconds = int.Parse(map.GetValueOrDefault("warmup", "5")),
-            ConcurrencyConfig = concurrencyNum.Length == 0 ? [1] : concurrencyNum,
-            Operation = operation,
-            PayloadSize = int.Parse(map.GetValueOrDefault("payload-size", "64")),
-            MetricsPort = int.Parse(map.GetValueOrDefault("metrics-port", "9464")),
-            HeartbeatIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-interval", "10")),
-            HeartbeatCheckIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-check-interval", "10")),
-            HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
-            MinConnections = minConnections,
-            MaxConnections = maxConnections,
-            ClientCount = clientCount,
-            ConcurrencyPerClient = concurrencyPerClient,
-            HoldDurationSeconds = holdDurationSeconds,
-            MaxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection,
-            MaxConcurrentCallsPerServer = maxConcurrentCallsPerServer,
-            MaxPendingRequestsPerConnection = maxPendingRequestsPerConnection,
-            UseStaticEndpoints = useStaticEndpoints,
-            StaticEndpointCount = staticEndpointCount,
-            UseDynamicResolver = useDynamicResolver,
-            DynamicEndpointCount = dynamicEndpointCount,
-            StaticLoadBalancingStrategy = staticLoadBalancingStrategy,
-            PerformanceProfile = profile,
-            RequestTimeoutMode = requestTimeoutMode,
-            AdmissionMode = admissionMode,
-            CompressionAlgorithm = compressionAlgorithm,
-            CompressionLevel = compressionLevel,
-            CompressionMinimumPayloadBytes = compressionMinimumPayloadBytes,
-            CompressionMinimumSavingsBytes = compressionMinimumSavingsBytes,
-            CompressionMinimumSavingsRatio = compressionMinimumSavingsRatio,
-            MaxSendQueueBytes = maxSendQueueBytes,
-            PayloadPattern = payloadPattern,
-            JsonOutputPath = map.GetValueOrDefault("json-output")
-        };
-    }
-
-    private static int? ParseOptionalInt(Dictionary<string, string> map, string key)
-        => map.TryGetValue(key, out var value) ? int.Parse(value) : null;
-
-}
-
-public sealed record StageResult(
-    string Operation,
-    int Concurrency,
-    long Success,
-    long Failure,
-    long SendQueueBackpressureRetries,
-    double Qps,
-    double OneWayPayloadMegabytesPerSecond,
-    double RoundTripPayloadMegabytesPerSecond,
-    double P50Us,
-    double P95Us,
-    double P99Us,
-    double P999Us,
-    double AvgUs,
-    double MinUs,
-    double MaxUs,
-    double ElapsedSeconds,
-    double ErrorRatePercent,
-    string TopFailures,
-    PerformanceStageEvidence Evidence);
-
-public sealed record RealtimeResult(
-    string Operation,
-    int Concurrency,
-    double Qps,
-    double P50Us,
-    double P95Us,
-    double P99Us,
-    double P999Us);
-
-[JsonSourceGenerationOptions(
-    WriteIndented = true,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-[JsonSerializable(typeof(PerformanceReport<LoadTestOptions, StageResult>))]
-[JsonSerializable(typeof(PerformanceReport<LoadTestOptions, HoldCapacityResult>))]
-internal sealed partial class LoadTestJsonContext : JsonSerializerContext;
-
-internal sealed class LatencyHistogram
-{
-    private const int DefaultBucketCount = 2_000_000;
-    private readonly long[] _buckets;
-    private long _count;
-    private long _sumUs;
-    private long _minUs = long.MaxValue;
-    private long _maxUs;
-
-    public LatencyHistogram(int bucketCount = DefaultBucketCount)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bucketCount);
-
-        _buckets = new long[bucketCount];
-    }
-
-    public void Record(double microseconds)
-    {
-        var us = (long)Math.Max(0, Math.Round(microseconds));
-        var bucket = (int)Math.Clamp(us, 0, _buckets.Length - 1);
-        Interlocked.Increment(ref _buckets[bucket]);
-        Interlocked.Increment(ref _count);
-        Interlocked.Add(ref _sumUs, us);
-        UpdateMin(us);
-        UpdateMax(us);
-    }
-
-    public double Percentile(double p)
-    {
-        var count = Interlocked.Read(ref _count);
-        if (count <= 0)
-            return 0;
-
-        var target = (long)Math.Ceiling(count * (p / 100.0));
-        long running = 0;
-        for (var i = 0; i < _buckets.Length; i++)
-        {
-            running += Interlocked.Read(ref _buckets[i]);
-            if (running >= target)
-                return i;
-        }
-
-        return _buckets.Length - 1;
-    }
-
-    public double Average
-    {
-        get
-        {
-            var count = Interlocked.Read(ref _count);
-            if (count <= 0)
-                return 0;
-            return Interlocked.Read(ref _sumUs) / (double)count;
-        }
-    }
-
-    public double Min
-    {
-        get
-        {
-            var value = Interlocked.Read(ref _minUs);
-            return value == long.MaxValue ? 0 : value;
-        }
-    }
-
-    public double Max => Interlocked.Read(ref _maxUs);
-
-    private void UpdateMin(long value)
-    {
-        while (true)
-        {
-            var old = Interlocked.Read(ref _minUs);
-            if (value >= old)
-                return;
-            if (Interlocked.CompareExchange(ref _minUs, value, old) == old)
-                return;
-        }
-    }
-
-    private void UpdateMax(long value)
-    {
-        while (true)
-        {
-            var old = Interlocked.Read(ref _maxUs);
-            if (value <= old)
-                return;
-            if (Interlocked.CompareExchange(ref _maxUs, value, old) == old)
-                return;
-        }
-    }
-}
-
-internal sealed class FailureRecorder
-{
-    private readonly ConcurrentDictionary<string, long> _counts = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, string> _firstDetails = new(StringComparer.Ordinal);
-
-    public void Record(Exception ex)
-    {
-        var key = ex is SharpLinkException sharpLink
-            ? $"{nameof(SharpLinkException)}[{sharpLink.Code}]"
-            : ex.GetType().Name;
-        _counts.AddOrUpdate(key, 1, static (_, old) => old + 1);
-        if (_firstDetails.TryAdd(key, ex.ToString()))
-            Console.Error.WriteLine($"[FailureDetail:{key}] {ex}");
-    }
-
-    public string Top(int count)
-    {
-        if (_counts.IsEmpty)
-            return string.Empty;
-
-        return string.Join(", ", _counts
-            .OrderByDescending(x => x.Value)
-            .Take(count)
-            .Select(x => $"{x.Key}:{x.Value}"));
-    }
-}
-
-internal sealed class MetricsRegistry
-{
-    private readonly ConcurrentDictionary<int, StageResult> _stageByConcurrency = new();
-    private readonly ConcurrentDictionary<int, RealtimeResult> _realtimeByConcurrency = new();
-    private long _totalSuccess;
-    private long _totalFailure;
-    private long _totalSendQueueBackpressureRetries;
-
-    public void UpdateStage(StageResult result)
-    {
-        _stageByConcurrency[result.Concurrency] = result;
-        Interlocked.Add(ref _totalSuccess, result.Success);
-        Interlocked.Add(ref _totalFailure, result.Failure);
-        Interlocked.Add(ref _totalSendQueueBackpressureRetries, result.SendQueueBackpressureRetries);
-    }
-
-    public void UpdateRealtime(RealtimeResult result)
-    {
-        _realtimeByConcurrency[result.Concurrency] = result;
-    }
-
-    public string RenderPrometheus()
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("# TYPE sharplink_load_test_total_success counter");
-        sb.AppendLine($"sharplink_load_test_total_success {Interlocked.Read(ref _totalSuccess)}");
-        sb.AppendLine("# TYPE sharplink_load_test_total_failure counter");
-        sb.AppendLine($"sharplink_load_test_total_failure {Interlocked.Read(ref _totalFailure)}");
-        sb.AppendLine("# TYPE sharplink_load_test_total_send_queue_backpressure_retries counter");
-        sb.AppendLine(
-            $"sharplink_load_test_total_send_queue_backpressure_retries {Interlocked.Read(ref _totalSendQueueBackpressureRetries)}");
-        sb.AppendLine("# TYPE sharplink_load_test_stage_qps gauge");
-        sb.AppendLine("# TYPE sharplink_load_test_stage_error_rate_percent gauge");
-        sb.AppendLine("# TYPE sharplink_load_test_stage_latency_us gauge");
-        foreach (var (concurrency, result) in _stageByConcurrency.OrderBy(x => x.Key))
-        {
-            sb.AppendLine($"sharplink_load_test_stage_qps{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\"}} {result.Qps:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_error_rate_percent{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\"}} {result.ErrorRatePercent:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.50\"}} {result.P50Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.95\"}} {result.P95Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.99\"}} {result.P99Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.999\"}} {result.P999Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"avg\"}} {result.AvgUs:F2}");
-        }
-
-        sb.AppendLine("# TYPE sharplink_load_test_realtime_qps gauge");
-        sb.AppendLine("# TYPE sharplink_load_test_realtime_latency_us gauge");
-        foreach (var (concurrency, result) in _realtimeByConcurrency.OrderBy(x => x.Key))
-        {
-            sb.AppendLine($"sharplink_load_test_realtime_qps{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\"}} {result.Qps:F2}");
-            sb.AppendLine($"sharplink_load_test_realtime_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.50\"}} {result.P50Us:F2}");
-            sb.AppendLine($"sharplink_load_test_realtime_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.95\"}} {result.P95Us:F2}");
-            sb.AppendLine($"sharplink_load_test_realtime_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.99\"}} {result.P99Us:F2}");
-            sb.AppendLine($"sharplink_load_test_realtime_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.999\"}} {result.P999Us:F2}");
-        }
-
-        return sb.ToString();
-    }
-}
-
-internal sealed class MetricsServer : IDisposable
-{
-    private readonly CancellationTokenSource _cts = new();
-    private readonly Task _loop;
-    private readonly HttpListener _listener;
-    private readonly MetricsRegistry _registry;
-
-    public MetricsServer(int port, MetricsRegistry registry)
-    {
-        _registry = registry;
-        _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://+:{port}/metrics/");
-        _listener.Start();
-        _loop = Task.Run(LoopAsync);
-        Console.WriteLine($"[Metrics] http://localhost:{port}/metrics");
-    }
-
-    private async Task LoopAsync()
-    {
-        while (!_cts.Token.IsCancellationRequested)
-        {
-            HttpListenerContext ctx;
-            try
-            {
-                ctx = await _listener.GetContextAsync();
-            }
-            catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
-            {
-                break;
-            }
-
-            var body = _registry.RenderPrometheus();
-            var bytes = Encoding.UTF8.GetBytes(body);
-            ctx.Response.ContentType = "text/plain; version=0.0.4";
-            ctx.Response.ContentLength64 = bytes.Length;
-            await ctx.Response.OutputStream.WriteAsync(bytes);
-            ctx.Response.OutputStream.Close();
-        }
-    }
-
-    public void Dispose()
-    {
-        _cts.Cancel();
-        _listener.Stop();
-        _listener.Close();
-        try
-        {
-            _loop.Wait(TimeSpan.FromSeconds(1));
-        }
-        catch (AggregateException ex) when (IsIgnorable(ex))
-        {
-        }
-
-        _cts.Dispose();
-    }
-
-    private static bool IsIgnorable(AggregateException ex)
-        => ex.Flatten().InnerExceptions.All(e => e is OperationCanceledException or ObjectDisposedException or HttpListenerException);
-}
-
-[RpcContract]
-public interface ILoadTestService : IService
-{
-    [NonCancellable]
-    ValueTask PingAsync();
-    [NonCancellable]
-    ValueTask<int> AddAsync(int left, int right);
-    [NonCancellable]
-    ValueTask<string> EchoAsync(string value);
-    [NonCancellable]
-    ValueTask<int> YieldAsync(int left, int right);
-    [NonCancellable]
-    ValueTask<int> DelayAsync(int left, int right);
-    [Oneway]
-    [NonCancellable]
-    ValueTask NotifyAsync(int left, int right);
-    [NonCancellable]
-    ValueTask<int> ResetHoldProbeAsync();
-    [NonCancellable]
-    ValueTask HoldAsync(int generation, int expectedAcceptedCalls, int holdDurationMilliseconds);
-    [NonCancellable]
-    ValueTask<int> GetHoldActiveCallsAsync();
-    [NonCancellable]
-    ValueTask<int> GetHoldPeakActiveCallsAsync();
-    [NonCancellable]
-    ValueTask<string> GetSessionIdAsync();
-}
-
-[RpcService]
-public class LoadTestService : ILoadTestService
-{
-    private readonly HoldCapacityProbe _holdProbe = new();
-
-    public ValueTask PingAsync() => ValueTask.CompletedTask;
-    public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
-    public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
-
-    public async ValueTask<int> YieldAsync(int left, int right)
-    {
-        await Task.Yield();
-        return left + right;
-    }
-
-    public async ValueTask<int> DelayAsync(int left, int right)
-    {
-        await Task.Delay(TimeSpan.FromMilliseconds(1)).ConfigureAwait(false);
-        return left + right;
-    }
-
-    public ValueTask NotifyAsync(int left, int right) => ValueTask.CompletedTask;
-
-    public ValueTask<int> ResetHoldProbeAsync() => ValueTask.FromResult(_holdProbe.Reset());
-
-    public ValueTask HoldAsync(int generation, int expectedAcceptedCalls, int holdDurationMilliseconds)
-        => _holdProbe.HoldAsync(generation, expectedAcceptedCalls, holdDurationMilliseconds);
-
-    public ValueTask<int> GetHoldActiveCallsAsync()
-        => ValueTask.FromResult(_holdProbe.ActiveCalls);
-
-    public ValueTask<int> GetHoldPeakActiveCallsAsync()
-        => ValueTask.FromResult(_holdProbe.PeakActiveCalls);
-
-    public ValueTask<string> GetSessionIdAsync()
-        => ValueTask.FromResult(
-            SharpLinkCallContext.Current?.SessionId ??
-            throw new InvalidOperationException("The current RPC call has no server session identity."));
 }

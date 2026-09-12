@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpLink.Runtime;
 
 /// <summary>Parses bounded SharpLink Protocol v2 frames.</summary>
@@ -6,7 +8,7 @@ public static class ProtocolV2FrameParser
     private const ProtocolV2FrameFlags KnownFlags =
         ProtocolV2FrameFlags.Error |
         ProtocolV2FrameFlags.Truncated |
-        ProtocolV2FrameFlags.HasDeadline |
+        ProtocolV2FrameFlags.HasTimeBudget |
         ProtocolV2FrameFlags.HasMetadata |
         ProtocolV2FrameFlags.Compressed |
         ProtocolV2FrameFlags.Cancellable |
@@ -21,36 +23,86 @@ public static class ProtocolV2FrameParser
         out ReadOnlySequence<byte> payload)
     {
         ArgumentNullException.ThrowIfNull(limits);
+        return TryReadFrameCore(
+            ref buffer,
+            limits,
+            limits.MaxFramePayloadBytes,
+            negotiatedLimit: false,
+            out header,
+            out payload);
+    }
+
+    internal static bool TryReadFrame(
+        ref ReadOnlySequence<byte> buffer,
+        SharpLinkProtocolOptions limits,
+        int maxFramePayloadBytes,
+        out ProtocolV2FrameHeader header,
+        out ReadOnlySequence<byte> payload)
+        => TryReadFrameCore(
+            ref buffer,
+            limits,
+            maxFramePayloadBytes,
+            negotiatedLimit: true,
+            out header,
+            out payload);
+
+    private static bool TryReadFrameCore(
+        ref ReadOnlySequence<byte> buffer,
+        SharpLinkProtocolOptions limits,
+        int maxFramePayloadBytes,
+        bool negotiatedLimit,
+        out ProtocolV2FrameHeader header,
+        out ReadOnlySequence<byte> payload)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        Debug.Assert(maxFramePayloadBytes > 0);
+        Debug.Assert(maxFramePayloadBytes <= limits.MaxFramePayloadBytes);
         header = default;
         payload = default;
         if (buffer.Length < ProtocolV2Constants.HeaderBytes)
             return false;
 
-        var reader = new SequenceReader<byte>(buffer);
-        if (!reader.TryRead(out var magic))
-            return false;
+        byte magic, typeRaw, flagsRaw;
+        int payloadLength;
+        long requestIdBits;
+        var first = buffer.FirstSpan;
+        if (first.Length >= ProtocolV2Constants.HeaderBytes)
+        {
+            // Only the fixed header must be contiguous; payload may cross segments.
+            magic = first[0];
+            payloadLength = BinaryPrimitives.ReadInt32LittleEndian(first[1..5]);
+            typeRaw = first[5];
+            flagsRaw = first[6];
+            requestIdBits = BinaryPrimitives.ReadInt64LittleEndian(first[7..15]);
+        }
+        else
+        {
+            var reader = new SequenceReader<byte>(buffer);
+            if (!reader.TryRead(out magic) ||
+                !reader.TryReadLittleEndian(out payloadLength) ||
+                !reader.TryRead(out typeRaw) || !reader.TryRead(out flagsRaw) ||
+                !reader.TryReadLittleEndian(out requestIdBits))
+            {
+                return false;
+            }
+        }
+
         if (magic != ProtocolV2Constants.Magic)
-            throw Violation(CreateInvalidMagicMessage(buffer, magic));
-        if (!reader.TryReadLittleEndian(out int payloadLength))
-            return false;
+            throw Violation(ProtocolViolationReason.InvalidMagic, CreateInvalidMagicMessage(buffer, magic));
         if (payloadLength < 0)
             throw Violation("Frame payload length cannot be negative.");
-        if (payloadLength > limits.MaxFramePayloadBytes)
+        if (payloadLength > maxFramePayloadBytes)
         {
+            var limitKind = negotiatedLimit ? "negotiated" : "configured";
             throw Violation(
-                $"Frame payload length {payloadLength} exceeds the configured maximum of {limits.MaxFramePayloadBytes} bytes.");
-        }
-        if (!reader.TryRead(out var typeRaw) || !reader.TryRead(out var flagsRaw) ||
-            !reader.TryReadLittleEndian(out long requestIdBits))
-        {
-            return false;
+                $"Frame payload length {payloadLength} exceeds the {limitKind} maximum of {maxFramePayloadBytes} bytes.");
         }
 
         var type = ParseType(typeRaw);
         var flags = ParseFlags(flagsRaw);
         var requestId = unchecked((ulong)requestIdBits);
         ValidateHeader(type, flags, requestId);
-        if (reader.Remaining < payloadLength)
+        if (buffer.Length - ProtocolV2Constants.HeaderBytes < payloadLength)
             return false;
 
         payload = buffer.Slice(ProtocolV2Constants.HeaderBytes, payloadLength);
@@ -75,6 +127,10 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.GoAway => ProtocolV2FrameType.GoAway,
         (byte)ProtocolV2FrameType.HealthCheck => ProtocolV2FrameType.HealthCheck,
         (byte)ProtocolV2FrameType.HealthResponse => ProtocolV2FrameType.HealthResponse,
+        (byte)ProtocolV2FrameType.ContractManifest => ProtocolV2FrameType.ContractManifest,
+        (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
+        (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
+        (byte)ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameType.SessionRefreshRequested,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -95,7 +151,11 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.HandshakeResponse or
             ProtocolV2FrameType.Ping or
             ProtocolV2FrameType.Pong or
-            ProtocolV2FrameType.GoAway;
+            ProtocolV2FrameType.GoAway or
+            ProtocolV2FrameType.ContractManifest or
+            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck or
+            ProtocolV2FrameType.SessionRefreshRequested;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
         if (!controlFrame && requestId == 0)
@@ -107,7 +167,7 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.HandshakeResponse => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             ProtocolV2FrameType.Ping => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.Pong => ProtocolV2FrameFlags.None,
-            ProtocolV2FrameType.Request => ProtocolV2FrameFlags.HasDeadline |
+            ProtocolV2FrameType.Request => ProtocolV2FrameFlags.HasTimeBudget |
                                            ProtocolV2FrameFlags.HasMetadata |
                                            ProtocolV2FrameFlags.Compressed |
                                            ProtocolV2FrameFlags.Cancellable |
@@ -123,6 +183,10 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.GoAway => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             ProtocolV2FrameType.HealthCheck => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.HealthResponse => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameFlags.None,
             _ => ProtocolV2FrameFlags.None
         };
         if ((flags & ~allowed) != 0)
@@ -151,8 +215,8 @@ public static class ProtocolV2FrameParser
         switch (type)
         {
             case ProtocolV2FrameType.HandshakeRequest:
-                if (payload.Length < 32 || payload.Length >
-                    36L + limits.MaxMetadataBytes +
+                if (payload.Length < 41 || payload.Length >
+                    45L + limits.MaxMetadataBytes +
                     SharpLinkCompressionOptions.MaxProviders * (1 + SharpLinkCompressionProfile.MaxAsciiBytes))
                     throw Violation("HandshakeRequest payload has an invalid bounded length.");
                 break;
@@ -231,6 +295,18 @@ public static class ProtocolV2FrameParser
                     throw Violation($"Unknown health status {status}.");
                 }
                 break;
+            case ProtocolV2FrameType.ContractManifest:
+                ProtocolV2ContractManifestCodec.ValidatePayloadShape(payload, limits);
+                break;
+            case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
+                _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
+                break;
+            case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
+                _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload);
+                break;
+            case ProtocolV2FrameType.SessionRefreshRequested:
+                _ = ProtocolV2PayloadCodec.ReadSessionRefreshRequested(payload);
+                break;
         }
     }
 
@@ -241,12 +317,20 @@ public static class ProtocolV2FrameParser
     {
         if (payload.Length < ProtocolV2Constants.RequestPrefixBytes)
             throw Violation("Request payload is shorter than its routing prefix.");
-        var reader = new SequenceReader<byte>(payload);
-        reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
-        if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0 && !reader.TryReadLittleEndian(out long _))
-            throw Violation("Request deadline field is truncated.");
+        var prefixBytes = ProtocolV2Constants.RequestPrefixBytes;
+        if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
+        {
+            prefixBytes += sizeof(long);
+            if (payload.Length < prefixBytes)
+                throw Violation("Request deadline field is truncated.");
+        }
         if ((flags & ProtocolV2FrameFlags.HasMetadata) == 0)
             return;
+
+        // Fixed routing and time-budget fields need availability checks only.
+        // Construct a reader only when a variable-length metadata field is present.
+        var reader = new SequenceReader<byte>(payload);
+        reader.Advance(prefixBytes);
         if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var metadataLength))
             throw Violation("Request metadata length is truncated or invalid.");
         if (metadataLength > maxMetadataBytes)
@@ -256,18 +340,32 @@ public static class ProtocolV2FrameParser
     }
 
     internal static SharpLinkException Violation(string message)
-        => new(SharpLinkErrorCode.ProtocolViolation, message);
+        => new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, message);
+
+    internal static SharpLinkException Violation(ProtocolViolationReason reason, string message)
+        => new SharpLinkProtocolViolationException(reason, message);
 
     private static string CreateInvalidMagicMessage(ReadOnlySequence<byte> buffer, byte actualMagic)
     {
-        // This path is terminal for the connection. Preserve a small bounded prefix so a
-        // long-running failure report can distinguish a bad writer from parser misalignment
-        // without adding allocations or validation to healthy frames.
+        // Security: hostile input must never be echoed into this terminal diagnostic. Only the
+        // fixed-cardinality magic byte and the buffer length are reported; no prefix, payload,
+        // hex, or hash of the network bytes is captured. Debug builds additionally trace a
+        // bounded hex prefix to the debugger output so a long-running failure report can still
+        // distinguish a bad writer from parser misalignment without touching the exception
+        // message or any production log.
+        var message = $"Invalid Protocol v2 frame magic 0x{actualMagic:X2}; remaining={buffer.Length}.";
+        DebugTraceInvalidMagicPrefix(buffer, actualMagic);
+        return message;
+    }
+
+    [Conditional("DEBUG")]
+    private static void DebugTraceInvalidMagicPrefix(ReadOnlySequence<byte> buffer, byte actualMagic)
+    {
         var prefixLength = (int)Math.Min(buffer.Length, 32);
         Span<byte> prefix = stackalloc byte[prefixLength];
         buffer.Slice(0, prefixLength).CopyTo(prefix);
-        return $"Invalid Protocol v2 frame magic 0x{actualMagic:X2}; " +
-               $"remaining={buffer.Length}, prefix={Convert.ToHexString(prefix)}.";
+        Debug.WriteLine(
+            $"Invalid Protocol v2 frame magic 0x{actualMagic:X2} prefix={Convert.ToHexString(prefix)}.");
     }
 }
 
@@ -283,7 +381,7 @@ internal static class ProtocolV2FrameWriter
     {
         ArgumentNullException.ThrowIfNull(writer);
         var start = writer.WrittenCount;
-        var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes);
+        var span = writer.GetSpan(ProtocolV2Constants.HeaderBytes)[..ProtocolV2Constants.HeaderBytes];
         span.Clear();
         span[0] = ProtocolV2Constants.Magic;
         span[5] = (byte)type;

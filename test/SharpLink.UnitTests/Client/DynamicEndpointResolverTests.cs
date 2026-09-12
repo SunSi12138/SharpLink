@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using SharpLink.Client;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -239,10 +240,56 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public async Task DelegateResolverPollingShouldUseTheBoundProviderBoundaryAndCleanUpOnStop()
+    {
+        var provider = new ManualTimeProvider();
+        var resolveCount = 0;
+        var resolver = new DelegateSharpLinkEndpointResolver(
+            _ =>
+            {
+                var version = Interlocked.Increment(ref resolveCount);
+                return ValueTask.FromResult(new SharpLinkEndpointSnapshot(version, []));
+            },
+            TimeSpan.FromSeconds(5));
+        var providerAware = (ISharpLinkRuntimeTimeProviderAwareResolver)resolver;
+        providerAware.BindTimeProvider(provider);
+        var duplicateBind = CaptureFailure(() => providerAware.BindTimeProvider(provider));
+        using var stop = new CancellationTokenSource();
+        await using var watch = resolver.WatchAsync(stop.Token).GetAsyncEnumerator(stop.Token);
+        var firstPoll = watch.MoveNextAsync().AsTask();
+
+        Ensure(duplicateBind is InvalidOperationException,
+            "a built-in resolver must bind to exactly one client TimeProvider");
+        Ensure(provider.ActiveTimerCount == 1 && resolveCount == 0,
+            "polling must arm one provider timer without resolving immediately");
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!firstPoll.IsCompleted && resolveCount == 0,
+            "delegate polling must remain pending one provider tick before its interval");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        Ensure(await firstPoll && resolveCount == 1 && watch.Current.Version == 1,
+            "delegate polling must resolve exactly once at provider equality");
+
+        var stoppedPoll = watch.MoveNextAsync().AsTask();
+        Ensure(provider.ActiveTimerCount == 1,
+            "the next polling interval must own one provider timer");
+        stop.Cancel();
+        var stopped = await CaptureFailureAsync(stoppedPoll);
+        await resolver.DisposeAsync();
+
+        Ensure(stopped is OperationCanceledException,
+            "client stop cancellation must terminate provider-backed delegate polling");
+        Ensure(resolveCount == 1 && provider.ActiveTimerCount == 0,
+            "stopping polling must not resolve again or leak its provider timer");
+    }
+
+    [Test]
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();
-        await using (var client = SharpClientBuilder.Create()
+        await using (var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                         .DisableRequestTimeout()
                          .UseEndpointResolver(resolver, _ => new TrackingFactory())
                          .Build())
         {
@@ -251,7 +298,8 @@ public sealed class DynamicEndpointResolverTests
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                .DisableRequestTimeout()
                 .UseTransport(new TrackingFactory())
                 .UseEndpointResolver(new TrackingResolver(), _ => new TrackingFactory())
                 .Build();
@@ -263,7 +311,8 @@ public sealed class DynamicEndpointResolverTests
     public async Task DynamicBuilderShouldCapMinReadyByMaxEndpoints()
     {
         var resolver = new TrackingResolver();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => new TrackingFactory())
             .UseCluster(options =>
             {
@@ -286,7 +335,8 @@ public sealed class DynamicEndpointResolverTests
                 Address = new SharpLinkAnonymousPipeAddress("in-handle", "out-handle")
             }
         ]));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
             .UseEndpointResolver(resolver, _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
             .Build();
 
@@ -298,7 +348,8 @@ public sealed class DynamicEndpointResolverTests
         catch (SharpLinkException exception)
         {
             Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "dynamic cluster rejection code");
-            Ensure(exception.InnerException is InvalidOperationException {
+            Ensure(exception.InnerException is InvalidOperationException
+            {
                 Message: "The endpoint resolver returned an invalid initial topology."
             }, "dynamic cluster must reject the anonymous-pipe factory before attempting a connection");
         }
@@ -308,7 +359,8 @@ public sealed class DynamicEndpointResolverTests
     public async Task RetriedResolverFailureShouldNotBeAnUnhandledBackgroundError()
     {
         var loggerFactory = new CaptureLoggerFactory();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout()
             .UseLoggerFactory(loggerFactory)
             .UseEndpointResolver(new FailingWatchResolver(), _ => new TrackingFactory())
             .Build();
@@ -324,8 +376,11 @@ public sealed class DynamicEndpointResolverTests
         Ensure(!loggerFactory.HasEntry(static entry => entry.Level == LogLevel.Error),
             "a resolver failure owned by the retry worker must not be reported as unhandled");
         Ensure(loggerFactory.HasEntry(static entry =>
-                entry is { Level: LogLevel.Warning, EventId.Id: 6102,
-                    Exception: InvalidOperationException { Message: "watch failed" } }),
+                entry is
+                {
+                    Level: LogLevel.Warning, EventId.Id: 6102,
+                    Exception: InvalidOperationException { Message: "watch failed" }
+                }),
             "the retried resolver failure should remain observable through its warning event");
     }
 
@@ -346,6 +401,19 @@ public sealed class DynamicEndpointResolverTests
         try
         {
             await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static Exception? CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
             return null;
         }
         catch (Exception exception)

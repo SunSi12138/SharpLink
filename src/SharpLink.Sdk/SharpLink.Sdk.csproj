@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
-    <ProjectReference Include="..\SharpLink.Runtime\SharpLink.Runtime.csproj" />
+    <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
     <ProjectReference Include="..\SharpLink.Generator\SharpLink.Generator.csproj"
                       Condition="'$(PublishAot)' != 'true'"
                       OutputItemType="Analyzer"

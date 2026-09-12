@@ -1,13 +1,13 @@
 # 发布流程
 
-本文定义 SharpLink `1.0` 及后续版本的正式发布门禁。发布对象必须是一个已提交、工作区干净且可由标签唯一定位的精确提交；RC 性能数字不能来自标签前后的近似版本。
+本文定义 SharpLink `2.0` 及后续版本的正式发布门禁。发布对象必须是一个已提交、工作区干净且可由标签唯一定位的精确提交；RC 性能数字不能来自标签前后的近似版本。
 
 ## 版本与兼容性
 
 - NuGet 包版本由 `VersionPrefix` 和可选的 `VersionSuffix` 组成。稳定版不设置后缀；预发布版本可使用例如 `rc7` 的后缀。
 - `AssemblyVersion` 与 `FileVersion` 始终使用四段纯数字；预发布后缀只进入包版本和 `InformationalVersion`。
 - 冻结前更新 `CHANGELOG.md`、包引用示例和迁移说明。公开 API、Protocol v2、生成代码、契约 Manifest 或默认行为的变化必须明确标注兼容性。
-- `1.0.0` 发布后保留其公开 API 包作为后续 `PackageValidationBaselineVersion`；不在补丁版本中进行破坏性 API 或 wire 变更。
+- `2.0.0` 发布后保留其公开 API 包作为后续 `PackageValidationBaselineVersion`；不在补丁版本中进行破坏性 API 或 wire 变更。
 
 ## 本地冻结门禁
 
@@ -15,16 +15,16 @@
 
 1. 强制还原并执行非增量 Release 构建，要求零警告、零错误。
 2. 执行 Generator、Unit、Integration 全套测试；Integration 必须覆盖真实传输、TLS/mTLS、认证授权、取消、deadline、流式背压、接入控制、优雅排空和故障恢复。
-3. 打包全部七个 NuGet 包并确认：版本一致、依赖版本正确、仓库提交正确、主程序集具有 XML 文档、符号包具有 portable PDB、SDK 包具有 Generator。
+3. 打包全部八个 NuGet 包并确认：版本一致、依赖版本正确、仓库提交正确、主程序集具有 XML 文档、符号包具有 portable PDB、SDK 包具有 Generator。
 4. 使用空 NuGet 缓存执行 `SharpLink.PackageSmoke`，避免项目引用或开发机缓存掩盖缺包。
 5. 在支持的平台执行独立进程 SharedMemory NativeAOT smoke；其余平台由 Release Gate 矩阵完成。
-6. 执行 24 小时 release soak。任何非注入错误、崩溃、恢复超时或结束后资源未归零均阻断发布。
+6. 在 GitHub Actions 上启动 5 小时 release soak（TCP / SharedMemory 并行）；本地不运行长稳。2.0.0 发布负责人批准长稳与其余验证并行：启动后继续完成其他门禁，全部其他验证完成即可发布，不以等待 5 小时结束为前置条件。发布时必须明确记录该运行的 SHA、链接和当前状态；已经观察到的非注入错误、崩溃、恢复超时或资源泄漏仍须先处理。运行结束后补齐结果，不能把运行中写成通过。
 7. 在同一精确提交执行 [最终性能矩阵](performance.md)，保存原始 JSON 和环境快照，只把可复现汇总写入仓库。
 8. 执行传递依赖漏洞和弃用扫描；高危漏洞或运行时可达的中危漏洞必须在发布前解决。
 
 ## GitHub 门禁
 
-日常功能通过 PR 合并到 `dev`。正式候选以 `dev → main` Release PR 收口；该 PR 自动运行 PR Quick、三平台 Release Gate、NativeAOT、包安装和 Chaos。合并后若 SHA 变化，必须在最终 `main` 提交手工重跑 Release Gate，构建、包和性能证据不能沿用不同 SHA 的 PR head 结果。
+日常功能通过 PR 合并到 `dev`。正式候选以 `dev → main` Release PR 收口；该 PR 自动运行三平台 Release Gate、NativeAOT、包安装和 Chaos。合并后若 SHA 变化，必须在最终 `main` 提交手工重跑 Release Gate，构建、包和性能证据不能沿用不同 SHA 的 PR head 结果。
 
 创建标签前确认：
 
@@ -34,14 +34,14 @@
 - NuGet.org Trusted Publishing 已为仓库、`release-gate.yml` workflow 和 `release` 发布环境配置；
 - Release notes 与 `CHANGELOG.md` 一致，预发布标记正确。
 
-标签采用 `v<package-version>`。标签和 GitHub Release 必须在所有门禁通过后创建，不使用标签来试跑尚未确认的候选代码。
+标签采用 `v<package-version>`。标签和 GitHub Release 必须在所有必需门禁通过后创建（2.0.0 的 5 小时异步长稳按上述明确例外处理），不使用标签来试跑尚未确认的候选代码。
 
 ## 首次 Trusted Publishing 配置
 
 这一步由仓库和 NuGet.org 管理员在首次发布前完成一次，不能由本地提交代替：
 
 1. 在 GitHub 仓库 `Settings → Environments` 创建 `release` Environment；建议配置 Required reviewers，并添加环境 secret `NUGET_USER`，值为 NuGet.org profile username（不是邮箱，也不是 API key）。
-2. 在 [NuGet.org Trusted Publishing](https://www.nuget.org/account/trustedpublishing) 创建 policy：Repository Owner=`SunSi12138`、Repository=`SharpLink`、Workflow File=`release-gate.yml`、Environment=`release`。Policy 的个人或组织所有权必须与七个 SharpLink 包的实际 NuGet.org owner 一致。
+2. 在 [NuGet.org Trusted Publishing](https://www.nuget.org/account/trustedpublishing) 创建 policy：Repository Owner=`SunSi12138`、Repository=`SharpLink`、Workflow File=`release-gate.yml`、Environment=`release`。Policy 的个人或组织所有权必须与八个 SharpLink 包的实际 NuGet.org owner 一致。
 3. 启用 GitHub Private vulnerability reporting、Dependabot alerts 与 dependency graph；首次合并 CodeQL workflow 后确认 Security 页面产生 C# 分析结果。把 `release-gate.yml` 设为标签发布前的必需检查。私有仓库的新 policy 需在其临时有效期内完成第一次成功发布。
 4. 在首次正式标签前先用本地 `dotnet pack Sharplink.slnx -c Release -o artifacts/nuget` 和 `./eng/verify-packages.sh artifacts/nuget` 检查包；只有 policy 与 Environment 都就绪后才推送发布标签。
 

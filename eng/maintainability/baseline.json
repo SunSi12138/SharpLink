@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "sourceRef": "d23304028cb133ebcede9323e5859cc88bde1901",
+  "rules": {
+    "source": {
+      "maxFileLoc": 800
+    },
+    "test": {
+      "maxFileLoc": 1000
+    }
+  },
+  "allowances": [
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+      "maxLoc": 1930,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs",
+      "maxLoc": 1638,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs",
+      "maxLoc": 1450,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpLinkClient.StaticCluster.cs",
+      "maxLoc": 850,
+      "reason": "Issue #592 keeps reconnect scheduling inside StaticClusterRuntime's existing single-gate topology/lifecycle owner; a mechanical partial split would fragment that lock invariant. Broader Client topology decomposition remains tracked by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/PendingRequestTable.cs",
+      "maxLoc": 1305,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/StreamManager.cs",
+      "maxLoc": 1347,
+      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs",
+      "maxLoc": 1193,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/Admission/AdmissionStateKernel.cs",
+      "maxLoc": 1160,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/Transport/SharedMemoryPipelines.cs",
+      "maxLoc": 1142,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpLinkClient.Invokers.cs",
+      "maxLoc": 1100,
+      "reason": "Issue #282 adds the reviewed terminal call-control telemetry invocation seam; existing invoker decomposition debt remains tracked by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Client/SharpClientBuilder.cs",
+      "maxLoc": 1060,
+      "reason": "Issue #282 adds the explicit request-timeout policy API and the reviewed order-independent MultiCluster inheritance helper; existing builder decomposition debt remains tracked by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/StreamFlowController.cs",
+      "maxLoc": 958,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/SharpLinkServerBuilder.cs",
+      "maxLoc": 829,
+      "reason": "Existing dev debt captured by issue #350."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
+      "maxLoc": 835,
+      "reason": "Issue #640 keeps inline compressed decode, retained-owner disposal, decode-permit completion, and envelope rebind ordering in the existing admission-dispatch owner; splitting this safety-critical lifecycle sequence solely to recover 21 LOC would fragment one resource-release invariant. Broader Server dispatch decomposition remains tracked by issue #350."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs",
+      "maxLoc": 2155,
+      "reason": "KEEP for issue #529: this [NotInParallel(\"dispatcher-pool\")] fixture is the single owner of shared pooled-dispatcher static state, pool clear/retention/collectibility assertions, and race cleanup; splitting it would fragment one isolation invariant without creating an independent behavior boundary."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.Benchmarks/SendPumpIsolationEvidenceRunner.cs",
+      "maxLoc": 1318,
+      "reason": "KEEP for issue #529: this evidence runner is one measurement protocol whose scenario family shares frame-tag identity, capacity/queue/copy/batch/transport timing boundaries, ProbeRecorder, modeled PipeWriter transport, and one ScenarioResult JSON schema; splitting it would make the evidence contract harder to audit."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.IntegrationTests/InterceptorIntegrationTests.cs",
+      "maxLoc": 1289,
+      "reason": "KEEP for issue #529: this end-to-end interceptor fixture shares one client/server harness, contract/service, invocation status and exception state, continuation rules, and call-shape support; separating it by side would duplicate setup and obscure paired lifecycle assertions."
+    },
+    {
+      "domain": "test",
+      "path": "test/SharpLink.Benchmarks/ConnectionAdmissionEvidenceRunner.cs",
+      "maxLoc": 1006,
+      "reason": "KEEP for issue #529: this 1006-line runner is one connection-resource-envelope protocol over a shared gauge/process-sample model and one output document across TCP/TLS/auth/ready scenarios; a six-line threshold split would be mechanical and would fragment evidence review."
+    }
+  ]
+}

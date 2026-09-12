@@ -29,6 +29,17 @@ public sealed class SharpLinkTokenBucketLimitOptions
     }
 }
 
+/// <summary>Controls when a runtime FixedWindow update becomes active.</summary>
+public enum SharpLinkFixedWindowUpdateActivation
+{
+    /// <summary>Applies a same-active-Window limit change immediately; otherwise defers the complete target to the next window.</summary>
+    Automatic,
+    /// <summary>Applies the new PermitLimit when the update is published. The Window must already be active and no Window change may be pending.</summary>
+    Immediate,
+    /// <summary>Applies the complete PermitLimit and Window target at the next natural active-window boundary.</summary>
+    NextWindow
+}
+
 /// <summary>Configures a fixed-window request-rate limit.</summary>
 public sealed class SharpLinkFixedWindowLimitOptions
 {
@@ -37,11 +48,21 @@ public sealed class SharpLinkFixedWindowLimitOptions
     /// <summary>Gets or sets the fixed window duration, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromSeconds(1);
 
+    /// <summary>Gets or sets when this target becomes active during a runtime FixedWindow update.</summary>
+    /// <remarks>
+    /// <see cref="SharpLinkFixedWindowUpdateActivation.Automatic"/> applies a limit-only update immediately
+    /// when the configured <see cref="Window"/> is already active and no Window activation is pending;
+    /// otherwise the complete target activates at the next natural window boundary.
+    /// </remarks>
+    public SharpLinkFixedWindowUpdateActivation UpdateActivation { get; set; }
+
     internal void Validate()
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(PermitLimit);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(Window, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(Window, SharpLinkTimer.MaximumDelay);
+        if (!Enum.IsDefined(UpdateActivation))
+            throw new ArgumentOutOfRangeException(nameof(UpdateActivation));
     }
 }
 
@@ -109,7 +130,7 @@ public class SharpLinkAdmissionRuleOptions
 
     internal bool HasLimit => Concurrency is not null || RateLimit is not null;
 
-    private protected void CopyLimitsTo(SharpLinkAdmissionRuleOptions destination)
+    internal void CopyLimitsTo(SharpLinkAdmissionRuleOptions destination)
     {
         destination.Concurrency = Concurrency is null
             ? null
@@ -125,7 +146,8 @@ public class SharpLinkAdmissionRuleOptions
             SharpLinkFixedWindowLimitOptions source => new SharpLinkFixedWindowLimitOptions
             {
                 PermitLimit = source.PermitLimit,
-                Window = source.Window
+                Window = source.Window,
+                UpdateActivation = source.UpdateActivation
             },
             SharpLinkSlidingWindowLimitOptions source => new SharpLinkSlidingWindowLimitOptions
             {
@@ -152,6 +174,14 @@ public class SharpLinkAdmissionRuleOptions
                 slidingWindow.Validate();
                 break;
         }
+    }
+
+    internal SharpLinkAdmissionRuleOptions CloneRuleValidated()
+    {
+        Validate();
+        var clone = new SharpLinkAdmissionRuleOptions();
+        CopyLimitsTo(clone);
+        return clone;
     }
 
     private SharpLinkAdmissionRuleOptions SetRateLimit<T>(Action<T> configure, Func<T> factory)
@@ -207,8 +237,7 @@ public sealed class SharpLinkAdmissionContext
         RpcMethodKind methodKind,
         string connectionId,
         SharpLinkAuthenticationContext? authenticationContext,
-        SharpLinkMetadata? metadata,
-        DateTimeOffset? deadline)
+        SharpLinkMetadata? metadata)
     {
         ContractId = contractId;
         MethodId = methodId;
@@ -216,7 +245,6 @@ public sealed class SharpLinkAdmissionContext
         ConnectionId = connectionId;
         AuthenticationContext = authenticationContext;
         Metadata = metadata;
-        Deadline = deadline;
     }
 
     /// <summary>Gets the stable generated contract ID.</summary>
@@ -231,8 +259,6 @@ public sealed class SharpLinkAdmissionContext
     public SharpLinkAuthenticationContext? AuthenticationContext { get; }
     /// <summary>Gets request metadata, or <see langword="null"/> when absent.</summary>
     public SharpLinkMetadata? Metadata { get; }
-    /// <summary>Gets the absolute request deadline, when present.</summary>
-    public DateTimeOffset? Deadline { get; }
 }
 
 /// <summary>Configures optional active admission control for one SharpLink server.</summary>
@@ -367,6 +393,32 @@ public sealed class SharpLinkAdmissionControlOptions
     internal IReadOnlyList<AdmissionRuleRegistration> Rules => _rules;
     internal Func<SharpLinkAdmissionContext, string?>? PartitionSelector => _partitionSelector;
     internal SharpLinkPartitionAdmissionOptions? Partition => _partition;
+
+    /// <summary>Validates and deep-copies every mutable admission option for one build plan.</summary>
+    internal SharpLinkAdmissionControlOptions CloneValidated()
+    {
+        Validate();
+        var clone = new SharpLinkAdmissionControlOptions
+        {
+            MaxQueuedCalls = MaxQueuedCalls,
+            MaxQueuedBytes = MaxQueuedBytes,
+            MaxQueueDelay = MaxQueueDelay,
+            QueueOneWayCalls = QueueOneWayCalls,
+            _partitionSelector = _partitionSelector,
+            _partition = _partition?.CloneValidated()
+        };
+        Global.CopyLimitsTo(clone.Global);
+        foreach (var registration in _rules)
+        {
+            clone._rules.Add(new AdmissionRuleRegistration(
+                registration.ContractType,
+                registration.ContractId,
+                registration.MethodName,
+                registration.MethodId,
+                registration.Rule.CloneRuleValidated()));
+        }
+        return clone;
+    }
 
     private SharpLinkAdmissionControlOptions AddRule(AdmissionRuleRegistration registration)
     {

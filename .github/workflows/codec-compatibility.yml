@@ -1,0 +1,429 @@
+name: Codec Compatibility
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      browser_evidence:
+        description: Run Browser/WASM and Browser-to-desktop compatibility evidence
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      browser_evidence:
+        description: Run Browser/WASM and Browser-to-desktop compatibility evidence
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  produce:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            os: ubuntu-24.04
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: windows-x64
+            os: windows-latest
+          - id: windows-arm64
+            os: windows-11-arm
+          - id: macos-arm64
+            os: macos-14
+          - id: macos-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Produce codec corpus
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- produce
+          --output artifacts/codec-compat/corpus
+
+      - name: Upload codec corpus
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-corpus-${{ matrix.id }}
+          path: artifacts/codec-compat/corpus
+          if-no-files-found: error
+          retention-days: 30
+
+  browser-produce:
+    if: inputs.browser_evidence
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Publish browser probe
+        run: >-
+          dotnet publish -c Release
+          test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
+          -o artifacts/codec-compat/browser-publish
+
+      - name: Produce browser WASM corpus
+        shell: bash
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/run-browser.mjs
+          produce
+          artifacts/codec-compat/browser-publish
+          artifacts/codec-compat/browser-corpus
+          "$SHARPLINK_COMMIT"
+          "$SHARPLINK_SDK_VERSION"
+
+      - name: Upload browser WASM corpus
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-evidence-corpus-browser-wasm
+          path: artifacts/codec-compat/browser-corpus
+          if-no-files-found: error
+          retention-days: 30
+
+  verify:
+    needs: produce
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            os: ubuntu-24.04
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: windows-x64
+            os: windows-latest
+          - id: windows-arm64
+            os: windows-11-arm
+          - id: macos-arm64
+            os: macos-14
+          - id: macos-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download desktop producer corpora
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-corpus-*
+          path: artifacts/codec-compat/producers
+          merge-multiple: false
+
+      - name: Cross-verify all desktop producer corpora
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- verify
+          --input artifacts/codec-compat/producers
+          --output artifacts/codec-compat/verification.json
+
+      - name: Upload verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-verification-${{ matrix.id }}
+          path: |
+            artifacts/codec-compat/verification.json
+            artifacts/codec-compat/verification-progress.log
+          if-no-files-found: error
+          retention-days: 30
+
+  browser-verify:
+    if: inputs.browser_evidence
+    continue-on-error: true
+    needs: [produce, browser-produce]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download desktop producer corpora
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-corpus-*
+          path: artifacts/codec-compat/producers
+          merge-multiple: false
+
+      - name: Download browser producer corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-evidence-corpus-browser-wasm
+          path: artifacts/codec-compat/producers/codec-evidence-corpus-browser-wasm
+
+      - name: Publish browser probe
+        run: >-
+          dotnet publish -c Release
+          test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
+          -o artifacts/codec-compat/browser-publish
+
+      - name: Cross-verify safe fixtures in browser WASM
+        shell: bash
+        env:
+          SHARPLINK_SKIP_BUILTIN_RAW: '1'
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/run-browser.mjs
+          verify
+          artifacts/codec-compat/browser-publish
+          artifacts/codec-compat/producers
+          artifacts/codec-compat/browser-verification/verification.json
+          "$SHARPLINK_COMMIT"
+          "$SHARPLINK_SDK_VERSION"
+
+      - name: Append framework raw-layout evidence
+        shell: bash
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs
+          append-raw
+          artifacts/codec-compat/browser-verification/verification.json
+          artifacts/codec-compat/producers
+          artifacts/codec-compat/producers/codec-evidence-corpus-browser-wasm
+
+      - name: Validate browser evidence report
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs
+          check-report
+          artifacts/codec-compat/browser-verification/verification.json
+
+      - name: Upload browser WASM verification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-evidence-verification-browser-wasm
+          path: artifacts/codec-compat/browser-verification/verification.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  browser-desktop-verify:
+    if: inputs.browser_evidence
+    continue-on-error: true
+    needs: [produce, browser-produce]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            os: ubuntu-24.04
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: windows-x64
+            os: windows-latest
+          - id: windows-arm64
+            os: windows-11-arm
+          - id: macos-arm64
+            os: macos-14
+          - id: macos-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download browser producer corpus
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-evidence-corpus-browser-wasm
+          path: artifacts/codec-compat/browser-producer
+
+      - name: Download matching desktop corpus for raw-layout reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-corpus-${{ matrix.id }}
+          path: artifacts/codec-compat/local-desktop-corpus
+
+      - name: Pin .NET SDK to matching desktop producer
+        shell: bash
+        run: |
+          sdk_version="$(node -p "JSON.parse(require('fs').readFileSync('artifacts/codec-compat/local-desktop-corpus/manifest.json','utf8')).sdkVersion")"
+          if [[ -z "$sdk_version" || "$sdk_version" == "unknown" ]]; then
+            echo "::error::Matching desktop corpus has no usable sdkVersion."
+            exit 1
+          fi
+          echo "SHARPLINK_EXPECTED_SDK_VERSION=$sdk_version" >> "$GITHUB_ENV"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('global.json','utf8')); p.sdk.version=process.argv[1]; p.sdk.rollForward='disable'; fs.writeFileSync('global.json', JSON.stringify(p,null,2)+'\\n');" "$sdk_version"
+
+      - name: Setup matching .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Verify and record matching SDK version
+        shell: bash
+        run: |
+          actual_sdk_version="$(dotnet --version)"
+          if [[ "$actual_sdk_version" != "$SHARPLINK_EXPECTED_SDK_VERSION" ]]; then
+            echo "::error::Expected SDK $SHARPLINK_EXPECTED_SDK_VERSION from matching desktop corpus, got $actual_sdk_version."
+            exit 1
+          fi
+          echo "SHARPLINK_SDK_VERSION=$actual_sdk_version" >> "$GITHUB_ENV"
+
+      - name: Cross-verify safe Browser producer fixtures on desktop
+        env:
+          SHARPLINK_SKIP_BUILTIN_RAW: '1'
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- verify
+          --input artifacts/codec-compat/browser-producer
+          --output artifacts/codec-compat/browser-to-desktop/verification.json
+
+      - name: Append Browser framework raw-layout evidence on desktop
+        shell: bash
+        run: |
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            append-raw artifacts/codec-compat/browser-to-desktop/verification.json \
+            artifacts/codec-compat/browser-producer artifacts/codec-compat/local-desktop-corpus
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs \
+            check-report artifacts/codec-compat/browser-to-desktop/verification.json
+
+      - name: Upload Browser-to-desktop verification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-evidence-verification-browser-to-${{ matrix.id }}
+          path: |
+            artifacts/codec-compat/browser-to-desktop/verification.json
+            artifacts/codec-compat/browser-to-desktop/verification-progress.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  browser-evidence:
+    continue-on-error: true
+    needs: [browser-verify, browser-desktop-verify]
+    if: ${{ inputs.browser_evidence && always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download Browser consumer evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codec-evidence-verification-browser-wasm
+          path: artifacts/codec-compat/browser-forward
+
+      - name: Download Browser-to-desktop evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-evidence-verification-browser-to-*
+          path: artifacts/codec-compat/browser-reverse
+          merge-multiple: false
+
+      - name: Gate bidirectional Browser evidence
+        run: >-
+          node test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs
+          check-browser-evidence
+          artifacts/codec-compat/browser-forward/verification.json
+          artifacts/codec-compat/browser-reverse
+
+  summary:
+    needs: verify
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download desktop verification reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-verification-*
+          path: artifacts/codec-compat/verifications
+          merge-multiple: false
+
+      - name: Require every desktop consumer report
+        shell: bash
+        run: |
+          count="$(find artifacts/codec-compat/verifications -name verification.json -type f | wc -l | tr -d ' ')"
+          if [[ "$count" != "6" ]]; then
+            echo "::error::Expected 6 desktop consumer reports, found $count."
+            exit 1
+          fi
+
+      - name: Aggregate desktop compatibility matrix
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- summarize
+          --input artifacts/codec-compat/verifications
+          --output artifacts/codec-compat/summary
+          --profile desktop
+
+      - name: Upload compatibility summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-compatibility-summary
+          path: artifacts/codec-compat/summary
+          if-no-files-found: warn
+          retention-days: 30

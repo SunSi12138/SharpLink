@@ -3,17 +3,14 @@ using System.Text;
 namespace SharpLink.Runtime;
 
 /// <summary>Encodes and decodes Protocol v2 control and error payloads.</summary>
-public static class ProtocolV2PayloadCodec
+public static partial class ProtocolV2PayloadCodec
 {
-    private const ProtocolV2Capabilities KnownCapabilities =
-        ProtocolV2Capabilities.Metadata |
-        ProtocolV2Capabilities.Compression |
-        ProtocolV2Capabilities.FlowControl |
-        ProtocolV2Capabilities.HealthCheck |
-        ProtocolV2Capabilities.CancellationReason;
+    private const ProtocolV2Capabilities RecognizedCapabilities =
+        RpcSessionProtocolRules.RecognizedCapabilities;
     private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int HandshakeRequestFixedBytes =
-        sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+        sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) +
+        sizeof(ulong) + sizeof(byte);
     private const int HandshakeResponseBytes =
         sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
 
@@ -47,6 +44,8 @@ public static class ProtocolV2PayloadCodec
         WriteInt32(writer, request.MaxFramePayloadBytes);
         WriteInt32(writer, request.StreamReceiveWindowBytes);
         WriteInt32(writer, request.ConnectionReceiveWindowBytes);
+        WriteUInt64(writer, request.ResponseCompressionPreferenceGeneration);
+        WriteByte(writer, request.AllowResponseCompression ? (byte)1 : (byte)0);
         WriteCompressionProfiles(writer, request.CompressionProfiles.Span);
         WriteVarUInt32(writer, checked((uint)request.AuthenticationPayload.Length));
         writer.Write(request.AuthenticationPayload.Span);
@@ -66,10 +65,14 @@ public static class ProtocolV2PayloadCodec
             !reader.TryReadLittleEndian(out long requiredBits) ||
             !reader.TryReadLittleEndian(out int maxFrame) ||
             !reader.TryReadLittleEndian(out int streamWindow) ||
-            !reader.TryReadLittleEndian(out int connectionWindow))
+            !reader.TryReadLittleEndian(out int connectionWindow) ||
+            !reader.TryReadLittleEndian(out long responsePreferenceGenerationBits) ||
+            !reader.TryRead(out var allowResponseCompressionRaw))
         {
             throw ProtocolV2FrameParser.Violation("HandshakeRequest payload is truncated.");
         }
+        if (allowResponseCompressionRaw > 1)
+            throw ProtocolV2FrameParser.Violation("Handshake response-compression preference is invalid.");
         var compressionProfiles = ReadCompressionProfiles(ref reader);
         if (!TryReadVarUInt32(ref reader, out var authLength))
             throw ProtocolV2FrameParser.Violation("Handshake authentication payload length is truncated.");
@@ -97,7 +100,9 @@ public static class ProtocolV2PayloadCodec
             streamWindow,
             connectionWindow,
             auth,
-            compressionProfiles);
+            compressionProfiles,
+            unchecked((ulong)responsePreferenceGenerationBits),
+            allowResponseCompressionRaw != 0);
     }
 
     /// <summary>Writes a negotiated handshake response payload.</summary>
@@ -106,7 +111,7 @@ public static class ProtocolV2PayloadCodec
         in ProtocolV2HandshakeResponse response)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        ValidateKnownCapabilities(response.NegotiatedCapabilities, nameof(response));
+        ValidateRecognizedCapabilities(response.NegotiatedCapabilities, nameof(response));
         ValidateOutboundCompressionSelection(response);
         ValidateLocalLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes);
@@ -151,7 +156,7 @@ public static class ProtocolV2PayloadCodec
         var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
         ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
         var negotiatedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits);
-        if ((negotiatedCapabilities & ~KnownCapabilities) != 0)
+        if ((negotiatedCapabilities & ~RecognizedCapabilities) != 0)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse negotiated unknown capabilities.");
         var response = new ProtocolV2HandshakeResponse(
             unchecked((ushort)minorBits),
@@ -164,11 +169,11 @@ public static class ProtocolV2PayloadCodec
         return response;
     }
 
-    private static void ValidateKnownCapabilities(
+    private static void ValidateRecognizedCapabilities(
         ProtocolV2Capabilities capabilities,
         string parameterName)
     {
-        if ((capabilities & ~KnownCapabilities) != 0)
+        if ((capabilities & ~RecognizedCapabilities) != 0)
             throw new ArgumentOutOfRangeException(parameterName, "Handshake capabilities contain unknown bits.");
     }
 
@@ -362,10 +367,26 @@ public static class ProtocolV2PayloadCodec
         return new SharpLinkHealthCheckResult(status);
     }
 
+    /// <summary>Writes an error payload without a finer-grained detail code.</summary>
+    public static void WriteError(
+        IBufferWriter<byte> writer,
+        SharpLinkErrorCode code,
+        string? message,
+        int maxMessageBytes,
+        out bool truncated)
+        => WriteError(
+            writer,
+            code,
+            SharpLinkErrorDetails.Unspecified,
+            message,
+            maxMessageBytes,
+            out truncated);
+
     /// <summary>Writes a binary error payload and reports whether the UTF-8 message was truncated.</summary>
     public static void WriteError(
         IBufferWriter<byte> writer,
         SharpLinkErrorCode code,
+        ushort detailCode,
         string? message,
         int maxMessageBytes,
         out bool truncated)
@@ -385,6 +406,7 @@ public static class ProtocolV2PayloadCodec
         }
 
         WriteUInt16(writer, checked((ushort)code));
+        WriteUInt16(writer, detailCode);
         WriteVarUInt32(writer, checked((uint)byteCount));
         if (byteCount == 0)
             return;
@@ -401,8 +423,12 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out short codeBits) || !TryReadVarUInt32(ref reader, out var messageLength))
+        if (!reader.TryReadLittleEndian(out short codeBits) ||
+            !reader.TryReadLittleEndian(out short detailBits) ||
+            !TryReadVarUInt32(ref reader, out var messageLength))
+        {
             throw ProtocolV2FrameParser.Violation("Binary error payload is truncated.");
+        }
         if (messageLength > maxMessageBytes)
             throw ProtocolV2FrameParser.Violation($"Error message exceeds {maxMessageBytes} bytes.");
         if (reader.Remaining != messageLength)
@@ -411,10 +437,15 @@ public static class ProtocolV2PayloadCodec
         var code = (SharpLinkErrorCode)unchecked((ushort)codeBits);
         if (!IsDefinedErrorCode(code))
             throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
+        var detailCode = unchecked((ushort)detailBits);
         var message = messageLength == 0
             ? string.Empty
             : DecodeStrictUtf8(reader.Sequence.Slice(reader.Position, messageLength), "Binary error message");
-        return new ProtocolV2Error(code, message, (flags & ProtocolV2FrameFlags.Truncated) != 0);
+        return new ProtocolV2Error(
+            code,
+            detailCode,
+            message,
+            (flags & ProtocolV2FrameFlags.Truncated) != 0);
     }
 
     internal static void ValidateErrorPayload(ReadOnlySequence<byte> payload, int maxMessageBytes)
@@ -422,6 +453,7 @@ public static class ProtocolV2PayloadCodec
         ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short codeBits) ||
+            !reader.TryReadLittleEndian(out short _) ||
             !TryReadVarUInt32(ref reader, out var messageLength))
         {
             throw ProtocolV2FrameParser.Violation("Binary error payload is truncated.");
@@ -522,10 +554,7 @@ public static class ProtocolV2PayloadCodec
         }
         catch (DecoderFallbackException exception)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"{field} is not valid UTF-8.",
-                exception);
+            throw Violation($"{field} is not valid UTF-8.", exception);
         }
     }
 
@@ -533,6 +562,12 @@ public static class ProtocolV2PayloadCodec
     {
         try
         {
+            if (bytes.IsSingleSegment)
+            {
+                // Strict validation without a stateful Decoder or temporary chars.
+                _ = SStrictUtf8.GetCharCount(bytes.FirstSpan);
+                return;
+            }
             var decoder = SStrictUtf8.GetDecoder();
             Span<char> characters = stackalloc char[256];
             foreach (var segment in bytes)
@@ -560,10 +595,7 @@ public static class ProtocolV2PayloadCodec
         }
         catch (DecoderFallbackException exception)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"{field} is not valid UTF-8.",
-                exception);
+            throw Violation($"{field} is not valid UTF-8.", exception);
         }
     }
 
@@ -581,12 +613,19 @@ public static class ProtocolV2PayloadCodec
     private static void WriteUtf8(IBufferWriter<byte> writer, string value)
     {
         var byteCount = SStrictUtf8.GetByteCount(value);
-        WriteVarUInt32(writer, checked((uint)byteCount));
-        if (byteCount == 0)
-            return;
-        var destination = writer.GetSpan(byteCount);
-        var written = SStrictUtf8.GetBytes(value.AsSpan(), destination);
-        writer.Advance(written);
+        var prefixBytes = GetVarUInt32Length(checked((uint)byteCount));
+        var destination = writer.GetSpan(checked(prefixBytes + byteCount));
+        var remaining = (uint)byteCount;
+        var offset = 0;
+        while (remaining >= 0x80)
+        {
+            destination[offset++] = (byte)(remaining | 0x80);
+            remaining >>= 7;
+        }
+        destination[offset++] = (byte)remaining;
+        if (byteCount != 0)
+            offset += SStrictUtf8.GetBytes(value.AsSpan(), destination[offset..]);
+        writer.Advance(offset);
     }
 
     private static string ReadUtf8(ref SequenceReader<byte> reader, string field)
@@ -600,16 +639,15 @@ public static class ProtocolV2PayloadCodec
         {
             var value = length == 0
                 ? string.Empty
-                : SStrictUtf8.GetString(reader.Sequence.Slice(reader.Position, length));
+                : length <= reader.UnreadSpan.Length
+                    ? SStrictUtf8.GetString(reader.UnreadSpan[..length])
+                    : SStrictUtf8.GetString(reader.Sequence.Slice(reader.Position, length));
             reader.Advance(length);
             return value;
         }
         catch (DecoderFallbackException exception)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"Request metadata {field} is not valid UTF-8.",
-                exception);
+            throw Violation($"Request metadata {field} is not valid UTF-8.", exception);
         }
     }
 
@@ -682,6 +720,12 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation($"Unknown Cancel reason {(byte)reason}.");
         }
     }
+
+    private static SharpLinkException Violation(string message, Exception? innerException = null)
+        => new SharpLinkProtocolViolationException(
+            ProtocolViolationReason.MalformedFrame,
+            message,
+            innerException);
 
     internal static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
     {

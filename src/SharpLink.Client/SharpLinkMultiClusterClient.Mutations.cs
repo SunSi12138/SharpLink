@@ -4,101 +4,229 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkMultiClusterClient
 {
-    async ValueTask ISharpLinkMultiClusterLifecycleControl.AddClusterAsync(
+    ValueTask<SharpLinkClusterAddResult> ISharpLinkMultiClusterLifecycleControl.AddClusterAsync(
         SharpLinkClusterKey cluster,
         SharpClientBuilder builder,
         bool allowDynamicContracts,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
+        => AddClusterCoreAsync(
+            cluster,
+            builder,
+            allowDynamicContracts,
+            cancellationToken,
+            manifestSource,
+            routeSource);
+
+    private async ValueTask<SharpLinkClusterAddResult> AddClusterCoreAsync(
+        SharpLinkClusterKey cluster,
+        SharpClientBuilder builder,
+        bool allowDynamicContracts,
+        CancellationToken cancellationToken,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
     {
         ValidateClusterKey(cluster);
         ArgumentNullException.ThrowIfNull(builder);
-        var started = Stopwatch.GetTimestamp();
+        ArgumentNullException.ThrowIfNull(manifestSource);
+        ArgumentNullException.ThrowIfNull(routeSource);
+        var started = _timeProvider.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         SharpLinkPreparedCluster? candidate = null;
         var published = false;
+        var mutationBegan = false;
         var publishedBudget = 0;
         var failureStage = "state_validation";
         try
         {
             LogMutationStage(_logger, "add", cluster.Value, "started", "pending", 0, 0);
             builder.UseLoggerFactoryIfUnset(_loggerFactory);
+            MutationRejection? rejection = null;
             lock (_gate)
             {
-                var snapshot = BeginSlotMutationLocked();
-                if (snapshot.Clusters.ContainsKey(cluster))
-                    throw new InvalidOperationException($"Cluster '{cluster}' is already configured.");
-                if (snapshot.Clusters.Count >= _options.MaxClusters)
-                    throw new InvalidOperationException($"Configured cluster count would exceed MaxClusters ({_options.MaxClusters}).");
+                if (!TryBeginSlotMutationLocked(
+                        allowRunningConnectivityTransition: true,
+                        out var snapshot,
+                        out var beginRejection))
+                {
+                    rejection = beginRejection;
+                }
+                else
+                {
+                    mutationBegan = true;
+                    if (snapshot.Clusters.ContainsKey(cluster))
+                    {
+                        rejection = Reject(
+                            SharpLinkClusterMutationFailureCode.AlreadyExists,
+                            $"Cluster '{cluster}' is already configured.");
+                    }
+                    else if (snapshot.Clusters.Count >= _options.MaxClusters)
+                    {
+                        rejection = Reject(
+                            SharpLinkClusterMutationFailureCode.CapacityExceeded,
+                            $"Configured cluster count would exceed MaxClusters ({_options.MaxClusters}).");
+                    }
+                }
             }
+            if (rejection is { } initialRejection)
+                return await RejectAddAsync(initialRejection, candidate, failureStage, started).ConfigureAwait(false);
 
             failureStage = "candidate_preparation";
             candidate = SharpLinkMultiClusterClientBuilder.PrepareRuntimeCluster(
                 cluster,
                 builder,
-                allowDynamicContracts);
+                allowDynamicContracts,
+                manifestSource,
+                routeSource);
             failureStage = "budget_preflight";
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var snapshot = GetPublishableSnapshotLocked();
-                if (snapshot.Clusters.ContainsKey(cluster))
-                    throw new InvalidOperationException($"Cluster '{cluster}' was added by another operation.");
-                ValidateSteadyBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
-                ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
-                _ = MergeRoutes(snapshot.Routes, candidate.StaticRoutes);
+                if (!TryGetPublishableSnapshotLocked(
+                        allowRunningConnectivityTransition: true,
+                        out var snapshot,
+                        out var publishRejection))
+                {
+                    rejection = publishRejection;
+                }
+                else if (snapshot.Clusters.ContainsKey(cluster))
+                {
+                    rejection = Reject(
+                        SharpLinkClusterMutationFailureCode.AlreadyExists,
+                        $"Cluster '{cluster}' was added by another operation.");
+                }
+                else if (!TryValidateSteadyBudget(
+                             snapshot.ConfiguredConnectionBudget,
+                             candidate.Slot.ConfiguredConnectionBudget,
+                             out var steadyRejection))
+                {
+                    rejection = steadyRejection;
+                }
+                else if (!TryValidateTransitionBudget(
+                             snapshot.ConfiguredConnectionBudget,
+                             candidate.Slot.ConfiguredConnectionBudget,
+                             out var transitionRejection))
+                {
+                    rejection = transitionRejection;
+                }
+                else if (!TryMergeRoutes(
+                             snapshot.Routes,
+                             candidate.StaticRoutes,
+                             out _,
+                             out var routeRejection))
+                {
+                    rejection = routeRejection;
+                }
             }
-            failureStage = "candidate_connect";
-            var candidateConnected = await ConnectCandidateWhenRequiredAsync(
+            if (rejection is { } preflightRejection)
+                return await RejectAddAsync(preflightRejection, candidate, failureStage, started).ConfigureAwait(false);
+
+            failureStage = "candidate_start";
+            var activation = await StartAddCandidateWhenRequiredAsync(
                 candidate.Slot, cancellationToken).ConfigureAwait(false);
+            if (activation.Rejection is { } activationRejection)
+                return await RejectAddAsync(activationRejection, candidate, failureStage, started).ConfigureAwait(false);
             LogMutationStage(_logger, "add", cluster.Value,
-                candidateConnected ? "candidate_connected" : "candidate_prepared", "success",
+                activation.Activated ? "candidate_started" : "candidate_prepared", "success",
                 candidate.Slot.ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
 
             failureStage = "snapshot_validation";
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>? nextRoutes = null;
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var snapshot = GetPublishableSnapshotLocked();
-                if (snapshot.Clusters.ContainsKey(cluster))
-                    throw new InvalidOperationException($"Cluster '{cluster}' was added by another operation.");
-                ValidateSteadyBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
-                ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
-
-                var nextClusters = snapshot.Clusters.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-                nextClusters.Add(cluster, candidate.Slot);
-                var nextRoutes = MergeRoutes(snapshot.Routes, candidate.StaticRoutes);
-                var nextBudget = checked(snapshot.ConfiguredConnectionBudget + candidate.Slot.ConfiguredConnectionBudget);
-                Volatile.Write(ref _snapshot, new MultiClusterSnapshot(
-                    nextClusters.ToFrozenDictionary(),
-                    nextRoutes,
-                    nextBudget));
-                _slotMutationInProgress = false;
-                published = true;
-                publishedBudget = nextBudget;
+                if (!TryGetPublishableSnapshotLocked(
+                        allowRunningConnectivityTransition: true,
+                        out var snapshot,
+                        out var publishRejection))
+                {
+                    rejection = publishRejection;
+                }
+                else if (snapshot.Clusters.ContainsKey(cluster))
+                {
+                    rejection = Reject(
+                        SharpLinkClusterMutationFailureCode.AlreadyExists,
+                        $"Cluster '{cluster}' was added by another operation.");
+                }
+                else if (!TryValidateSteadyBudget(
+                             snapshot.ConfiguredConnectionBudget,
+                             candidate.Slot.ConfiguredConnectionBudget,
+                             out var steadyRejection))
+                {
+                    rejection = steadyRejection;
+                }
+                else if (!TryValidateTransitionBudget(
+                             snapshot.ConfiguredConnectionBudget,
+                             candidate.Slot.ConfiguredConnectionBudget,
+                             out var transitionRejection))
+                {
+                    rejection = transitionRejection;
+                }
+                else if (!TryMergeRoutes(
+                             snapshot.Routes,
+                             candidate.StaticRoutes,
+                             out nextRoutes,
+                             out var routeRejection))
+                {
+                    rejection = routeRejection;
+                }
+                else
+                {
+                    var nextClusters = snapshot.Clusters.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                    nextClusters.Add(cluster, candidate.Slot);
+                    var nextBudget = checked(snapshot.ConfiguredConnectionBudget + candidate.Slot.ConfiguredConnectionBudget);
+                    Volatile.Write(ref _snapshot, new MultiClusterSnapshot(
+                        nextClusters.ToFrozenDictionary(),
+                        nextRoutes!,
+                        nextBudget));
+                    _slotMutationInProgress = false;
+                    mutationBegan = false;
+                    published = true;
+                    publishedBudget = nextBudget;
+                }
             }
+            if (rejection is { } publicationRejection)
+                return await RejectAddAsync(publicationRejection, candidate, failureStage, started).ConfigureAwait(false);
 
             LogMutationStage(_logger, "add", cluster.Value, "snapshot_published", "success", publishedBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-            RecordMutation("add", "success", Stopwatch.GetElapsedTime(started));
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
+            RecordMutation("add", "success", _timeProvider.GetElapsedTime(started));
+            return SharpLinkClusterAddResult.Success();
         }
         catch (Exception exception)
         {
             LogMutationStage(_logger, "add", cluster.Value, "rollback", "failed", 0,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds, failureStage);
-            RecordMutation("add", "failed", Stopwatch.GetElapsedTime(started));
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds, failureStage);
+            RecordMutation("add", "failed", _timeProvider.GetElapsedTime(started));
             if (candidate is not null && !published)
                 await RethrowAfterCandidateCleanupAsync(exception, candidate.Slot.Client).ConfigureAwait(false);
             throw;
         }
         finally
         {
-            EndSlotMutation();
+            if (mutationBegan)
+                EndSlotMutation();
             _mutationGate.Release();
+        }
+
+        async ValueTask<SharpLinkClusterAddResult> RejectAddAsync(
+            MutationRejection rejected,
+            SharpLinkPreparedCluster? rejectedCandidate,
+            string stage,
+            long operationStarted)
+        {
+            LogMutationStage(_logger, "add", cluster.Value, "rollback", "rejected", 0,
+                _timeProvider.GetElapsedTime(operationStarted).TotalMilliseconds, stage);
+            RecordMutation("add", "rejected", _timeProvider.GetElapsedTime(operationStarted));
+            if (rejectedCandidate is not null)
+                await rejectedCandidate.Slot.Client.StopAsync().ConfigureAwait(false);
+            return SharpLinkClusterAddResult.Failure(rejected.Code, rejected.Message);
         }
     }
 
-    async ValueTask ISharpLinkMultiClusterLifecycleControl.ReplaceClusterAsync(
+    async ValueTask<SharpLinkClusterReplacementResult> ISharpLinkMultiClusterLifecycleControl.ReplaceClusterAsync(
         SharpLinkClusterKey cluster,
         SharpClientBuilder builder,
         TimeSpan gracefulTimeout,
@@ -107,27 +235,48 @@ internal sealed partial class SharpLinkMultiClusterClient
         ValidateClusterKey(cluster);
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        var started = Stopwatch.GetTimestamp();
+        var started = _timeProvider.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         SharpLinkPreparedCluster? candidate = null;
         SharpLinkClusterSlot? existingSlot = null;
         DynamicAssemblyRegistration[] registrations = [];
         var published = false;
+        var mutationBegan = false;
         var publishedBudget = 0;
         var failureStage = "state_validation";
         try
         {
             LogMutationStage(_logger, "replace", cluster.Value, "started", "pending", 0, 0);
             builder.UseLoggerFactoryIfUnset(_loggerFactory);
+            MutationRejection? rejection = null;
             lock (_gate)
             {
-                var snapshot = BeginSlotMutationLocked();
-                if (!snapshot.Clusters.TryGetValue(cluster, out existingSlot))
-                    throw new ArgumentException($"Cluster '{cluster}' is not configured.", nameof(cluster));
-                registrations = _dynamicRegistrations
-                    .Where(registration => ReferenceEquals(registration.Slot, existingSlot))
-                    .ToArray();
+                if (!TryBeginSlotMutationLocked(
+                        allowRunningConnectivityTransition: false,
+                        out var snapshot,
+                        out var beginRejection))
+                {
+                    rejection = beginRejection;
+                }
+                else
+                {
+                    mutationBegan = true;
+                    if (!snapshot.Clusters.TryGetValue(cluster, out existingSlot))
+                    {
+                        rejection = Reject(
+                            SharpLinkClusterMutationFailureCode.NotFound,
+                            $"Cluster '{cluster}' is not configured.");
+                    }
+                    else
+                    {
+                        registrations = _dynamicRegistrations
+                            .Where(registration => ReferenceEquals(registration.Slot, existingSlot))
+                            .ToArray();
+                    }
+                }
             }
+            if (rejection is { } initialRejection)
+                return await RejectReplacementAsync(initialRejection, candidate, failureStage, started).ConfigureAwait(false);
 
             failureStage = "candidate_preparation";
             candidate = SharpLinkMultiClusterClientBuilder.PrepareReplacementCluster(existingSlot!, builder);
@@ -135,9 +284,27 @@ internal sealed partial class SharpLinkMultiClusterClient
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var snapshot = GetPublishableSnapshotLocked();
-                ValidateReplacementBudgetLocked(snapshot, cluster, existingSlot!, candidate.Slot);
+                if (!TryGetPublishableSnapshotLocked(
+                        allowRunningConnectivityTransition: false,
+                        out var snapshot,
+                        out var publishRejection))
+                {
+                    rejection = publishRejection;
+                }
+                else if (!TryValidateReplacementBudgetLocked(
+                             snapshot,
+                             cluster,
+                             existingSlot!,
+                             candidate.Slot,
+                             out _,
+                             out var budgetRejection))
+                {
+                    rejection = budgetRejection;
+                }
             }
+            if (rejection is { } preflightRejection)
+                return await RejectReplacementAsync(preflightRejection, candidate, failureStage, started).ConfigureAwait(false);
+
             failureStage = "assembly_migration";
             foreach (var registration in registrations)
             {
@@ -150,85 +317,121 @@ internal sealed partial class SharpLinkMultiClusterClient
             }
 
             failureStage = "candidate_connect";
-            var candidateConnected = await ConnectCandidateWhenRequiredAsync(
+            var activation = await ConnectReplacementCandidateWhenRequiredAsync(
                 candidate.Slot, cancellationToken).ConfigureAwait(false);
+            if (activation.Rejection is { } activationRejection)
+                return await RejectReplacementAsync(activationRejection, candidate, failureStage, started).ConfigureAwait(false);
             LogMutationStage(_logger, "replace", cluster.Value,
-                candidateConnected ? "candidate_connected" : "candidate_prepared", "success",
+                activation.Activated ? "candidate_connected" : "candidate_prepared", "success",
                 candidate.Slot.ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
 
             failureStage = "snapshot_validation";
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var snapshot = GetPublishableSnapshotLocked();
-                var nextBudget = ValidateReplacementBudgetLocked(
-                    snapshot, cluster, existingSlot!, candidate.Slot);
-
-                var nextClusters = snapshot.Clusters.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-                nextClusters[cluster] = candidate.Slot;
-                var nextRoutes = snapshot.Routes.ToDictionary(static pair => pair.Key, pair =>
-                    ReferenceEquals(pair.Value.Slot, existingSlot)
-                        ? pair.Value with { Slot = candidate.Slot }
-                        : pair.Value);
-                for (var index = 0; index < _dynamicRegistrations.Count; index++)
+                if (!TryGetPublishableSnapshotLocked(
+                        allowRunningConnectivityTransition: false,
+                        out var snapshot,
+                        out var publishRejection))
                 {
-                    var registration = _dynamicRegistrations[index];
-                    if (ReferenceEquals(registration.Slot, existingSlot))
-                    {
-                        _dynamicRegistrations[index] = registration with { Slot = candidate.Slot };
-                    }
+                    rejection = publishRejection;
                 }
+                else if (!TryValidateReplacementBudgetLocked(
+                             snapshot,
+                             cluster,
+                             existingSlot!,
+                             candidate.Slot,
+                             out var nextBudget,
+                             out var budgetRejection))
+                {
+                    rejection = budgetRejection;
+                }
+                else
+                {
+                    var nextClusters = snapshot.Clusters.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                    nextClusters[cluster] = candidate.Slot;
+                    var nextRoutes = snapshot.Routes.ToDictionary(static pair => pair.Key, pair =>
+                        ReferenceEquals(pair.Value.Slot, existingSlot)
+                            ? pair.Value with { Slot = candidate.Slot }
+                            : pair.Value);
+                    for (var index = 0; index < _dynamicRegistrations.Count; index++)
+                    {
+                        var registration = _dynamicRegistrations[index];
+                        if (ReferenceEquals(registration.Slot, existingSlot))
+                            _dynamicRegistrations[index] = registration with { Slot = candidate.Slot };
+                    }
 
-                _transitionConnectionBudget = checked(
-                    _transitionConnectionBudget + existingSlot.ConfiguredConnectionBudget);
-                Volatile.Write(ref _snapshot, new MultiClusterSnapshot(
-                    nextClusters.ToFrozenDictionary(),
-                    nextRoutes.ToFrozenDictionary(),
-                    nextBudget));
-                _slotMutationInProgress = false;
-                published = true;
-                publishedBudget = nextBudget;
+                    _transitionConnectionBudget = checked(
+                        _transitionConnectionBudget + existingSlot!.ConfiguredConnectionBudget);
+                    Volatile.Write(ref _snapshot, new MultiClusterSnapshot(
+                        nextClusters.ToFrozenDictionary(),
+                        nextRoutes.ToFrozenDictionary(),
+                        nextBudget));
+                    _slotMutationInProgress = false;
+                    mutationBegan = false;
+                    published = true;
+                    publishedBudget = nextBudget;
+                }
             }
+            if (rejection is { } publicationRejection)
+                return await RejectReplacementAsync(publicationRejection, candidate, failureStage, started).ConfigureAwait(false);
 
             LogMutationStage(_logger, "replace", cluster.Value, "snapshot_published", "success", publishedBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-            var cleanup = TrackRetiredSlotCleanup(
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
+            var retirement = TrackRetiredSlotCleanup(
                 existingSlot!,
                 existingSlot!.ConfiguredConnectionBudget,
                 "replace",
                 cluster,
                 gracefulTimeout);
-            ObserveBackgroundFailure(cleanup);
             failureStage = "retired_cleanup_wait";
-            var released = await WaitForRetiredCleanupAsync(
-                cleanup,
+            var released = await retirement.WaitAsync(
                 gracefulTimeout,
+                GetTimeProvider(existingSlot!.Client),
                 cancellationToken).ConfigureAwait(false);
             if (!released)
             {
                 LogMutationStage(_logger, "replace", cluster.Value, "forced_stop", "cleanup_pending",
                     Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    _timeProvider.GetElapsedTime(started).TotalMilliseconds);
             }
-            RecordMutation("replace", released ? "success" : "forced_stop", Stopwatch.GetElapsedTime(started));
+            RecordMutation("replace", released ? "success" : "forced_stop", _timeProvider.GetElapsedTime(started));
+            return SharpLinkClusterReplacementResult.Success(released);
         }
         catch (Exception exception)
         {
             LogMutationStage(_logger, "replace", cluster.Value,
                 published ? "cleanup_wait_failed" : "rollback", "failed",
                 Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds,
                 failureStage);
-            RecordMutation("replace", published ? "published_wait_failed" : "failed", Stopwatch.GetElapsedTime(started));
+            RecordMutation("replace", published ? "published_wait_failed" : "failed", _timeProvider.GetElapsedTime(started));
             if (candidate is not null && !published)
                 await RethrowAfterCandidateCleanupAsync(exception, candidate.Slot.Client).ConfigureAwait(false);
             throw;
         }
         finally
         {
-            EndSlotMutation();
+            if (mutationBegan)
+                EndSlotMutation();
             _mutationGate.Release();
+        }
+
+        async ValueTask<SharpLinkClusterReplacementResult> RejectReplacementAsync(
+            MutationRejection rejected,
+            SharpLinkPreparedCluster? rejectedCandidate,
+            string stage,
+            long operationStarted)
+        {
+            LogMutationStage(_logger, "replace", cluster.Value, "rollback", "rejected",
+                Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
+                _timeProvider.GetElapsedTime(operationStarted).TotalMilliseconds,
+                stage);
+            RecordMutation("replace", "rejected", _timeProvider.GetElapsedTime(operationStarted));
+            if (rejectedCandidate is not null)
+                await rejectedCandidate.Slot.Client.StopAsync().ConfigureAwait(false);
+            return SharpLinkClusterReplacementResult.Failure(rejected.Code, rejected.Message);
         }
     }
 
@@ -239,198 +442,110 @@ internal sealed partial class SharpLinkMultiClusterClient
     {
         ValidateClusterKey(cluster);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        var started = Stopwatch.GetTimestamp();
+        var started = _timeProvider.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         SharpLinkClusterSlot? existingSlot = null;
         var published = false;
+        var mutationBegan = false;
         var publishedBudget = 0;
         var failureStage = "snapshot_validation";
         try
         {
             LogMutationStage(_logger, "remove", cluster.Value, "started", "pending",
                 Volatile.Read(ref _snapshot).ConfiguredConnectionBudget, 0);
+            MutationRejection? rejection = null;
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var snapshot = BeginSlotMutationLocked();
-                if (!snapshot.Clusters.TryGetValue(cluster, out existingSlot))
-                    throw new ArgumentException($"Cluster '{cluster}' is not configured.", nameof(cluster));
-
-                var nextClusters = snapshot.Clusters
-                    .Where(pair => pair.Key != cluster)
-                    .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                    .ToFrozenDictionary();
-                var nextRoutes = snapshot.Routes
-                    .Where(pair => !ReferenceEquals(pair.Value.Slot, existingSlot))
-                    .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                    .ToFrozenDictionary();
-                _dynamicRegistrations.RemoveAll(registration => ReferenceEquals(registration.Slot, existingSlot));
-                var nextBudget = checked(snapshot.ConfiguredConnectionBudget - existingSlot.ConfiguredConnectionBudget);
-                _transitionConnectionBudget = checked(
-                    _transitionConnectionBudget + existingSlot.ConfiguredConnectionBudget);
-                Volatile.Write(ref _snapshot, new MultiClusterSnapshot(nextClusters, nextRoutes, nextBudget));
-                _slotMutationInProgress = false;
-                published = true;
-                publishedBudget = nextBudget;
+                if (!TryBeginSlotMutationLocked(
+                        allowRunningConnectivityTransition: false,
+                        out var snapshot,
+                        out var beginRejection))
+                {
+                    rejection = beginRejection;
+                }
+                else
+                {
+                    mutationBegan = true;
+                    if (!snapshot.Clusters.TryGetValue(cluster, out existingSlot))
+                    {
+                        rejection = Reject(
+                            SharpLinkClusterMutationFailureCode.NotFound,
+                            $"Cluster '{cluster}' is not configured.");
+                    }
+                    else
+                    {
+                        var nextClusters = snapshot.Clusters
+                            .Where(pair => pair.Key != cluster)
+                            .ToDictionary(static pair => pair.Key, static pair => pair.Value)
+                            .ToFrozenDictionary();
+                        var nextRoutes = snapshot.Routes
+                            .Where(pair => !ReferenceEquals(pair.Value.Slot, existingSlot))
+                            .ToDictionary(static pair => pair.Key, static pair => pair.Value)
+                            .ToFrozenDictionary();
+                        _dynamicRegistrations.RemoveAll(registration => ReferenceEquals(registration.Slot, existingSlot));
+                        var nextBudget = checked(snapshot.ConfiguredConnectionBudget - existingSlot.ConfiguredConnectionBudget);
+                        _transitionConnectionBudget = checked(
+                            _transitionConnectionBudget + existingSlot.ConfiguredConnectionBudget);
+                        Volatile.Write(ref _snapshot, new MultiClusterSnapshot(nextClusters, nextRoutes, nextBudget));
+                        _slotMutationInProgress = false;
+                        mutationBegan = false;
+                        published = true;
+                        publishedBudget = nextBudget;
+                    }
+                }
+            }
+            if (rejection is { } removeRejection)
+            {
+                LogMutationStage(_logger, "remove", cluster.Value, "rollback", "rejected",
+                    Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
+                    _timeProvider.GetElapsedTime(started).TotalMilliseconds,
+                    failureStage);
+                RecordMutation("remove", "rejected", _timeProvider.GetElapsedTime(started));
+                return SharpLinkClusterRemovalResult.Failure(removeRejection.Code, removeRejection.Message);
             }
 
             LogMutationStage(_logger, "remove", cluster.Value, "snapshot_published", "success", publishedBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-            var cleanup = TrackRetiredSlotCleanup(
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
+            var retirement = TrackRetiredSlotCleanup(
                 existingSlot!,
                 existingSlot!.ConfiguredConnectionBudget,
                 "remove",
                 cluster,
                 gracefulTimeout);
-            ObserveBackgroundFailure(cleanup);
             failureStage = "retired_cleanup_wait";
-            var released = await WaitForRetiredCleanupAsync(
-                cleanup,
+            var released = await retirement.WaitAsync(
                 gracefulTimeout,
+                GetTimeProvider(existingSlot!.Client),
                 cancellationToken).ConfigureAwait(false);
             if (!released)
             {
                 LogMutationStage(_logger, "remove", cluster.Value, "forced_stop", "cleanup_pending",
                     Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    _timeProvider.GetElapsedTime(started).TotalMilliseconds);
             }
-            RecordMutation("remove", released ? "success" : "forced_stop", Stopwatch.GetElapsedTime(started));
-            return new SharpLinkClusterRemovalResult
-            {
-                Succeeded = true,
-                ReferencesReleased = released,
-                ForcedStop = !released
-            };
+            RecordMutation("remove", released ? "success" : "forced_stop", _timeProvider.GetElapsedTime(started));
+            return SharpLinkClusterRemovalResult.Success(released);
         }
         catch
         {
             LogMutationStage(_logger, "remove", cluster.Value,
                 published ? "cleanup_wait_failed" : "rollback", "failed",
                 Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds,
                 failureStage);
-            RecordMutation("remove", published ? "published_wait_failed" : "failed", Stopwatch.GetElapsedTime(started));
+            RecordMutation("remove", published ? "published_wait_failed" : "failed", _timeProvider.GetElapsedTime(started));
             throw;
         }
         finally
         {
-            EndSlotMutation();
+            if (mutationBegan)
+                EndSlotMutation();
             _mutationGate.Release();
         }
     }
 
-    private MultiClusterSnapshot BeginSlotMutationLocked()
-    {
-        var state = (SharpLinkMultiClusterState)_state;
-        if (state == SharpLinkMultiClusterState.Connecting)
-            throw new InvalidOperationException("Cluster slot lifecycle operations are unavailable while the coordinator is connecting.");
-        if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
-            throw new InvalidOperationException($"Multi-cluster client state '{state}' does not accept cluster slot lifecycle operations.");
-        if (_slotMutationInProgress || _activeAssemblyReplacements != 0 ||
-            _unregisterOperations.Count != 0 || _drainingRegistrations.Count != 0)
-        {
-            throw new InvalidOperationException("A cluster or dynamic assembly lifecycle operation is already in progress.");
-        }
-
-        _slotMutationInProgress = true;
-        return Volatile.Read(ref _snapshot);
-    }
-
-    private MultiClusterSnapshot GetPublishableSnapshotLocked()
-    {
-        var state = (SharpLinkMultiClusterState)_state;
-        if (state is not SharpLinkMultiClusterState.Created and
-            not SharpLinkMultiClusterState.Ready and
-            not SharpLinkMultiClusterState.Degraded)
-        {
-            throw new InvalidOperationException(
-                $"Multi-cluster client state '{state}' changed before the cluster slot could be published.");
-        }
-        return Volatile.Read(ref _snapshot);
-    }
-
-    private async Task<bool> ConnectCandidateWhenRequiredAsync(
-        SharpLinkClusterSlot candidate,
-        CancellationToken cancellationToken)
-    {
-        SharpLinkMultiClusterState state;
-        lock (_gate)
-            state = (SharpLinkMultiClusterState)_state;
-        if (state == SharpLinkMultiClusterState.Created)
-            return false;
-        if (state is not SharpLinkMultiClusterState.Ready and not SharpLinkMultiClusterState.Degraded)
-            throw new InvalidOperationException($"Multi-cluster client state '{state}' cannot publish a cluster candidate.");
-
-        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _shutdown.Token);
-        await candidate.Client.ConnectAsync(linkedCancellation.Token).ConfigureAwait(false);
-        return true;
-    }
-
-    private void ValidateSteadyBudget(int currentBudget, int addedBudget)
-    {
-        var nextBudget = checked(currentBudget + addedBudget);
-        if (nextBudget > _options.MaxTotalConfiguredConnections)
-        {
-            throw new InvalidOperationException(
-                $"Configured child connection budget ({nextBudget}) exceeds MaxTotalConfiguredConnections ({_options.MaxTotalConfiguredConnections}).");
-        }
-    }
-
-    private int ValidateReplacementBudgetLocked(
-        MultiClusterSnapshot snapshot,
-        SharpLinkClusterKey cluster,
-        SharpLinkClusterSlot existingSlot,
-        SharpLinkClusterSlot candidateSlot)
-    {
-        if (!snapshot.Clusters.TryGetValue(cluster, out var currentSlot) ||
-            !ReferenceEquals(currentSlot, existingSlot))
-        {
-            throw new InvalidOperationException($"Cluster '{cluster}' changed while its replacement was prepared.");
-        }
-
-        var nextBudget = checked(snapshot.ConfiguredConnectionBudget - existingSlot.ConfiguredConnectionBudget +
-            candidateSlot.ConfiguredConnectionBudget);
-        if (nextBudget > _options.MaxTotalConfiguredConnections)
-        {
-            throw new InvalidOperationException(
-                $"Replacement child connection budget ({nextBudget}) exceeds MaxTotalConfiguredConnections ({_options.MaxTotalConfiguredConnections}).");
-        }
-        ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidateSlot.ConfiguredConnectionBudget);
-        return nextBudget;
-    }
-
-    private void ValidateTransitionBudget(int currentBudget, int candidateBudget)
-    {
-        var transitionBudget = checked(currentBudget + _transitionConnectionBudget + candidateBudget);
-        var transitionLimit = checked(_options.MaxTotalConfiguredConnections * 2);
-        if (transitionBudget > transitionLimit)
-        {
-            throw new InvalidOperationException(
-                $"Transition child connection budget ({transitionBudget}) exceeds the bounded transition limit ({transitionLimit}).");
-        }
-    }
-
-    private static FrozenDictionary<Type, SharpLinkClusterRouteRegistration> MergeRoutes(
-        FrozenDictionary<Type, SharpLinkClusterRouteRegistration> currentRoutes,
-        FrozenDictionary<Type, SharpLinkClusterRouteRegistration> incomingRoutes)
-    {
-        var nextRoutes = currentRoutes.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-        var contractIds = nextRoutes.Values.Select(static route => route.ContractId).ToHashSet();
-        foreach (var pair in incomingRoutes)
-        {
-            if (nextRoutes.ContainsKey(pair.Key) || !contractIds.Add(pair.Value.ContractId))
-            {
-                throw new InvalidOperationException(
-                    $"Contract '{pair.Key.FullName}' ({pair.Value.ContractId}) is already routed to another assembly or cluster.");
-            }
-            nextRoutes.Add(pair.Key, pair.Value);
-        }
-        return nextRoutes.ToFrozenDictionary();
-    }
-
-    private Task TrackRetiredSlotCleanup(
+    private SharpLinkRetirementHandle TrackRetiredSlotCleanup(
         SharpLinkClusterSlot retiredSlot,
         int connectionBudget,
         string operation,
@@ -443,21 +558,8 @@ internal sealed partial class SharpLinkMultiClusterClient
             operation,
             cluster,
             gracefulTimeout);
-        lock (_gate)
-            _retiredCleanupOperations.Add(cleanup);
-        _ = cleanup.ContinueWith(
-            completed =>
-            {
-                if (completed.Status == TaskStatus.RanToCompletion)
-                {
-                    lock (_gate)
-                        _retiredCleanupOperations.Remove(cleanup);
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-        return cleanup;
+        TrackFrameworkTask(cleanup, $"MultiClusterRetiredSlot{operation}");
+        return new SharpLinkRetirementHandle(cleanup);
     }
 
     private async Task CompleteRetiredSlotCleanupAsync(
@@ -490,10 +592,17 @@ internal sealed partial class SharpLinkMultiClusterClient
         if (gracefulTimeout == TimeSpan.Zero || client is not ISharpLinkClientDrainInspector inspector)
             return;
 
-        var started = Stopwatch.GetTimestamp();
+        var timeProvider = GetTimeProvider(client);
+        var deadline = SharpLinkTime.AddDuration(
+            timeProvider.GetTimestamp(),
+            gracefulTimeout,
+            timeProvider.TimestampFrequency);
         while (inspector.ActiveCallCount != 0 || inspector.ActiveStreamCount != 0)
         {
-            var remaining = gracefulTimeout - Stopwatch.GetElapsedTime(started);
+            var remaining = SharpLinkTime.GetRemaining(
+                deadline,
+                timeProvider.GetTimestamp(),
+                timeProvider.TimestampFrequency);
             if (remaining <= TimeSpan.Zero)
                 return;
             try
@@ -502,6 +611,7 @@ internal sealed partial class SharpLinkMultiClusterClient
                     remaining < TimeSpan.FromMilliseconds(25)
                         ? remaining
                         : TimeSpan.FromMilliseconds(25),
+                    timeProvider,
                     _shutdown.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
@@ -510,15 +620,6 @@ internal sealed partial class SharpLinkMultiClusterClient
             }
         }
     }
-
-    private static async Task<bool> WaitForRetiredCleanupAsync(
-        Task cleanup,
-        TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken)
-        => await SharpLinkTimer.WaitAsync(
-            cleanup,
-            gracefulTimeout,
-            cancellationToken).ConfigureAwait(false);
 
     private void EndSlotMutation()
     {

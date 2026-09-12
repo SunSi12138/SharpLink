@@ -1,0 +1,31 @@
+name: Verify NuGet package contracts
+description: Verify SharpLink NuGet packages contain the expected generator, metadata, symbols, and dependency contracts.
+
+inputs:
+  package-directory:
+    description: Directory containing packaged NuGet artifacts.
+    required: false
+    default: artifacts/nuget
+
+runs:
+  using: composite
+  steps:
+    - name: Verify SDK Contains Generator
+      shell: bash
+      run: |
+        package_listing="$(mktemp "$RUNNER_TEMP/sharplink-sdk-package-list.XXXXXX")"
+        trap 'rm -f "$package_listing"' EXIT
+        unzip -l "${{ inputs.package-directory }}"/SharpLink.Sdk.*.nupkg > "$package_listing"
+        grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll' "$package_listing"
+
+    - name: Verify package metadata, XML documentation, and symbols
+      shell: bash
+      run: ./eng/verify-packages.sh "${{ inputs.package-directory }}"
+
+    - name: Verify Hosting direct Runtime dependency
+      shell: bash
+      run: ./eng/verify-hosting-package-dependency.sh "${{ inputs.package-directory }}"
+
+    - name: Verify Abstractions has no DI dependency
+      shell: bash
+      run: ./eng/verify-abstractions-package-dependency.sh "${{ inputs.package-directory }}"

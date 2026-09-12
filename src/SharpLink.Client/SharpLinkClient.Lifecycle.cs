@@ -24,6 +24,10 @@ internal sealed partial class SharpLinkClient
                 // The initialization attempt belongs to the client. A caller may cancel only its
                 // WaitAsync below; shutdown remains the operation's lifetime boundary.
                 _connectTask = ConnectInitialAsync(CancellationToken.None);
+                TrackFrameworkTask(
+                    _connectTask,
+                    "InitialConnect",
+                    TaskObservationMode.ExternallyObserved);
             }
             connectTask = _connectTask;
         }
@@ -77,15 +81,21 @@ internal sealed partial class SharpLinkClient
         ITransportConnection? connection = null;
         try
         {
-            connection = await transportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
+            connection = await ConnectTransportAsync(transportFactory, attemptCts.Token).ConfigureAwait(false);
             if (connection is ITransportSecurityInfo securityInfo)
                 LogTlsEstablished(_logger, securityInfo.Protocol, securityInfo.CipherSuite);
-            session = new RpcSession(connection, _rpcSessionFlushOptions);
+            session = new RpcSession(
+                connection,
+                new RpcSessionCreationOptions(
+                    RpcSessionRole.Client,
+                    _runtimeContext,
+                    _rpcSessionFlushOptions,
+                    _requestCompressionPolicy));
             connection = null;
-            session.SetTelemetrySide("client");
-            session.BindRuntimeContext(_runtimeContext);
 
             await CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken).ConfigureAwait(false);
+            if (_beforeReadyPublicationTestHook is not null)
+                await _beforeReadyPublicationTestHook(attemptCts.Token).ConfigureAwait(false);
 
             var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
             var clientConnection = new ClientConnection(
@@ -93,7 +103,7 @@ internal sealed partial class SharpLinkClient
                 session,
                 sessionCts,
                 _protocolOptions.MaxPendingRequestsPerConnection,
-                _runtimeContext.Codecs);
+                _runtimeContext);
             var readySession = clientConnection.Session;
             readySession.OnDisconnected += exception => HandleDisconnected(
                 clientConnection,
@@ -115,6 +125,26 @@ internal sealed partial class SharpLinkClient
                 {
                     _connections.Add(clientConnection);
                     PublishReadySnapshotLocked();
+                    try
+                    {
+                        ReconcileResponseCompressionPreferenceAfterReadyPublication(readySession);
+                    }
+                    catch (Exception exception)
+                    {
+                        _connections.Remove(clientConnection);
+                        PublishReadySnapshotLocked();
+                        poolException = exception;
+                    }
+                    if (poolException is not null)
+                        goto PublicationFailed;
+                    readySession.NotifyConnected();
+                    TrackFrameworkTask(
+                        RunHeartbeatSendLoopAsync(clientConnection, sessionCts.Token),
+                        "HeartbeatSendLoop");
+                    TrackFrameworkTask(
+                        RunProcessRequestLoopAsync(clientConnection, sessionCts.Token),
+                        "ProcessRequestLoop");
+                PublicationFailed:;
                 }
             }
             if (poolException is not null)
@@ -123,10 +153,6 @@ internal sealed partial class SharpLinkClient
                 await clientConnection.DisposeAsync().ConfigureAwait(false);
                 throw poolException;
             }
-
-            readySession.NotifyConnected();
-            TrackBackgroundTask(RunHeartbeatSendLoopAsync(clientConnection, sessionCts.Token));
-            TrackBackgroundTask(RunProcessRequestLoopAsync(clientConnection, sessionCts.Token));
             session = null;
             return clientConnection;
         }
@@ -170,7 +196,9 @@ internal sealed partial class SharpLinkClient
         CancellationToken operationCancellation,
         CancellationToken propagatedCancellation)
     {
-        using var handshakeTimeout = new CancellationTokenSource(_protocolOptions.HandshakeTimeout);
+        using var handshakeTimeout = new CancellationTokenSource(
+            _protocolOptions.HandshakeTimeout,
+            _runtimeContext.TimeProvider);
         using var handshakeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             operationCancellation,
             handshakeTimeout.Token);
@@ -207,9 +235,12 @@ internal sealed partial class SharpLinkClient
         {
             if (_shutdownCts.IsCancellationRequested || ReadyConnectionCount == 0)
                 return;
-            _readyTimestamp = Stopwatch.GetTimestamp();
+            if (!_hasReconnectReadyTimestamp)
+            {
+                _readyTimestamp = _runtimeContext.TimeProvider.GetTimestamp();
+                _hasReconnectReadyTimestamp = true;
+            }
             TransitionTo(SharpLinkConnectionState.Ready);
-            _readySignal.TrySetResult(true);
         }
     }
 
@@ -225,6 +256,11 @@ internal sealed partial class SharpLinkClient
         if (index != snapshot.Length)
             Array.Resize(ref snapshot, index);
         Volatile.Write(ref _readyConnections, snapshot);
+        PublishReadinessFacts(new ClientReadinessFacts(
+            ActiveEndpoints: 1,
+            ReadyEndpoints: snapshot.Length == 0 ? 0 : 1,
+            ReadyConnections: snapshot.Length,
+            TargetReadyEndpoints: 1));
     }
 
     private int CountReadyConnectionsLocked()
@@ -293,16 +329,42 @@ internal sealed partial class SharpLinkClient
     {
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
-            IRpcChannel channel = registration.Module is null
-                ? this
+            ValidateRemoteContractAssembly(registration);
+            var existing = Volatile.Read(ref registration.Proxy);
+            if (existing is not null)
+                return (T)existing;
+
+            var channel = registration.Module is null
+                ? (IRpcChannel)this
                 : new SharpLinkModuleRpcChannel(this, registration.Module);
-            return (T)registration.Descriptor.ProxyFactory(channel);
+            var created = registration.Descriptor.ProxyFactory(channel, registration.Codecs);
+            var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
+            return (T)(published ?? created);
         }
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
     }
 
-    private async Task<Exception?> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
+    public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        if (metadata.Count == 0)
+            return Get<T>();
+
+        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
+        {
+            ValidateRemoteContractAssembly(registration);
+            IRpcChannel channel = registration.Module is null
+                ? this
+                : new SharpLinkModuleRpcChannel(this, registration.Module);
+            channel = new SharpLinkMetadataRpcChannel(channel, metadata);
+            return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);
+        }
+
+        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
+    }
+
+    private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var authPayload = _authenticator is null
             ? ReadOnlyMemory<byte>.Empty
@@ -313,31 +375,26 @@ internal sealed partial class SharpLinkClient
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
-        var compressionProfiles = _runtimeContext.Compression.ProviderBindings.Count == 0
-            ? ReadOnlyMemory<string>.Empty
-            : _runtimeContext.Compression.ProviderBindings
-                .Select(static binding => binding.WireProfile)
-                .ToArray();
-        var supportedCapabilities =
-            ProtocolV2Capabilities.Metadata |
-            ProtocolV2Capabilities.FlowControl |
-            ProtocolV2Capabilities.HealthCheck |
-            ProtocolV2Capabilities.CancellationReason;
-        if (!compressionProfiles.IsEmpty)
-            supportedCapabilities |= ProtocolV2Capabilities.Compression;
-        var handshakeRequest = new ProtocolV2HandshakeRequest(
-            ProtocolV2Constants.MinorVersion,
-            supportedCapabilities,
-            ProtocolV2Capabilities.None,
+        var compressionProviders = _runtimeContext.Compression.ProviderBindings;
+        var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
+            compressionProviders,
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
+        var handshakePreference = CaptureResponseCompressionPreference();
+        var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
+            negotiationPolicy,
+            ProtocolV2Capabilities.ContractManifest,
             authPayload,
-            compressionProfiles);
+            handshakePreference.Generation,
+            handshakePreference.Allowed);
         await session.SendHandshakeRequestAndFlushAsync(handshakeRequest, _protocolOptions, ct).ConfigureAwait(false);
 
         var reader = session.Input;
         Exception? handshakeException = null;
+        NegotiatedSessionOptions? negotiated = null;
+        ProtocolV2ContractManifest? manifest = null;
         var handshakeCompleted = false;
         while (session.IsConnected && !ct.IsCancellationRequested)
         {
@@ -347,63 +404,88 @@ internal sealed partial class SharpLinkClient
             {
                 while (session.IsConnected &&
                        !ct.IsCancellationRequested &&
-                       ProtocolV2FrameParser.TryReadFrame(
+                       session.TryReadInboundFrame(
                            ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
-                    if (header.Type != ProtocolV2FrameType.HandshakeResponse)
-                        handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
-                    else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
+                    session.EnsureInboundFrameAllowed(header.Type);
+                    try
                     {
-                        var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, _protocolOptions);
-                        if (response.MinorVersion > ProtocolV2Constants.MinorVersion)
+                        if (header.Type == ProtocolV2FrameType.HandshakeResponse)
                         {
-                            handshakeException = new SharpLinkException(SharpLinkErrorCode.Unimplemented,
-                                $"Server requires unsupported protocol minor version {response.MinorVersion}.");
+                            if (negotiated is not null || manifest is not null)
+                            {
+                                handshakeException = CreateProtocolViolationException(
+                                    "Received duplicate or out-of-order HandshakeResponse.");
+                            }
+                            else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
+                            {
+                                var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, _protocolOptions);
+                                negotiated = ProtocolV2Negotiator.ValidateServerResponse(
+                                    handshakeRequest,
+                                    response,
+                                    negotiationPolicy);
+                                if (!session.TryCompleteHandshake(negotiated))
+                                {
+                                    handshakeException = CreateProtocolViolationException(
+                                        "The handshake result was already completed or the session terminated.");
+                                }
+                                else
+                                {
+                                    session.InitializeClientResponseCompressionPreference(handshakePreference);
+                                }
+                            }
+                            else
+                            {
+                                var error = ProtocolV2PayloadCodec.ReadError(
+                                    payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
+                                handshakeException = new SharpLinkException(
+                                    error.Code,
+                                    error.DetailCode,
+                                    error.Message);
+                                if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
+                                    SharpLinkErrorCode.AuthenticationExpired or
+                                    SharpLinkErrorCode.AuthorizationDenied or
+                                    SharpLinkErrorCode.PermissionDenied)
+                                {
+                                    SharpLinkTelemetry.RecordAuthenticationFailure("client");
+                                }
+                            }
+                        }
+                        else if (header.Type == ProtocolV2FrameType.ContractManifest)
+                        {
+                            if (negotiated is null || manifest is not null)
+                            {
+                                handshakeException = CreateProtocolViolationException(
+                                    "Received duplicate or out-of-order ContractManifest during handshake.");
+                            }
+                            else
+                            {
+                                manifest = ProtocolV2ContractManifestCodec.Read(payload, _protocolOptions);
+                                PublishRemoteContractManifest(session, manifest);
+                                handshakeCompleted = true;
+                            }
                         }
                         else
                         {
-                            var runtimeSession = (RpcSession)session;
-                            runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
-                            runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
-                            var compressionBinding = ValidateNegotiatedCompression(
-                                response,
-                                compressionProfiles.Span);
-                            if (compressionBinding is { } binding)
-                                runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
-                            if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
-                            {
-                                runtimeSession.EnableStreamFlowControl(
-                                    response.StreamReceiveWindowBytes,
-                                    response.ConnectionReceiveWindowBytes);
-                            }
-                            handshakeException = null;
+                            handshakeException = CreateProtocolViolationException(
+                                "Received unexpected packet during handshake.");
                         }
                     }
-                    else
+                    catch (SharpLinkException exception)
                     {
-                        var error = ProtocolV2PayloadCodec.ReadError(
-                            payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
-                        handshakeException = new SharpLinkException(error.Code, error.Message);
-                        if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
-                            SharpLinkErrorCode.AuthenticationExpired or
-                            SharpLinkErrorCode.AuthorizationDenied or
-                            SharpLinkErrorCode.PermissionDenied)
-                        {
-                            SharpLinkTelemetry.RecordAuthenticationFailure("client");
-                        }
+                        handshakeException = exception;
                     }
 
-                    handshakeCompleted = true;
-                    break;
+                    if (handshakeException is not null)
+                        handshakeCompleted = true;
+
+                    if (handshakeCompleted)
+                        break;
                 }
             }
             finally
             {
-                // A control or response frame can share this read with the handshake response.
-                // Once the handshake is complete, leave the remainder unexamined so the request
-                // loop observes it immediately instead of waiting for another transport read.
-                // The finally also releases transport read ownership when parsing throws.
                 reader.AdvanceTo(buffer.Start, handshakeCompleted ? buffer.Start : buffer.End);
             }
 
@@ -423,38 +505,6 @@ internal sealed partial class SharpLinkClient
             : CreateConnectionClosedException("Server disconnected during handshake.");
     }
 
-    private SharpLinkCompressionProviderBinding? ValidateNegotiatedCompression(
-        in ProtocolV2HandshakeResponse response,
-        ReadOnlySpan<string> offeredProfiles)
-    {
-        var negotiated =
-            (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
-        if (!negotiated)
-        {
-            if (response.CompressionProfile is not null)
-            {
-                throw CreateProtocolViolationException(
-                    "The server selected a compression profile without negotiating compression.");
-            }
-            return null;
-        }
-        if (response.CompressionProfile is not { } profile)
-            throw CreateProtocolViolationException("Negotiated compression is missing its selected profile.");
-
-        var offered = false;
-        foreach (var candidate in offeredProfiles)
-        {
-            if (string.Equals(candidate, profile, StringComparison.Ordinal))
-            {
-                offered = true;
-                break;
-            }
-        }
-        var binding = offered ? _runtimeContext.Compression.FindProviderBinding(profile) : null;
-        return binding ?? throw CreateProtocolViolationException(
-            $"The server selected compression profile '{profile}' that the client did not offer.");
-    }
-
     private async Task ProcessRequestLoop(ClientConnection connection, CancellationToken ct)
     {
         var session = connection.Session;
@@ -469,10 +519,11 @@ internal sealed partial class SharpLinkClient
             {
                 while (session.IsConnected &&
                        !ct.IsCancellationRequested &&
-                       ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
+                       session.TryReadInboundFrame(ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.MarkActive();
+                    session.EnsureInboundFrameAllowed(header.Type);
                     IRpcByteBufferWriter? decodedOwner = null;
                     try
                     {
@@ -484,7 +535,9 @@ internal sealed partial class SharpLinkClient
                     {
                         var requestId = unchecked((long)header.RequestId);
                         if (header.Type == ProtocolV2FrameType.Response)
+                        {
                             connection.PendingCalls.DispatchError(requestId, exception);
+                        }
                         else if (header.Type == ProtocolV2FrameType.StreamData)
                         {
                             var streamId = RpcSession.ReadCompressedStreamId(payload);
@@ -507,54 +560,71 @@ internal sealed partial class SharpLinkClient
                     {
                         switch (header.Type)
                         {
-                        case ProtocolV2FrameType.Ping:
-                            await session.SendPongWithBackpressureAsync(
-                                ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
-                            break;
-                        case ProtocolV2FrameType.Pong:
-                            DebugLogServerHeartbeatReceived(_logger);
-                            break;
-                        case ProtocolV2FrameType.Cancel:
-                            _ = session.ReadNegotiatedCancelReason(payload);
-                            DebugLogServerCancelIgnored(_logger);
-                            break;
-                        case ProtocolV2FrameType.Response:
-                            DispatchRpc(connection, unchecked((long)header.RequestId), header.Flags, ref payload);
-                            break;
-                        case ProtocolV2FrameType.HealthResponse:
-                            DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
-                            break;
-                        case ProtocolV2FrameType.StreamData:
-                            var dispatchTask = DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
-                            if (!dispatchTask.IsCompletedSuccessfully)
-                                await dispatchTask;
-                            break;
-                        case ProtocolV2FrameType.StreamComplete:
-                            DispatchStreamComplete(
-                                connection, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
-                            break;
-                        case ProtocolV2FrameType.WindowUpdate:
-                            session.ApplyWindowUpdate(
-                                unchecked((long)header.RequestId),
-                                ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
-                            break;
-                        case ProtocolV2FrameType.GoAway:
-                            if (payload.Length < sizeof(ulong))
-                                throw CreateProtocolViolationException("GoAway last accepted request ID is truncated.");
-                            var goAwayError = ProtocolV2PayloadCodec.ReadError(
-                                payload.Slice(sizeof(ulong)),
-                                header.Flags | ProtocolV2FrameFlags.Error,
-                                _protocolOptions.MaxErrorMessageBytes);
-                            MarkConnectionDraining(connection);
-                            using (BeginRequestLogScope(_logger, unchecked((long)header.RequestId)))
-                                LogClientDisconnectedWithError(
-                                    _logger,
-                                    new SharpLinkException(goAwayError.Code, goAwayError.Message));
-                            break;
-                        case ProtocolV2FrameType.HandshakeRequest:
-                        case ProtocolV2FrameType.HandshakeResponse:
-                        case ProtocolV2FrameType.Request:
-                        case ProtocolV2FrameType.HealthCheck:
+                            case ProtocolV2FrameType.Ping:
+                                await session.SendPongWithBackpressureAsync(
+                                    ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
+                                break;
+                            case ProtocolV2FrameType.Pong:
+                                DebugLogServerHeartbeatReceived(_logger);
+                                break;
+                            case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
+                                session.ApplyResponseCompressionPreferenceAck(
+                                    ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload).AppliedGeneration);
+                                break;
+                            case ProtocolV2FrameType.Cancel:
+                                _ = session.ReadNegotiatedCancelReason(payload);
+                                DebugLogServerCancelIgnored(_logger);
+                                break;
+                            case ProtocolV2FrameType.Response:
+                                DispatchRpc(connection, unchecked((long)header.RequestId), header.Flags, ref payload);
+                                break;
+                            case ProtocolV2FrameType.HealthResponse:
+                                DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
+                                break;
+                            case ProtocolV2FrameType.ContractManifest:
+                                PublishRemoteContractManifest(
+                                    session,
+                                    ProtocolV2ContractManifestCodec.Read(payload, _protocolOptions));
+                                break;
+                            case ProtocolV2FrameType.StreamData:
+                                var streamRequestId = unchecked((long)header.RequestId);
+                                if (connection.PendingCalls.TryAcceptStreamData(streamRequestId))
+                                {
+                                    var dispatchTask = DispatchStreamChunkAsync(session, streamRequestId, payload);
+                                    if (!dispatchTask.IsCompletedSuccessfully)
+                                        await dispatchTask;
+                                }
+                                break;
+                            case ProtocolV2FrameType.StreamComplete:
+                                DispatchStreamComplete(
+                                    connection, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
+                                break;
+                            case ProtocolV2FrameType.WindowUpdate:
+                                session.ApplyWindowUpdate(
+                                    unchecked((long)header.RequestId),
+                                    ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
+                                break;
+                            case ProtocolV2FrameType.GoAway:
+                                if (payload.Length < sizeof(ulong))
+                                    throw CreateProtocolViolationException("GoAway last accepted request ID is truncated.");
+                                var goAwayError = ProtocolV2PayloadCodec.ReadError(
+                                    payload.Slice(sizeof(ulong)),
+                                    header.Flags | ProtocolV2FrameFlags.Error,
+                                    _protocolOptions.MaxErrorMessageBytes);
+                                MarkConnectionDraining(connection);
+                                using (BeginRequestLogScope(_logger, unchecked((long)header.RequestId)))
+                                    LogClientDisconnectedWithError(
+                                        _logger,
+                                        new SharpLinkException(
+                                            goAwayError.Code,
+                                            goAwayError.DetailCode,
+                                            goAwayError.Message));
+                                break;
+                            case ProtocolV2FrameType.HandshakeRequest:
+                            case ProtocolV2FrameType.HandshakeResponse:
+                            case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
+                            case ProtocolV2FrameType.Request:
+                            case ProtocolV2FrameType.HealthCheck:
                             default:
                                 SharpLinkTelemetry.RecordProtocolFailure("client");
                                 HandleDisconnected(connection, CreateProtocolViolationException("Received unexpected packet from server."));
@@ -600,19 +670,45 @@ internal sealed partial class SharpLinkClient
     private async Task HeartbeatSendLoop(ClientConnection connection, CancellationToken ct)
     {
         var session = connection.Session;
+        var timeProvider = _runtimeContext.TimeProvider;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
+        var lastPingTimestamp = timeProvider.GetTimestamp();
+        var sendImmediately = true;
+
         while (!ct.IsCancellationRequested)
         {
+            var configuration = CaptureHeartbeatConfiguration();
+            if (!sendImmediately)
+            {
+                if (session.TimeSinceLastActivity > configuration.Timeout || !session.IsConnected)
+                {
+                    LogServerHeartbeatTimeout(_logger);
+                    await session.DisposeAsync();
+                    HandleDisconnected(connection, CreateHeartbeatTimeoutException("Server heartbeat timeout."));
+                    break;
+                }
+
+                var elapsedSincePing = timeProvider.GetElapsedTime(lastPingTimestamp);
+                if (elapsedSincePing < configuration.Interval)
+                {
+                    var remaining = configuration.Interval - elapsedSincePing;
+                    if (!await WaitForHeartbeatScheduleAsync(
+                            remaining,
+                            configuration,
+                            ct).ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+
+                    // Re-enter through the generation/liveness checks before emitting a Ping. This
+                    // prevents a lengthened interval from allowing an old timer to send early.
+                    continue;
+                }
+            }
+
             await session.SendPingWithBackpressureAsync(ct).ConfigureAwait(false);
-            await SharpLinkTimer.DelayAsync(_heartbeatInterval, ct).ConfigureAwait(false);
-            if (session.TimeSinceLastActivity <= _heartbeatTimeout && session.IsConnected)
-                continue;
-
-            LogServerHeartbeatTimeout(_logger);
-
-            await session.DisposeAsync();
-            HandleDisconnected(connection, CreateHeartbeatTimeoutException("Server heartbeat timeout."));
-            break;
+            lastPingTimestamp = timeProvider.GetTimestamp();
+            sendImmediately = false;
         }
     }
 
@@ -627,7 +723,10 @@ internal sealed partial class SharpLinkClient
         if (isError)
         {
             var error = ProtocolV2PayloadCodec.ReadError(payload, flags, _protocolOptions.MaxErrorMessageBytes);
-            var remoteException = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
+            var remoteException = SharpLinkResourceExhaustion.CreateRemote(
+                error.Code,
+                error.DetailCode,
+                error.Message);
             if (connection.PendingCalls.DispatchError(requestId, remoteException))
                 return;
         }

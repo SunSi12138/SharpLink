@@ -1,0 +1,136 @@
+name: Pending and codec validation
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'src/SharpLink.Abstractions/SharpLinkTelemetry*.cs'
+      - 'src/SharpLink.Client/PendingRequestTable.cs'
+      - 'src/SharpLink.Client/SharpLinkClient*.cs'
+      - 'src/SharpLink.Client/SharpLinkCircuitBreaker*.cs'
+      - 'src/SharpLink.Runtime/Codec/CodecHelpers.cs'
+      - 'src/SharpLink.Runtime/Codec/DateTimeCodec.cs'
+      - 'src/SharpLink.Runtime/Codec/StructCodec.cs'
+      - 'test/SharpLink.UnitTests/Validation/**'
+      - 'test/SharpLink.Benchmarks/PendingRequestMatrix*.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'eng/validate-pending-lifecycle.py'
+      - 'eng/validate-codec-semantics.py'
+      - 'eng/validate-datetimeoffset-performance.py'
+      - 'eng/run-pending-request-matrix.sh'
+      - 'doc/pending-request-matrix.md'
+      - '.github/workflows/pending-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pending-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  issue-556-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record merge-ref regression provenance
+        run: |
+          mkdir -p artifacts/validation/issue-556
+          git rev-parse HEAD | tee artifacts/validation/issue-556/commit.txt
+          dotnet --info > artifacts/validation/issue-556/dotnet-info.txt
+      - name: Build test workers with issue 556 fix
+        run: dotnet build test/SharpLink.UnitTests -c Release -v minimal
+      - name: Validate issue 556 deadline reuse invariant
+        run: >-
+          python3 eng/validate-pending-lifecycle.py --mode regression
+          --scenario deadline-response
+          --scenario deadline-cancel
+          --scenario deadline-disconnect
+          --output artifacts/validation/issue-556/pending
+      - name: Upload issue 556 regression evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-556-regression-evidence
+          path: artifacts/validation/issue-556
+          if-no-files-found: warn
+
+  issue-557-and-558-regression-plus-559-characterization:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record exact validation provenance
+        run: |
+          mkdir -p artifacts/validation
+          git rev-parse HEAD | tee artifacts/validation/commit.txt
+          dotnet --info > artifacts/validation/dotnet-info.txt
+      - name: Build test workers
+        run: dotnet build test/SharpLink.UnitTests -c Release -v minimal
+      - name: Validate issue 557 diagnostic exception invariants
+        id: pending
+        run: >-
+          python3 eng/validate-pending-lifecycle.py --mode regression
+          --scenario no-listener
+          --scenario metric-control
+          --scenario metric-minus
+          --scenario metric-plus
+          --scenario logger-control
+          --scenario logger-throw
+          --output artifacts/validation/pending
+      - name: Validate issue 558 raw DateTime semantics and measure issue 559 DateTimeOffset fragmentation
+        if: ${{ !cancelled() && steps.pending.outcome != 'skipped' }}
+        run: python3 eng/validate-codec-semantics.py --mode regression
+      - name: Compare issue 559 DateTimeOffset decode against pre-fix baseline
+        if: ${{ !cancelled() && steps.pending.outcome != 'skipped' }}
+        run: >-
+          python3 eng/validate-datetimeoffset-performance.py
+          --output artifacts/validation/datetimeoffset-performance
+      - name: Upload complete validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pending-and-codec-evidence
+          path: artifacts/validation
+          if-no-files-found: warn
+
+  issue-571-pending-request-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record issue 571 evidence provenance
+        run: |
+          mkdir -p artifacts/validation/issue-571
+          git rev-parse HEAD | tee artifacts/validation/issue-571/commit.txt
+          dotnet --info > artifacts/validation/issue-571/dotnet-info.txt
+          uname -a > artifacts/validation/issue-571/uname.txt
+          lscpu > artifacts/validation/issue-571/lscpu.txt
+      - name: Run issue 571 deterministic matrix smoke
+        run: bash eng/run-pending-request-matrix.sh ci artifacts/validation/issue-571/matrix
+      - name: Upload issue 571 matrix evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-571-pending-request-matrix
+          path: artifacts/validation/issue-571
+          if-no-files-found: warn

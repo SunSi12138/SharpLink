@@ -1,6 +1,8 @@
-using System.Net;
-using System.IO.Pipelines;
 using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.IO.Pipelines;
+using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Channels;
 
@@ -8,12 +10,20 @@ namespace SharpLink.UnitTests;
 
 internal sealed class TestClientTransportFactory : IClientTransportFactory
 {
+    private static readonly KeyValuePair<long, RpcHash128>[] DefaultContractManifest =
+    [
+        new(8_101, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL))
+    ];
+
     private readonly ProtocolV2Capabilities _negotiatedCapabilities;
+    private readonly KeyValuePair<long, RpcHash128>[] _contractManifest;
 
     internal TestClientTransportFactory(
-        ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None)
+        ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
+        IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null)
     {
         _negotiatedCapabilities = negotiatedCapabilities;
+        _contractManifest = contractManifest?.ToArray() ?? DefaultContractManifest;
     }
 
     public TestTransportConnection Connection { get; } = new();
@@ -23,18 +33,9 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
     public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _connectCount);
-        var payload = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
-            ProtocolV2Constants.MinorVersion,
+        await Connection.InjectSuccessfulHandshakeAsync(
             _negotiatedCapabilities,
-            4 * 1024 * 1024,
-            1024 * 1024,
-            16 * 1024 * 1024));
-        await Connection.InjectFrameAsync(
-            ProtocolV2FrameType.HandshakeResponse,
-            ProtocolV2FrameFlags.None,
-            0,
-            payload.WrittenMemory,
+            _contractManifest,
             cancellationToken);
         return Connection;
     }
@@ -44,8 +45,10 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
 
 internal sealed class TestTransportConnection : ITransportConnection
 {
+    private static readonly SharpLinkProtocolOptions ProtocolLimits = new();
     private readonly Pipe _inbound = new();
     private readonly Pipe _outbound = new();
+    private readonly CallbackPipeWriter _output;
     private readonly Channel<TestSentFrame> _sentPackets = Channel.CreateUnbounded<TestSentFrame>();
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _observeOutputTask;
@@ -53,14 +56,51 @@ internal sealed class TestTransportConnection : ITransportConnection
 
     public TestTransportConnection()
     {
+        _output = new CallbackPipeWriter(_outbound.Writer);
         _observeOutputTask = ObserveOutputAsync(_disposeCts.Token);
     }
 
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public PipeReader Input => _inbound.Reader;
-    public PipeWriter Output => _outbound.Writer;
+    public PipeWriter Output => _output;
     public EndPoint? LocalEndPoint => null;
     public EndPoint? RemoteEndPoint => null;
+
+    internal void RunOnNextOutputBufferRequest(Action callback)
+        => _output.RunOnNextBufferRequest(callback);
+
+    internal async Task InjectSuccessfulHandshakeAsync(
+        ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
+        IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
+        CancellationToken cancellationToken = default)
+    {
+        negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
+        var responsePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, new ProtocolV2HandshakeResponse(
+            ProtocolV2Constants.MinorVersion,
+            negotiatedCapabilities,
+            4 * 1024 * 1024,
+            1024 * 1024,
+            16 * 1024 * 1024));
+        await InjectFrameAsync(
+            ProtocolV2FrameType.HandshakeResponse,
+            ProtocolV2FrameFlags.None,
+            0,
+            responsePayload.WrittenMemory,
+            cancellationToken);
+
+        var manifestPayload = new PooledByteBufferWriter();
+        ProtocolV2ContractManifestCodec.Write(
+            manifestPayload,
+            new ProtocolV2ContractManifest(0, contractManifest ?? []),
+            ProtocolLimits);
+        await InjectFrameAsync(
+            ProtocolV2FrameType.ContractManifest,
+            ProtocolV2FrameFlags.None,
+            0,
+            manifestPayload.WrittenMemory,
+            cancellationToken);
+    }
 
     public Task InjectPacketAsync(
         ProtocolV2FrameType type,
@@ -128,6 +168,10 @@ internal sealed class TestTransportConnection : ITransportConnection
         {
             return false;
         }
+        catch (ChannelClosedException)
+        {
+            return false;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -137,7 +181,7 @@ internal sealed class TestTransportConnection : ITransportConnection
 
         _disposeCts.Cancel();
         await CompleteAsync(_inbound.Writer);
-        await CompleteAsync(_outbound.Writer);
+        await CompleteAsync(_output);
         try
         {
             await _observeOutputTask;
@@ -195,6 +239,46 @@ internal sealed class TestTransportConnection : ITransportConnection
         catch (InvalidOperationException)
         {
         }
+    }
+
+    private sealed class CallbackPipeWriter(PipeWriter inner) : PipeWriter
+    {
+        private Action? _nextBufferRequest;
+
+        internal void RunOnNextBufferRequest(Action callback)
+        {
+            ArgumentNullException.ThrowIfNull(callback);
+            if (Interlocked.CompareExchange(ref _nextBufferRequest, callback, null) is not null)
+                throw new InvalidOperationException("an output buffer callback is already armed");
+        }
+
+        public override void Advance(int bytes) => inner.Advance(bytes);
+
+        public override void CancelPendingFlush() => inner.CancelPendingFlush();
+
+        public override void Complete(Exception? exception = null) => inner.Complete(exception);
+
+        public override ValueTask CompleteAsync(Exception? exception = null)
+            => inner.CompleteAsync(exception);
+
+        public override ValueTask<FlushResult> FlushAsync(
+            CancellationToken cancellationToken = default)
+            => inner.FlushAsync(cancellationToken);
+
+        public override Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            RunCallbackIfArmed();
+            return inner.GetMemory(sizeHint);
+        }
+
+        public override Span<byte> GetSpan(int sizeHint = 0)
+        {
+            RunCallbackIfArmed();
+            return inner.GetSpan(sizeHint);
+        }
+
+        private void RunCallbackIfArmed()
+            => Interlocked.Exchange(ref _nextBufferRequest, null)?.Invoke();
     }
 }
 

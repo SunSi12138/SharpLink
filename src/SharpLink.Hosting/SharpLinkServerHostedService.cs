@@ -9,74 +9,62 @@ internal sealed class SharpLinkServerHostedService(
     SharpLinkServerReadiness readiness,
     IHostApplicationLifetime applicationLifetime) : IHostedService
 {
-    private ISharpLinkServer? _server;
-    private Task? _runTask;
-    private CancellationTokenSource? _runCts;
     private readonly Lock _stopGate = new();
+    private ISharpLinkServer? _server;
+    private Task? _terminalObserver;
     private Task? _stopTask;
     private int _stopRequested;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Task runTask;
+        ISharpLinkServer server;
         lock (_stopGate)
         {
-            if (Volatile.Read(ref _stopRequested) != 0)
+            if (Volatile.Read(ref _stopRequested) != 0 || _stopTask is not null)
                 throw new InvalidOperationException("The SharpLink server host has already stopped.");
-            if (_runCts is not null)
+            if (_server is not null)
                 throw new InvalidOperationException("The SharpLink server host has already started.");
 
             builder.UseLoggerFactoryIfUnset(loggerFactory);
             builder.UseServiceProvider(serviceProvider);
-            _server = builder.Build();
-            readiness.Publish(_server);
-            _runCts = new CancellationTokenSource();
-            _runTask = _server.RunAsync(_runCts.Token).AsTask();
-            runTask = _runTask;
+            server = builder.Build();
+            _server = server;
         }
 
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!runTask.IsCompleted)
-            {
-                _ = ObserveRunTaskAsync(runTask);
-                return;
-            }
-
-            await runTask.ConfigureAwait(false);
-            throw new InvalidOperationException("SharpLink server RunAsync completed during startup.");
+            await server.StartAsync(cancellationToken).ConfigureAwait(false);
+            readiness.Publish(server);
+            Volatile.Write(ref _terminalObserver, ObserveTerminalAsync(server));
         }
-        catch (Exception runException)
+        catch (Exception startException)
         {
-            var failures = new System.Collections.Generic.List<Exception> { runException };
-            var server = Interlocked.Exchange(ref _server, null);
-            if (server is not null)
+            var failures = new List<Exception> { startException };
+            var owned = Interlocked.Exchange(ref _server, null);
+            if (owned is not null)
             {
-                readiness.Clear(server);
-                try { await server.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception cleanupException) { failures.Add(cleanupException); }
+                try { readiness.Clear(owned); }
+                catch (Exception cleanupException) { AddFailure(ref failures, cleanupException); }
+                try { await owned.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception cleanupException) { AddFailure(ref failures, cleanupException); }
             }
-            try { _runCts.Dispose(); }
-            catch (Exception cleanupException) { failures.Add(cleanupException); }
-            _runCts = null;
-            if (failures.Count == 1)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(runException).Throw();
-            throw new AggregateException(failures);
+            if (failures is { Count: 1 })
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(startException).Throw();
+            throw new AggregateException(failures ?? []);
         }
     }
 
-    private async Task ObserveRunTaskAsync(Task runTask)
+    private async Task ObserveTerminalAsync(ISharpLinkServer server)
     {
         try
         {
-            await runTask.ConfigureAwait(false);
+            await server.WaitForShutdownAsync().ConfigureAwait(false);
             if (Volatile.Read(ref _stopRequested) == 0 &&
                 !applicationLifetime.ApplicationStopping.IsCancellationRequested)
             {
                 loggerFactory.CreateLogger<SharpLinkServerHostedService>().LogCritical(
-                    "SharpLink server run loop completed unexpectedly.");
+                    "SharpLink server terminated unexpectedly.");
                 applicationLifetime.StopApplication();
             }
         }
@@ -84,10 +72,12 @@ internal sealed class SharpLinkServerHostedService(
         {
             if (Volatile.Read(ref _stopRequested) != 0 ||
                 applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            {
                 return;
+            }
             loggerFactory.CreateLogger<SharpLinkServerHostedService>().LogCritical(
                 exception,
-                "SharpLink server run loop terminated unexpectedly.");
+                "SharpLink server terminated because of an unrecoverable runtime failure.");
             applicationLifetime.StopApplication();
         }
     }
@@ -95,48 +85,38 @@ internal sealed class SharpLinkServerHostedService(
     public Task StopAsync(CancellationToken cancellationToken)
     {
         Volatile.Write(ref _stopRequested, 1);
+        Task stopTask;
         lock (_stopGate)
-            return _stopTask ??= StopCoreAsync(cancellationToken);
+            stopTask = _stopTask ??= StopCoreAsync();
+
+        return cancellationToken.CanBeCanceled
+            ? stopTask.WaitAsync(cancellationToken)
+            : stopTask;
     }
 
-    private async Task StopCoreAsync(CancellationToken cancellationToken)
+    private async Task StopCoreAsync()
     {
-        var runCts = Interlocked.Exchange(ref _runCts, null);
-        if (runCts is null)
+        var server = Interlocked.Exchange(ref _server, null);
+        if (server is null)
             return;
 
         List<Exception>? failures = null;
         try
         {
-            if (_server is not null)
-                await _server.StopAsync(TimeSpan.FromSeconds(30), cancellationToken);
-            await runCts.CancelAsync();
-            if (_runTask is not null)
-                await _runTask.WaitAsync(cancellationToken);
+            await server.StopAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
             AddFailure(ref failures, exception);
-            if (exception is OperationCanceledException &&
-                cancellationToken.IsCancellationRequested &&
-                _server is SharpLinkServer sharpLinkServer)
-            {
-                sharpLinkServer.ForceStop();
-            }
         }
 
-        try { runCts.Dispose(); }
+        try { readiness.Clear(server); }
         catch (Exception exception) { AddFailure(ref failures, exception); }
-        var server = Interlocked.Exchange(ref _server, null);
-        if (server is not null)
-        {
-            try { readiness.Clear(server); }
-            catch (Exception exception) { AddFailure(ref failures, exception); }
-            try { await server.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception exception) { AddFailure(ref failures, exception); }
-        }
-        _server = null;
-        _runTask = null;
+
+        var terminalObserver = Volatile.Read(ref _terminalObserver);
+        if (terminalObserver is not null)
+            await terminalObserver.ConfigureAwait(false);
+        Volatile.Write(ref _terminalObserver, null);
 
         if (failures is { Count: 1 })
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();

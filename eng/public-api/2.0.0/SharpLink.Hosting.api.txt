@@ -1,0 +1,38 @@
+namespace SharpLink.Hosting
+{
+    public static class HostExtensions
+    {
+        extension(Microsoft.Extensions.DependencyInjection.IServiceCollection services)
+        {
+            public SharpLink.Server.SharpLinkServerBuilder AddSharpLinkServer(System.Action<SharpLink.Server.SharpLinkServerBuilder>? configure = null) { }
+            public SharpLink.Client.SharpClientBuilder AddSharpLinkClient(System.Action<SharpLink.Client.SharpClientBuilder>? configure = null) { }
+            public SharpLink.Client.SharpLinkMultiClusterClientBuilder AddSharpLinkMultiClusterClient(System.Action<SharpLink.Client.SharpLinkMultiClusterClientBuilder>? configure = null) { }
+        }
+    }
+    public interface IAnonymousPipeAllocatorAccessor
+    {
+        SharpLink.Runtime.IAnonymousPipeAllocator? AnonymousPipeAllocator { get; }
+    }
+    public interface ISharpLinkClientAccessor
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ISharpLinkClient> GetClientAsync(System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface ISharpLinkMultiClusterClientAccessor
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.Abstractions.ISharpLinkMultiClusterClient> GetClientAsync(System.Threading.CancellationToken cancellationToken = default);
+    }
+    public interface ISharpLinkServerReadiness
+    {
+        SharpLink.Abstractions.SharpLinkHealthStatus Status { get; }
+    }
+    public sealed class SharpLinkRemoteHealthCheck : Microsoft.Extensions.Diagnostics.HealthChecks.IHealthCheck
+    {
+        public SharpLinkRemoteHealthCheck(SharpLink.Hosting.ISharpLinkClientAccessor clientAccessor) { }
+        public System.Threading.Tasks.Task<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult> CheckHealthAsync(Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckContext context, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class SharpLinkServerHealthCheck : Microsoft.Extensions.Diagnostics.HealthChecks.IHealthCheck
+    {
+        public SharpLinkServerHealthCheck(SharpLink.Hosting.ISharpLinkServerReadiness readiness) { }
+        public System.Threading.Tasks.Task<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult> CheckHealthAsync(Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckContext context, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+}

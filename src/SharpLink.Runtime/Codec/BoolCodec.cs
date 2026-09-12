@@ -8,10 +8,10 @@ internal sealed class BoolCodec : IRpcCodec<bool>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in bool value, IBufferWriter<byte> writer)
     {
-        Unsafe.WriteUnaligned( ref MemoryMarshal.GetReference(writer.GetSpan(Size)), Unsafe.As<bool, byte>(ref Unsafe.AsRef(in value)));
+        Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), Unsafe.As<bool, byte>(ref Unsafe.AsRef(in value)));
         writer.Advance(Size);
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Deserialize(in ReadOnlySequence<byte> buffer)
     {
@@ -31,11 +31,11 @@ internal sealed class NullableBoolCodec : IRpcCodec<bool?>
 {
     internal static readonly NullableBoolCodec Instance = new();
     private const int Size = 1;
-    
+
     // 0xFF (255) = Null
     // 0 = False
     // 1 = True
-    private const byte NullTag = 0xFF; 
+    private const byte NullTag = 0xFF;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in bool? value, IBufferWriter<byte> writer)

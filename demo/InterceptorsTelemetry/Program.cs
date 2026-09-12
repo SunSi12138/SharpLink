@@ -59,11 +59,8 @@ public sealed class ConsoleClientInterceptor : ISharpLinkClientInterceptor
         SharpLinkClientInvocationContext context,
         SharpLinkClientInvocationDelegate next)
     {
-        context.Options = context.Options with
-        {
-            Metadata = new SharpLinkMetadata(
-                new KeyValuePair<string, string>("demo", "interceptor"))
-        };
+        context.Metadata = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("demo", "interceptor"));
         var result = await next(context);
         LastStatus = context.Status;
         return result;

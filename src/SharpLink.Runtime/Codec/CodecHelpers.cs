@@ -6,6 +6,7 @@ internal static class CodecHelpers
 {
     private const int Size = 4;
     private const int MaxStackBufferBytes = 1024;
+    private const int DateTimeOffsetCollectionElementSize = 16;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void EnsureAvailable(in ReadOnlySequence<byte> buffer, long requiredBytes)
@@ -151,18 +152,6 @@ internal static class CodecHelpers
         }
     }
 
-    public static DateTime CreateDateTime(long binaryData)
-    {
-        try
-        {
-            return DateTime.FromBinary(binaryData);
-        }
-        catch (ArgumentException ex)
-        {
-            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Invalid DateTime payload.", ex);
-        }
-    }
-
     public static DateTimeOffset CreateDateTimeOffset(long ticks, short offsetMinutes)
     {
         try
@@ -173,6 +162,24 @@ internal static class CodecHelpers
         {
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Invalid DateTimeOffset payload.", ex);
         }
+    }
+
+    private static DateTimeOffset CreateDateTimeOffsetFromUtcTicks(long utcTicks, short offsetMinutes)
+    {
+        if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains invalid UTC ticks or offset.");
+
+        var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
+        if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
+            offsetTicks < 0 && utcTicks < -offsetTicks)
+        {
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains a value outside the supported clock range.");
+        }
+
+        // The checks above prove both clock and UTC ticks are in range and
+        // offsetTicks is a whole-minute offset within +/-14 hours. Reuse that value
+        // directly instead of passing through the catch-wrapped public helper.
+        return new DateTimeOffset(utcTicks + offsetTicks, new TimeSpan(offsetTicks));
     }
 
     public static TimeOnly ValidateTimeOnly(TimeOnly value)
@@ -189,8 +196,22 @@ internal static class CodecHelpers
         return value;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static decimal ValidateDecimal(decimal value)
     {
+        // Inspect the public decimal bit representation, not its native field layout.
+        Span<int> bits = stackalloc int[4];
+        decimal.GetBits(value, bits);
+        var flags = bits[3];
+        if ((flags & 0x7F00FFFF) == 0 && (uint)(flags & 0x00FF0000) <= (28u << 16))
+            return value;
+        return ValidateInvalidDecimal(value);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static decimal ValidateInvalidDecimal(decimal value)
+    {
+        // Retain the framework constructor's exception and the existing DataLoss wrapper.
         try
         {
             Span<int> bits = stackalloc int[4];
@@ -209,6 +230,12 @@ internal static class CodecHelpers
         if (typeof(T) == typeof(bool))
         {
             var bytes = MemoryMarshal.AsBytes(values);
+            if (bytes.Length >= 16)
+            {
+                if (bytes.ContainsAnyExceptInRange((byte)0, (byte)1))
+                    throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
+                return;
+            }
             for (var index = 0; index < bytes.Length; index++)
                 if (bytes[index] > 1)
                     throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
@@ -239,10 +266,7 @@ internal static class CodecHelpers
         {
             var typed = MemoryMarshal.Cast<T, DateTime>(values);
             for (var index = 0; index < typed.Length; index++)
-            {
-                var value = typed[index];
-                _ = CreateDateTime(Unsafe.As<DateTime, long>(ref value));
-            }
+                _ = DateTimeCodec.ValidateRaw(typed[index]);
             return;
         }
         if (typeof(T) == typeof(TimeOnly))
@@ -252,16 +276,6 @@ internal static class CodecHelpers
                 _ = ValidateTimeOnly(typed[index]);
             return;
         }
-        if (typeof(T) == typeof(DateTimeOffset))
-            ValidateDateTimeOffsetElements(MemoryMarshal.AsBytes(values));
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void NormalizeDateTimeOffsetBlitPayload(Span<byte> payload)
-    {
-        const int size = 16;
-        for (var offset = 0; offset < payload.Length; offset += size)
-            payload.Slice(offset + sizeof(short), 6).Clear();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -271,33 +285,131 @@ internal static class CodecHelpers
     {
         if (values.IsEmpty)
             return;
-        var source = MemoryMarshal.AsBytes(values);
-        EnsureSerializablePayloadLength(source.Length, nameof(values));
-        var destination = writer.GetSpan(source.Length)[..source.Length];
-        source.CopyTo(destination);
-        NormalizeDateTimeOffsetBlitPayload(destination);
-        writer.Advance(source.Length);
+
+        var payloadBytes = checked(values.Length * DateTimeOffsetCollectionElementSize);
+        EnsureSerializablePayloadLength(payloadBytes, nameof(values));
+        var destination = writer.GetSpan(payloadBytes)[..payloadBytes];
+        for (var index = 0; index < values.Length; index++)
+        {
+            var value = values[index];
+            var element = destination.Slice(index * DateTimeOffsetCollectionElementSize, DateTimeOffsetCollectionElementSize);
+            BinaryPrimitives.WriteInt16LittleEndian(element, checked((short)value.Offset.TotalMinutes));
+            element.Slice(sizeof(short), 6).Clear();
+            BinaryPrimitives.WriteInt64LittleEndian(element.Slice(sizeof(long)), value.UtcTicks);
+        }
+        writer.Advance(payloadBytes);
     }
 
-    private static void ValidateDateTimeOffsetElements(ReadOnlySpan<byte> payload)
+    public static DateTimeOffset[]? ReadDateTimeOffsetCollection(in ReadOnlySequence<byte> buffer)
     {
-        const int size = 16;
-        for (var offset = 0; offset < payload.Length; offset += size)
+        var length = GetValidatedDateTimeOffsetCollectionLength(buffer);
+        if (length == -1)
+            return null;
+        if (length == 0)
+            return [];
+
+        var result = new DateTimeOffset[length];
+        ReadDateTimeOffsetCollectionPayload(buffer.Slice(sizeof(int)), result);
+        return result;
+    }
+
+    public static List<DateTimeOffset>? ReadDateTimeOffsetList(in ReadOnlySequence<byte> buffer)
+    {
+        var length = GetValidatedDateTimeOffsetCollectionLength(buffer);
+        if (length == -1)
+            return null;
+        if (length == 0)
+            return [];
+
+        var result = new List<DateTimeOffset>(length);
+        CollectionsMarshal.SetCount(result, length);
+        ReadDateTimeOffsetCollectionPayload(
+            buffer.Slice(sizeof(int)),
+            CollectionsMarshal.AsSpan(result));
+        return result;
+    }
+
+    private static int GetValidatedDateTimeOffsetCollectionLength(in ReadOnlySequence<byte> buffer)
+    {
+        var length = ReadInt32(buffer);
+        if (length < -1)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Invalid collection length {length}.");
+        if (length <= 0)
         {
-            var element = payload[offset..];
-            var offsetMinutes = Unsafe.ReadUnaligned<short>(ref MemoryMarshal.GetReference(element));
-            var utcTicks = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(
-                ref MemoryMarshal.GetReference(element), sizeof(long)));
-            if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
-                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains invalid UTC ticks or offset.");
-            var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
-            if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
-                offsetTicks < 0 && utcTicks < -offsetTicks)
+            EnsureExactSize(buffer, sizeof(int));
+            return length;
+        }
+
+        int payloadBytes;
+        try
+        {
+            payloadBytes = checked(length * DateTimeOffsetCollectionElementSize);
+        }
+        catch (OverflowException ex)
+        {
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Collection byte length overflowed.", ex);
+        }
+        if (payloadBytes > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(int))
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Collection payload exceeds the protocol maximum.");
+        EnsureExactSize(buffer, (long)sizeof(int) + payloadBytes);
+        return length;
+    }
+
+    private static void ReadDateTimeOffsetCollectionPayload(
+        in ReadOnlySequence<byte> payload,
+        Span<DateTimeOffset> destination)
+    {
+        if (payload.IsSingleSegment)
+        {
+            var source = payload.FirstSpan;
+            for (var index = 0; index < destination.Length; index++)
             {
-                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains a value outside the supported clock range.");
+                destination[index] = ReadDateTimeOffsetCollectionElement(
+                    source.Slice(
+                        index * DateTimeOffsetCollectionElementSize,
+                        DateTimeOffsetCollectionElementSize));
             }
+            return;
+        }
+
+        var reader = new SequenceReader<byte>(payload);
+        Span<byte> temporary = stackalloc byte[DateTimeOffsetCollectionElementSize];
+        for (var index = 0; index < destination.Length; index++)
+        {
+            if (reader.UnreadSpan.Length >= DateTimeOffsetCollectionElementSize)
+            {
+                destination[index] = ReadDateTimeOffsetCollectionElement(
+                    reader.UnreadSpan[..DateTimeOffsetCollectionElementSize]);
+            }
+            else
+            {
+                if (!reader.TryCopyTo(temporary))
+                {
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.DataLoss,
+                        "DateTimeOffset collection payload is truncated.");
+                }
+                destination[index] = ReadDateTimeOffsetCollectionElement(temporary);
+            }
+            reader.Advance(DateTimeOffsetCollectionElementSize);
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static DateTimeOffset ReadDateTimeOffsetCollectionElement(ReadOnlySpan<byte> element)
+    {
+        if (element.Slice(sizeof(short), 6).IndexOfAnyExcept((byte)0) >= 0)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains non-canonical padding.");
+
+        var offsetMinutes = BinaryPrimitives.ReadInt16LittleEndian(element);
+        var utcTicks = BinaryPrimitives.ReadInt64LittleEndian(element.Slice(sizeof(long)));
+        return CreateDateTimeOffsetFromUtcTicks(utcTicks, offsetMinutes);
+    }
+
+    public static DateTimeOffset[] ReadRequiredDateTimeOffsetCollection(in ReadOnlySequence<byte> buffer)
+        => ReadDateTimeOffsetCollection(buffer) ?? throw new SharpLinkException(
+            SharpLinkErrorCode.DataLoss,
+            "A non-nullable memory payload used the reserved null collection marker.");
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void WriteInt32(IBufferWriter<byte> writer, in int value)

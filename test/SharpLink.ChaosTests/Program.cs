@@ -24,6 +24,15 @@ namespace SharpLink.ChaosTests;
 public static class Program
 {
     private static readonly TimeSpan RecoveryTimeout = TimeSpan.FromSeconds(30);
+    private static readonly string[] OperationNames =
+    [
+        "Unary",
+        "ServerStreamingEarlyBreak",
+        "ClientStreaming",
+        "Cancellation",
+        "OneWay",
+        "DuplexStreaming"
+    ];
     private const int ConsecutiveRecoveryProbeCount = 5;
 
     public static async Task<int> Main(string[] args)
@@ -43,14 +52,17 @@ public static class Program
         var failures = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
         var failureSamples = new ConcurrentQueue<string>();
         var memorySamples = new ConcurrentQueue<MemorySample>();
+        var unobservedTaskExceptionSamples = new ConcurrentQueue<string>();
         var serverStops = new ConcurrentQueue<ChaosServerStopObservation>();
         var reportGate = new Lock();
         var phase = "Starting";
         var soakStarted = Stopwatch.GetTimestamp();
         var startedMemory = 0L;
         long success = 0;
+        var operationAttempts = new long[OperationNames.Length];
         long expectedFailures = 0;
         long unexpectedFailures = 0;
+        long unobservedTaskExceptions = 0;
         long faultGeneration = 0;
         long maxRecoveryMilliseconds = 0;
         long reportWriteFailures = 0;
@@ -75,6 +87,14 @@ public static class Program
                 isFinal: true);
         };
         AppDomain.CurrentDomain.UnhandledException += unhandledHandler;
+        EventHandler<UnobservedTaskExceptionEventArgs> unobservedTaskExceptionHandler = (_, eventArgs) =>
+        {
+            Interlocked.Increment(ref unobservedTaskExceptions);
+            if (unobservedTaskExceptionSamples.Count < 20)
+                unobservedTaskExceptionSamples.Enqueue(eventArgs.Exception.ToString());
+            eventArgs.SetObserved();
+        };
+        TaskScheduler.UnobservedTaskException += unobservedTaskExceptionHandler;
 
         phase = "StartingServer";
         var server = await ChaosServer.StartAsync(
@@ -103,9 +123,13 @@ public static class Program
         var service = client.Get<IChaosService>();
         phase = "Warmup";
         await WarmUpAsync(service, duration.Token).ConfigureAwait(false);
-        startedMemory = GetRetainedMemory();
         soakStarted = Stopwatch.GetTimestamp();
-        memorySamples.Enqueue(new MemorySample(DateTimeOffset.UtcNow, 0, startedMemory));
+        var startedSample = CaptureResourceSample(0) with
+        {
+            UnobservedTaskExceptions = Volatile.Read(ref unobservedTaskExceptions)
+        };
+        startedMemory = startedSample.RetainedBytes;
+        memorySamples.Enqueue(startedSample);
         phase = "Workload";
         TryWriteReport("Running", phase, null, failure: null, drain: null, isFinal: false);
         var memorySampler = SampleRetainedMemoryAsync();
@@ -118,6 +142,7 @@ public static class Program
                 workerId,
                 duration.Token,
                 () => Volatile.Read(ref faultGeneration),
+                operation => Interlocked.Increment(ref operationAttempts[operation]),
                 () => Interlocked.Increment(ref success),
                 () => Interlocked.Increment(ref expectedFailures),
                 RecordUnexpectedFailure);
@@ -134,14 +159,17 @@ public static class Program
         serverStops.Enqueue(await server.StopAsync("FinalStop").ConfigureAwait(false));
         phase = "DrainingMetrics";
         var drain = await metrics.WaitForZeroAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-        var endedMemory = GetRetainedMemory();
+        if (options.InjectUnobservedTaskException)
+            CreateUnobservedTaskExceptionForGateProbe();
+        var finalSample = CaptureResourceSample(Stopwatch.GetElapsedTime(soakStarted).TotalSeconds) with
+        {
+            UnobservedTaskExceptions = Volatile.Read(ref unobservedTaskExceptions)
+        };
+        var endedMemory = finalSample.RetainedBytes;
         var memoryGrowthPercent = startedMemory == 0
             ? 0
             : (endedMemory - startedMemory) * 100.0 / startedMemory;
-        memorySamples.Enqueue(new MemorySample(
-            DateTimeOffset.UtcNow,
-            Stopwatch.GetElapsedTime(soakStarted).TotalSeconds,
-            endedMemory));
+        memorySamples.Enqueue(finalSample);
         var orderedMemorySamples = memorySamples.OrderBy(static sample => sample.ElapsedSeconds).ToArray();
         var lastSixHoursGrowthPercent = CalculateWindowGrowth(orderedMemorySamples, TimeSpan.FromHours(6));
         if (options.InjectClientError)
@@ -173,6 +201,14 @@ public static class Program
                 $"Chaos recorded {unexpectedFailures} unexpected failures.",
                 null);
         }
+        else if (Volatile.Read(ref unobservedTaskExceptions) != 0)
+        {
+            exitCode = 7;
+            terminalFailure = new ChaosFailure(
+                "UnobservedTaskExceptions",
+                $"Chaos captured {Volatile.Read(ref unobservedTaskExceptions)} unobserved Task exception(s).",
+                string.Join(Environment.NewLine, unobservedTaskExceptionSamples));
+        }
         else if (clientLogs.ErrorCount != 0)
         {
             exitCode = 2;
@@ -197,12 +233,15 @@ public static class Program
                 $"Chaos failed to write its requested report {Volatile.Read(ref reportWriteFailures)} time(s).",
                 Volatile.Read(ref reportWriteFailure));
         }
-        else if (success == 0 || restartCount == 0)
+        else if (success == 0 || expectedFailures == 0 || restartCount == 0 ||
+                 Enumerable.Range(0, operationAttempts.Length)
+                     .Any(index => Volatile.Read(ref operationAttempts[index]) == 0))
         {
             exitCode = 3;
             terminalFailure = new ChaosFailure(
                 "InsufficientCoverage",
-                $"Chaos completed with success={success} and restarts={restartCount}.",
+                $"Chaos completed with success={success}, restarts={restartCount}, and operations=" +
+                string.Join(",", CreateOperationAttemptSnapshot().Select(static item => $"{item.Key}:{item.Value}")) + ".",
                 null);
         }
         else if (lastSixHoursGrowthPercent is > 5)
@@ -232,10 +271,12 @@ public static class Program
                 Volatile.Read(ref reportWriteFailure));
         }
         AppDomain.CurrentDomain.UnhandledException -= unhandledHandler;
+        TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
 
         Console.WriteLine(
             $"CHAOS_RESULT success={success} injected={expectedFailures} unexpected={unexpectedFailures} " +
             $"restarts={restartCount} clientErrors={clientLogs.ErrorCount} serverErrors={serverLogs.ErrorCount} " +
+            $"unobserved={Volatile.Read(ref unobservedTaskExceptions)} " +
             $"retained={startedMemory}->{endedMemory} ({memoryGrowthPercent:F2}%)");
         foreach (var error in serverLogs.AllSnapshot())
             Console.WriteLine($"CHAOS_SERVER_ERROR {error}");
@@ -326,16 +367,23 @@ public static class Program
                 while (true)
                 {
                     await Task.Delay(options.CheckpointInterval, duration.Token).ConfigureAwait(false);
-                    var sample = new MemorySample(
-                        DateTimeOffset.UtcNow,
-                        Stopwatch.GetElapsedTime(soakStarted).TotalSeconds,
-                        GetRetainedMemory());
+                    var sample = CaptureResourceSample(
+                        Stopwatch.GetElapsedTime(soakStarted).TotalSeconds) with
+                    {
+                        UnobservedTaskExceptions = Volatile.Read(ref unobservedTaskExceptions)
+                    };
                     memorySamples.Enqueue(sample);
                     TryWriteReport("Running", phase, null, failure: null, drain: null, isFinal: false);
                     Console.WriteLine(
                         $"CHAOS_CHECKPOINT elapsed={sample.ElapsedSeconds:F0}s success={Volatile.Read(ref success)} " +
                         $"unexpected={Volatile.Read(ref unexpectedFailures)} restarts={Volatile.Read(ref restartCount)} " +
-                        $"retained={sample.RetainedBytes}");
+                        $"retained={sample.RetainedBytes} workingSet={sample.ProcessWorkingSetBytes} " +
+                        $"private={sample.ProcessPrivateBytes} gcHeap={sample.GcHeapSizeBytes} " +
+                        $"gen={sample.Gen0Collections}/{sample.Gen1Collections}/{sample.Gen2Collections} " +
+                        $"threads={sample.ProcessThreadCount}/{sample.ThreadPoolThreadCount} " +
+                        $"pending={sample.ThreadPoolPendingWorkItemCount} " +
+                        $"dispatchers={sample.DispatcherRetainedCount} " +
+                        $"unobserved={sample.UnobservedTaskExceptions}");
                 }
             }
             catch (OperationCanceledException) when (duration.IsCancellationRequested)
@@ -378,8 +426,10 @@ public static class Program
                 options.StopOnUnexpectedFailure,
                 Volatile.Read(ref restartCount),
                 Volatile.Read(ref success),
+                CreateOperationAttemptSnapshot(),
                 Volatile.Read(ref expectedFailures),
                 Volatile.Read(ref unexpectedFailures),
+                Volatile.Read(ref unobservedTaskExceptions),
                 Volatile.Read(ref maxRecoveryMilliseconds),
                 startedMemory,
                 latestMemory,
@@ -394,6 +444,7 @@ public static class Program
                 failures.OrderByDescending(static item => item.Value)
                     .ToDictionary(static item => item.Key, static item => item.Value),
                 [.. failureSamples],
+                [.. unobservedTaskExceptionSamples],
                 clientLogs.AllSnapshot(),
                 serverLogs.AllSnapshot(),
                 [.. serverStops]);
@@ -428,6 +479,13 @@ public static class Program
                 return false;
             }
         }
+
+        IReadOnlyDictionary<string, long> CreateOperationAttemptSnapshot()
+            => Enumerable.Range(0, OperationNames.Length)
+                .ToDictionary(
+                    static index => OperationNames[index],
+                    index => Volatile.Read(ref operationAttempts[index]),
+                    StringComparer.Ordinal);
     }
 
     private static async Task RunWorkerAsync(
@@ -435,6 +493,7 @@ public static class Program
         int workerId,
         CancellationToken runToken,
         Func<long> getFaultGeneration,
+        Action<int> attempt,
         Action success,
         Action expectedFailure,
         Action<Exception> unexpectedFailure)
@@ -442,7 +501,8 @@ public static class Program
         var iteration = 0;
         while (!runToken.IsCancellationRequested)
         {
-            var operation = (workerId + iteration++) & 3;
+            var operation = (workerId + iteration++) % 6;
+            attempt(operation);
             var operationGeneration = getFaultGeneration();
             try
             {
@@ -469,7 +529,7 @@ public static class Program
                         if (sum != 120)
                             throw new InvalidDataException($"Client stream result was corrupted: {sum}/120.");
                         break;
-                    default:
+                    case 3:
                         using (var cancellation = CancellationTokenSource.CreateLinkedTokenSource(runToken))
                         {
                             // A finite server delay makes this assertion depend on whether the
@@ -481,6 +541,28 @@ public static class Program
                             await service.DelayAsync(Timeout.Infinite, cancellation.Token).ConfigureAwait(false);
                             throw new InvalidOperationException("Cancellation injection completed successfully.");
                         }
+                    case 4:
+                        await service.PublishAsync(workerId, iteration).ConfigureAwait(false);
+                        break;
+                    default:
+                        var duplexCount = 0;
+                        await foreach (var item in service.DuplexAsync(CreateValues(runToken))
+                                           .ConfigureAwait(false))
+                        {
+                            var expected = duplexCount * 2;
+                            if (item != expected)
+                            {
+                                throw new InvalidDataException(
+                                    $"Duplex stream item was corrupted: {item}/{expected}.");
+                            }
+                            duplexCount++;
+                        }
+                        if (duplexCount != 16)
+                        {
+                            throw new InvalidDataException(
+                                $"Duplex stream returned only {duplexCount}/16 items.");
+                        }
+                        break;
                 }
                 success();
             }
@@ -533,10 +615,21 @@ public static class Program
         {
             _ = await service.AddAsync(iteration, 1).ConfigureAwait(false);
             _ = await service.UploadAsync(CreateValues(cancellationToken)).ConfigureAwait(false);
+            await service.PublishAsync(iteration, 1).ConfigureAwait(false);
             await foreach (var _ in service.StreamAsync(8, cancellationToken)
                                .WithCancellation(cancellationToken).ConfigureAwait(false))
             {
             }
+            var duplexCount = 0;
+            await foreach (var item in service.DuplexAsync(CreateValues(cancellationToken))
+                               .ConfigureAwait(false))
+            {
+                if (item != duplexCount * 2)
+                    throw new InvalidDataException("Duplex warmup result was corrupted.");
+                duplexCount++;
+            }
+            if (duplexCount != 16)
+                throw new InvalidDataException("Duplex warmup returned an incomplete stream.");
         }
     }
 
@@ -563,10 +656,10 @@ public static class Program
 
         return exception is SocketException or IOException or ObjectDisposedException or
             SharpLinkException
-            {
-                Code: SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed or
+        {
+            Code: SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed or
                     SharpLinkErrorCode.DeadlineExceeded or SharpLinkErrorCode.Cancelled
-            };
+        };
     }
 
     private static async Task<bool> WaitForRecoveryAsync(
@@ -588,12 +681,12 @@ public static class Program
             }
             catch (Exception exception) when (exception is SocketException or IOException or ObjectDisposedException or
                                               SharpLinkException
-                                              {
-                                                  Code: SharpLinkErrorCode.Unavailable or
+            {
+                Code: SharpLinkErrorCode.Unavailable or
                                                       SharpLinkErrorCode.ConnectionClosed or
                                                       SharpLinkErrorCode.DeadlineExceeded or
                                                       SharpLinkErrorCode.Cancelled
-                                              })
+            })
             {
                 consecutiveSuccesses = 0;
             }
@@ -641,12 +734,41 @@ public static class Program
             ? $"{nameof(SharpLinkException)}[{sharpLink.Code}]"
             : exception.GetType().Name;
 
-    private static long GetRetainedMemory()
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CreateUnobservedTaskExceptionForGateProbe()
+    {
+        var faulted = Task.FromException(
+            new InvalidOperationException("Injected unobserved Task exception gate probe."));
+        GC.KeepAlive(faulted);
+    }
+
+    private static MemorySample CaptureResourceSample(double elapsedSeconds)
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
-        return GC.GetTotalMemory(forceFullCollection: true);
+        var retainedBytes = GC.GetTotalMemory(forceFullCollection: false);
+        var gc = GC.GetGCMemoryInfo();
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        return new MemorySample(
+            DateTimeOffset.UtcNow,
+            elapsedSeconds,
+            retainedBytes,
+            process.WorkingSet64,
+            process.PrivateMemorySize64,
+            gc.HeapSizeBytes,
+            gc.TotalCommittedBytes,
+            gc.FragmentedBytes,
+            GC.CollectionCount(0),
+            GC.CollectionCount(1),
+            GC.CollectionCount(2),
+            process.Threads.Count,
+            ThreadPool.ThreadCount,
+            ThreadPool.PendingWorkItemCount,
+            ThreadPool.CompletedWorkItemCount,
+            PooledAsyncStreamDispatcher<int>.RetainedCountForTests,
+            UnobservedTaskExceptions: 0);
     }
 
     private static double? CalculateWindowGrowth(
@@ -835,540 +957,7 @@ public static class Program
         Console.WriteLine("  --stop-on-unexpected true");
         Console.WriteLine("  --inject-client-error false      (release-gate self-test)");
         Console.WriteLine("  --inject-server-error false      (release-gate self-test)");
+        Console.WriteLine("  --inject-unobserved-task-exception false (release-gate self-test)");
         Console.WriteLine("  --json-output artifacts/chaos/report.json");
-    }
-}
-
-internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port)
-{
-    internal int Port { get; } = port;
-
-    internal static Task<ChaosServer> StartAsync(
-        ChaosTransport transport,
-        string sharedMemoryName,
-        int port,
-        ILoggerFactory loggerFactory)
-    {
-        var builder = SharpLinkServerBuilder.Create()
-            .UseLoggerFactory(loggerFactory)
-            .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
-        if (transport == ChaosTransport.SharedMemory)
-            builder.UseSharedMemory(sharedMemoryName);
-        else
-            builder.UseTcp(port, IPAddress.Loopback.ToString());
-        var boundPort = transport == ChaosTransport.Tcp
-            ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port
-            : 0;
-        var server = (SharpLinkServer)builder.Build();
-        var runTask = server.RunAsync().AsTask();
-        return Task.FromResult(new ChaosServer(server, runTask, boundPort));
-    }
-
-    internal static async Task<ChaosServer> StartWithRetryAsync(
-        ChaosTransport transport,
-        string sharedMemoryName,
-        int port,
-        ILoggerFactory loggerFactory,
-        CancellationToken cancellationToken)
-    {
-        Exception? lastException = null;
-        for (var attempt = 0; attempt < 100; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                return await StartAsync(transport, sharedMemoryName, port, loggerFactory).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is SocketException or IOException)
-            {
-                lastException = exception;
-                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        throw new InvalidOperationException("TCP listener did not become reusable after rolling restart.", lastException);
-    }
-
-    internal async Task<ChaosServerStopObservation> StopAsync(string reason)
-    {
-        await server.StopAsync(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
-        await runTask.WaitAsync(TimeSpan.FromSeconds(6)).ConfigureAwait(false);
-        return new ChaosServerStopObservation(
-            DateTimeOffset.UtcNow,
-            reason,
-            server.ActiveCallCountForDiagnostics,
-            server.LastStopDiagnostics);
-    }
-}
-
-internal sealed record ChaosServerStopObservation(
-    DateTimeOffset TimestampUtc,
-    string Reason,
-    int ActiveCallsAfterStop,
-    ServerStopDiagnosticSnapshot? GraceTimeoutSnapshot);
-
-internal sealed class ChaosMetricObserver : IDisposable
-{
-    private static readonly string[] Tracked =
-    [
-        "sharplink.connections.active",
-        "sharplink.calls.active",
-        "sharplink.requests.pending",
-        "sharplink.streams.active",
-        "sharplink.send.queue.bytes"
-    ];
-
-    private readonly ConcurrentDictionary<string, long> _values = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<ActiveCallKey, long> _activeCallBreakdown = new();
-    private readonly MeterListener _listener = new();
-
-    internal ChaosMetricObserver()
-    {
-        for (var index = 0; index < Tracked.Length; index++)
-            _values[Tracked[index]] = 0;
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == "SharpLink" && _values.ContainsKey(instrument.Name))
-                listener.EnableMeasurementEvents(instrument);
-        };
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
-        {
-            _values.AddOrUpdate(
-                instrument.Name,
-                static (_, delta) => delta,
-                static (_, value, delta) => value + delta,
-                measurement);
-            if (instrument.Name != "sharplink.calls.active")
-                return;
-
-            var side = "unknown";
-            var contractId = long.MinValue;
-            var methodId = long.MinValue;
-            foreach (var tag in tags)
-            {
-                switch (tag.Key)
-                {
-                    case "rpc.side":
-                        if (tag.Value is string configuredSide)
-                            side = configuredSide;
-                        break;
-                    case "rpc.sharplink.contract_id":
-                        _ = TryReadInt64(tag.Value, out contractId);
-                        break;
-                    case "rpc.sharplink.method_id":
-                        _ = TryReadInt64(tag.Value, out methodId);
-                        break;
-                }
-            }
-            var key = new ActiveCallKey(side, contractId, methodId);
-            _activeCallBreakdown.AddOrUpdate(
-                key,
-                static (_, delta) => delta,
-                static (_, value, delta) => value + delta,
-                measurement);
-        });
-        _listener.Start();
-
-    }
-
-    internal IReadOnlyDictionary<string, long> Snapshot()
-        => _values.ToDictionary(static value => value.Key, static value => value.Value);
-
-    internal IReadOnlyDictionary<string, long> ActiveCallBreakdownSnapshot()
-        => _activeCallBreakdown
-            .Where(static value => value.Value != 0)
-            .ToDictionary(
-                static value => value.Key.ToString(),
-                static value => value.Value,
-                StringComparer.Ordinal);
-
-    private static bool TryReadInt64(object? value, out long result)
-    {
-        switch (value)
-        {
-            case long signed:
-                result = signed;
-                return true;
-            case ulong unsigned when unsigned <= long.MaxValue:
-                result = (long)unsigned;
-                return true;
-            case int signed32:
-                result = signed32;
-                return true;
-            case uint unsigned32:
-                result = unsigned32;
-                return true;
-            default:
-                result = long.MinValue;
-                return false;
-        }
-    }
-
-    internal async Task<ChaosDrainResult> WaitForZeroAsync(TimeSpan timeout)
-    {
-        var started = Stopwatch.GetTimestamp();
-        var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
-        while (_values.Any(static value => value.Value != 0))
-        {
-            if (Stopwatch.GetTimestamp() >= deadline)
-            {
-                return CreateDrainResult(drained: false, started);
-            }
-            await Task.Delay(20).ConfigureAwait(false);
-        }
-        return CreateDrainResult(drained: true, started);
-    }
-
-    private ChaosDrainResult CreateDrainResult(bool drained, long started)
-        => new(
-            drained,
-            Stopwatch.GetElapsedTime(started).TotalSeconds,
-            Snapshot(),
-            ActiveCallBreakdownSnapshot());
-
-    public void Dispose() => _listener.Dispose();
-
-    private readonly record struct ActiveCallKey(string Side, long ContractId, long MethodId)
-    {
-        public override string ToString()
-            => $"{Side}:{FormatIdentifier(ContractId)}:{FormatIdentifier(MethodId)}";
-
-        private static string FormatIdentifier(long value)
-            => value == long.MinValue
-                ? "unknown"
-                : value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-    }
-}
-
-internal sealed class ChaosLoggerFactory : ILoggerFactory, ILogger
-{
-    private const int MaxRetainedErrors = 8;
-    private readonly ConcurrentQueue<string> _generationErrors = new();
-    private readonly ConcurrentQueue<string> _allErrors = new();
-    private long _errorCount;
-
-    internal long ErrorCount => Volatile.Read(ref _errorCount);
-
-    public void AddProvider(ILoggerProvider provider)
-    {
-        ArgumentNullException.ThrowIfNull(provider);
-    }
-
-    public ILogger CreateLogger(string categoryName)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(categoryName);
-        return this;
-    }
-
-    public IDisposable? BeginScope<TState>(TState state) where TState : notnull
-        => null;
-
-    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
-
-    public void Log<TState>(
-        LogLevel logLevel,
-        EventId eventId,
-        TState state,
-        Exception? exception,
-        Func<TState, Exception?, string> formatter)
-    {
-        if (!IsEnabled(logLevel))
-            return;
-
-        RecordError(
-            $"Event={eventId.Id}:{eventId.Name}; Message={formatter(state, exception)}; " +
-            $"Exception={exception}");
-    }
-
-    internal void Clear() => _generationErrors.Clear();
-
-    internal IReadOnlyList<string> Snapshot() => [.. _generationErrors];
-
-    internal IReadOnlyList<string> AllSnapshot() => [.. _allErrors];
-
-    internal void InjectErrorForGateProbe(string owner)
-        => RecordError($"Injected {owner} Error for the Chaos release-gate self-test.");
-
-    private void RecordError(string error)
-    {
-        Interlocked.Increment(ref _errorCount);
-        EnqueueBounded(_generationErrors, error);
-        EnqueueBounded(_allErrors, error);
-    }
-
-    private static void EnqueueBounded(ConcurrentQueue<string> queue, string error)
-    {
-        queue.Enqueue(error);
-        while (queue.Count > MaxRetainedErrors)
-            queue.TryDequeue(out _);
-    }
-
-    public void Dispose()
-    {
-        _generationErrors.Clear();
-        _allErrors.Clear();
-    }
-}
-
-internal sealed record ChaosDrainResult(
-    bool Drained,
-    double WaitedSeconds,
-    IReadOnlyDictionary<string, long> Metrics,
-    IReadOnlyDictionary<string, long> ActiveCallBreakdown)
-{
-    internal string Describe()
-        => "SharpLink state did not drain after chaos: " +
-           string.Join(", ", Metrics.Select(static value => $"{value.Key}={value.Value}")) +
-           "; active-call breakdown: " +
-           string.Join(", ", ActiveCallBreakdown.Select(static value => $"{value.Key}={value.Value}"));
-}
-
-internal sealed class ChaosOptions
-{
-    internal TimeSpan Duration { get; private init; } = TimeSpan.FromSeconds(120);
-    internal int Concurrency { get; private init; } = 32;
-    internal TimeSpan RestartInterval { get; private init; } = TimeSpan.FromSeconds(5);
-    internal TimeSpan CheckpointInterval { get; private init; } = TimeSpan.FromSeconds(30);
-    internal bool DumpOnFailure { get; private init; } = true;
-    internal bool StopOnUnexpectedFailure { get; private init; } = true;
-    internal bool InjectClientError { get; private init; }
-    internal bool InjectServerError { get; private init; }
-    internal ChaosTransport Transport { get; private init; } = ChaosTransport.Tcp;
-    internal string SharedMemoryName { get; private init; } = "sharplink-chaos";
-    internal string? JsonOutputPath { get; private init; }
-
-    internal static ChaosOptions Parse(string[] args)
-    {
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var index = 0; index < args.Length; index++)
-        {
-            var argument = args[index];
-            if (!argument.StartsWith("--", StringComparison.Ordinal))
-                throw new ArgumentException($"Unexpected argument '{argument}'.");
-            if (++index >= args.Length)
-                throw new ArgumentException($"Missing value for '{argument}'.");
-            values[argument[2..]] = args[index];
-        }
-
-        if (values.ContainsKey("duration") && values.ContainsKey("duration-seconds"))
-            throw new ArgumentException("Use either --duration or --duration-seconds, not both.");
-        var duration = values.TryGetValue("duration", out var durationText)
-            ? ParseDuration(durationText, "duration")
-            : TimeSpan.FromSeconds(ParsePositive(values, "duration-seconds", 120));
-        var concurrency = ParsePositive(values, "concurrency", 32);
-        var restartSeconds = ParsePositive(values, "restart-interval-seconds", 5);
-        var transport = values.GetValueOrDefault("transport", "tcp").ToLowerInvariant() switch
-        {
-            "tcp" => ChaosTransport.Tcp,
-            "sharedmemory" or "shared-memory" or "shm" => ChaosTransport.SharedMemory,
-            var value => throw new ArgumentException($"Unsupported chaos transport '{value}'.")
-        };
-        if (TimeSpan.FromSeconds(restartSeconds) >= duration)
-            throw new ArgumentException("Restart interval must be shorter than the chaos duration.");
-        var checkpointInterval = values.TryGetValue("checkpoint-interval", out var checkpointText)
-            ? ParseDuration(checkpointText, "checkpoint-interval")
-            : values.TryGetValue("checkpoint-interval-seconds", out var checkpointSecondsText)
-                ? TimeSpan.FromSeconds(ParsePositive(checkpointSecondsText, "checkpoint-interval-seconds"))
-                : GetDefaultCheckpointInterval(duration);
-        if (checkpointInterval >= duration)
-            checkpointInterval = TimeSpan.FromTicks(Math.Max(TimeSpan.TicksPerSecond, duration.Ticks / 2));
-        return new ChaosOptions
-        {
-            Duration = duration,
-            Concurrency = concurrency,
-            RestartInterval = TimeSpan.FromSeconds(restartSeconds),
-            CheckpointInterval = checkpointInterval,
-            DumpOnFailure = ParseBoolean(values, "dump-on-failure", fallback: true),
-            StopOnUnexpectedFailure = ParseBoolean(values, "stop-on-unexpected", fallback: true),
-            InjectClientError = ParseBoolean(values, "inject-client-error", fallback: false),
-            InjectServerError = ParseBoolean(values, "inject-server-error", fallback: false),
-            Transport = transport,
-            SharedMemoryName = values.GetValueOrDefault("shm-name", "sharplink-chaos"),
-            JsonOutputPath = values.GetValueOrDefault("json-output")
-        };
-    }
-
-    private static int ParsePositive(Dictionary<string, string> values, string name, int fallback)
-    {
-        var value = int.Parse(values.GetValueOrDefault(name, fallback.ToString()));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value, name);
-        return value;
-    }
-
-    private static int ParsePositive(string text, string name)
-    {
-        var value = int.Parse(text);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value, name);
-        return value;
-    }
-
-    private static TimeSpan ParseDuration(string value, string name)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
-        var unitLength = char.IsLetter(value[^1]) ? 1 : 0;
-        if (unitLength == 1 && double.TryParse(
-                value.AsSpan(0, value.Length - 1),
-                System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture,
-                out var amount))
-        {
-            var duration = char.ToLowerInvariant(value[^1]) switch
-            {
-                's' => TimeSpan.FromSeconds(amount),
-                'm' => TimeSpan.FromMinutes(amount),
-                'h' => TimeSpan.FromHours(amount),
-                'd' => TimeSpan.FromDays(amount),
-                _ => throw new ArgumentException(
-                    $"Unsupported {name} unit in '{value}'. Use s, m, h, d, or a TimeSpan.",
-                    name)
-            };
-            if (duration > TimeSpan.Zero)
-                return duration;
-        }
-        if (TimeSpan.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsed) &&
-            parsed > TimeSpan.Zero)
-        {
-            return parsed;
-        }
-        throw new ArgumentException($"{name} must be a positive duration such as 10m, 24h, or 00:10:00.", name);
-    }
-
-    private static TimeSpan GetDefaultCheckpointInterval(TimeSpan duration)
-    {
-        if (duration >= TimeSpan.FromHours(12))
-            return TimeSpan.FromMinutes(30);
-        if (duration >= TimeSpan.FromHours(6))
-            return TimeSpan.FromMinutes(15);
-        if (duration >= TimeSpan.FromHours(1))
-            return TimeSpan.FromMinutes(10);
-        if (duration >= TimeSpan.FromMinutes(10))
-            return TimeSpan.FromMinutes(1);
-        if (duration >= TimeSpan.FromMinutes(2))
-            return TimeSpan.FromSeconds(30);
-        return TimeSpan.FromSeconds(10);
-    }
-
-    private static bool ParseBoolean(
-        IReadOnlyDictionary<string, string> values,
-        string name,
-        bool fallback)
-    {
-        if (!values.TryGetValue(name, out var value))
-            return fallback;
-        if (bool.TryParse(value, out var parsed))
-            return parsed;
-        throw new ArgumentException($"{name} must be true or false.", name);
-    }
-}
-
-internal sealed record ChaosReport(
-    DateTimeOffset TimestampUtc,
-    DateTimeOffset StartedUtc,
-    string Status,
-    string Phase,
-    int? ExitCode,
-    bool IsFinal,
-    string Commit,
-    bool? WorkingTreeDirty,
-    string OperatingSystem,
-    string Architecture,
-    string Runtime,
-    double DurationSeconds,
-    double ActualElapsedSeconds,
-    double CheckpointIntervalSeconds,
-    double RestartIntervalSeconds,
-    int Concurrency,
-    string Transport,
-    bool DumpOnFailure,
-    bool StopOnUnexpectedFailure,
-    int RestartCount,
-    long Success,
-    long ExpectedFailures,
-    long UnexpectedFailures,
-    long MaxRecoveryMilliseconds,
-    long RetainedMemoryStart,
-    long RetainedMemoryEnd,
-    double RetainedMemoryGrowthPercent,
-    double? LastSixHoursRetainedMemoryGrowthPercent,
-    IReadOnlyList<MemorySample> MemorySamples,
-    IReadOnlyDictionary<string, long> FinalMetrics,
-    IReadOnlyDictionary<string, long> ActiveCallBreakdown,
-    ChaosDrainResult? Drain,
-    ChaosFailure? TerminalFailure,
-    ChaosDiagnosticArtifact? DiagnosticArtifact,
-    IReadOnlyDictionary<string, long> Failures,
-    IReadOnlyList<string> FailureSamples,
-    IReadOnlyList<string> ClientErrors,
-    IReadOnlyList<string> ServerErrors,
-    IReadOnlyList<ChaosServerStopObservation> ServerStops);
-
-internal sealed record ChaosFailure(string Type, string Message, string? Details)
-{
-    internal static ChaosFailure FromException(Exception exception)
-        => new(exception.GetType().FullName ?? exception.GetType().Name, exception.Message, exception.ToString());
-}
-
-internal sealed record ChaosDiagnosticArtifact(
-    string Kind,
-    string Path,
-    bool Captured,
-    string Details);
-
-internal enum ChaosTransport
-{
-    Tcp,
-    SharedMemory
-}
-
-internal sealed record MemorySample(
-    DateTimeOffset TimestampUtc,
-    double ElapsedSeconds,
-    long RetainedBytes);
-
-[RpcContract]
-public interface IChaosService : IService
-{
-    [NonCancellable]
-    ValueTask<int> AddAsync(int left, int right);
-
-    ValueTask DelayAsync(int milliseconds, CancellationToken cancellationToken);
-
-    [NonCancellable]
-    ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
-
-    IAsyncEnumerable<int> StreamAsync(int count, CancellationToken cancellationToken);
-}
-
-[RpcService]
-public sealed class ChaosService : IChaosService
-{
-    public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
-
-    public async ValueTask DelayAsync(int milliseconds, CancellationToken cancellationToken)
-        => await Task.Delay(milliseconds, cancellationToken).ConfigureAwait(false);
-
-    public async ValueTask<int> UploadAsync(IAsyncEnumerable<int> values)
-    {
-        var sum = 0;
-        var count = 0;
-        await foreach (var value in values.ConfigureAwait(false))
-        {
-            sum += value;
-            count++;
-        }
-        if (count != 16)
-            throw new InvalidDataException($"Server received only {count}/16 client-stream items.");
-        return sum;
-    }
-
-    public async IAsyncEnumerable<int> StreamAsync(
-        int count,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        for (var index = 0; index < count; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return index;
-            await Task.Yield();
-        }
     }
 }

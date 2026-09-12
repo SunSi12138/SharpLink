@@ -1,0 +1,76 @@
+# Control-plane result and exception contract
+
+本文固定 SharpLink 公开 control-plane API 在“返回结构化结果”和“抛异常”之间的边界。目标是让 orchestration、健康探测和动态配置代码不需要依赖异常消息做正常分支，同时保留参数、配置和内部故障的异常语义。
+
+## Review rule
+
+| 情况 | 公开契约 | 典型示例 |
+| --- | --- | --- |
+| 预期运行时拒绝或状态竞争 | structured result / `Try...` | cluster 已存在、cluster 不存在、route 冲突、合法 cluster 在查询前被并发移除 |
+| 参数或配置错误 | exception | default/非法 `SharpLinkClusterKey`、非法 timeout、无效 builder 配置 |
+| caller cancellation | `OperationCanceledException` | 调用方取消等待或 mutation |
+| 内部 invariant / 非预期运行时故障 | exception | 实现 bug、资源清理异常、未预期 transport/runtime failure |
+
+结构化结果必须提供稳定的 typed code/status；调用方不应解析异常消息或日志文本来判断 expected runtime outcome。反过来，也不要求把所有异常都转换为 result：programmer error、invalid configuration、cancellation 和 invariant failure 继续保持异常语义。
+
+## Multi-cluster mutations
+
+`AddClusterAsync`、`ReplaceClusterAsync` 和 `RemoveClusterAsync` 使用 operation-specific structured result 表达预期拒绝和 publication/cleanup outcome。调用方应根据 `Succeeded`、failure code 以及 publication/cleanup 字段分支，而不是捕获 `InvalidOperationException` 再解析消息。
+
+Mutation result 只描述该 control-plane operation 的结果，不承诺远端 cluster 已 Ready。需要远端可用性时仍应显式使用 readiness API。
+
+## Cluster status query
+
+当 cluster 是否仍存在本身就是运行时状态的一部分时，built-in coordinator 可使用 `TryGetClusterStatus`：
+
+- 合法且当前存在的 key 返回 `true`，并给出一个 `SharpLinkClusterStatusSnapshot`；
+- 合法但当前不存在的 key（包括查询前刚被并发移除）返回 `false`；
+- default 或非法 key 是 programmer error，仍抛 `ArgumentException`。
+
+Legacy custom `ISharpLinkMultiClusterClient` implementation 若要提供同样的 non-throwing presence contract，必须显式 override `TryGetClusterStatus`。默认实现不会捕获 `GetClusterState` 的异常再猜测“是否只是 cluster 不存在”，因为 legacy getter 没有稳定的 missing-cluster exception contract；默认实现对合法 key 返回 `NotSupportedException`，从而避免把实现特定的参数或配置错误静默改写成 query miss。
+
+`SharpLinkClusterStatusSnapshot` 捕获 child 的独立公开状态域：legacy `ConnectionState`、canonical `RuntimeState` 和 canonical `Readiness`。其中 readiness 不会从 legacy connection state 重建，因此 legacy `ConnectAsync()` 可以出现 `ConnectionState == Ready` 但 canonical `Readiness == NotReady` 的合法组合。Snapshot 在返回后保持不可变，但它不是跨多个状态域的事务性 lease；并发 lifecycle / topology transition 仍可能发生，读取结果也不保证后续操作成功。
+
+`GetClusterState`、`GetClusterRuntimeState` 和 `GetClusterReadiness` 保留为 convenience getter。当调用方把“cluster 必须存在”视为自身 invariant 时可以继续使用它们；cluster 缺失时这些 getter 仍可以抛异常。需要处理正常存在性竞争的 orchestration 代码应使用支持该 capability 的 `TryGetClusterStatus` implementation。
+
+## Runtime configuration updates
+
+Client 和 Server 的 live runtime configuration 继续保留现有 throwing API 以兼容调用方，同时提供对应的 `Try...` structured path。built-in runtime 在预期 control-plane 拒绝时返回 `SharpLinkRuntimeConfigurationUpdateResult`；调用方应根据 `Succeeded` 与 `FailureCode` 分支，而不是捕获并解析 `InvalidOperationException`。
+
+稳定 failure code 包括：
+
+- `LifecycleClosed`：draining、Stop/Dispose 已封口或 terminal lifecycle 不再允许 publication；
+- `ModeConflict`：互斥 runtime mode 阻止更新，例如 custom endpoint admission 与 built-in circuit breaker；
+- `PublicationConflict`：候选生成期间 publication 已发生并发变化；
+- `UnsupportedByImplementation`：custom `ISharpLinkClient` / `ISharpLinkServer` 未提供 built-in structured runtime update capability；
+- `CandidateRejected`：合法候选被 runtime policy 拒绝且没有 publication。
+
+参数/配置错误、application callback/provider 抛出的异常、caller cancellation、generation exhaustion、内部 invariant 与 fatal runtime failure 仍保持 exception 语义。`Try...` 不负责把这些异常降格成普通 failure result。
+
+Runtime update 的 publication 不变量与 throwing API 相同：候选必须先完整 build/validate，再以一个 generation/immutable snapshot 原子发布；任何 structured rejection 都不得产生 partial publication 或推进 generation。已经开始的 logical call、attempt、message 或 session 继续使用各自 capture boundary 上取得的 generation；成功更新只影响既有契约定义的未来 capture。Stop/Dispose seal 之后不允许新 publication，且 structured path 不引入新的 supervisor、timer、state owner，也不增加 ordinary RPC hot path 的固定分配。
+
+Custom implementation 不会因为调用 structured path 而抛 `NotSupportedException` 作为正常分支。扩展方法会返回 `UnsupportedByImplementation`；如果 custom implementation 需要自己的 live-update capability，应提供对应的显式 contract，而不是依赖 built-in runtime 类型转换或异常消息。
+
+## Desired-session publication and rolling refresh
+
+Desired-session publication 同样遵循上述边界。`ISharpLinkServer.PublishDesiredSessionAsync(...)` 保留为 throwing convenience API；对 orchestration 来说，canonical path 是 `TryPublishDesiredSessionAsync(...)`，返回 `SharpLinkServerDesiredSessionPublicationResult`：
+
+- 成功时 `Succeeded=true`，并携带当前 immutable `SharpLinkServerDesiredSessionSnapshot`；
+- Server 已 Draining/Stopped/Faulted 或 stop seal 已建立时返回 `LifecycleClosed`；
+- custom `ISharpLinkServer` 未实现 built-in desired-session capability 时返回 `UnsupportedByImplementation`；
+- 非法 `MaxFramePayloadBytes`、非法 rollout mode、caller cancellation、generation overflow/invariant failure 继续抛异常。
+
+Desired configuration generation 与 rolling-refresh intent 是两个不同的 control-plane state。`FutureOnly` 可以推进 desired generation，但不会创建 rolling intent；因此 accept 时固定在旧 generation、之后才完成 handshake 的 session 不会因为 FutureOnly publication 被 catch-up refresh。`RollingRefresh` 才会把当前 desired generation 标记为 rolling target。
+
+同配置的 `RollingRefresh` 不是 no-op：它可以 join 正在进行的 server-owned scan，或在之前 scan 已结束后重新扫描 stale sessions。这允许 `FutureOnly -> same-config RollingRefresh`，也允许 caller 在之前等待被取消后用同一 generation 重试。Rollout 一旦启动由 Server ownership 持有；caller cancellation 只取消该 caller 的 wait，不取消底层 rollout。Server shutdown 才是该工作者的终止边界。
+
+这种语义避免把“desired configuration 已提交”与“某个 caller 是否成功等到通知 cohort 完成”混为一个事务：配置 publication 保持原子，rolling notification 是可重复、幂等趋近的后续 control-plane operation。
+
+## Audit scope and follow-up boundaries
+
+本契约只统一 expected runtime outcome 的建模规则，不把相邻问题合并成一个大改动。以下行为保持独立演进：
+
+- coordinator running 时新增 cluster 的 readiness / publication 语义；
+- health-check API 的 structured result。
+
+Runtime configuration update 与 desired-session publication 的 structured result 已按本页契约纳入统一 control-plane 模型。后续能力可以复用同一条 review rule：expected runtime state 使用 typed result/status，调用方错误和非预期故障继续使用异常。这样可以避免为了“消除异常”而扩大热路径、改变 RPC wire contract，或把互不相关的 control-plane 行为耦合在一次变更中。

@@ -60,7 +60,7 @@ public class StaticEndpointBuilderTests
         var attributes = new Dictionary<string, string> { ["zone"] = "a" };
         SharpLinkEndpoint? received = null;
         var factory = new TrackingFactory();
-        var client = SharpClientBuilder.Create()
+        var client = CreateClientBuilder()
             .UseEndpoint(
                 new SharpLinkEndpoint
                 {
@@ -84,34 +84,36 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
-    public async Task SingleEndpointFactoryShouldBeReleasedWhenLaterBuildValidationFails()
+    public async Task CompileValidationFailureShouldNotAcquireEndpointFactory()
     {
         var factory = new TrackingFactory();
+        var builder = CreateClientBuilder()
+            .UseEndpoint(Endpoint("one", 5001), _ => factory)
+            .UseConnectionPool(static options => options.MaxConnections = 0);
         await EnsureThrows<ArgumentOutOfRangeException>(() =>
         {
-            _ = SharpClientBuilder.Create()
-                .UseEndpoint(Endpoint("one", 5001), _ => factory)
-                .UseConnectionPool(static options => options.MaxConnections = 0)
-                .Build();
+            _ = builder.Build();
             return Task.CompletedTask;
         });
-        Ensure(factory.DisposeCount == 1, "factory disposal after a fixed-client build failure");
+        Ensure(factory.DisposeCount == 0,
+            "Compile validation must not invoke or take ownership of an endpoint factory");
+        await EnsureConsumed(builder.Build);
     }
 
     [Test]
-    public void SingleEndpointBuildRollbackShouldPreserveValidationAndCleanupFailures()
+    public void CompileValidationFailureShouldNotRunEndpointFactoryCleanup()
     {
         var factory = new TrackingFactory(throwOnDispose: true);
 
-        var failure = CaptureFailure(() => SharpClientBuilder.Create()
+        var failure = CaptureFailure(() => CreateClientBuilder()
             .UseEndpoint(Endpoint("one", 5001), _ => factory)
             .UseConnectionPool(static options => options.MaxConnections = 0)
             .Build());
 
         Ensure(ContainsException<ArgumentOutOfRangeException>(failure),
-            "fixed-endpoint rollback must retain the build validation failure");
-        Ensure(ContainsMessage(failure, "test disposal failure"),
-            "fixed-endpoint rollback must retain the transport cleanup failure");
+            "Compile validation must preserve the validation failure");
+        Ensure(!ContainsMessage(failure, "test disposal failure") && factory.DisposeCount == 0,
+            "Compile validation must not create or clean up the endpoint factory");
     }
 
     [Test]
@@ -125,9 +127,10 @@ public class StaticEndpointBuilderTests
             SynchronizationContext.SetSynchronizationContext(new NonPumpingSynchronizationContext());
             try
             {
-                _ = SharpClientBuilder.Create()
-                    .UseEndpoint(Endpoint("one", 5001), _ => factory)
-                    .UseConnectionPool(static options => options.MaxConnections = 0)
+                _ = CreateClientBuilder()
+                    .UseTransport(factory)
+                    .UseProtocol(static options =>
+                        options.MaxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1)
                     .Build();
             }
             catch (Exception exception)
@@ -149,7 +152,7 @@ public class StaticEndpointBuilderTests
         Ensure(failure is not null && ContainsException<ArgumentOutOfRangeException>(failure),
             "rollback must preserve the original validation failure");
         Ensure(factory.DisposeCompleted,
-            "rollback must complete the context-capturing asynchronous disposal");
+            "compile-failure cleanup must complete the context-capturing direct transport disposal");
     }
 
     [Test]
@@ -157,7 +160,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoint(
                     new SharpLinkEndpoint
                     {
@@ -176,7 +179,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     [Endpoint("first", 5001), Endpoint("second", 5002)],
                     _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
@@ -191,7 +194,7 @@ public class StaticEndpointBuilderTests
         var factory = new ProfileBindingFailureFactory();
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => factory)
                 .Build();
             return Task.CompletedTask;
@@ -204,7 +207,7 @@ public class StaticEndpointBuilderTests
     {
         var factory = new ProfileBindingFailureFactory(throwOnDispose: true);
 
-        var failure = CaptureFailure(() => SharpClientBuilder.Create()
+        var failure = CaptureFailure(() => CreateClientBuilder()
             .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => factory)
             .Build());
 
@@ -215,17 +218,18 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
-    public void ClientBuildRollbackShouldPreserveBuildAndRuntimeContextCleanupFailures()
+    public void ClientMaterializeRollbackShouldPreserveBuildAndRuntimeContextCleanupFailures()
     {
-        var failure = CaptureFailure(() => SharpClientBuilder.Create()
-            .UseEndpoint(Endpoint("one", 5001), _ => new TrackingFactory())
-            .UseConnectionPool(static options => options.MaxConnections = 0)
-            .BuildCore([new ThrowingScopeManifest()]));
+        var builder = CreateClientBuilder()
+            .UseEndpoint(Endpoint("one", 5001), _ => new ProfileBindingFailureFactory());
+        var plan = builder.CompileForMultiCluster([new ThrowingScopeManifest()]);
 
-        Ensure(ContainsException<ArgumentOutOfRangeException>(failure),
-            "Client rollback must retain the original build failure");
+        var failure = CaptureFailure(() => builder.MaterializeCompiledPlan(plan));
+
+        Ensure(ContainsMessage(failure, "test profile binding failure"),
+            "Client materialization rollback must retain the profile binding failure");
         Ensure(ContainsMessage(failure, "runtime context cleanup failed"),
-            "Client rollback must retain Runtime Context cleanup failure");
+            "Client materialization rollback must retain Runtime Context cleanup failure");
     }
 
     [Test]
@@ -233,7 +237,7 @@ public class StaticEndpointBuilderTests
     {
         var first = new TrackingFactory();
         var second = new TrackingFactory();
-        var client = SharpClientBuilder.Create()
+        var client = CreateClientBuilder()
             .UseEndpoints(
                 [Endpoint("first", 5001), Endpoint("second", 5002)],
                 endpoint => endpoint.Id == "first" ? first : second)
@@ -245,30 +249,40 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
-    public async Task BuilderShouldTakeFreshEndpointSnapshotsAfterPreflightBuilds()
+    public async Task BuilderShouldCompileOneFrozenEndpointSnapshotAndThenBeConsumed()
     {
-        var endpoints = new List<SharpLinkEndpoint> { Endpoint("first", 5001) };
+        var attributes = new Dictionary<string, string> { ["zone"] = "first" };
+        var endpoints = new List<SharpLinkEndpoint>
+        {
+            new()
+            {
+                Id = "first",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001),
+                Attributes = attributes
+            }
+        };
+        var source = new SinglePassEndpointEnumerable(endpoints);
         var createdEndpointIds = new List<string>();
-        var builder = SharpClientBuilder.Create()
-            .UseEndpoints(endpoints, endpoint =>
+        var builder = CreateClientBuilder()
+            .UseEndpoints(source, endpoint =>
             {
                 createdEndpointIds.Add(endpoint.Id);
                 return new TrackingFactory();
             });
 
-        Ensure(builder.GetConfiguredMaximumConnections() == 1,
-            "one endpoint should reserve the fixed-client connection budget");
-        await using (var first = builder.Build())
-        {
-        }
+        await using var client = builder.Build();
 
+        attributes["zone"] = "changed";
         endpoints[0] = Endpoint("second", 5002);
-        await using (var second = builder.Build())
-        {
-        }
+        var frozenEndpoint = ReadPrivate<SharpLinkEndpoint>(client, "_fixedEndpoint");
 
-        Ensure(createdEndpointIds.SequenceEqual(["first", "second"]),
-            "a reused builder must take a fresh endpoint snapshot for each build");
+        Ensure(source.EnumerationCount == 1 && source.MoveNextCount == 2,
+            "a static endpoint source must be enumerated exactly once during Compile");
+        Ensure(createdEndpointIds.SequenceEqual(["first"]),
+            "Materialize must use the endpoint frozen by Compile");
+        Ensure(frozenEndpoint.Id == "first" && frozenEndpoint.Attributes["zone"] == "first",
+            "post-Build source and attribute mutation must not affect the frozen Client plan");
+        await EnsureConsumed(builder.Build);
     }
 
     [Test]
@@ -278,7 +292,7 @@ public class StaticEndpointBuilderTests
         var remaining = new TrackingFactory();
         await EnsureThrows<AggregateException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     [Endpoint("first", 5001), Endpoint("second", 5002), Endpoint("duplicate", 5003)],
                     endpoint => endpoint.Id switch
@@ -300,7 +314,7 @@ public class StaticEndpointBuilderTests
     {
         var throwing = new TrackingFactory(throwOnDispose: true);
         var remaining = new TrackingFactory();
-        var client = SharpClientBuilder.Create()
+        var client = CreateClientBuilder()
             .UseEndpoints(
                 [Endpoint("first", 5001), Endpoint("second", 5002)],
                 endpoint => endpoint.Id == "first" ? throwing : remaining)
@@ -318,7 +332,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseTransport(new TrackingFactory())
                 .UseEndpoints([Endpoint("first", 5001), Endpoint("second", 5002)], _ => new TrackingFactory())
                 .Build();
@@ -327,7 +341,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("first", 5001), Endpoint("second", 5002)], _ => new TrackingFactory())
                 .UseConnectionPool(static options => options.MaxConnections = 2)
                 .Build();
@@ -336,7 +350,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseLoadBalancing(SharpLinkLoadBalancingStrategy.Random)
                 .UseEndpointSelector(new FirstSelector());
             return Task.CompletedTask;
@@ -348,7 +362,7 @@ public class StaticEndpointBuilderTests
     {
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("duplicate", 5001), Endpoint("duplicate", 5002)], _ => new TrackingFactory())
                 .Build();
             return Task.CompletedTask;
@@ -356,7 +370,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => new TrackingFactory())
                 .UseCluster(static options =>
                 {
@@ -370,7 +384,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints([], _ => new TrackingFactory())
                 .Build();
             return Task.CompletedTask;
@@ -378,7 +392,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     Enumerable.Range(0, SharpLinkClusterOptions.MaximumEndpoints + 1)
                         .Select(index => Endpoint($"endpoint-{index}", 5001 + index)),
@@ -389,7 +403,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints(
                     [new SharpLinkEndpoint
                     {
@@ -404,7 +418,7 @@ public class StaticEndpointBuilderTests
 
         await EnsureThrows<ArgumentOutOfRangeException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => new TrackingFactory())
                 .UseCluster(static options => options.MaxRetiringConnections = -1)
                 .Build();
@@ -417,7 +431,7 @@ public class StaticEndpointBuilderTests
     {
         var first = new TrackingFactory();
         var second = new TrackingFactory();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = CreateClientBuilder()
             .UseEndpoints(
                 [Endpoint("one", 5001), Endpoint("two", 5002)],
                 endpoint => endpoint.Id == "one" ? first : second)
@@ -438,13 +452,18 @@ public class StaticEndpointBuilderTests
         var shared = new TrackingFactory();
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = CreateClientBuilder()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => shared)
                 .Build();
             return Task.CompletedTask;
         });
         Ensure(shared.DisposeCount == 1, "rejected shared factory must be disposed exactly once");
     }
+
+    private static SharpClientBuilder CreateClientBuilder()
+        => SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableRequestTimeout();
 
     private static SharpLinkEndpoint Endpoint(string id, int port) => new()
     {
@@ -465,6 +484,21 @@ public class StaticEndpointBuilderTests
         }
         catch (TException)
         {
+        }
+    }
+
+    private static Task EnsureConsumed(Func<ISharpLinkClient> build)
+    {
+        try
+        {
+            _ = build();
+            throw new Exception("expected consumed builder failure");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message == "This SharpLink builder has already been consumed.",
+                "consumed builders must have a stable error message");
+            return Task.CompletedTask;
         }
     }
 
@@ -520,6 +554,31 @@ public class StaticEndpointBuilderTests
         }
     }
 
+    private sealed class SinglePassEndpointEnumerable(IReadOnlyList<SharpLinkEndpoint> endpoints)
+        : IEnumerable<SharpLinkEndpoint>
+    {
+        private int _enumerationCount;
+        private int _moveNextCount;
+
+        internal int EnumerationCount => Volatile.Read(ref _enumerationCount);
+        internal int MoveNextCount => Volatile.Read(ref _moveNextCount);
+
+        public IEnumerator<SharpLinkEndpoint> GetEnumerator()
+        {
+            if (Interlocked.Increment(ref _enumerationCount) != 1)
+                throw new InvalidOperationException("endpoint source must not be enumerated twice");
+
+            for (var index = 0; index < endpoints.Count; index++)
+            {
+                Interlocked.Increment(ref _moveNextCount);
+                yield return endpoints[index];
+            }
+            Interlocked.Increment(ref _moveNextCount);
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     private sealed class ProfileBindingFailureFactory(bool throwOnDispose = false)
         : IClientTransportFactory, IPerformanceProfileAwareTransport
     {
@@ -569,6 +628,7 @@ public class StaticEndpointBuilderTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly => typeof(ThrowingScopeManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x6275696c6465722dUL, 0x726f6c6c6261636bUL);
         public string CompileTimeDescriptor => "client-build-rollback";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
@@ -579,8 +639,7 @@ public class StaticEndpointBuilderTests
     private sealed class ThrowingScopeCodecFactory : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(BuilderValue);
-        public string SchemaId => "builder-value/v1";
-        public string WireFormatId => "builder-wire/v1";
+        public RpcHash128 CodecHash => new(0x6275696c6465722dUL, 0x636f6465632d7631UL);
         public string AdapterId => "builder-adapter/v1";
         public IRpcCodecAdapter Adapter { get; } = new ThrowingScopeAdapter();
         public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
@@ -591,7 +650,6 @@ public class StaticEndpointBuilderTests
     private sealed class ThrowingScopeAdapter : IRpcCodecAdapter
     {
         public string AdapterId => "builder-adapter/v1";
-        public string WireFormatId => "builder-wire/v1";
         public IRpcCodecAdapterScope CreateScope() => new ThrowingScope();
     }
 

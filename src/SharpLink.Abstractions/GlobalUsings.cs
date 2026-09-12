@@ -8,7 +8,6 @@ global using System.Runtime.InteropServices;
 global using System.IO.Pipelines;
 global using System.Threading.Channels;
 global using System.Diagnostics;
-global using Microsoft.Extensions.DependencyInjection;
 global using System.Collections.Concurrent;
 
 global using SharpLink.Sdk;

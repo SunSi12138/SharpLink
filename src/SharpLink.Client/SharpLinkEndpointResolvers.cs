@@ -4,12 +4,19 @@ using System.Runtime.CompilerServices;
 
 namespace SharpLink.Client;
 
+internal interface ISharpLinkRuntimeTimeProviderAwareResolver
+{
+    void BindTimeProvider(TimeProvider timeProvider);
+}
+
 /// <summary>Adapts application-supplied resolve and watch delegates to an endpoint resolver.</summary>
 /// <remarks>
 /// When no watch delegate is supplied, the resolver polls the resolve delegate with one bounded delay.
 /// This allows applications to adapt an existing registry client without SharpLink taking a dependency on it.
 /// </remarks>
-public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolver
+public sealed class DelegateSharpLinkEndpointResolver :
+    ISharpLinkEndpointResolver,
+    ISharpLinkRuntimeTimeProviderAwareResolver
 {
     private static readonly TimeSpan DefaultPollingInterval = TimeSpan.FromSeconds(30);
     private readonly Func<CancellationToken, ValueTask<SharpLinkEndpointSnapshot>> _resolve;
@@ -17,8 +24,10 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
     private readonly TimeSpan _pollingInterval;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Lock _disposeGate = new();
+    private TimeProvider _timeProvider = TimeProvider.System;
     private Task? _disposeTask;
     private int _disposed;
+    private int _timeProviderBound;
 
     /// <summary>Initializes a polling delegate resolver.</summary>
     /// <param name="resolve">Returns the latest complete endpoint snapshot.</param>
@@ -66,7 +75,10 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
 
         while (true)
         {
-            await SharpLinkTimer.DelayAsync(_pollingInterval, linked.Token).ConfigureAwait(false);
+            await SharpLinkTimer.DelayAsync(
+                _pollingInterval,
+                _timeProvider,
+                linked.Token).ConfigureAwait(false);
             yield return await _resolve(linked.Token).ConfigureAwait(false);
         }
     }
@@ -105,6 +117,17 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
     {
         if (Volatile.Read(ref _disposed) != 0)
             throw new ObjectDisposedException(nameof(DelegateSharpLinkEndpointResolver));
+    }
+
+    void ISharpLinkRuntimeTimeProviderAwareResolver.BindTimeProvider(TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        if (Interlocked.Exchange(ref _timeProviderBound, 1) != 0)
+        {
+            throw new InvalidOperationException(
+                "The endpoint resolver already belongs to a SharpLink client.");
+        }
+        _timeProvider = timeProvider;
     }
 }
 
@@ -174,7 +197,9 @@ internal sealed class BclSharpLinkDnsQuery : ISharpLinkDnsQuery
 /// DNS record order is ignored. Stable endpoint IDs are derived from the original host, port, address
 /// family, and normalized IP address, while the original host remains the default TLS authority.
 /// </remarks>
-public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
+public sealed class SharpLinkDnsEndpointResolver :
+    ISharpLinkEndpointResolver,
+    ISharpLinkRuntimeTimeProviderAwareResolver
 {
     private readonly string _host;
     private readonly int _port;
@@ -183,11 +208,13 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Lock _gate = new();
     private readonly Lock _disposeGate = new();
+    private TimeProvider _timeProvider = TimeProvider.System;
     private Task? _disposeTask;
     private SharpLinkEndpointSnapshot? _lastSnapshot;
     private string[] _lastEndpointKeys = [];
     private long _version;
     private int _disposed;
+    private int _timeProviderBound;
 
     /// <summary>Initializes a DNS endpoint resolver.</summary>
     /// <param name="host">The non-empty DNS host name retained as endpoint authority.</param>
@@ -242,7 +269,10 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
         using var linked = CreateOperationCancellation(cancellationToken);
         while (true)
         {
-            await SharpLinkTimer.DelayAsync(GetRefreshDelay(), linked.Token).ConfigureAwait(false);
+            await SharpLinkTimer.DelayAsync(
+                GetRefreshDelay(),
+                _timeProvider,
+                linked.Token).ConfigureAwait(false);
             SharpLinkEndpointSnapshot? published = null;
             try
             {
@@ -372,5 +402,16 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
     {
         if (Volatile.Read(ref _disposed) != 0)
             throw new ObjectDisposedException(nameof(SharpLinkDnsEndpointResolver));
+    }
+
+    void ISharpLinkRuntimeTimeProviderAwareResolver.BindTimeProvider(TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        if (Interlocked.Exchange(ref _timeProviderBound, 1) != 0)
+        {
+            throw new InvalidOperationException(
+                "The endpoint resolver already belongs to a SharpLink client.");
+        }
+        _timeProvider = timeProvider;
     }
 }

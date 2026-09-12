@@ -1,0 +1,17 @@
+[SharpLink.Sdk.RpcSerializable]
+public sealed class FixturePayload
+{
+    [SharpLink.Sdk.RpcMember(7)]
+    [SharpLink.Sdk.RpcRequired]
+    public string Name { get; init; } = string.Empty;
+
+    public int Count { get; init; }
+
+    public List<string> Tags { get; init; } = new();
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IDtoFixtureService : SharpLink.Sdk.IService
+{
+    ValueTask<FixturePayload> Echo(FixturePayload value, CancellationToken cancellationToken);
+}

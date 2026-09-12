@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace SharpLink.Abstractions;
 
 /// <summary>Provides instance-scoped runtime services used by generated proxies and stubs.</summary>
@@ -8,6 +10,13 @@ public interface IRpcRuntimeContext
 
     /// <summary>Gets the byte-writer pool owned by this client or server.</summary>
     IRpcBufferWriterPool Buffers { get; }
+}
+
+/// <summary>Resolves the immutable Codec provider owned by one generated RPC Contract assembly.</summary>
+public interface IRpcContractCodecProviderResolver
+{
+    /// <summary>Gets the Codec provider bound to <paramref name="ownerAssembly"/>.</summary>
+    IRpcCodecProvider GetContractCodecProvider(Assembly ownerAssembly);
 }
 
 /// <summary>Resolves codecs without relying on process-wide mutable configuration.</summary>

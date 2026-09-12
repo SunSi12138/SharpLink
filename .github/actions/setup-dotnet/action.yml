@@ -1,0 +1,14 @@
+name: Setup .NET CI environment
+description: Configure the shared .NET CLI environment and install the repository CI SDK.
+
+runs:
+  using: composite
+  steps:
+    - name: Configure .NET CLI environment
+      shell: bash
+      run: echo "DOTNET_CLI_TELEMETRY_OPTOUT=1" >> "$GITHUB_ENV"
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: 10.0.x

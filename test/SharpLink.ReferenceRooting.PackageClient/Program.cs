@@ -11,7 +11,7 @@ public static class Program
             throw new ArgumentException("Expected one shared-memory name.");
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseSharedMemory(args[0])
             .Build();
         await client.ConnectAsync(timeout.Token);

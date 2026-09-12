@@ -1,12 +1,13 @@
-using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
 using System.Reflection.Emit;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
-using SharpLink.Server;
 using System.Threading;
+using Microsoft.Extensions.DependencyInjection;
+using SharpLink.RollbackPlugin;
+using SharpLink.Server;
+using SharpLink.Sdk;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
@@ -101,7 +102,7 @@ public class ServiceRegistrationTests
         Ensure(ContainsMessage(failure, "connection service disposal failed"),
             "connection cleanup must retain the service disposal failure");
         Ensure(ContainsMessage(failure, "connection scope disposal failed"),
-            "connection cleanup must retain the scope disposal failure");
+            "connection cleanup must retain the scope cleanup failure");
     }
 
     [Test]
@@ -130,7 +131,7 @@ public class ServiceRegistrationTests
     [Test]
     public async Task DynamicModuleReleaseShouldPreserveEveryServiceFailure()
     {
-        var server = CreateServer([]);
+        var server = CreateServer();
         var module = AddDynamicModule(server, "module-release",
             CreateThrowingRegistration(typeof(object), "first module cleanup failed"),
             CreateThrowingRegistration(typeof(string), "second module cleanup failed"));
@@ -158,7 +159,7 @@ public class ServiceRegistrationTests
     [Test]
     public async Task DynamicModuleShutdownShouldPreserveEveryModuleFailure()
     {
-        var server = CreateServer([]);
+        var server = CreateServer();
         AddDynamicModule(server, "first-module",
             CreateThrowingRegistration(typeof(object), "first dynamic module failed"));
         AddDynamicModule(server, "second-module",
@@ -182,32 +183,53 @@ public class ServiceRegistrationTests
     }
 
     [Test]
-    public async Task RegisteredServiceCleanupShouldPreserveDynamicAndStaticFailures()
+    // The scenario owns both a generated-catalog identity and RollbackState process state.
+    [NotInParallel(new[] { "generated-catalog", "rollback-plugin" })]
+    public async Task RegisteredServiceCleanupShouldPreserveDynamicAndFrameworkOwnedStaticFailures()
     {
-        var staticRegistration = CreateThrowingRegistration(
-            typeof(object),
-            "static ownership cleanup failed");
-        var server = CreateServer(new Dictionary<long, ServiceRegistration>
-        {
-            [1] = staticRegistration
-        });
-        AddDynamicModule(server, "dynamic-ownership",
-            CreateThrowingRegistration(typeof(string), "dynamic ownership cleanup failed"));
-
+        await RollbackState.TestIsolation.WaitAsync();
+        var manifest = new StaticCleanupManifest();
+        SharpLinkGeneratedAssemblyCatalog.Register(manifest);
+        SharpLinkServer? server = null;
+        var stopAttempted = false;
         try
         {
-            var failure = await CaptureAsync(() => InvokePrivateAsync(
-                server,
-                "DisposeRegisteredServicesAsync"));
+            var staticService = new ThrowingStaticCleanupService("static ownership cleanup failed");
+            var builder = SharpLinkServerBuilder.Create()
+                .UseTransport(new NoopListener())
+                .DisableAutomaticServiceRegistration()
+                .UseServiceProvider(new EmptyServiceProvider())
+                .ReplaceService<IStaticCleanupContract>(staticService);
+            MarkReplacementFrameworkOwned(builder, typeof(IStaticCleanupContract));
+            server = (SharpLinkServer)builder.Build();
+            AddDynamicModule(server, "dynamic-ownership",
+                CreateThrowingRegistration(typeof(string), "dynamic ownership cleanup failed"));
+
+            stopAttempted = true;
+            var failure = await CaptureAsync(server.DisposeAsync);
 
             Ensure(ContainsMessage(failure, "dynamic ownership cleanup failed"),
                 "server cleanup must retain its dynamic-module failure");
             Ensure(ContainsMessage(failure, "static ownership cleanup failed"),
-                "server cleanup must retain its static-service failure");
+                "server cleanup must retain its framework-owned static-service failure");
+            Ensure(staticService.DisposeCount == 1,
+                "server cleanup must dispose the framework-owned static replacement exactly once");
         }
         finally
         {
-            await server.DisposeAsync();
+            if (!stopAttempted && server is not null)
+            {
+                try
+                {
+                    await server.DisposeAsync();
+                }
+                catch
+                {
+                }
+            }
+            RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
+            RollbackState.TestIsolation.Release();
+            GC.KeepAlive(manifest);
         }
     }
 
@@ -247,14 +269,42 @@ public class ServiceRegistrationTests
             throw new InvalidOperationException($"{methodName} did not return a Task."));
     }
 
-    private static SharpLinkServer CreateServer(IEnumerable<KeyValuePair<long, ServiceRegistration>> registrations)
-        => new(
-            new NoopListener(),
-            registrations.ToFrozenDictionary(),
-            TimeSpan.FromSeconds(1),
-            TimeSpan.FromSeconds(1),
-            NullLoggerFactory.Instance,
-            serviceProvider: new EmptyServiceProvider());
+    private static SharpLinkServer CreateServer()
+        => (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .UseTransport(new NoopListener())
+            .DisableAutomaticServiceRegistration()
+            .UseServiceProvider(new EmptyServiceProvider())
+            .Build();
+
+    private static void MarkReplacementFrameworkOwned(SharpLinkServerBuilder builder, Type contractType)
+    {
+        var definitionsField = typeof(SharpLinkServerBuilder).GetField(
+            "_replacementServices",
+            BindingFlags.Instance | BindingFlags.NonPublic) ??
+            throw new Exception("cannot find Server Builder replacement services");
+        var definitions = (System.Collections.IDictionary)(definitionsField.GetValue(builder) ??
+            throw new Exception("cannot read Server Builder replacement services"));
+        var replacement = definitions[contractType] ??
+            throw new Exception($"cannot find replacement for '{contractType.FullName}'");
+        var replacementType = replacement.GetType();
+        var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var instance = replacementType.GetProperty("Instance", flags)?.GetValue(replacement);
+        var factory = replacementType.GetProperty("Factory", flags)?.GetValue(replacement);
+        var lifetime = replacementType.GetProperty("Lifetime", flags)?.GetValue(replacement);
+        ConstructorInfo? constructor = null;
+        foreach (var candidate in replacementType.GetConstructors(flags))
+        {
+            if (candidate.GetParameters().Length == 4)
+            {
+                constructor = candidate;
+                break;
+            }
+        }
+        if (constructor is null || lifetime is null)
+            throw new Exception("cannot construct framework-owned Server Builder replacement");
+
+        definitions[contractType] = constructor.Invoke([instance, factory, lifetime, false]);
+    }
 
     private static SharpLinkDynamicModule AddDynamicModule(
         SharpLinkServer server,
@@ -264,18 +314,30 @@ public class ServiceRegistrationTests
         var assembly = AssemblyBuilder.DefineDynamicAssembly(
             new AssemblyName($"SharpLink.UnitTests.{name}.{Guid.NewGuid():N}"),
             AssemblyBuilderAccess.Run);
+        var locatorConstructor = typeof(SharpLinkGeneratedAssemblyManifestAttribute).GetConstructor(
+            [typeof(Type), typeof(int), typeof(int), typeof(string), typeof(string)]) ??
+            throw new Exception("cannot find current SharpLink manifest locator constructor");
+        assembly.SetCustomAttribute(new CustomAttributeBuilder(
+            locatorConstructor,
+            [
+                typeof(EmptyManifest),
+                SharpLinkGeneratedManifestVersions.Api,
+                SharpLinkGeneratedManifestVersions.Protocol,
+                "test",
+                SharpLinkGeneratedManifestVersions.AbiIdentity
+            ]));
         var manifest = new EmptyManifest(assembly);
         var runtime = (SharpLinkRuntimeContext)GetPrivateField(server, "_runtimeContext");
         var codecRegistration = runtime.PrepareGeneratedManifest(manifest);
         runtime.AdoptGeneratedManifest(codecRegistration);
         var module = new SharpLinkDynamicModule(assembly, manifest, codecRegistration);
 
-        var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)GetPrivateField(server, "_dynamicModules");
-        modules.Add(assembly, module);
-        var detached = (Dictionary<SharpLinkDynamicModule, ServiceRegistration[]>)GetPrivateField(
-            server,
-            "_detachedModuleServices");
-        detached.Add(module, registrations);
+        var registry = (ServerServiceModuleRegistry)GetPrivateField(server, "_serviceModuleRegistry");
+        lock (registry.Gate)
+        {
+            registry.DynamicModules.Add(assembly, module);
+            registry.DetachedModuleServices.Add(module, registrations);
+        }
         return module;
     }
 
@@ -357,6 +419,19 @@ public class ServiceRegistrationTests
             => ValueTask.FromException(new InvalidOperationException(message));
     }
 
+    private interface IStaticCleanupContract : IService;
+
+    private sealed class ThrowingStaticCleanupService(string message) : IStaticCleanupContract, IAsyncDisposable
+    {
+        public int DisposeCount { get; private set; }
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.FromException(new InvalidOperationException(message));
+        }
+    }
+
     private sealed class NoopListener : IServerTransportListener
     {
         public EndPoint? LocalEndPoint => null;
@@ -373,8 +448,33 @@ public class ServiceRegistrationTests
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
         public Assembly OwnerAssembly { get; } = ownerAssembly;
-        public string CompileTimeDescriptor => string.Empty;
+        public RpcHash128 RpcAssemblyHash => new(0x736572766963652dUL, 0x656d7074792d7631UL);
+        public string CompileTimeDescriptor => "test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class StaticCleanupManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(StaticCleanupManifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x736572766963652dUL, 0x636c65616e75702dUL);
+        public string CompileTimeDescriptor => "service-cleanup";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } =
+        [
+            new SharpLinkGeneratedContractDescriptor(
+                typeof(IStaticCleanupContract),
+                typeof(IStaticCleanupContract).FullName!,
+                91_004,
+                new string('c', 64),
+                [],
+                static (_, _) => throw new NotSupportedException(),
+                static _ => new StubMarker())
+        ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<string> Dependencies => [];
@@ -384,19 +484,19 @@ public class ServiceRegistrationTests
     {
         public long InterfaceHash => 1;
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output)
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }
 }

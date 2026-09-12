@@ -68,6 +68,7 @@ static async Task RunAnonymousPipeAsync()
     var serverTask = DemoTcp.StartServerAsync(server, app.Token);
     var client = SharpClientBuilder.Create()
         .UseAnonymousPipe(offer.InHandle, offer.OutHandle)
+        .UseRequestTimeout()
         .Build();
     try
     {
@@ -91,7 +92,7 @@ static async Task RunPairAsync(
     using var app = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     var server = serverBuilder.Build();
     var serverTask = DemoTcp.StartServerAsync(server, app.Token);
-    var client = clientBuilder.Build();
+    var client = clientBuilder.UseRequestTimeout().Build();
     try
     {
         await client.ConnectAsync(app.Token);

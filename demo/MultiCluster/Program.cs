@@ -17,6 +17,7 @@ var ordersTask = DemoTcp.StartServerAsync(ordersServer, app.Token);
 var paymentsTask = DemoTcp.StartServerAsync(paymentsServer, app.Token);
 
 var client = SharpLinkMultiClusterClientBuilder.Create()
+    .UseRequestTimeout()
     .AddCluster("orders", child => child.UseTcp(IPAddress.Loopback.ToString(), ordersPort))
     .AddCluster("payments", child => child.UseTcp(IPAddress.Loopback.ToString(), paymentsPort))
     .Build();

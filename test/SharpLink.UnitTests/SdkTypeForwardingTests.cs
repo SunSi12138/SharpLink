@@ -12,6 +12,8 @@ public class SdkTypeForwardingTests
         "SharpLink.Sdk.OnewayAttribute",
         "SharpLink.Sdk.RpcCodecAdapterAttribute",
         "SharpLink.Sdk.RpcCodecAdapterRegistrationAttribute",
+        "SharpLink.Sdk.RpcCodecRouteAttribute",
+        "SharpLink.Sdk.RpcCodecScope",
         "SharpLink.Sdk.RpcContractAttribute",
         "SharpLink.Sdk.RpcIgnoreAttribute",
         "SharpLink.Sdk.RpcMemberAttribute",
@@ -19,7 +21,6 @@ public class SdkTypeForwardingTests
         "SharpLink.Sdk.RpcSerializableAttribute",
         "SharpLink.Sdk.RpcServiceAttribute",
         "SharpLink.Sdk.RpcUnionCaseAttribute",
-        "SharpLink.Sdk.SharpLinkCallOptions",
         "SharpLink.Sdk.SharpLinkClusterContractAssemblyAttribute",
         "SharpLink.Sdk.SharpLinkMetadata",
         "SharpLink.Sdk.SharpLinkRpcContractsAttribute",
@@ -35,7 +36,7 @@ public class SdkTypeForwardingTests
             .ToDictionary(type => type.FullName!, StringComparer.Ordinal);
 
         Ensure(forwardedTypes.Count == PublishedContractTypes.Length,
-            "SDK should expose exactly the contract types published in 1.0.0 as forwarders");
+            "SDK should expose exactly the published contract types as forwarders");
 
         foreach (var typeName in PublishedContractTypes)
         {

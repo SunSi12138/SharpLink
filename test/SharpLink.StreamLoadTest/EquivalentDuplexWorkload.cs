@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
+using SharpLink.Serializer.SharpPack;
 
 [assembly: RpcCodecAdapter(
     typeof(ValueTuple<long, byte[]>),

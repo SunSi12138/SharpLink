@@ -18,14 +18,14 @@ public interface IRpcStub
     long InterfaceHash { get; }
 
     /// <summary>Invokes a non-cancellable method that has no response payload.</summary>
-    ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args);
+    ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args);
 
     /// <summary>Invokes a cancellable method that has no response payload.</summary>
-    ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken);
+    ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken);
 
     /// <summary>Invokes a non-cancellable method and writes its response payload.</summary>
-    ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output);
+    ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output);
 
     /// <summary>Invokes a cancellable method and writes its response payload.</summary>
-    ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output, CancellationToken cancellationToken);
+    ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken);
 }

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <CodecRuntime Condition="'$(CodecRuntime)' == ''">mono</CodecRuntime>
+    <TargetFramework Condition="'$(CodecRuntime)' == 'coreclr'">net11.0-ios</TargetFramework>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0-ios</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>com.sharplink.codeccompat.ios</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <AssemblyName>SharpLink.CodecCompatibility</AssemblyName>
+    <RootNamespace>SharpLink.CodecCompatibility</RootNamespace>
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TrimMode>copy</TrimMode>
+    <UseMonoRuntime Condition="'$(CodecRuntime)' == 'mono'">true</UseMonoRuntime>
+    <UseMonoRuntime Condition="'$(CodecRuntime)' == 'coreclr'">false</UseMonoRuntime>
+    <UseInterpreter Condition="'$(CodecRuntime)' == 'mono'">true</UseInterpreter>
+    <MtouchDebug Condition="'$(CodecRuntime)' == 'coreclr'">false</MtouchDebug>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);IL2026;IL2090;CA1422</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Compile Include="../SharpLink.CodecCompatibility/AutoLayoutEvidenceFixtures.cs" Link="Shared/AutoLayoutEvidenceFixtures.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/CompatibilityPolicy.cs" Link="Shared/CompatibilityPolicy.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/Fixtures.cs" Link="Shared/Fixtures.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/Models.cs" Link="Shared/Models.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/PortableModels.cs" Link="Shared/PortableModels.cs" />
+    <Compile Include="../SharpLink.CodecCompatibility/PortableProbe.cs" Link="Shared/PortableProbe.cs" />
+  </ItemGroup>
+</Project>

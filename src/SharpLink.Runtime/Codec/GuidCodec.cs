@@ -16,9 +16,9 @@ internal sealed class GuidCodec : IRpcCodec<Guid>
     public Guid Deserialize(in ReadOnlySequence<byte> buffer)
     {
         CodecHelpers.EnsureExactSize(buffer, Size);
-        if (buffer.FirstSpan.Length >= Size) 
+        if (buffer.FirstSpan.Length >= Size)
             return Unsafe.ReadUnaligned<Guid>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
-            
+
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         return Unsafe.ReadUnaligned<Guid>(ref MemoryMarshal.GetReference(temp));
@@ -41,7 +41,7 @@ internal sealed class NullableGuidCodec : IRpcCodec<Guid?>
         }
         else
         {
-            span.Clear();
+            span[..Size].Clear();
         }
         writer.Advance(Size);
     }

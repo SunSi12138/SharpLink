@@ -1,11 +1,12 @@
 using System.Reflection;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
 
-public class PendingRequestTableTests
+public partial class PendingRequestTableTests
 {
     private const int TableCapacity = 65536;
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
@@ -14,18 +15,54 @@ public class PendingRequestTableTests
     [Test]
     public void ConstructorShouldRequirePowerOfTwoCapacity()
     {
-        AssertThrows<ArgumentOutOfRangeException>(() => _ = new PendingRequestTable(0));
-        AssertThrows<ArgumentException>(() => _ = new PendingRequestTable(3));
+        AssertThrows<ArgumentOutOfRangeException>(() => _ = CreateTable(0));
+        AssertThrows<ArgumentException>(() => _ = CreateTable(3));
+    }
+
+    [Test]
+    public void ConstructorShouldRejectEveryMissingRuntimeDependency()
+    {
+        AssertThrows<ArgumentNullException>(() => _ = new PendingRequestTable(
+            8,
+            null!,
+            PendingRequestTableTestFixture.Owner,
+            TimeProvider.System));
+        AssertThrows<ArgumentNullException>(() => _ = new PendingRequestTable(
+            8,
+            PendingRequestTableTestFixture.Codecs,
+            null!,
+            TimeProvider.System));
+        AssertThrows<ArgumentNullException>(() => _ = new PendingRequestTable(
+            8,
+            PendingRequestTableTestFixture.Codecs,
+            PendingRequestTableTestFixture.Owner,
+            null!));
+    }
+
+    [Test]
+    public void DisposeShouldNotDisposeCallerOwnedDependencies()
+    {
+        var codecs = new TrackingCodecProvider();
+        var owner = new TrackingPendingCallOwner();
+        var timeProvider = new TrackingTimeProvider();
+        var manager = new PendingRequestTable(8, codecs, owner, timeProvider);
+
+        manager.Dispose();
+        manager.Dispose();
+
+        Ensure(codecs.DisposeCount == 0, "the table must not dispose its caller-owned codec provider");
+        Ensure(owner.DisposeCount == 0, "the table must not dispose its caller-owned pending owner");
+        Ensure(timeProvider.DisposeCount == 0, "the table must not dispose its caller-owned time provider");
     }
 
     [Test]
     public async Task PayloadBearingResponseShouldNotTreatMissingPayloadAsDefaultValue()
     {
-        using var manager = new PendingRequestTable(8);
+        using var manager = CreateTable(8);
         var operation = manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out var requestId);
         var payload = ReadOnlySequence<byte>.Empty;
@@ -39,7 +76,7 @@ public class PendingRequestTableTests
         var payloadlessOperation = manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out requestId,
             hasResponsePayload: false);
@@ -53,11 +90,11 @@ public class PendingRequestTableTests
     [Test]
     public async Task RequiredScalarResponseMustRejectDecodedNull()
     {
-        using var manager = new PendingRequestTable(8);
+        using var manager = CreateTable(8);
         var operation = manager.Rent(
             new NullStringCodec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out var requestId);
         var payload = new ReadOnlySequence<byte>(new byte[] { 1 });
@@ -71,7 +108,7 @@ public class PendingRequestTableTests
         var nullableOperation = manager.Rent(
             new NullStringCodec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out requestId,
             responseNullable: true);
@@ -84,7 +121,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task OccupiedWrappedSlotShouldAdvanceIdToAnotherFreeSlot()
     {
-        var manager = new PendingRequestTable(4);
+        var manager = CreateTable(4);
         var longRequest = manager.Rent<int>(out var longRequestId);
 
         for (var index = 0; index < 3; index++)
@@ -115,7 +152,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task DefaultCapacityShouldRejectRequest65537AsResourceExhausted()
     {
-        var manager = new PendingRequestTable();
+        var manager = CreateTable();
         var operations = new RpcRequestOperation<int>[TableCapacity];
         for (var index = 0; index < operations.Length; index++)
             operations[index] = manager.Rent<int>(out _);
@@ -131,7 +168,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task DispatchShouldNotDropCurrentPendingWhenStaleResponseArrives()
     {
-        var manager = new PendingRequestTable();
+        var manager = CreateTable();
 
         var op1 = manager.Rent<int>(out var requestId1);
         var payload = SInt32Payload;
@@ -153,7 +190,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task DispatchErrorShouldNotDropCurrentPendingWhenStaleErrorArrives()
     {
-        var manager = new PendingRequestTable();
+        var manager = CreateTable();
 
         var op1 = manager.Rent<int>(out var requestId1);
         var payload = SInt32Payload;
@@ -171,7 +208,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task RequestIdWrapShouldSkipZeroAndKeepFullIdentity()
     {
-        var manager = new PendingRequestTable(4);
+        var manager = CreateTable(4);
         SetNextId(manager, long.MaxValue - 1);
 
         var beforeWrap = manager.Rent<int>(out var beforeWrapId);
@@ -191,7 +228,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task FailAllPendingRequestsShouldFailEveryPendingOperation()
     {
-        var manager = new PendingRequestTable();
+        var manager = CreateTable();
         var op1 = manager.Rent<int>(out _);
         var op2 = manager.Rent<int>(out _);
         var ex = new IOException("disconnected");
@@ -205,13 +242,13 @@ public class PendingRequestTableTests
     [Test]
     public async Task FullTableWaitShouldResumeWhenAnySlotCompletes()
     {
-        var manager = new PendingRequestTable(2);
+        var manager = CreateTable(2);
         var first = manager.Rent<int>(out var firstId);
         var second = manager.Rent<int>(out _);
 
         var waiting = manager.RentAsync<int>(
             waitForSlot: true,
-            DateTimeOffset.UtcNow.AddSeconds(5),
+            RpcDeadline.Create(TimeSpan.FromSeconds(5), TimeProvider.System),
             System.Threading.CancellationToken.None).AsTask();
         Ensure(!waiting.IsCompleted, "full table waiter should suspend");
 
@@ -231,12 +268,12 @@ public class PendingRequestTableTests
     [Test]
     public async Task FullTableWaitShouldHonorDeadlineAndCancellation()
     {
-        var manager = new PendingRequestTable(1);
+        var manager = CreateTable(1);
         var operation = manager.Rent<int>(out _);
 
         var timeout = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            DateTimeOffset.UtcNow.AddMilliseconds(20),
+            RpcDeadline.Create(TimeSpan.FromMilliseconds(20), TimeProvider.System),
             System.Threading.CancellationToken.None).AsTask());
         Ensure(timeout is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }, "deadline error");
 
@@ -244,7 +281,7 @@ public class PendingRequestTableTests
         cancellation.Cancel();
         var canceled = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            deadline: null,
+            deadline: default,
             cancellation.Token).AsTask());
         Ensure(canceled is OperationCanceledException, "cancellation error");
 
@@ -255,13 +292,13 @@ public class PendingRequestTableTests
     [Test]
     public async Task FullTableFarFutureDeadlineShouldRemainCancellable()
     {
-        using var manager = new PendingRequestTable(1);
+        using var manager = CreateTable(1);
         var occupied = manager.Rent<int>(out _);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         var failure = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            DateTimeOffset.MaxValue,
+            RpcDeadline.FromTimestamp(long.MaxValue),
             cancellation.Token).AsTask());
 
         Ensure(failure is OperationCanceledException,
@@ -273,7 +310,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task CompletionRaceShouldHaveExactlyOneWinnerAndReleaseOneSlot()
     {
-        var manager = new PendingRequestTable(1);
+        var manager = CreateTable(1);
         var operation = manager.Rent<int>(out var requestId);
         var payload1 = SInt32Payload;
 
@@ -299,45 +336,56 @@ public class PendingRequestTableTests
     [Test]
     public async Task StreamingResponseObservationShouldPrecedeTerminalCompletion()
     {
-        using var manager = new PendingRequestTable(8);
+        using var manager = CreateTable(8);
         using var observer = new BlockingStreamingCompletionObserver();
         var requestId = manager.RegisterStream(
             PendingCallKind.ServerStreaming,
             new NoopStreamDispatcher(),
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             observer);
 
-        var response = Task.Run(() =>
+        var response = LongRunningTestWorker.Run(() =>
         {
             var payload = ReadOnlySequence<byte>.Empty;
             return manager.Dispatch(requestId, ref payload);
         });
-        await observer.ResponseObservationEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        Task<bool>? terminal = null;
+        try
+        {
+            await observer.ResponseObservationEntered.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var terminal = Task.Run(() => manager.TryComplete(
-            requestId,
-            PendingCallCompletionReason.ConnectionClosed,
-            new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test disconnect")));
-        await Task.Delay(50);
-        Ensure(!observer.TerminalCompletionObserved.IsCompleted,
-            "terminal completion must wait until the matched streaming response is observed");
+            terminal = LongRunningTestWorker.Run(() => manager.TryComplete(
+                requestId,
+                PendingCallCompletionReason.ConnectionClosed,
+                new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test disconnect")));
+            await Task.Delay(50);
+            Ensure(!observer.TerminalCompletionObserved.IsCompleted,
+                "terminal completion must wait until the matched streaming response is observed");
 
-        observer.ReleaseResponseObservation();
-        Ensure(await response, "streaming response acknowledgement");
-        Ensure(await terminal, "terminal completion");
-        await observer.TerminalCompletionObserved.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(observer.TerminalSawResponseObservation,
-            "terminal observer must see the prior response acknowledgement");
+            observer.ReleaseResponseObservation();
+            Ensure(await response, "streaming response acknowledgement");
+            Ensure(await terminal, "terminal completion");
+            await observer.TerminalCompletionObserved.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(observer.TerminalSawResponseObservation,
+                "terminal observer must see the prior response acknowledgement");
+        }
+        finally
+        {
+            observer.ReleaseResponseObservation();
+            await LongRunningTestWorker.JoinAsync(response, RaceCoordinationTimeout);
+            if (terminal is not null)
+                await LongRunningTestWorker.JoinAsync(terminal, RaceCoordinationTimeout);
+        }
     }
 
     [Test]
     public async Task ThrowingProducerCancellationCallbackShouldNotStrandCompletion()
     {
         var owner = new RecordingPendingCallOwner();
-        using var manager = new PendingRequestTable(8, owner: owner);
+        using var manager = CreateTable(8, owner: owner);
         var lease = manager.RegisterOneWayClientStream(
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None);
         using var callback = manager.GetProducerCancellationToken(lease.Id).Register(
             static () => throw new InvalidOperationException("producer cancellation callback failed"));
@@ -370,7 +418,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task DisposedTableShouldRejectEveryStreamRegistration()
     {
-        var manager = new PendingRequestTable(8);
+        var manager = CreateTable(8);
         manager.Dispose();
 
         long registeredStreamId = 0;
@@ -379,14 +427,14 @@ public class PendingRequestTableTests
             registeredStreamId = manager.RegisterStream(
                 PendingCallKind.ServerStreaming,
                 new NoopStreamDispatcher(),
-                deadlineTimestamp: 0,
+                deadline: default,
                 CancellationToken.None);
         });
         PendingRequestLease<RpcEmptyRequest> registeredOneWay = default;
         var oneWayFailure = CaptureException(() =>
         {
             registeredOneWay = manager.RegisterOneWayClientStream(
-                deadlineTimestamp: 0,
+                deadline: default,
                 CancellationToken.None);
         });
 
@@ -404,7 +452,7 @@ public class PendingRequestTableTests
 
         for (var iteration = 0; iteration < 512; iteration++)
         {
-            var racingTable = new PendingRequestTable(1);
+            var racingTable = CreateTable(1);
             using var start = new ManualResetEventSlim();
             RpcRequestOperation<int>? operation = null;
             var rent = Task.Run(() =>
@@ -440,7 +488,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task ConnectionClosedCompletionWithoutAnExplicitExceptionShouldKeepItsWireCode()
     {
-        using var manager = new PendingRequestTable(1);
+        using var manager = CreateTable(1);
         var operation = manager.Rent<int>(out var requestId);
 
         Ensure(manager.TryComplete(requestId, PendingCallCompletionReason.ConnectionClosed),
@@ -454,12 +502,12 @@ public class PendingRequestTableTests
     [Test]
     public async Task MonotonicDeadlineScanShouldCompleteWithoutCompletionPathRemoval()
     {
-        using var manager = new PendingRequestTable(8);
+        using var manager = CreateTable(8);
         var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 50;
         var operation = manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadline,
+            RpcDeadline.FromTimestamp(deadline),
             CancellationToken.None,
             out _);
 
@@ -472,7 +520,7 @@ public class PendingRequestTableTests
     [Test]
     public async Task LongMonotonicDeadlineShouldNotExceedTheNativeTimerRange()
     {
-        using var manager = new PendingRequestTable(8);
+        using var manager = CreateTable(8);
         var deadline = Stopwatch.GetTimestamp() +
             (long)(TimeSpan.FromDays(60).TotalSeconds * Stopwatch.Frequency);
         RpcRequestOperation<int>? operation = null;
@@ -483,7 +531,7 @@ public class PendingRequestTableTests
             operation = manager.Rent(
                 new Int32Codec(),
                 PendingCallKind.Unary,
-                deadline,
+                RpcDeadline.FromTimestamp(deadline),
                 CancellationToken.None,
                 out requestId);
         }
@@ -504,13 +552,13 @@ public class PendingRequestTableTests
     [Test]
     public async Task CancellationResponseDeadlineRaceShouldHaveOneWinnerAndNotCorruptPool()
     {
-        using var manager = new PendingRequestTable(8);
+        using var manager = CreateTable(8);
         for (var iteration = 0; iteration < 100_000; iteration++)
         {
             var operation = manager.Rent(
                 new Int32Codec(),
                 PendingCallKind.Unary,
-                deadlineTimestamp: 0,
+                deadline: default,
                 CancellationToken.None,
                 out var requestId);
             var payload = SInt32Payload;
@@ -540,28 +588,44 @@ public class PendingRequestTableTests
     public async Task CancellationShouldNotCompleteOwnerBeforeRegistrationIsPublished()
     {
         using var owner = new BlockingPendingCallOwner();
-        using var manager = new PendingRequestTable(8, owner: owner);
+        using var manager = CreateTable(8, owner: owner);
         using var cancellation = new CancellationTokenSource();
-        var rentTask = Task.Run(() => manager.Rent(
+        var rentTask = LongRunningTestWorker.Run(() => manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             cancellation.Token,
             out _));
+        Task cancelTask = Task.CompletedTask;
+        try
+        {
+            Ensure(owner.RegistrationEntered.Wait(RaceCoordinationTimeout),
+                "registration callback should reach the deterministic race gate");
+            cancelTask = LongRunningTestWorker.Run(cancellation.Cancel);
+            await Task.Delay(20);
+            owner.AllowRegistration.Set();
 
-        Ensure(owner.RegistrationEntered.Wait(RaceCoordinationTimeout),
-            "registration callback should reach the deterministic race gate");
-        var cancelTask = Task.Run(cancellation.Cancel);
-        await Task.Delay(20);
-        owner.AllowRegistration.Set();
-
-        var operation = await rentTask;
-        await cancelTask;
-        var exception = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
-        Ensure(exception is OperationCanceledException, "the racing call should still observe cancellation");
-        Ensure(owner.MinimumActiveCount >= 0, "completion must not precede owner registration");
-        Ensure(owner.ActiveCount == 0, "registration and completion must balance exactly once");
+            var operation = await rentTask;
+            await cancelTask;
+            var exception = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+            Ensure(exception is OperationCanceledException, "the racing call should still observe cancellation");
+            Ensure(owner.MinimumActiveCount >= 0, "completion must not precede owner registration");
+            Ensure(owner.ActiveCount == 0, "registration and completion must balance exactly once");
+        }
+        finally
+        {
+            owner.AllowRegistration.Set();
+            await LongRunningTestWorker.JoinAsync(rentTask, RaceCoordinationTimeout);
+            await LongRunningTestWorker.JoinAsync(cancelTask, RaceCoordinationTimeout);
+        }
     }
+
+    private static PendingRequestTable CreateTable(
+        int capacity = TableCapacity,
+        IPendingCallOwner? owner = null,
+        IRpcCodecProvider? codecs = null,
+        TimeProvider? timeProvider = null)
+        => PendingRequestTableTestFixture.Create(capacity, owner, codecs, timeProvider);
 
     private static void SetNextId(PendingRequestTable manager, long nextId)
     {
@@ -698,6 +762,86 @@ public class PendingRequestTableTests
 
         public void OnProducerCancellationCallbackFailed(Exception exception)
             => ProducerCancellationFailure = exception;
+    }
+
+    private sealed class TrackingCodecProvider : IRpcCodecProvider, IDisposable
+    {
+        internal int DisposeCount { get; private set; }
+
+        public IRpcCodec<T> GetCodec<T>() => PendingRequestTableTestFixture.Codecs.GetCodec<T>();
+
+        public void Dispose() => DisposeCount++;
+    }
+
+    private sealed class TrackingPendingCallOwner : IPendingCallOwner, IDisposable
+    {
+        private int _activeCount;
+        private int _minimumActiveCount;
+        private int _registeredCount;
+        private int _completedCount;
+
+        internal int ActiveCount => Volatile.Read(ref _activeCount);
+        internal int MinimumActiveCount => Volatile.Read(ref _minimumActiveCount);
+        internal int RegisteredCount => Volatile.Read(ref _registeredCount);
+        internal int CompletedCount => Volatile.Read(ref _completedCount);
+        internal int DisposeCount { get; private set; }
+
+        public void OnPendingCallRegistered()
+        {
+            Interlocked.Increment(ref _registeredCount);
+            Interlocked.Increment(ref _activeCount);
+        }
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+            Interlocked.Increment(ref _completedCount);
+            var active = Interlocked.Decrement(ref _activeCount);
+            while (true)
+            {
+                var minimum = Volatile.Read(ref _minimumActiveCount);
+                if (active >= minimum ||
+                    Interlocked.CompareExchange(ref _minimumActiveCount, active, minimum) == minimum)
+                {
+                    break;
+                }
+            }
+        }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+        {
+        }
+
+        public void Dispose() => DisposeCount++;
+    }
+
+    private sealed class TrackingTimeProvider : TimeProvider, IDisposable
+    {
+        private readonly DateTimeOffset? _utcNow;
+
+        internal TrackingTimeProvider(DateTimeOffset? utcNow = null)
+        {
+            _utcNow = utcNow;
+        }
+
+        internal int DisposeCount { get; private set; }
+        internal int UtcReadCount { get; private set; }
+        internal int TimestampReadCount { get; private set; }
+
+        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            UtcReadCount++;
+            return _utcNow ?? TimeProvider.System.GetUtcNow();
+        }
+
+        public override long GetTimestamp()
+        {
+            TimestampReadCount++;
+            return TimeProvider.System.GetTimestamp();
+        }
+
+        public void Dispose() => DisposeCount++;
     }
 
     private sealed class NoopStreamDispatcher : IStreamDispatcher

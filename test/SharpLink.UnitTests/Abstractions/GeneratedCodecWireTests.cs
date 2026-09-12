@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace SharpLink.UnitTests.Abstractions;
 
 public class GeneratedCodecWireTests
@@ -40,14 +38,56 @@ public class GeneratedCodecWireTests
     }
 
     [Test]
-    public void GeneratedStringWriterShouldRejectIsolatedSurrogates()
+    public void GeneratedStringWriterShouldPreserveIsolatedSurrogates()
     {
         using var writer = new PooledByteBufferWriter();
-        var failure = CaptureException(() => RpcGeneratedCodecWire.WriteString(writer, "\uD800"));
+        var source = new string(['\uD800', 'X', '\uDC00']);
 
-        Ensure(failure is EncoderFallbackException,
-            $"isolated surrogate should fail strict UTF-8 encoding, not {failure?.GetType().Name}");
-        Ensure(writer.WrittenCount == 0, "invalid string must not partially write its length");
+        RpcGeneratedCodecWire.WriteString(writer, source);
+        var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(writer.WrittenMemory));
+        var decoded = RpcGeneratedCodecWire.ReadString(ref reader);
+
+        Ensure(decoded == source, "generated v2 string wire must preserve arbitrary UTF-16 code units");
+        Ensure(reader.Remaining == 0, "generated string reader must consume the full UTF-16 payload");
+    }
+
+    [Test]
+    public void GeneratedDateTimeOffsetShouldUseCanonicalLogicalFields()
+    {
+        const long utcTicks = 0x0102030405060708L;
+        var offset = TimeSpan.FromMinutes(330);
+        var source = new DateTimeOffset(utcTicks + offset.Ticks, offset);
+
+        using var writer = new PooledByteBufferWriter();
+        RpcGeneratedCodecWire.WriteDateTimeOffset(writer, source);
+        var bytes = writer.WrittenMemory.ToArray();
+        var expected = new byte[]
+        {
+            0x4A, 0x01, 0, 0, 0, 0, 0, 0,
+            0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01
+        };
+        Ensure(bytes.AsSpan().SequenceEqual(expected),
+            "generated DateTimeOffset wire must be offset-minutes i16le + six zero bytes + UTC ticks i64le");
+
+        var segmented = CreateSegmentedSequence(bytes);
+        var reader = new SequenceReader<byte>(segmented);
+        var decoded = RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader);
+        Ensure(decoded == source, "segmented canonical DateTimeOffset payload must round-trip");
+        Ensure(reader.Remaining == 0, "DateTimeOffset reader must consume exactly 16 bytes");
+
+        var nonCanonical = (byte[])bytes.Clone();
+        nonCanonical[2] = 1;
+        var invalidReader = new SequenceReader<byte>(new ReadOnlySequence<byte>(nonCanonical));
+        try
+        {
+            _ = RpcGeneratedCodecWire.ReadDateTimeOffset(ref invalidReader);
+            throw new Exception("expected non-canonical DateTimeOffset padding to fail");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.DataLoss,
+                "non-zero DateTimeOffset padding must be classified as DataLoss");
+        }
     }
 
     private static SharpLinkException CaptureSharpLink(Action action)
@@ -72,19 +112,6 @@ public class GeneratedCodecWireTests
             throw new Exception("expected SharpLinkException");
         }
         catch (SharpLinkException exception)
-        {
-            return exception;
-        }
-    }
-
-    private static Exception? CaptureException(Action action)
-    {
-        try
-        {
-            action();
-            return null;
-        }
-        catch (Exception exception)
         {
             return exception;
         }
