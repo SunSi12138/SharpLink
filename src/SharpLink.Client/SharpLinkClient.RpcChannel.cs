@@ -147,6 +147,12 @@ internal sealed partial class SharpLinkClient
 
     private void HandleDisconnected(ClientConnection connection, Exception ex)
     {
+        if (_cluster is not null)
+        {
+            _cluster.HandleConnectionFailure(connection, ex);
+            return;
+        }
+
         if (!TryStartConnectionCleanup(connection, "DisconnectedConnectionCleanup", ex))
             return;
 
