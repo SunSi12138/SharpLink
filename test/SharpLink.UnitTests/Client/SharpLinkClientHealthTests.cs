@@ -115,7 +115,8 @@ public class SharpLinkClientHealthTests
             .DisableRequestTimeout()
             .AddCluster(
                 "orders",
-                child => child.UseTransport(new TestClientTransportFactory()))
+                child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
             .Build();
         await client.ConnectAsync();
 
