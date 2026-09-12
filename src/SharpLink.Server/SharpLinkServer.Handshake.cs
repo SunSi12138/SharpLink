@@ -94,7 +94,7 @@ internal sealed partial class SharpLinkServer
                         // ContractManifest has been published and flushed to the client.
                         if ((acceptedNegotiation.Options.Capabilities & ProtocolV2Capabilities.SessionRefresh) != 0)
                         {
-                            runtimeSession.OnConnected += () => TrackServerRuntimeTask(
+                            runtimeSession.OnConnected += () => TrackFrameworkTask(
                                 RunSessionRefreshIfStaleAsync(runtimeSession, desiredSession),
                                 "SessionRefreshCatchUp");
                         }
