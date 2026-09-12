@@ -67,9 +67,7 @@ internal sealed class ClientConnection :
            Session.CanAcceptCalls;
 
     public int ActiveCallCount
-        => PendingCalls.ActiveCount +
-           Volatile.Read(ref _auxiliaryActiveCallCount) +
-           Volatile.Read(ref _callAdmissionReservations);
+        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
 
@@ -101,9 +99,8 @@ internal sealed class ClientConnection :
             return false;
         }
 
-        var reservations = Interlocked.Increment(ref _callAdmissionReservations);
-        if (PendingCalls.ActiveCount + reservations > PendingCalls.Capacity ||
-            Volatile.Read(ref _callAdmissionClosed) != 0 ||
+        Interlocked.Increment(ref _callAdmissionReservations);
+        if (Volatile.Read(ref _callAdmissionClosed) != 0 ||
             State != ClientConnectionState.Ready || !Session.CanAcceptCalls)
         {
             ReleaseCallAdmissionReservation();

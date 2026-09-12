@@ -298,9 +298,9 @@ internal sealed partial class SharpLinkClient
                 source.CompletePlannedSessionRefreshRetirement();
                 return;
             }
-            // Pending capacity and untracked-call ownership are the formal admission boundary.
-            // Keep the source protocol Ready but hidden from selection until admitted work drains.
-            if (source.ActiveCallCount != 0)
+            // Pending capacity, untracked-call ownership, and the selection-to-registration
+            // reservation are the formal admission boundary.
+            if (source.CallAdmissionReservationCount != 0 || source.ActiveCallCount != 0)
                 return;
 
             source.CompletePlannedSessionRefreshRetirement();

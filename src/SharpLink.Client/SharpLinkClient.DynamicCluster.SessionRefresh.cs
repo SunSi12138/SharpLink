@@ -326,7 +326,7 @@ internal sealed partial class SharpLinkClient
                     source.CompletePlannedSessionRefreshRetirement();
                     return;
                 }
-                if (source.ActiveCallCount != 0)
+                if (source.CallAdmissionReservationCount != 0 || source.ActiveCallCount != 0)
                     return;
 
                 source.CompletePlannedSessionRefreshRetirement();
