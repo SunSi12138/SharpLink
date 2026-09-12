@@ -332,11 +332,16 @@ internal sealed partial class SharpLinkClient
         return SharpLinkRuntimeConfigurationUpdateResult.Success();
     }
 
-    private bool IsRuntimeConfigurationPublicationClosed(SharpLinkConnectionState state)
-        => Volatile.Read(ref _stopStarted) != 0 ||
-           state is SharpLinkConnectionState.Draining or
-               SharpLinkConnectionState.Stopped or
-               SharpLinkConnectionState.Faulted;
+    private bool IsRuntimeConfigurationPublicationClosed(SharpLinkConnectionState _)
+    {
+        if (Volatile.Read(ref _stopStarted) != 0)
+            return true;
+
+        return LifecycleState is
+            SharpLinkClientLifecycleState.Draining or
+            SharpLinkClientLifecycleState.Stopped or
+            SharpLinkClientLifecycleState.Faulted;
+    }
 
     private static SharpLinkRuntimeConfigurationUpdateResult LifecycleClosed(string message)
         => SharpLinkRuntimeConfigurationUpdateResult.Failure(

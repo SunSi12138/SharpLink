@@ -13,10 +13,20 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
         ISharpLinkClient client = new CustomClient();
 
         var result = client.TryUpdateRequestTimeout(TimeSpan.FromSeconds(1));
+        var flushResult = client.TryUpdateRpcSessionFlushPolicy(
+            4096,
+            TimeSpan.FromMilliseconds(5));
+        var invalidFlush = CaptureException(() =>
+            client.TryUpdateRpcSessionFlushPolicy(0, TimeSpan.FromMilliseconds(1)));
 
         Ensure(!result.Succeeded &&
                result.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.UnsupportedByImplementation,
             "custom client should receive explicit non-throwing unsupported result");
+        Ensure(!flushResult.Succeeded &&
+               flushResult.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.UnsupportedByImplementation,
+            "custom client flush update should receive explicit non-throwing unsupported result");
+        Ensure(invalidFlush is ArgumentOutOfRangeException,
+            "invalid custom-client flush input must remain a parameter exception");
     }
 
     [Test]
@@ -25,10 +35,33 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
         ISharpLinkServer server = new CustomServer();
 
         var result = server.TryDisableAdmissionControl();
+        var flushResult = server.TryUpdateRpcSessionFlushPolicy(
+            4096,
+            TimeSpan.FromMilliseconds(5));
+        var invalidFlush = CaptureException(() =>
+            server.TryUpdateRpcSessionFlushPolicy(0, TimeSpan.FromMilliseconds(1)));
 
         Ensure(!result.Succeeded &&
                result.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.UnsupportedByImplementation,
             "custom server should receive explicit non-throwing unsupported result");
+        Ensure(!flushResult.Succeeded &&
+               flushResult.FailureCode == SharpLinkRuntimeConfigurationUpdateFailureCode.UnsupportedByImplementation,
+            "custom server flush update should receive explicit non-throwing unsupported result");
+        Ensure(invalidFlush is ArgumentOutOfRangeException,
+            "invalid custom-server flush input must remain a parameter exception");
+    }
+
+    private static Exception CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            throw new Exception("expected exception");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static void Ensure(bool condition, string message)
