@@ -38,10 +38,8 @@ public sealed class SharpLinkClientSessionRefreshTests
         Ensure(factory.ConnectCount == 2,
             "stale, duplicate, and newer requests for one source must share the in-flight replacement");
 
-        factory.ReleaseReplacement();
+        await ReleaseReplacementAndWaitForEligibilityCutAsync(factory, client, "fixed");
         var replacement = factory.GetConnection(1);
-        _ = await replacement.WaitForSentPacket(ProtocolV2FrameType.Ping)
-            .WaitAsync(TimeSpan.FromSeconds(2));
 
         Ensure(client.ReadyConnectionCount == 1,
             $"replacement publication must atomically swap Ready eligibility instead of overshooting the pool; ready={client.ReadyConnectionCount}");
@@ -75,8 +73,9 @@ public sealed class SharpLinkClientSessionRefreshTests
         ],
         ConfigureTwoEndpointCluster);
         await client.ConnectAsync();
+        await WaitForReadyCountAsync(client, 2, "static");
 
-        Ensure(client.ReadyConnectionCount == 2 && firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 1,
+        Ensure(firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 1,
             $"static topology should begin with one Ready connection per source endpoint; ready={client.ReadyConnectionCount}, first={firstFactory.ConnectCount}, second={secondFactory.ConnectCount}");
 
         await InjectRefreshAsync(firstFactory.GetConnection(0), Guid.NewGuid(), 2);
@@ -87,9 +86,7 @@ public sealed class SharpLinkClientSessionRefreshTests
         Ensure(secondFactory.ConnectCount == 1,
             "static refresh must not migrate replacement work to another endpoint");
 
-        firstFactory.ReleaseReplacement();
-        _ = await firstFactory.GetConnection(1).WaitForSentPacket(ProtocolV2FrameType.Ping)
-            .WaitAsync(TimeSpan.FromSeconds(2));
+        await ReleaseReplacementAndWaitForEligibilityCutAsync(firstFactory, client, "static");
 
         Ensure(client.ReadyConnectionCount == 2,
             $"static refresh must preserve the published Ready connection count after the swap; ready={client.ReadyConnectionCount}");
@@ -117,8 +114,9 @@ public sealed class SharpLinkClientSessionRefreshTests
             endpoint => factories[endpoint.Id],
             ConfigureTwoEndpointCluster);
         await client.ConnectAsync();
+        await WaitForReadyCountAsync(client, 2, "dynamic");
 
-        Ensure(client.ReadyConnectionCount == 2 && firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 1,
+        Ensure(firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 1,
             $"dynamic topology should begin with one Ready connection per current endpoint generation; ready={client.ReadyConnectionCount}, first={firstFactory.ConnectCount}, second={secondFactory.ConnectCount}");
 
         await InjectRefreshAsync(firstFactory.GetConnection(0), Guid.NewGuid(), 2);
@@ -129,9 +127,7 @@ public sealed class SharpLinkClientSessionRefreshTests
         Ensure(secondFactory.ConnectCount == 1,
             "dynamic refresh must not move replacement work to a different endpoint generation");
 
-        firstFactory.ReleaseReplacement();
-        _ = await firstFactory.GetConnection(1).WaitForSentPacket(ProtocolV2FrameType.Ping)
-            .WaitAsync(TimeSpan.FromSeconds(2));
+        await ReleaseReplacementAndWaitForEligibilityCutAsync(firstFactory, client, "dynamic");
 
         Ensure(client.ReadyConnectionCount == 2,
             $"dynamic refresh must preserve Ready capacity across replacement publication; ready={client.ReadyConnectionCount}");
@@ -186,6 +182,47 @@ public sealed class SharpLinkClientSessionRefreshTests
                 $"{topology} refresh did not start a replacement; ready={client.ReadyConnectionCount}, connects={factory.ConnectCount}, state={client.State}",
                 exception);
         }
+    }
+
+    private static async Task ReleaseReplacementAndWaitForEligibilityCutAsync(
+        RefreshTransportFactory factory,
+        SharpLinkClient client,
+        string topology)
+    {
+        var cut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client._afterSessionRefreshEligibilitySwapTestHook = () => cut.TrySetResult();
+        try
+        {
+            factory.ReleaseReplacement();
+            await cut.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        catch (TimeoutException exception)
+        {
+            throw new InvalidOperationException(
+                $"{topology} replacement became transport-ready but did not commit its eligibility cut; ready={client.ReadyConnectionCount}, connects={factory.ConnectCount}, state={client.State}",
+                exception);
+        }
+        finally
+        {
+            client._afterSessionRefreshEligibilitySwapTestHook = null;
+        }
+    }
+
+    private static async Task WaitForReadyCountAsync(
+        SharpLinkClient client,
+        int expected,
+        string topology)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (client.ReadyConnectionCount == expected)
+                return;
+            await Task.Delay(10);
+        }
+
+        throw new InvalidOperationException(
+            $"{topology} topology did not publish the expected Ready connection count; expected={expected}, actual={client.ReadyConnectionCount}, state={client.State}");
     }
 
     private static void Ensure(bool condition, string message)
