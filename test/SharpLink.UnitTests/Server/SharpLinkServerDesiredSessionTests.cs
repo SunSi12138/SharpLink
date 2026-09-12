@@ -1,4 +1,6 @@
+using System.Net;
 using SharpLink.Server;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
@@ -7,8 +9,7 @@ public sealed class SharpLinkServerDesiredSessionTests
     [Test]
     public async Task FutureOnlyPublicationShouldAdvanceImmutableDesiredGeneration()
     {
-        await using var fixture = await SharpLinkServerTestFixture.CreateAsync();
-        var server = fixture.Server;
+        await using var server = CreateServer();
         var initial = server.DesiredSession;
 
         var published = await server.PublishDesiredSessionAsync(
@@ -30,8 +31,7 @@ public sealed class SharpLinkServerDesiredSessionTests
     [Test]
     public async Task InvalidDesiredCandidateShouldNotAdvanceGeneration()
     {
-        await using var fixture = await SharpLinkServerTestFixture.CreateAsync();
-        var server = fixture.Server;
+        await using var server = CreateServer();
         var initial = server.DesiredSession;
 
         await EnsureThrows<ArgumentOutOfRangeException>(async () =>
@@ -46,6 +46,12 @@ public sealed class SharpLinkServerDesiredSessionTests
         Ensure(server.DesiredSession == initial,
             "an invalid desired candidate must leave the current generation unchanged");
     }
+
+    private static ISharpLinkServer CreateServer()
+        => SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .UseTransport(new NoopListener())
+            .Build();
 
     private static void Ensure(bool condition, string message)
     {
@@ -65,5 +71,15 @@ public sealed class SharpLinkServerDesiredSessionTests
             return;
         }
         throw new InvalidOperationException($"Expected {typeof(TException).Name}.");
+    }
+
+    private sealed class NoopListener : IServerTransportListener
+    {
+        public EndPoint? LocalEndPoint => null;
+
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
