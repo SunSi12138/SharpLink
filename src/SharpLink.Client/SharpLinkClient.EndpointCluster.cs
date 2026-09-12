@@ -26,6 +26,9 @@ internal sealed partial class SharpLinkClient
         void HandleConnectionFailure(ClientConnection connection, Exception exception);
         void MarkConnectionDraining(ClientConnection connection);
         void RetireDrainingConnectionIfIdle(ClientConnection connection);
+        void RequestSessionRefresh(
+            RpcSession session,
+            ProtocolV2SessionRefreshRequested request);
         ValueTask StopAsync();
         ValueTask DisposeResourcesAsync();
     }
