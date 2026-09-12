@@ -162,6 +162,9 @@ jobs:
       - name: Verify NuGet package contracts
         uses: ./.github/actions/verify-packages
 
+      - name: Install architecture guard prerequisite
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Verify reviewed public API and release versions
         run: |
           bash ./eng/verify-public-api.sh
