@@ -9,6 +9,7 @@ internal sealed partial class SharpLinkClient
     // Deterministic review-race hooks. They are null in production and stay off the ordinary RPC path.
     internal Action? _afterSessionRefreshEligibilitySwapTestHook;
     internal Action<ClientConnection>? _beforeSessionRefreshEligibilityCommitTestHook;
+    internal Action<ClientConnection>? _afterSessionRefreshCommitReservationTestHook;
     internal Action? _beforeSessionRefreshWorkerReleaseTestHook;
     internal Action<ClientConnection>? _callAdmissionReservedTestHook;
 
@@ -17,6 +18,9 @@ internal sealed partial class SharpLinkClient
 
     internal void NotifyBeforeSessionRefreshEligibilityCommitForTest(ClientConnection connection)
         => Volatile.Read(ref _beforeSessionRefreshEligibilityCommitTestHook)?.Invoke(connection);
+
+    internal void NotifyAfterSessionRefreshCommitReservationForTest(ClientConnection connection)
+        => Volatile.Read(ref _afterSessionRefreshCommitReservationTestHook)?.Invoke(connection);
 
     internal void TryAdvancePlannedSessionRefreshRetirement(ClientConnection connection)
     {
@@ -268,14 +272,24 @@ internal sealed partial class SharpLinkClient
                     else
                     {
                         replacementCommitReserved = true;
-                        source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
-                        // Deliberately place the deterministic cut hook before immutable snapshot
-                        // publication. A reader retaining the old source-only snapshot must redirect
-                        // through source admission to this already-Ready replacement instead of seeing
-                        // a transient Unavailable gap.
-                        Volatile.Read(ref _afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
-                        PublishReadySnapshotLocked();
-                        published = true;
+                        if (!publishedReplacement.TryCommitSessionRefreshRetirement())
+                        {
+                            // A fatal transition linearized before the eligibility cut while this
+                            // attempt already held the admission reservation. Roll the replacement
+                            // back and keep the healthy source selectable so the refresh debt retries.
+                            _connections.Remove(publishedReplacement);
+                        }
+                        else
+                        {
+                            source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
+                            // Deliberately place the deterministic cut hook before immutable snapshot
+                            // publication. A reader retaining the old source-only snapshot must redirect
+                            // through source admission to this already-Ready replacement instead of seeing
+                            // a transient Unavailable gap.
+                            Volatile.Read(ref _afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
+                            PublishReadySnapshotLocked();
+                            published = true;
+                        }
                     }
                 }
             }

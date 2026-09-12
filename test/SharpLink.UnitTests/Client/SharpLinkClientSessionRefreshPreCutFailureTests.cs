@@ -70,6 +70,71 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
         await AssertPreCutReplacementFailureKeepsSourceAsync(client, factory);
     }
 
+    [Test]
+    public async Task FixedReplacementFailureAfterCommitReservationShouldKeepSourceSelectableAndRetry()
+    {
+        var factory = new PreCutFailureTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            factory,
+            builder => builder.UseConnectionPool(options =>
+            {
+                options.MinConnections = 1;
+                options.MaxConnections = 1;
+            }));
+        await client.ConnectAsync();
+
+        await AssertPostReservationPreCutFailureKeepsSourceAsync(client, factory);
+    }
+
+    [Test]
+    public async Task StaticReplacementFailureAfterCommitReservationShouldKeepSourceSelectableAndRetry()
+    {
+        var activeFactory = new PreCutFailureTransportFactory();
+        var spareFactory = new PreCutFailureTransportFactory();
+        await using var client = ClientBuilderTestHelper.BuildStatic(
+        [
+            new StaticEndpointConfiguration(CreateEndpoint("post-reservation-static", 6701), activeFactory),
+            new StaticEndpointConfiguration(CreateEndpoint("post-reservation-static-spare", 6702), spareFactory)
+        ],
+        builder => builder.UseCluster(options =>
+        {
+            options.MinReadyEndpoints = 1;
+            options.MaxConnections = 1;
+            options.MaxConnectionsPerEndpoint = 1;
+            options.MaxRetiringConnections = 1;
+        }));
+        await client.ConnectAsync();
+        Ensure(activeFactory.ConnectCount == 1,
+            "the static post-reservation failure setup should initially own the active endpoint");
+
+        await AssertPostReservationPreCutFailureKeepsSourceAsync(client, activeFactory);
+        Ensure(spareFactory.ConnectCount == 0,
+            "a replacement rejected after its commit reservation must retain refresh debt on the source endpoint");
+    }
+
+    [Test]
+    public async Task DynamicReplacementFailureAfterCommitReservationShouldKeepSourceSelectableAndRetry()
+    {
+        var factory = new PreCutFailureTransportFactory();
+        var endpoint = CreateEndpoint("post-reservation-dynamic", 6801);
+        var resolver = new DelegateSharpLinkEndpointResolver(
+            _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1, [endpoint])),
+            TimeSpan.FromHours(1));
+        await using var client = ClientBuilderTestHelper.BuildDynamic(
+            resolver,
+            _ => factory,
+            builder => builder.UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 1;
+                options.MaxConnectionsPerEndpoint = 1;
+                options.MaxRetiringConnections = 1;
+            }));
+        await client.ConnectAsync();
+
+        await AssertPostReservationPreCutFailureKeepsSourceAsync(client, factory);
+    }
+
     private static async Task AssertPreCutReplacementFailureKeepsSourceAsync(
         SharpLinkClient client,
         PreCutFailureTransportFactory factory)
@@ -119,6 +184,61 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
             releaseCommit.Set();
             factory.ReleaseRetry();
             client._beforeSessionRefreshEligibilityCommitTestHook = null;
+        }
+    }
+
+    private static async Task AssertPostReservationPreCutFailureKeepsSourceAsync(
+        SharpLinkClient client,
+        PreCutFailureTransportFactory factory)
+    {
+        await WaitForConditionAsync(
+            () => client.ReadyConnectionCount == 1,
+            "the post-reservation failure setup must settle on exactly one Ready connection before a refresh is injected");
+        var sourceTransport = factory.GetConnection(0);
+        var reservationHeld = new TaskCompletionSource<ClientConnection>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseReservation = new ManualResetEventSlim(false);
+        client._afterSessionRefreshCommitReservationTestHook = replacement =>
+        {
+            reservationHeld.TrySetResult(replacement);
+            if (!releaseReservation.Wait(TimeSpan.FromSeconds(3)))
+                throw new TimeoutException("post-reservation replacement hook was not released");
+        };
+
+        try
+        {
+            await InjectRefreshAsync(sourceTransport, Guid.NewGuid(), 2);
+            await factory.FirstReplacementStarted.WaitAsync(TimeSpan.FromSeconds(3));
+            factory.ReleaseFirstReplacement();
+
+            var replacement = await reservationHeld.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var replacementTransport = factory.GetConnection(1);
+            await replacementTransport.DisposeAsync();
+
+            await WaitForConditionAsync(
+                () => replacement.HasObservedFatalFailureForAdmission,
+                "replacement failure must be observed while the commit reservation is held but the source is not yet closed");
+            Ensure(client.ReadyConnectionCount == 1,
+                "a fatal transition that linearizes before the source cut must leave the healthy source as the sole Ready connection");
+
+            releaseReservation.Set();
+            await factory.RetryStarted.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Ensure(client.ReadyConnectionCount == 1,
+                "rejecting the commit after a fatal observation must not retire the healthy source or publish zero-ready");
+
+            var unary = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+            var request = await sourceTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            await sourceTransport.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
+            Ensure(await unary.WaitAsync(TimeSpan.FromSeconds(2)) == 0,
+                "the source must stay selectable when the replacement fails after the commit reservation but before the cut");
+        }
+        finally
+        {
+            releaseReservation.Set();
+            factory.ReleaseRetry();
+            client._afterSessionRefreshCommitReservationTestHook = null;
         }
     }
 

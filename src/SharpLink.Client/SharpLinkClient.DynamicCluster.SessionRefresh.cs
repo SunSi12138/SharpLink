@@ -240,7 +240,7 @@ internal sealed partial class SharpLinkClient
 
                 var published = false;
                 var sourceGone = false;
-                var retryForCapacity = false;
+                var retryReplacement = false;
                 lock (_gate)
                 {
                     if (_lifecycle.IsStopping || _client._shutdownCts.IsCancellationRequested)
@@ -250,7 +250,7 @@ internal sealed partial class SharpLinkClient
                                  !ReferenceEquals(FindEndpointLocked(source), endpoint) || !source.CanAcceptCalls;
                     if (!sourceGone && !CanPlanRefreshLocked(source))
                     {
-                        retryForCapacity = true;
+                        retryReplacement = true;
                     }
                     else if (!sourceGone)
                     {
@@ -278,16 +278,27 @@ internal sealed partial class SharpLinkClient
                             !publishedReplacement.TryReserveSessionRefreshCommit())
                         {
                             _connections.Remove(endpoint, publishedReplacement);
-                            retryForCapacity = true;
+                            retryReplacement = true;
                         }
                         else
                         {
                             replacementCommitReserved = true;
-                            source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
-                            PublishReadySnapshotLocked();
-                            endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
-                            Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
-                            published = true;
+                            if (!publishedReplacement.TryCommitSessionRefreshRetirement())
+                            {
+                                // A fatal transition linearized before the eligibility cut while this
+                                // attempt already held the admission reservation. Roll the replacement
+                                // back and keep the healthy source selectable so the debt retries.
+                                _connections.Remove(endpoint, publishedReplacement);
+                                retryReplacement = true;
+                            }
+                            else
+                            {
+                                source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
+                                PublishReadySnapshotLocked();
+                                endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
+                                Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
+                                published = true;
+                            }
                         }
                     }
                 }
@@ -303,7 +314,7 @@ internal sealed partial class SharpLinkClient
                     session = null;
                     await DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(publishedReplacement).ConfigureAwait(false);
                     replacement = null;
-                    return sourceGone || !retryForCapacity;
+                    return sourceGone || !retryReplacement;
                 }
 
                 session = null;

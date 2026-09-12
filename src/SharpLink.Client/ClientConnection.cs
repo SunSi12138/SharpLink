@@ -14,6 +14,13 @@ internal sealed class ClientConnection :
     IStreamConsumerDeliveryGate,
     IAsyncDisposable
 {
+    // Session-refresh cut state machine. A fatal transition and the blue-green commit claim
+    // race on this single CAS target so the source eligibility cut is linearized against a
+    // replacement that fails before the cut.
+    private const int SessionRefreshCommitOpen = 0;
+    private const int SessionRefreshCommitCommitted = 1;
+    private const int SessionRefreshCommitRejected = 2;
+
     private readonly SharpLinkClient _client;
     private readonly TimeProvider _timeProvider;
     private readonly CancellationTokenSource _cancellation;
@@ -26,7 +33,8 @@ internal sealed class ClientConnection :
     private int _selectionEligible = 1;
     private int _fatalFailureObservedForAdmission;
     private int _plannedSessionRefreshRetirement;
-    private ClientConnection? _sessionRefreshReplacement;
+    private int _sessionRefreshCommitState;
+    private SessionRefreshRedirect? _sessionRefreshRedirect;
     private int _disposed;
 
     public ClientConnection(
@@ -78,17 +86,44 @@ internal sealed class ClientConnection :
     internal bool HasPlannedSessionRefreshRetirement
         => Volatile.Read(ref _plannedSessionRefreshRetirement) != 0;
 
+    /// <summary>
+    /// The shared redirect that retires this connection's refresh lineage into the newest Ready
+    /// replacement. <see langword="null"/> until the connection takes part in a refresh cut.
+    /// </summary>
+    internal SessionRefreshRedirect? SessionRefreshRedirect
+        => Volatile.Read(ref _sessionRefreshRedirect);
+
     internal bool TryReserveCallAdmission(out ClientConnection admitted)
     {
-        ClientConnection? candidate = this;
-        for (var redirects = 0; candidate is not null && redirects < 32; redirects++)
+        if (TryReserveOwnCallAdmission(notifyTestHook: true))
+        {
+            admitted = this;
+            return true;
+        }
+
+        var redirect = Volatile.Read(ref _sessionRefreshRedirect);
+        if (redirect is null)
+        {
+            admitted = null!;
+            return false;
+        }
+
+        // The redirect always targets the newest Ready connection in the lineage, so this is a
+        // constant-depth lookup rather than a walk over retired generations. The retry only
+        // re-reads the same indirection when a concurrent cut published a newer target between
+        // the read and the reservation attempt.
+        var candidate = redirect.Current;
+        for (var attempt = 0; candidate is not null && attempt < 3; attempt++)
         {
             if (candidate.TryReserveOwnCallAdmission(notifyTestHook: true))
             {
                 admitted = candidate;
                 return true;
             }
-            candidate = Volatile.Read(ref candidate._sessionRefreshReplacement);
+            var next = redirect.Current;
+            if (ReferenceEquals(next, candidate))
+                break;
+            candidate = next;
         }
 
         admitted = null!;
@@ -98,11 +133,50 @@ internal sealed class ClientConnection :
     internal bool TryReserveSessionRefreshCommit()
     {
         _client.NotifyBeforeSessionRefreshEligibilityCommitForTest(this);
-        return TryReserveOwnCallAdmission(notifyTestHook: false);
+        if (!TryReserveOwnCallAdmission(notifyTestHook: false))
+            return false;
+
+        // The reservation only proves the replacement was admission-eligible at this instant.
+        // The source cut is linearized later by TryCommitSessionRefreshRetirement(); this hook
+        // deterministically freezes the window in between for review regressions.
+        _client.NotifyAfterSessionRefreshCommitReservationForTest(this);
+        return true;
+    }
+
+    /// <summary>
+    /// Claims the blue-green eligibility cut for a replacement that already holds a session
+    /// refresh admission reservation.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the commit won the race against a fatal transition and the
+    /// caller must retire the source. <see langword="false"/> when a fatal transition was
+    /// observed first, in which case the caller must roll the replacement back and keep the
+    /// source selectable.
+    /// </returns>
+    internal bool TryCommitSessionRefreshRetirement()
+    {
+        // The flag read is the linearization point of the claim: an observation published before
+        // it rejects the cut, while an observation published after it falls into ordinary
+        // post-cut replacement handling. The CAS then rejects a commit whose observation landed
+        // between this read and the claim.
+        if (Volatile.Read(ref _fatalFailureObservedForAdmission) != 0)
+            return false;
+        return Interlocked.CompareExchange(
+            ref _sessionRefreshCommitState,
+            SessionRefreshCommitCommitted,
+            SessionRefreshCommitOpen) == SessionRefreshCommitOpen;
     }
 
     internal void ObserveFatalFailureForAdmission()
-        => Volatile.Write(ref _fatalFailureObservedForAdmission, 1);
+    {
+        Volatile.Write(ref _fatalFailureObservedForAdmission, 1);
+        // A commit that already won keeps its claim: the cut linearized first, so the failure is
+        // handled with ordinary post-cut replacement semantics. Any unclaimed commit is rejected.
+        Interlocked.CompareExchange(
+            ref _sessionRefreshCommitState,
+            SessionRefreshCommitRejected,
+            SessionRefreshCommitOpen);
+    }
 
     private bool TryReserveOwnCallAdmission(bool notifyTestHook)
     {
@@ -158,10 +232,32 @@ internal sealed class ClientConnection :
         if (ReferenceEquals(this, replacement))
             throw new ArgumentException("A session-refresh source cannot replace itself.", nameof(replacement));
 
-        Volatile.Write(ref _sessionRefreshReplacement, replacement);
+        // All connections in one refresh lineage share a single indirection and it always points
+        // at the newest Ready replacement. Disposed predecessors are therefore not retained by an
+        // older pinned source and a stale admission never exhausts a fixed redirect hop budget.
+        var redirect = GetOrCreateSessionRefreshRedirect();
+        replacement.JoinSessionRefreshRedirect(redirect);
+        redirect.Publish(replacement);
+
         Volatile.Write(ref _selectionEligible, 0);
         Volatile.Write(ref _callAdmissionClosed, 1);
         Volatile.Write(ref _plannedSessionRefreshRetirement, 1);
+    }
+
+    internal void JoinSessionRefreshRedirect(SessionRefreshRedirect redirect)
+    {
+        ArgumentNullException.ThrowIfNull(redirect);
+        Interlocked.CompareExchange(ref _sessionRefreshRedirect, redirect, null);
+    }
+
+    private SessionRefreshRedirect GetOrCreateSessionRefreshRedirect()
+    {
+        var existing = Volatile.Read(ref _sessionRefreshRedirect);
+        if (existing is not null)
+            return existing;
+
+        var created = new SessionRefreshRedirect();
+        return Interlocked.CompareExchange(ref _sessionRefreshRedirect, created, null) ?? created;
     }
 
     internal void CompletePlannedSessionRefreshRetirement()
@@ -216,6 +312,7 @@ internal sealed class ClientConnection :
     public void Fail(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        ObserveFatalFailureForAdmission();
         Volatile.Write(ref _selectionEligible, 0);
         Volatile.Write(ref _callAdmissionClosed, 1);
         var previousState = Interlocked.Exchange(ref _state, (int)ClientConnectionState.Closed);

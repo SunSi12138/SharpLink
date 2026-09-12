@@ -35,6 +35,10 @@ Ready topology snapshots are intentionally lock-free, so refresh cannot rely on 
 
 When replacement publication establishes the refresh cut, the source publishes a stable source-to-replacement redirect before closing source admission. A reader that retained an older immutable source snapshot can therefore follow that redirect to the already-Ready replacement instead of observing a false zero-ready interval. A call that already reserved the source before the cut remains formally admitted to that source and can register/complete there.
 
+The blue-green cut is linearized on the replacement against a fatal transition the framework may already have observed. An admission reservation only proves the replacement was eligible at that instant, so the actual source-admission closure additionally claims a connection-level commit state. A replacement receive/heartbeat/disconnect failure that publishes its fatal observation first rejects the claim and rolls the replacement back with the source still selectable; a failure that lands after the successful claim is handled with ordinary post-cut replacement semantics. The source is never closed while the framework already knows the replacement is fatal.
+
+The redirect is one shared indirection per refresh lineage rather than a predecessor chain. Every connection retired along that lineage points at the same object and that object holds only the newest Ready replacement, so the redirect graph stays constant-depth while a long-lived call keeps an old generation pinned. Repeated rapid refreshes therefore neither retain disposed predecessors nor fail admission from a stale snapshot, because a pinned source always resolves directly to the current Ready connection.
+
 With `MaxRetiringConnections = 0`, an admitted source is hidden from new selection but remains physically Ready while its admitted work drains. It is not moved into `Draining` or counted as a retiring connection until both its admission-reservation count and `ActiveCallCount` reach zero, at which point retirement is immediate. This removes the selection-to-registration retirement race without exceeding the retiring budget.
 
 ## Bounded replacement
