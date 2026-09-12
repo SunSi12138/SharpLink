@@ -65,12 +65,7 @@ public sealed class SharpLinkRemoteHealthCheck(ISharpLinkClientAccessor clientAc
         {
             var client = await clientAccessor.GetClientAsync(cancellationToken).ConfigureAwait(false);
             var response = await client.CheckHealthAsync(cancellationToken).ConfigureAwait(false);
-            return response.Status switch
-            {
-                SharpLinkHealthStatus.Ready => HealthCheckResult.Healthy("Remote SharpLink server is ready."),
-                SharpLinkHealthStatus.Draining => HealthCheckResult.Degraded("Remote SharpLink server is draining."),
-                _ => HealthCheckResult.Unhealthy("Remote SharpLink server is unhealthy.")
-            };
+            return MapResult(response);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -79,8 +74,32 @@ public sealed class SharpLinkRemoteHealthCheck(ISharpLinkClientAccessor clientAc
         catch (Exception exception)
         {
             return HealthCheckResult.Unhealthy(
-                "Remote SharpLink health check failed.",
+                "Remote SharpLink health check failed unexpectedly.",
                 exception);
         }
     }
+
+    private static HealthCheckResult MapResult(SharpLinkHealthCheckResult result)
+        => result.Outcome switch
+        {
+            SharpLinkHealthProbeOutcome.Success => result.Status switch
+            {
+                SharpLinkHealthStatus.Ready => HealthCheckResult.Healthy(
+                    "Remote SharpLink server is ready."),
+                SharpLinkHealthStatus.Draining => HealthCheckResult.Degraded(
+                    "Remote SharpLink server is draining."),
+                SharpLinkHealthStatus.Unhealthy => HealthCheckResult.Unhealthy(
+                    "Remote SharpLink server is unhealthy."),
+                _ => HealthCheckResult.Unhealthy(
+                    "Remote SharpLink server returned an invalid health response.")
+            },
+            SharpLinkHealthProbeOutcome.NotReady => HealthCheckResult.Unhealthy(
+                "SharpLink client has no ready remote connection."),
+            SharpLinkHealthProbeOutcome.Unavailable => HealthCheckResult.Unhealthy(
+                "Remote SharpLink server became unavailable during the health probe."),
+            SharpLinkHealthProbeOutcome.Unsupported => HealthCheckResult.Unhealthy(
+                "Remote SharpLink server does not support protocol health checks."),
+            _ => HealthCheckResult.Unhealthy(
+                "Remote SharpLink health probe returned an unknown outcome.")
+        };
 }

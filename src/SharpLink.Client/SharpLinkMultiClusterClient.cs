@@ -36,6 +36,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     {
         ArgumentNullException.ThrowIfNull(routeManifestSnapshot);
         _options = options;
+        InitializeClusterDialLimiter(options, clusters.Values);
         _snapshot = new MultiClusterSnapshot(
             clusters,
             routes,
