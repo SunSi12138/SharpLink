@@ -8,124 +8,141 @@ namespace SharpLink.Client;
 /// </remarks>
 public static class SharpLinkClientRuntimeConfigurationExtensions
 {
+    /// <summary>Attempts to replace the runtime interceptor generation.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryReplaceInterceptors(
         this ISharpLinkClient client,
         IEnumerable<ISharpLinkClientInterceptor> interceptors)
-        => GetRuntime(client, nameof(TryReplaceInterceptors)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryReplaceInterceptorsCore(interceptors)
             : Unsupported(nameof(TryReplaceInterceptors));
 
+    /// <summary>Attempts to publish a custom request timeout.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateRequestTimeout(
         this ISharpLinkClient client,
         TimeSpan timeout)
-        => GetRuntime(client, nameof(TryUpdateRequestTimeout)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateRequestTimeoutCore(timeout)
             : Unsupported(nameof(TryUpdateRequestTimeout));
 
+    /// <summary>Attempts to disable the published request-timeout policy.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryDisableRequestTimeout(this ISharpLinkClient client)
-        => GetRuntime(client, nameof(TryDisableRequestTimeout)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryDisableRequestTimeoutCore()
             : Unsupported(nameof(TryDisableRequestTimeout));
 
+    /// <summary>Attempts to publish the built-in retry policy.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateRetryPolicy(
         this ISharpLinkClient client,
         ISharpLinkRetryOptions options)
-        => GetRuntime(client, nameof(TryUpdateRetryPolicy)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateRetryPolicyCore(options)
             : Unsupported(nameof(TryUpdateRetryPolicy));
 
+    /// <summary>Attempts to publish a custom retry policy with default limits.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateRetryPolicy(
         this ISharpLinkClient client,
         ISharpLinkRetryPolicy policy)
-        => GetRuntime(client, nameof(TryUpdateRetryPolicy)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateRetryPolicyCore(policy)
             : Unsupported(nameof(TryUpdateRetryPolicy));
 
+    /// <summary>Attempts to publish a custom retry policy with explicit limits.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateRetryPolicy(
         this ISharpLinkClient client,
         ISharpLinkRetryPolicy policy,
         ISharpLinkRetryOptions limits)
-        => GetRuntime(client, nameof(TryUpdateRetryPolicy)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateRetryPolicyCore(policy, limits)
             : Unsupported(nameof(TryUpdateRetryPolicy));
 
+    /// <summary>Attempts to disable retry publication.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryDisableRetry(this ISharpLinkClient client)
-        => GetRuntime(client, nameof(TryDisableRetry)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryDisableRetryCore()
             : Unsupported(nameof(TryDisableRetry));
 
+    /// <summary>Attempts to publish the complete heartbeat configuration.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateHeartbeat(
         this ISharpLinkClient client,
         TimeSpan interval,
         TimeSpan timeout)
-        => GetRuntime(client, nameof(TryUpdateHeartbeat)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateHeartbeatCore(interval, timeout)
             : Unsupported(nameof(TryUpdateHeartbeat));
 
+    /// <summary>Attempts to publish a new heartbeat interval while retaining the current timeout.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateHeartbeatInterval(
         this ISharpLinkClient client,
         TimeSpan interval)
-        => GetRuntime(client, nameof(TryUpdateHeartbeatInterval)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateHeartbeatIntervalCore(interval)
             : Unsupported(nameof(TryUpdateHeartbeatInterval));
 
+    /// <summary>Attempts to publish a new heartbeat timeout while retaining the current interval.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateHeartbeatTimeout(
         this ISharpLinkClient client,
         TimeSpan timeout)
-        => GetRuntime(client, nameof(TryUpdateHeartbeatTimeout)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateHeartbeatTimeoutCore(timeout)
             : Unsupported(nameof(TryUpdateHeartbeatTimeout));
 
+    /// <summary>Attempts to publish the reconnect policy.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateReconnectPolicy(
         this ISharpLinkClient client,
         SharpLinkReconnectPolicy policy)
-        => GetRuntime(client, nameof(TryUpdateReconnectPolicy)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateReconnectPolicyCore(policy)
             : Unsupported(nameof(TryUpdateReconnectPolicy));
 
+    /// <summary>Attempts to publish a custom endpoint-admission policy.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateEndpointAdmissionPolicy(
         this ISharpLinkClient client,
         ISharpLinkEndpointAdmissionPolicy policy)
-        => GetRuntime(client, nameof(TryUpdateEndpointAdmissionPolicy)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateEndpointAdmissionPolicyCore(policy)
             : Unsupported(nameof(TryUpdateEndpointAdmissionPolicy));
 
+    /// <summary>Attempts to disable custom endpoint admission.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryDisableEndpointAdmissionPolicy(this ISharpLinkClient client)
-        => GetRuntime(client, nameof(TryDisableEndpointAdmissionPolicy)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryDisableEndpointAdmissionPolicyCore()
             : Unsupported(nameof(TryDisableEndpointAdmissionPolicy));
 
+    /// <summary>Attempts to publish the built-in circuit-breaker configuration.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateCircuitBreaker(
         this ISharpLinkClient client,
         ISharpLinkCircuitBreakerOptions options)
-        => GetRuntime(client, nameof(TryUpdateCircuitBreaker)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateCircuitBreakerCore(options)
             : Unsupported(nameof(TryUpdateCircuitBreaker));
 
+    /// <summary>Attempts to disable the built-in circuit breaker.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryDisableCircuitBreaker(this ISharpLinkClient client)
-        => GetRuntime(client, nameof(TryDisableCircuitBreaker)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryDisableCircuitBreakerCore()
             : Unsupported(nameof(TryDisableCircuitBreaker));
 
+    /// <summary>Attempts to publish the request-compression send policy.</summary>
     public static SharpLinkRuntimeConfigurationUpdateResult TryUpdateRequestCompressionPolicy(
         this ISharpLinkClient client,
         SharpLinkCompressionSendPolicy policy)
-        => GetRuntime(client, nameof(TryUpdateRequestCompressionPolicy)) is { } runtime
+        => GetRuntime(client) is { } runtime
             ? runtime.TryUpdateRequestCompressionPolicyCore(policy)
             : Unsupported(nameof(TryUpdateRequestCompressionPolicy));
 
+    /// <summary>Attempts to publish and reconcile the response-compression preference.</summary>
     public static ValueTask<SharpLinkRuntimeConfigurationUpdateResult> TrySetResponseCompressionPreferenceAsync(
         this ISharpLinkClient client,
         bool allowResponseCompression,
         CancellationToken cancellationToken = default)
     {
-        var runtime = GetRuntime(client, nameof(TrySetResponseCompressionPreferenceAsync));
+        var runtime = GetRuntime(client);
         return runtime is null
             ? ValueTask.FromResult(Unsupported(nameof(TrySetResponseCompressionPreferenceAsync)))
             : runtime.TrySetResponseCompressionPreferenceCoreAsync(allowResponseCompression, cancellationToken);
     }
 
-    private static SharpLinkClient? GetRuntime(ISharpLinkClient client, string operation)
+    private static SharpLinkClient? GetRuntime(ISharpLinkClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
         return client as SharpLinkClient;
