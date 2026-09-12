@@ -55,7 +55,7 @@ using SharpLink.Sdk;
     4,
     2,
     "2.0.0",
-    "sharplink-2.0-api4-rpcchannel-codec-provider-v4")]
+    "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
 
 namespace ReferencedUnion
 {

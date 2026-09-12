@@ -151,7 +151,7 @@ public sealed record SharpLinkClientSupportSnapshot(
     SharpLinkConnectionFailureSnapshot? LastConnectionFailure)
 {
     /// <summary>The current support snapshot JSON schema version.</summary>
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 1;
 
     /// <summary>Gets the local client runtime lifecycle independently of remote connectivity.</summary>
     public SharpLinkClientLifecycleState LifecycleState { get; init; }

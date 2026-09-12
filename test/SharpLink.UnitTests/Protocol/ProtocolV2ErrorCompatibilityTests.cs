@@ -3,12 +3,12 @@ namespace SharpLink.UnitTests.Protocol;
 public class ProtocolV2ErrorCompatibilityTests
 {
     [Test]
-    public async Task StructuredErrorShapeShouldRejectMinorFivePeers()
+    public async Task StructuredErrorShapeShouldRejectPublishedMinorThreePeers()
     {
-        Ensure(ProtocolV2Constants.MinorVersion == 6, "structured errors require protocol minor 6");
+        Ensure(ProtocolV2Constants.MinorVersion == 4, "2.0 increments the published minor 3 once");
         Ensure(
-            ProtocolV2Constants.MinimumCompatibleMinorVersion == 6,
-            "minor-5 peers must be rejected before decoding the structured error shape");
+            ProtocolV2Constants.MinimumCompatibleMinorVersion == 4,
+            "published minor-3 peers must be rejected before decoding the structured error shape");
 
         var policy = ProtocolV2Negotiator.CreateImplementedPolicy(
             4 * 1024 * 1024,

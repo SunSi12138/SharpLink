@@ -523,7 +523,7 @@ public interface INullableService : SharpLink.Sdk.IService
             "damaged baseline diagnostic");
 
         var baseline = RunContractGenerator(source).Json.Replace(
-            "\"version\": 3", "\"version\": 99", StringComparison.Ordinal);
+            "\"version\": 2", "\"version\": 99", StringComparison.Ordinal);
         var unsupported = RunContractGenerator(source, baseline);
         Ensure(unsupported.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK025"),
             "unsupported baseline version diagnostic");

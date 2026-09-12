@@ -45,7 +45,7 @@ The public constants live under `SharpLinkErrorDetails.ResourceExhausted`.
 
 ## Wire format and compatibility
 
-Protocol v2 minor 6 encodes every binary error payload as:
+Protocol v2 minor 4 encodes every binary error payload as:
 
 ```text
 SharpLinkErrorCode : uint16 little-endian
@@ -56,4 +56,4 @@ Message            : MessageLength bytes of UTF-8
 
 Message truncation only changes the UTF-8 message and the frame's `Truncated` flag; it never removes or changes `DetailCode`.
 
-This binary shape is not compatible with the previous minor-5 `(Code, Message)` layout. SharpLink therefore sets both `ProtocolV2Constants.MinorVersion` and `MinimumCompatibleMinorVersion` to 6. A minor-5 peer is rejected during handshake instead of allowing either side to misinterpret an error payload.
+This binary shape is not compatible with the published 1.1.1/minor-3 `(Code, Message)` layout. SharpLink 2.0 increments that released baseline once and sets both `ProtocolV2Constants.MinorVersion` and `MinimumCompatibleMinorVersion` to 4. A minor-3 peer is rejected during handshake instead of allowing either side to misinterpret an error payload. Development-only minor numbers are not released compatibility boundaries.

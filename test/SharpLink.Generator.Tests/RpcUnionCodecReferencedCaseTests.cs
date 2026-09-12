@@ -47,12 +47,12 @@ namespace SharpLink.Abstractions
             support,
             101UL,
             202UL,
-            "sharplink-2.0-api4-rpcchannel-codec-provider-v4");
+            "sharplink-2.0-api4-rpcchannel-codec-provider-v1");
         var secondOwner = CreateReferencedUnionCaseOwner(
             support,
             303UL,
             404UL,
-            "sharplink-2.0-api4-rpcchannel-codec-provider-v4");
+            "sharplink-2.0-api4-rpcchannel-codec-provider-v1");
         var incompatibleOwner = CreateReferencedUnionCaseOwner(
             support,
             101UL,

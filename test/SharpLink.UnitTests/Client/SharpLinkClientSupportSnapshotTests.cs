@@ -60,7 +60,7 @@ public sealed class SharpLinkClientSupportSnapshotTests
         var snapshot = client.GetDiagnosticSnapshot();
         Ensure(snapshot.SchemaVersion == SharpLinkClientSupportSnapshot.CurrentSchemaVersion,
             "lifecycle snapshot schema version");
-        Ensure(snapshot.SchemaVersion == 2, "lifecycle domains require support schema v2");
+        Ensure(snapshot.SchemaVersion == 1, "the first published support snapshot uses schema v1");
         Ensure(snapshot.LifecycleState == SharpLinkClientLifecycleState.Running,
             "runtime remains running while remote is unavailable");
         Ensure(snapshot.ReadinessState == SharpLinkReadinessState.NotReady,
@@ -77,8 +77,8 @@ public sealed class SharpLinkClientSupportSnapshotTests
         var json = client.ExportDiagnosticSnapshotJson();
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
-        Ensure(root.GetProperty("schemaVersion").GetInt32() == 2,
-            "JSON exports support schema v2");
+        Ensure(root.GetProperty("schemaVersion").GetInt32() == 1,
+            "JSON exports the first published support schema v1");
         Ensure(Enum.Parse<SharpLinkClientLifecycleState>(
                 root.GetProperty("lifecycleState").GetString()!, ignoreCase: true) == snapshot.LifecycleState,
             "JSON exports lifecycle state value");
