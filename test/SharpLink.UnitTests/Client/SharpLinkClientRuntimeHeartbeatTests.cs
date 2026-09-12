@@ -104,6 +104,9 @@ public sealed class SharpLinkClientRuntimeHeartbeatTests
             var sessionStopped = GetSessionStoppedTask(connection.Session);
             client.UpdateHeartbeatTimeout(TimeSpan.FromSeconds(7));
             await sessionStopped.WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(
+                () => connection.State == ClientConnectionState.Closed,
+                () => "shortened heartbeat timeout did not finish supervised connection cleanup");
             Ensure(connection.State == ClientConnectionState.Closed,
                 "shrinking timeout below retained peer inactivity must close without waiting for the old interval");
         }
@@ -152,6 +155,9 @@ public sealed class SharpLinkClientRuntimeHeartbeatTests
             var sessionStopped = GetSessionStoppedTask(connection.Session);
             provider.Advance(TimeSpan.FromSeconds(5));
             await sessionStopped.WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(
+                () => connection.State == ClientConnectionState.Closed,
+                () => "extended heartbeat timeout did not finish supervised connection cleanup");
             Ensure(connection.State == ClientConnectionState.Closed,
                 "the increased timeout must still be measured from the original peer activity, not reset by the update");
         }

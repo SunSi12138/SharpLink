@@ -80,6 +80,10 @@ public sealed class SharpLinkClientLifecycleHeartbeatTests
             var sessionStopped = GetSessionStoppedTask(connection.Session);
             provider.Advance(TimeSpan.FromSeconds(5));
             await sessionStopped;
+            // Session shutdown and the supervised ClientConnection cleanup have separate owners.
+            await WaitUntilAsync(
+                () => connection.State == ClientConnectionState.Closed,
+                () => "heartbeat timeout did not finish supervised connection cleanup");
             Ensure(connection.State == ClientConnectionState.Closed && !connection.Session.IsConnected,
                 "the first check after the timeout boundary must close the silent connection");
             Ensure(transport.ConnectCount == 1,
