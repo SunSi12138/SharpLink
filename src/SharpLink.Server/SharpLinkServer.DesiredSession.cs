@@ -84,7 +84,9 @@ internal sealed partial class SharpLinkServer
                 await rolloutTask.ConfigureAwait(false);
         }
 
-        return SharpLinkServerDesiredSessionPublicationResult.Success(published);
+        // Another publisher may have advanced the desired generation while this caller waited
+        // for the server-owned scan. Return the current snapshot at completion, as the API promises.
+        return SharpLinkServerDesiredSessionPublicationResult.Success(CaptureDesiredSession());
     }
 
     private void ValidateDesiredSessionCandidate(

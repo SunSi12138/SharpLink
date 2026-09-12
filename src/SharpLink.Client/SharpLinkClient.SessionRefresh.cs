@@ -132,7 +132,7 @@ internal sealed partial class SharpLinkClient
                             (stale ??= []).Add(candidate);
                             continue;
                         }
-                        if (source is null && CanPlanFixedRefreshLocked(candidate))
+                        if (source is null && CanPlanFixedRefreshLocked())
                             source = candidate;
                     }
                     if (stale is not null)
@@ -193,15 +193,17 @@ internal sealed partial class SharpLinkClient
         _sessionRefreshTask = null;
     }
 
-    private bool CanPlanFixedRefreshLocked(ClientConnection source)
+    private bool CanPlanFixedRefreshLocked()
     {
         var retiring = 0;
         foreach (var connection in _connections)
         {
-            if (connection.State == ClientConnectionState.Draining)
+            if (connection.State == ClientConnectionState.Draining || connection.HasPlannedSessionRefreshRetirement)
                 retiring++;
         }
-        return retiring < _connectionPoolOptions.MaxConnections || source.ActiveCallCount == 0;
+        // Every cut needs a slot: even an idle source can admit work while the replacement
+        // connects. Planned sources retain physical sessions until those admitted calls drain.
+        return retiring < _connectionPoolOptions.MaxConnections;
     }
 
     private async Task<bool> ReplaceFixedSessionAsync(
@@ -214,7 +216,7 @@ internal sealed partial class SharpLinkClient
                 return true;
             if (!_connections.Contains(source) || !source.CanAcceptCalls)
                 return true;
-            if (!CanPlanFixedRefreshLocked(source))
+            if (!CanPlanFixedRefreshLocked())
                 return false;
         }
 
@@ -262,7 +264,7 @@ internal sealed partial class SharpLinkClient
                     throw CreateConnectionClosedException("Client stopped while refreshing a session.");
 
                 sourceStillEligible = _connections.Contains(source) && source.CanAcceptCalls;
-                if (sourceStillEligible && CanPlanFixedRefreshLocked(source))
+                if (sourceStillEligible && CanPlanFixedRefreshLocked())
                 {
                     _connections.Add(publishedReplacement);
                     try

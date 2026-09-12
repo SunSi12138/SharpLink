@@ -380,7 +380,8 @@ internal sealed partial class SharpLinkClient
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
-            compressionProviders);
+            compressionProviders,
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
         var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,

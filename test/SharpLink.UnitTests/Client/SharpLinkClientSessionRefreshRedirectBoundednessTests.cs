@@ -1,3 +1,4 @@
+using System.Reflection;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -14,7 +15,9 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
     private const int RefreshGenerations = 40;
 
     [Test]
-    public async Task RepeatedFixedRefreshShouldKeepRedirectBoundedAndReachLatestReady()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FixedRefreshShouldWaitForPlannedSourceBudgetThenResume(bool latestSourceHasCall)
     {
         var factory = new RepeatedRefreshTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(
@@ -23,6 +26,88 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             {
                 options.MinConnections = 1;
                 options.MaxConnections = 1;
+            }));
+        await client.ConnectAsync();
+        using var cancellation = new CancellationTokenSource();
+        var firstCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
+        Task<int>? secondCall = null;
+        var firstTransport = factory.GetConnection(0);
+        var firstRequest = await firstTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        var firstCut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client._afterSessionRefreshEligibilitySwapTestHook = () => firstCut.TrySetResult();
+        var serverInstanceId = Guid.NewGuid();
+        try
+        {
+            await InjectRefreshAsync(firstTransport, serverInstanceId, 2);
+            await firstCut.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var secondTransport = factory.GetConnection(1);
+            ProtocolV2FrameHeader secondRequest = default;
+            if (latestSourceHasCall)
+            {
+                secondCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
+                secondRequest = await secondTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
+            var poolGate = (Lock)typeof(SharpLinkClient).GetField("_poolGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client)!;
+            lock (poolGate)
+            {
+                var canPlan = (bool)typeof(SharpLinkClient).GetMethod(
+                    "CanPlanFixedRefreshLocked", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(client, null)!;
+                Ensure(!canPlan,
+                    "a physically Ready planned source consumes the fixed retirement budget, even when the next source is idle");
+            }
+
+            var nextCut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var requestReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            client._afterSessionRefreshEligibilitySwapTestHook = () => nextCut.TrySetResult();
+            var latest = ((ClientConnection[])typeof(SharpLinkClient).GetField(
+                "_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!)[0];
+            latest.Session.SessionRefreshRequested += _ => requestReceived.TrySetResult();
+            await InjectRefreshAsync(secondTransport, serverInstanceId, 3);
+            await requestReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(factory.ConnectCount == 2 && !nextCut.Task.IsCompleted && client.ReadyConnectionCount == 1,
+                "a full retirement budget preserves refresh debt without accumulating a third physical connection");
+
+            await firstTransport.InjectInt32ResponseAsync(unchecked((long)firstRequest.RequestId));
+            Ensure(await firstCall.WaitAsync(TimeSpan.FromSeconds(5)) == 0, "the pinned original call drains normally");
+            await nextCut.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(factory.ConnectCount == 3 && client.ReadyConnectionCount == 1,
+                "draining the planned source releases its slot and resumes the same queued refresh request");
+            if (secondCall is not null)
+            {
+                await secondTransport.InjectInt32ResponseAsync(unchecked((long)secondRequest.RequestId));
+                Ensure(await secondCall.WaitAsync(TimeSpan.FromSeconds(5)) == 0,
+                    "work pinned to the next generation also survives its replacement");
+            }
+        }
+        finally
+        {
+            client._afterSessionRefreshEligibilitySwapTestHook = null;
+            cancellation.Cancel();
+            try { await firstCall.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) { }
+            if (secondCall is not null)
+            {
+                try { await secondCall.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (OperationCanceledException) { }
+            }
+        }
+    }
+
+    [Test]
+    public async Task RepeatedFixedRefreshShouldKeepRedirectBoundedAndReachLatestReady()
+    {
+        var factory = new RepeatedRefreshTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            factory,
+            builder => builder.UseConnectionPool(options =>
+            {
+                options.MinConnections = 1;
+                // One retirement slot stays pinned; the second permits each transient swap.
+                options.MaxConnections = 2;
             }));
         await client.ConnectAsync();
 
