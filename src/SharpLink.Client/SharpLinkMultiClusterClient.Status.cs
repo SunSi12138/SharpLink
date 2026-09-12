@@ -20,7 +20,12 @@ internal sealed partial class SharpLinkMultiClusterClient
             return false;
         }
 
-        status = new SharpLinkClusterStatusSnapshot(cluster, slot.Client.State);
+        var child = slot.Client;
+        status = new SharpLinkClusterStatusSnapshot(
+            cluster,
+            child.State,
+            child.ClusterState,
+            child.Readiness);
         return true;
     }
 }
