@@ -21,15 +21,17 @@ Mutation result 只描述该 control-plane operation 的结果，不承诺远端
 
 ## Cluster status query
 
-当 cluster 是否仍存在本身就是运行时状态的一部分时，使用 `TryGetClusterStatus`：
+当 cluster 是否仍存在本身就是运行时状态的一部分时，built-in coordinator 可使用 `TryGetClusterStatus`：
 
 - 合法且当前存在的 key 返回 `true`，并给出一个 `SharpLinkClusterStatusSnapshot`；
 - 合法但当前不存在的 key（包括查询前刚被并发移除）返回 `false`；
 - default 或非法 key 是 programmer error，仍抛 `ArgumentException`。
 
-`SharpLinkClusterStatusSnapshot` 是 point-in-time、level-triggered 观察。读取之后 cluster 可以立即因为 replacement、removal、disconnect 或 lifecycle transition 改变状态，因此它不是 lease，也不是后续操作成功的保证。
+Legacy custom `ISharpLinkMultiClusterClient` implementation 若要提供同样的 non-throwing presence contract，必须显式 override `TryGetClusterStatus`。默认实现不会捕获 `GetClusterState` 的异常再猜测“是否只是 cluster 不存在”，因为 legacy getter 没有稳定的 missing-cluster exception contract；默认实现对合法 key 返回 `NotSupportedException`，从而避免把实现特定的参数或配置错误静默改写成 query miss。
 
-`GetClusterState`、`GetClusterRuntimeState` 和 `GetClusterReadiness` 保留为 convenience getter。当调用方把“cluster 必须存在”视为自身 invariant 时可以继续使用它们；cluster 缺失时这些 getter 仍可以抛异常。需要处理正常存在性竞争的 orchestration 代码应使用 `TryGetClusterStatus`。
+`SharpLinkClusterStatusSnapshot` 捕获 child 的独立公开状态域：legacy `ConnectionState`、canonical `RuntimeState` 和 canonical `Readiness`。其中 readiness 不会从 legacy connection state 重建，因此 legacy `ConnectAsync()` 可以出现 `ConnectionState == Ready` 但 canonical `Readiness == NotReady` 的合法组合。Snapshot 在返回后保持不可变，但它不是跨多个状态域的事务性 lease；并发 lifecycle / topology transition 仍可能发生，读取结果也不保证后续操作成功。
+
+`GetClusterState`、`GetClusterRuntimeState` 和 `GetClusterReadiness` 保留为 convenience getter。当调用方把“cluster 必须存在”视为自身 invariant 时可以继续使用它们；cluster 缺失时这些 getter 仍可以抛异常。需要处理正常存在性竞争的 orchestration 代码应使用支持该 capability 的 `TryGetClusterStatus` implementation。
 
 ## Audit scope and follow-up boundaries
 
