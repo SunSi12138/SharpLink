@@ -112,6 +112,7 @@ public class SharpLinkClientHealthTests
     public async Task MultiClusterHealthProbeShouldUseSameStructuredOutcome()
     {
         await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .DisableRequestTimeout()
             .AddCluster(
                 "orders",
                 child => child.UseTransport(new TestClientTransportFactory()))
