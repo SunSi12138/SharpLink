@@ -7,6 +7,57 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkClientTrackedEmissionDeadlineTests
 {
     [Test]
+    public async Task TimedUnaryShouldObserveEmissionWithinTheSendPumpLifetime()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(
+            transport, builder => builder.UseTimeProvider(timeProvider));
+        await client.ConnectAsync();
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
+        var trackedBefore = client.FrameworkTaskSnapshotForDiagnostics.TotalTracked;
+
+        using var releaseEmission = new ManualResetEventSlim();
+        var emissionEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.Connection.RunOnNextOutputBufferRequest(() =>
+        {
+            emissionEntered.TrySetResult();
+            if (!releaseEmission.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("test did not release request emission");
+        });
+
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var method = new RpcMethodDescriptor(
+            ContractId: 1, MethodId: 292, Kind: RpcMethodKind.Unary,
+            HasResponsePayload: true, HasClientStreams: false,
+            HasMethodTimeout: true, MethodTimeout: TimeSpan.FromSeconds(5));
+        try
+        {
+            var invocation = channel.InvokeUnaryAsync(
+                method, in request, RpcEmptyRequestCodec.Instance,
+                channel.RuntimeContext.Codecs.GetCodec<int>(), metadata: null).AsTask();
+            await emissionEntered.Task;
+            Ensure(!invocation.IsCompleted,
+                "a request blocked before emission must still await its response");
+            Ensure(client.FrameworkTaskSnapshotForDiagnostics.TotalTracked == trackedBefore,
+                "each timed Unary must use the existing send-pump owner without registering a per-call task");
+
+            releaseEmission.Set();
+            var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+            Ensure(!invocation.IsCompleted,
+                "successful emission alone must not complete a Unary response operation");
+            await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
+            Ensure(await invocation == 0, "the emitted request must receive its original response");
+        }
+        finally
+        {
+            releaseEmission.Set();
+        }
+    }
+
+    [Test]
     public async Task TimedUnaryDroppedAtEmissionShouldCompleteWithoutDeadlineTimerCallback()
     {
         var timeProvider = new ManualTimeProvider();

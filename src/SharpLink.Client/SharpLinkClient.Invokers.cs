@@ -420,7 +420,7 @@ internal sealed partial class SharpLinkClient
         {
             if (connection.PendingCalls.Contains(requestId))
             {
-                var emission = SendRpcCall(
+                _ = SendRpcCall(
                     connection.Session,
                     contractId,
                     methodId,
@@ -430,14 +430,8 @@ internal sealed partial class SharpLinkClient
                     requestCodec,
                     control.Deadline,
                     control.Metadata,
-                    observeEmission: control.Deadline.HasValue,
-                    cancellationToken: CancellationToken.None);
-                if (!emission.IsCompletedSuccessfully)
-                {
-                    TrackFrameworkTask(
-                        ObserveTrackedRequestEmissionAsync(connection, requestId, emission),
-                        "UnaryRequestEmission");
-                }
+                    cancellationToken: CancellationToken.None,
+                    failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null);
             }
         }
         catch (Exception exception)
@@ -817,25 +811,6 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private async Task ObserveTrackedRequestEmissionAsync(
-        ClientConnection connection,
-        long requestId,
-        ValueTask emission)
-    {
-        try
-        {
-            await emission.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            var deadlineExceeded = exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded };
-            connection.PendingCalls.TryComplete(
-                requestId,
-                deadlineExceeded ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure,
-                deadlineExceeded ? null : exception);
-        }
-    }
-
     private ValueTask<StreamCallRegistration> PrepareGeneratedServerStreamAsync<TResponse>(
         PooledAsyncStreamDispatcher<TResponse> dispatcher,
         PendingCallKind kind,
@@ -919,7 +894,8 @@ internal sealed partial class SharpLinkClient
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
         bool observeEmission = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IRequestEmissionFailureObserver? failureObserver = null)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
@@ -970,7 +946,7 @@ internal sealed partial class SharpLinkClient
             ownsWriter = false;
             if (observeEmission)
                 return session.SendPacketAndObserveEmissionAsync(writer, deadline, cancellationToken);
-            session.SendPacket(writer, deadline);
+            session.SendPacket(writer, deadline, failureObserver);
             return ValueTask.CompletedTask;
         }
         finally

@@ -1,5 +1,11 @@
 namespace SharpLink.Runtime;
 
+/// <summary>Receives a queued request's failure while its send pump still owns the frame.</summary>
+internal interface IRequestEmissionFailureObserver
+{
+    void OnRequestEmissionFailure(long requestId, Exception exception);
+}
+
 /// <summary>
 /// Transfers one encoded frame and its backing writer to the session send pump.
 /// Only the pump may return the owner after the frame has been flushed or drained.
@@ -13,7 +19,8 @@ internal readonly struct OwnedFrame
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
         bool isProtocolProgress,
-        RpcDeadline deadline = default)
+        RpcDeadline deadline = default,
+        IRequestEmissionFailureObserver? failureObserver = null)
     {
         Owner = owner;
         Memory = owner.WrittenMemory;
@@ -24,11 +31,15 @@ internal readonly struct OwnedFrame
         if (owner is PooledByteBufferWriter pooledOwner)
         {
             pooledOwner.EmissionDeadline = deadline;
-            _completionState = flushCompletion;
+            _completionState = (object?)flushCompletion ?? failureObserver;
         }
         else if (!deadline.HasValue)
         {
-            _completionState = flushCompletion;
+            _completionState = (object?)flushCompletion ?? failureObserver;
+        }
+        else if (failureObserver is not null)
+        {
+            _completionState = new FailureDeadlineState(failureObserver, deadline);
         }
         else if (flushCompletion is null)
         {
@@ -56,6 +67,14 @@ internal readonly struct OwnedFrame
             _ => null
         };
 
+    public IRequestEmissionFailureObserver? FailureObserver
+        => _completionState switch
+        {
+            IRequestEmissionFailureObserver observer => observer,
+            FailureDeadlineState state => state.Observer,
+            _ => null
+        };
+
     /// <summary>
     /// The process-local request lifetime retained until the transport emission boundary.
     /// Default pooled writers retain it on the writer lease so this hot-path struct does not grow;
@@ -68,6 +87,7 @@ internal readonly struct OwnedFrame
             {
                 DeadlineState state => state.Deadline,
                 CompletionDeadlineState state => state.Deadline,
+                FailureDeadlineState state => state.Deadline,
                 _ => default
             };
 
@@ -89,6 +109,14 @@ internal readonly struct OwnedFrame
         RpcDeadline deadline)
     {
         internal TaskCompletionSource<bool> Completion { get; } = completion;
+        internal RpcDeadline Deadline { get; } = deadline;
+    }
+
+    private sealed class FailureDeadlineState(
+        IRequestEmissionFailureObserver observer,
+        RpcDeadline deadline)
+    {
+        internal IRequestEmissionFailureObserver Observer { get; } = observer;
         internal RpcDeadline Deadline { get; } = deadline;
     }
 }

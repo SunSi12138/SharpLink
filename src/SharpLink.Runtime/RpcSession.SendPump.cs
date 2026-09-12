@@ -33,6 +33,7 @@ internal sealed partial class RpcSession
         private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
         private readonly WakeupSignal _wakeup = new();
+        private readonly List<OwnedFrame> _expiredFrames = [];
         private readonly Task _pumpTask;
         private TaskCompletionSource<bool>? _capacityChanged;
         private long _queuedBytes;
@@ -225,12 +226,11 @@ internal sealed partial class RpcSession
                         }
                         bytesAccumulated += frame.Length;
 
-                        // A deadline-bearing Request is a publication boundary. Its retained
-                        // process-local deadline is sampled only after output span/copy has
-                        // completed, and no later frame may perform local work before the flush
-                        // that publishes that budget snapshot.
+                        // Already queued requests can share one publication boundary. All
+                        // copies precede a single deadline sample, and a timed suffix never
+                        // waits for new arrivals or the configured batching timer.
                         var flushPolicy = _flushPolicyState.Capture();
-                        if (hasTimeBudget ||
+                        if ((deferWrites && normalFramesSinceInterleave >= NormalFramesPerInterleave - 1) ||
                             frame.ForceFlush ||
                             flushPolicy.FlushEveryFrame ||
                             bytesAccumulated >= flushPolicy.FlushSizeThreshold)
@@ -274,7 +274,7 @@ internal sealed partial class RpcSession
                     // explicitly timed generation waits; runtime updates publish such a generation
                     // and wake this same pump so the active batch is re-evaluated from its original
                     // start timestamp.
-                    if (_flushPolicyState.Capture().DeadlineBatchingEnabled &&
+                    if (!deferWrites && _flushPolicyState.Capture().DeadlineBatchingEnabled &&
                         await WaitForMoreUntilFlushBoundaryAsync(
                             batchStartTimestamp,
                             bytesAccumulated).ConfigureAwait(false) &&
@@ -355,58 +355,108 @@ internal sealed partial class RpcSession
             _output.Advance(source.Length);
         }
 
-        private bool TryWriteFrameAtEmission(OwnedFrame frame)
+        private int WriteRetainedBatchAtEmission(
+            List<OwnedFrame> pending,
+            int writtenCount,
+            List<OwnedFrame> expired)
         {
-            var source = frame.Memory.Span;
-            if (source.IsEmpty)
-                return true;
-            if (!HasTimeBudget(frame))
+            var length = 0;
+            for (var index = writtenCount; index < pending.Count; index++)
             {
-                WriteFrame(frame);
-                return true;
+                var frame = pending[index];
+                if (HasTimeBudget(frame) && !frame.Deadline.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        "A Request carrying TimeBudget must retain its process-local RpcDeadline until emission.");
+                }
+                length = checked(length + frame.Length);
             }
-            if (!frame.Deadline.HasValue)
+            if (length == 0)
+                return 0;
+
+            // Acquire one span and finish every payload copy before sampling the clock.
+            // No later frame can call a custom writer/provider between the shared sample
+            // and publication. The bounded pass below only compacts expired frames and
+            // stamps surviving budgets in this already acquired span.
+            expired.EnsureCapacity(pending.Count - writtenCount);
+            var destination = _output.GetSpan(length);
+            var offset = 0;
+            for (var index = writtenCount; index < pending.Count; index++)
             {
-                throw new InvalidOperationException(
-                    "A Request carrying TimeBudget must retain its process-local RpcDeadline until emission.");
+                var frame = pending[index];
+                frame.Memory.Span.CopyTo(destination[offset..]);
+                offset += frame.Length;
             }
-
-            var budgetOffset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
-
-            // GetSpan/copy are still local pre-publication work and may be supplied by a
-            // custom PipeWriter. Finish that work before sampling the remaining budget so
-            // it cannot silently extend the peer's lifetime.
-            var destination = _output.GetSpan(source.Length);
-            source.CopyTo(destination);
-            var remaining = frame.Deadline.GetRemaining(_timeProvider);
-            if (remaining <= TimeSpan.Zero)
-                return false;
-
-            SharpLinkTelemetry.RecordSentBytes(source.Length);
-            BinaryPrimitives.WriteInt64LittleEndian(
-                destination.Slice(budgetOffset, sizeof(long)),
-                remaining.Ticks);
-            _output.Advance(source.Length);
-            return true;
+            var frequency = _timeProvider.TimestampFrequency;
+            var timestamp = _timeProvider.GetTimestamp();
+            var sourceOffset = 0;
+            var destinationOffset = 0;
+            for (var index = writtenCount; index < pending.Count;)
+            {
+                var frame = pending[index];
+                var timed = HasTimeBudget(frame);
+                var remaining = timed
+                    ? frame.Deadline.GetRemaining(timestamp, frequency)
+                    : TimeSpan.MaxValue;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    expired.Add(frame);
+                    pending.RemoveAt(index);
+                    sourceOffset += frame.Length;
+                    continue;
+                }
+                if (sourceOffset != destinationOffset)
+                    destination.Slice(sourceOffset, frame.Length).CopyTo(destination[destinationOffset..]);
+                if (timed)
+                {
+                    var budgetOffset = destinationOffset + ProtocolV2Constants.HeaderBytes +
+                        ProtocolV2Constants.RequestPrefixBytes;
+                    BinaryPrimitives.WriteInt64LittleEndian(
+                        destination.Slice(budgetOffset, sizeof(long)), remaining.Ticks);
+                }
+                sourceOffset += frame.Length;
+                destinationOffset += frame.Length;
+                index++;
+            }
+            _output.Advance(destinationOffset);
+            return destinationOffset;
         }
 
         private async ValueTask FlushAndReleaseAsync(
             List<OwnedFrame> pending,
             int writtenCount)
         {
-            // Only the suffix beginning with the first deadline-bearing request stays in
-            // owned buffers. Stamp its remaining TimeBudget from retained deadline metadata
-            // at the last possible point before FlushAsync.
-            for (var index = writtenCount; index < pending.Count;)
+            var expired = _expiredFrames;
+            try
             {
-                var frame = pending[index];
-                if (TryWriteFrameAtEmission(frame))
-                {
-                    index++;
-                    continue;
-                }
+                var sentBytes = WriteRetainedBatchAtEmission(pending, writtenCount, expired);
+                if (pending.Count == 0)
+                    return;
 
-                pending.RemoveAt(index);
+                // Initiate publication before callbacks for dropped requests or telemetry:
+                // neither may consume a surviving request's already sampled wire budget.
+                var flush = _output.FlushAsync(_sessionCancellation);
+                CompleteExpiredBatch(expired);
+                if (sentBytes > 0)
+                    SharpLinkTelemetry.RecordSentBytes(sentBytes);
+                var result = await flush.ConfigureAwait(false);
+                if (result.IsCanceled || result.IsCompleted)
+                    throw CreateTransportClosedException();
+                ReleaseBatch(pending, exception: null);
+            }
+            finally
+            {
+                CompleteExpiredBatch(expired);
+            }
+        }
+
+        private void CompleteExpiredBatch(List<OwnedFrame> expired)
+        {
+            while (expired.Count > 0)
+            {
+                var index = expired.Count - 1;
+                var frame = expired[index];
+                expired.RemoveAt(index);
                 CompleteReserved(
                     frame,
                     new SharpLinkException(
@@ -414,14 +464,6 @@ internal sealed partial class RpcSession
                         "Request deadline expired before transport emission."),
                     completeFlushWaiter: true);
             }
-
-            if (pending.Count == 0)
-                return;
-
-            var result = await _output.FlushAsync(_sessionCancellation).ConfigureAwait(false);
-            if (result.IsCanceled || result.IsCompleted)
-                throw CreateTransportClosedException();
-            ReleaseBatch(pending, exception: null);
         }
 
         private async ValueTask<bool> WaitForMoreUntilFlushBoundaryAsync(
@@ -562,6 +604,14 @@ internal sealed partial class RpcSession
             Exception? exception,
             bool completeFlushWaiter = true)
         {
+            // Capture the identity before returning the writer: returning a pooled writer
+            // invalidates its bytes and permits another producer to reuse that buffer.
+            var failureObserver = exception is not null && completeFlushWaiter
+                ? frame.FailureObserver
+                : null;
+            var failedRequestId = failureObserver is null
+                ? 0
+                : BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long)));
             try
             {
                 _returnBuffer(frame.Owner);
@@ -578,6 +628,9 @@ internal sealed partial class RpcSession
                         frame.FlushCompletion?.TrySetException(exception);
                 }
                 PulseCapacityWaiters();
+                // This belongs to the pump's existing lifetime. There is no detached task,
+                // and no admission lock is held while the pending-call owner completes it.
+                failureObserver?.OnRequestEmissionFailure(failedRequestId, exception!);
             }
         }
 
