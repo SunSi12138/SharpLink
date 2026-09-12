@@ -298,7 +298,8 @@ public class NegotiatedSessionOptionsTests
             ProtocolV2FrameType.GoAway,
             ProtocolV2FrameType.HealthResponse,
             ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
-            ProtocolV2FrameType.ResponseCompressionPreferenceAck
+            ProtocolV2FrameType.ResponseCompressionPreferenceAck,
+            ProtocolV2FrameType.SessionRefreshRequested
         };
 
         foreach (var frameType in Enum.GetValues<ProtocolV2FrameType>())
