@@ -2,9 +2,11 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
+    private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(
+        RpcSession session,
+        SharpLinkServerDesiredSessionSnapshot desiredSession,
+        CancellationToken ct)
     {
-        var desiredSession = GetAcceptedDesiredSession();
         BindDesiredSessionSnapshot(session, desiredSession);
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
         var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
