@@ -107,6 +107,8 @@
 
 ### Fixed
 
+- Connection teardown now runs outside fixed/static/dynamic pool locks while remaining registered for shutdown. This prevents pending-call registration from deadlocking with disconnect cleanup; ordinary calls also skip session-refresh retirement locks when no retirement is planned.
+
 - Server applications now emit deterministic static bootstrap calls for referenced generated service manifests. A normal Server-to-Service project reference roots and registers even an internal service implementation before `Build()` snapshots the catalog, without marker types, runtime assembly scanning, or reflection discovery; the path is covered by clean-package, JIT, and NativeAOT process smokes.
 - Server-stream failures caused by deadline, remote cancellation, module drain, Server stop, or connection closure now preserve the call state's first terminal reason instead of remapping every `OperationCanceledException` to `Cancelled`. Forced Server stop therefore remains `Unavailable` or `ConnectionClosed`, while `Cancelled` continues to identify caller cancellation or consumer abandonment.
 - Server connection shutdown now first signals terminal stream and send-pump state, then cancels and joins the session read loop before completing its `PipeReader`. The handshake and request parsers stop consuming an already-buffered batch as soon as the session becomes terminal, so rolling restart can neither strand bounded stream dispatch, spend the cleanup budget draining stale frames, nor reclaim a live `ReadOnlySequence` while it is being parsed. This eliminates teardown timeouts and the resulting `ArgumentOutOfRangeException` without hiding malformed frames on active sessions.

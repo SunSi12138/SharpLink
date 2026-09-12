@@ -182,17 +182,12 @@ internal sealed partial class SharpLinkClient
                 }
                 if (forceClose)
                 {
-                    connection.Fail(CreateConnectionClosedException(
-                        "The static cluster retiring-connection budget was exhausted."));
-                    _client.TrackFrameworkTask(
-                        DisposeConnectionAsync(connection),
-                        "StaticClusterForcedRetirementCleanup");
+                    _client.QueueConnectionCleanup(connection, "StaticClusterForcedRetirementCleanup",
+                        CreateConnectionClosedException("The static cluster retiring-connection budget was exhausted."));
                 }
                 else if (retireImmediately)
                 {
-                    _client.TrackFrameworkTask(
-                        DisposeConnectionAsync(connection),
-                        "StaticClusterRetiredConnectionCleanup");
+                    _client.QueueConnectionCleanup(connection, "StaticClusterRetiredConnectionCleanup");
                 }
             }
 
@@ -252,9 +247,7 @@ internal sealed partial class SharpLinkClient
                     return;
                 _retiringConnections.Remove(connection);
                 PublishReadySnapshotLocked();
-                _client.TrackFrameworkTask(
-                    DisposeConnectionAsync(connection),
-                    "StaticClusterIdleConnectionCleanup");
+                _client.QueueConnectionCleanup(connection, "StaticClusterIdleConnectionCleanup");
             }
             EnsureReconnect(endpoint);
         }
@@ -527,6 +520,7 @@ internal sealed partial class SharpLinkClient
 
         private void HandleDisconnected(EndpointState endpoint, ClientConnection connection, Exception exception)
         {
+            connection.ObserveFatalFailureForAdmission();
             lock (_gate)
             {
                 if (Volatile.Read(ref _stopping) != 0)
@@ -547,10 +541,7 @@ internal sealed partial class SharpLinkClient
                     }
                     endpoint.ClearReadyTimestamp();
                 }
-                connection.Fail(exception);
-                _client.TrackFrameworkTask(
-                    DisposeConnectionAsync(connection),
-                    "StaticClusterDisconnectedConnectionCleanup");
+                _client.QueueConnectionCleanup(connection, "StaticClusterDisconnectedConnectionCleanup", exception);
             }
             if (Volatile.Read(ref _stopping) == 0)
             {

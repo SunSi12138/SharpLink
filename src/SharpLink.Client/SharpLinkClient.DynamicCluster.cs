@@ -170,9 +170,7 @@ internal sealed partial class SharpLinkClient
                 PublishReadySnapshotLocked();
                 if (disposeNow)
                 {
-                    _lifecycle.TrackTask(
-                        DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connection),
-                        "DynamicClusterForcedRetirementCleanup");
+                    _client.QueueConnectionCleanup(connection, "DynamicClusterForcedRetirementCleanup");
                 }
             }
             if (endpoint!.Retiring)
@@ -230,9 +228,7 @@ internal sealed partial class SharpLinkClient
                 if (!_connections.TryRetireDrainingIfIdle(connection, out endpoint))
                     return;
                 PublishReadySnapshotLocked();
-                _lifecycle.TrackTask(
-                    DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connection),
-                    "DynamicClusterIdleConnectionCleanup");
+                _client.QueueConnectionCleanup(connection, "DynamicClusterIdleConnectionCleanup");
             }
             if (endpoint!.Retiring)
                 ScheduleRetiredStateRelease(endpoint);
@@ -773,6 +769,7 @@ internal sealed partial class SharpLinkClient
 
         private void HandleDisconnected(DynamicEndpointState endpoint, ClientConnection connection, Exception exception)
         {
+            connection.ObserveFatalFailureForAdmission();
             var retired = false;
             lock (_gate)
             {
@@ -794,10 +791,7 @@ internal sealed partial class SharpLinkClient
                     }
                     endpoint.ClearReadyTimestamp();
                 }
-                connection.Fail(exception);
-                _lifecycle.TrackTask(
-                    DynamicClusterRuntimeLifecycle.DisposeConnectionAsync(connection),
-                    "DynamicClusterDisconnectedConnectionCleanup");
+                _client.QueueConnectionCleanup(connection, "DynamicClusterDisconnectedConnectionCleanup", exception);
             }
             if (retired)
                 ScheduleRetiredStateRelease(endpoint);

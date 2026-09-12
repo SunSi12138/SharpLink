@@ -220,6 +220,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             TimeSpan.FromSeconds(2));
         Ensure(clientContract.Succeeded && clientContract.ReferencesReleased,
             "client Contract replacement without dependants remains supported");
+        // Local replacement does not acknowledge the asynchronous server manifest notification.
+        await WaitForRemoteContractManifestAsync(harness.Client, newPlugin.ContractType);
         object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
         Ensure(await InvokeValueTaskAsync<int>(
                 newProxy, newPlugin.ContractType, "UnaryAsync", 4, CancellationToken.None) == 5,
