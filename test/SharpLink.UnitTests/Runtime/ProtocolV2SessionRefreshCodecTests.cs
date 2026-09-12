@@ -18,6 +18,62 @@ public sealed class ProtocolV2SessionRefreshCodecTests
     }
 
     [Test]
+    public void SessionRefreshFrameShouldUseBoundedConnectionControlParsing()
+    {
+        var expected = new ProtocolV2SessionRefreshRequested(Guid.NewGuid(), 42);
+        var writer = new PooledByteBufferWriter();
+        var token = ProtocolV2FrameWriter.BeginFrame(
+            writer,
+            ProtocolV2FrameType.SessionRefreshRequested,
+            ProtocolV2FrameFlags.None,
+            0);
+        ProtocolV2PayloadCodec.WriteSessionRefreshRequested(writer, expected);
+        ProtocolV2FrameWriter.EndFrame(writer, token);
+        var buffer = new ReadOnlySequence<byte>(writer.WrittenMemory);
+
+        Ensure(ProtocolV2FrameParser.TryReadFrame(
+                ref buffer,
+                new SharpLinkProtocolOptions(),
+                out var header,
+                out var payload),
+            "a complete session-refresh control frame should parse");
+        Ensure(header.Type == ProtocolV2FrameType.SessionRefreshRequested,
+            "frame parser should preserve the session-refresh type");
+        Ensure(header.RequestId == 0 && header.Flags == ProtocolV2FrameFlags.None,
+            "session refresh should remain an unflagged connection-level control frame");
+        Ensure(ProtocolV2PayloadCodec.ReadSessionRefreshRequested(payload) == expected,
+            "frame parser should preserve the bounded refresh payload");
+        Ensure(buffer.IsEmpty, "frame parser should consume the complete refresh frame");
+    }
+
+    [Test]
+    public async Task SessionRefreshFrameShouldRejectRpcRequestIds()
+    {
+        var writer = new PooledByteBufferWriter();
+        var token = ProtocolV2FrameWriter.BeginFrame(
+            writer,
+            ProtocolV2FrameType.SessionRefreshRequested,
+            ProtocolV2FrameFlags.None,
+            7);
+        ProtocolV2PayloadCodec.WriteSessionRefreshRequested(
+            writer,
+            new ProtocolV2SessionRefreshRequested(Guid.NewGuid(), 1));
+        ProtocolV2FrameWriter.EndFrame(writer, token);
+        var frame = writer.WrittenMemory.ToArray();
+
+        await EnsureThrows<SharpLinkException>(() =>
+        {
+            var buffer = new ReadOnlySequence<byte>(frame);
+            _ = ProtocolV2FrameParser.TryReadFrame(
+                ref buffer,
+                new SharpLinkProtocolOptions(),
+                out _,
+                out _);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
     public async Task SessionRefreshPayloadShouldRejectInvalidIdentityAndGeneration()
     {
         await EnsureThrows<ArgumentException>(() =>
