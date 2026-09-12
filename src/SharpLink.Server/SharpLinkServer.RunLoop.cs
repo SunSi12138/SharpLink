@@ -32,6 +32,7 @@ internal sealed partial class SharpLinkServer
                     if (!accept.IsCompleted)
                         acceptStarted.TrySetResult(true);
                     connection = await accept.ConfigureAwait(false);
+                    var desiredSession = CaptureDesiredSession();
                     acceptStarted.TrySetResult(true);
 
                     if (CurrentState == ServerState.Starting)
@@ -52,8 +53,6 @@ internal sealed partial class SharpLinkServer
                         }
                         catch (Exception exception)
                         {
-                            // A rejected transport must never take down the accept loop;
-                            // the failure is observed without terminating the listener.
                             LogDeferredCleanupFailed(_logger, "ConnectionAdmissionReject", exception);
                         }
                         continue;
@@ -63,6 +62,7 @@ internal sealed partial class SharpLinkServer
                         RunAcceptedConnectionIsolatedAsync(
                             connection,
                             connectionLease,
+                            desiredSession,
                             _forceStopCts.Token),
                         "AcceptedConnectionSession",
                         TaskObservationMode.ExternallyObserved);
@@ -107,11 +107,12 @@ internal sealed partial class SharpLinkServer
     private async Task RunAcceptedConnectionIsolatedAsync(
         ITransportConnection connection,
         ServerConnectionAdmission.Lease connectionLease,
+        SharpLinkServerDesiredSessionSnapshot desiredSession,
         CancellationToken cancellationToken)
     {
         try
         {
-            await HandleAcceptedConnectionAsync(connection, connectionLease, cancellationToken)
+            await HandleAcceptedConnectionAsync(connection, connectionLease, desiredSession, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception exception) when (!IsExpectedCancellation(exception, cancellationToken))
