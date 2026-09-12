@@ -10,6 +10,11 @@ internal sealed partial class SharpLinkClient
     internal Action? _afterSessionRefreshEligibilitySwapTestHook;
     internal Action<ClientConnection>? _beforeSessionRefreshEligibilityCommitTestHook;
     internal Action<ClientConnection>? _afterSessionRefreshCommitReservationTestHook;
+    internal Action<ClientConnection>? _beforeSessionRefreshCutLockTestHook;
+    internal Action<ClientConnection, ClientConnection>? _beforeSessionRefreshCutPublicationTestHook;
+    internal Action<ClientConnection, ClientConnection>? _afterSessionRefreshCutPublicationTestHook;
+    internal Action<ClientConnection>? _beforeFatalFailurePublicationTestHook;
+    internal Action<ClientConnection>? _afterFatalFailurePublicationTestHook;
     internal Action? _beforeSessionRefreshWorkerReleaseTestHook;
     internal Action<ClientConnection>? _callAdmissionReservedTestHook;
 
@@ -21,6 +26,21 @@ internal sealed partial class SharpLinkClient
 
     internal void NotifyAfterSessionRefreshCommitReservationForTest(ClientConnection connection)
         => Volatile.Read(ref _afterSessionRefreshCommitReservationTestHook)?.Invoke(connection);
+
+    internal void NotifyBeforeSessionRefreshCutLockForTest(ClientConnection connection)
+        => Volatile.Read(ref _beforeSessionRefreshCutLockTestHook)?.Invoke(connection);
+
+    internal void NotifyBeforeSessionRefreshCutPublicationForTest(ClientConnection source, ClientConnection replacement)
+        => Volatile.Read(ref _beforeSessionRefreshCutPublicationTestHook)?.Invoke(source, replacement);
+
+    internal void NotifyAfterSessionRefreshCutPublicationForTest(ClientConnection source, ClientConnection replacement)
+        => Volatile.Read(ref _afterSessionRefreshCutPublicationTestHook)?.Invoke(source, replacement);
+
+    internal void NotifyBeforeFatalFailurePublicationForTest(ClientConnection connection)
+        => Volatile.Read(ref _beforeFatalFailurePublicationTestHook)?.Invoke(connection);
+
+    internal void NotifyAfterFatalFailurePublicationForTest(ClientConnection connection)
+        => Volatile.Read(ref _afterFatalFailurePublicationTestHook)?.Invoke(connection);
 
     internal void TryAdvancePlannedSessionRefreshRetirement(ClientConnection connection)
     {
@@ -272,7 +292,7 @@ internal sealed partial class SharpLinkClient
                     else
                     {
                         replacementCommitReserved = true;
-                        if (!publishedReplacement.TryCommitSessionRefreshRetirement())
+                        if (!publishedReplacement.TryCommitSessionRefreshRetirement(source))
                         {
                             // A fatal transition linearized before the eligibility cut while this
                             // attempt already held the admission reservation. Roll the replacement
@@ -281,7 +301,6 @@ internal sealed partial class SharpLinkClient
                         }
                         else
                         {
-                            source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
                             // Deliberately place the deterministic cut hook before immutable snapshot
                             // publication. A reader retaining the old source-only snapshot must redirect
                             // through source admission to this already-Ready replacement instead of seeing

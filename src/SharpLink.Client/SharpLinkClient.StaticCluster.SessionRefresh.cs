@@ -278,7 +278,7 @@ internal sealed partial class SharpLinkClient
                         else
                         {
                             replacementCommitReserved = true;
-                            if (!publishedReplacement.TryCommitSessionRefreshRetirement())
+                            if (!publishedReplacement.TryCommitSessionRefreshRetirement(source))
                             {
                                 // A fatal transition linearized before the eligibility cut while this
                                 // attempt already held the admission reservation. Roll the replacement
@@ -288,7 +288,6 @@ internal sealed partial class SharpLinkClient
                             }
                             else
                             {
-                                source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
                                 PublishReadySnapshotLocked();
                                 endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
                                 Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
