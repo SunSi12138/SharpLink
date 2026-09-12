@@ -240,6 +240,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private async Task DisposeCoreAsync()
     {
+        var diagnosticClock = System.Diagnostics.Stopwatch.StartNew();
         var waitForFinalCloseStart = false;
         var wakeWriter = false;
         lock (_outboundStateGate)
@@ -256,6 +257,8 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         if (waitForFinalCloseStart)
         {
             await Task.WhenAny(_closeWriteStarted.Task, _writerTask).ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE control-close-start {diagnosticClock.ElapsedMilliseconds}ms");
         }
         try
         {
@@ -269,7 +272,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         Exception? cleanupException = null;
         try
         {
+            diagnosticClock.Restart();
             await _stream.DisposeAsync().ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE control-stream-dispose {diagnosticClock.ElapsedMilliseconds}ms");
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {
@@ -280,7 +286,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         }
         try
         {
+            diagnosticClock.Restart();
             await _readerTask.ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE control-reader-join {diagnosticClock.ElapsedMilliseconds}ms");
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {
@@ -293,7 +302,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         }
         try
         {
+            diagnosticClock.Restart();
             await _writerTask.ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE control-writer-join {diagnosticClock.ElapsedMilliseconds}ms");
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {

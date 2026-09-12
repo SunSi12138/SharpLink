@@ -568,12 +568,15 @@ internal sealed partial class RpcSession
                 cleanupException = exception;
             }
 
+            var diagnosticClock = System.Diagnostics.Stopwatch.StartNew();
             var pump = CapturePumpForStop();
             try
             {
                 pump?.Stop();
                 if (pump is not null)
                     await pump.WaitForStopAsync().ConfigureAwait(false);
+                if (diagnosticClock.ElapsedMilliseconds > 100)
+                    Console.Error.WriteLine($"STOP_STAGE pump {diagnosticClock.ElapsedMilliseconds}ms");
             }
             catch (Exception exception)
             {
@@ -582,7 +585,10 @@ internal sealed partial class RpcSession
 
             try
             {
+                diagnosticClock.Restart();
                 await StartTransportDispose().ConfigureAwait(false);
+                if (diagnosticClock.ElapsedMilliseconds > 100)
+                    Console.Error.WriteLine($"STOP_STAGE transport {diagnosticClock.ElapsedMilliseconds}ms");
             }
             catch (Exception exception)
             {

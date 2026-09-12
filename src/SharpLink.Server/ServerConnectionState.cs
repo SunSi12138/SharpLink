@@ -367,12 +367,18 @@ internal sealed class ServerConnectionState
             (failures ??= []).Add(exception);
         }
 
+        var diagnosticClock = System.Diagnostics.Stopwatch.StartNew();
         if (Volatile.Read(ref _sessionLoopState) == 1)
             await _sessionLoopCompleted.Task.ConfigureAwait(false);
+        if (diagnosticClock.ElapsedMilliseconds > 100)
+            Console.Error.WriteLine($"STOP_STAGE session-loop {diagnosticClock.ElapsedMilliseconds}ms");
+        diagnosticClock.Restart();
 
         try
         {
             await Session.DisposeAsync().ConfigureAwait(false);
+            if (diagnosticClock.ElapsedMilliseconds > 100)
+                Console.Error.WriteLine($"STOP_STAGE session-dispose {diagnosticClock.ElapsedMilliseconds}ms");
         }
         catch (Exception exception)
         {
