@@ -255,8 +255,12 @@ internal sealed partial class SharpLinkClient
                         "ProcessRequestLoop");
 
                     source.BeginPlannedSessionRefreshRetirement(publishedReplacement);
-                    PublishReadySnapshotLocked();
+                    // Deliberately place the deterministic cut hook before immutable snapshot
+                    // publication. A reader retaining the old source-only snapshot must redirect
+                    // through source admission to this already-Ready replacement instead of seeing
+                    // a transient Unavailable gap.
                     Volatile.Read(ref _afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
+                    PublishReadySnapshotLocked();
                     published = true;
                 }
             }
