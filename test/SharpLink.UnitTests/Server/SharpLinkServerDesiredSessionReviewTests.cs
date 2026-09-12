@@ -19,8 +19,10 @@ public sealed class SharpLinkServerDesiredSessionReviewTests
             configuration,
             SharpLinkSessionRolloutMode.FutureOnly);
 
-        Ensure(futureOnly.Succeeded && futureOnly.Snapshot is { } published,
+        Ensure(futureOnly.Succeeded && futureOnly.Snapshot.HasValue,
             "FutureOnly publication should succeed");
+        var published = futureOnly.Snapshot ?? throw new InvalidOperationException(
+            "successful FutureOnly publication must return its desired snapshot");
         Ensure(!server.TryCreateRollingSessionRefreshRequestForTesting(pinned, out _),
             "a session pinned before a FutureOnly publication must not receive handshake catch-up refresh intent");
 
