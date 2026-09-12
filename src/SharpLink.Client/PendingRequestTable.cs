@@ -61,7 +61,7 @@ internal interface IPendingCallCompletionObserver
 /// so response, cancellation, deadline and disconnect races converge on one terminal path. The
 /// operation object is returned to its type-specific pool only after its caller observes GetResult.
 /// </remarks>
-internal sealed class PendingRequestTable : IDisposable
+internal sealed class PendingRequestTable : IDisposable, IRequestEmissionFailureObserver
 {
     private readonly int _indexMask;
     private readonly int _capacity;
@@ -368,6 +368,15 @@ internal sealed class PendingRequestTable : IDisposable
 
     public bool DispatchError(long id, Exception exception)
         => TryComplete(id, PendingCallCompletionReason.RemoteError, exception);
+
+    void IRequestEmissionFailureObserver.OnRequestEmissionFailure(long requestId, Exception exception)
+    {
+        var deadlineExceeded = exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded };
+        TryComplete(
+            requestId,
+            deadlineExceeded ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure,
+            deadlineExceeded ? null : exception);
+    }
 
     public bool TryComplete(
         long id,

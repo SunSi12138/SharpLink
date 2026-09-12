@@ -562,6 +562,14 @@ internal sealed partial class RpcSession
             Exception? exception,
             bool completeFlushWaiter = true)
         {
+            // Capture the identity before returning the writer: returning a pooled writer
+            // invalidates its bytes and permits another producer to reuse that buffer.
+            var failureObserver = exception is not null && completeFlushWaiter
+                ? frame.FailureObserver
+                : null;
+            var failedRequestId = failureObserver is null
+                ? 0
+                : BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long)));
             try
             {
                 _returnBuffer(frame.Owner);
@@ -578,6 +586,9 @@ internal sealed partial class RpcSession
                         frame.FlushCompletion?.TrySetException(exception);
                 }
                 PulseCapacityWaiters();
+                // This belongs to the pump's existing lifetime. There is no detached task,
+                // and no admission lock is held while the pending-call owner completes it.
+                failureObserver?.OnRequestEmissionFailure(failedRequestId, exception!);
             }
         }
 
