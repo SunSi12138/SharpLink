@@ -11,7 +11,8 @@ internal sealed partial class SharpLinkServer
             desiredSession.Configuration.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
-            compressionProviders);
+            compressionProviders,
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
         var reader = session.Input;
         SharpLinkAuthenticationResult? handshakeResult = null;
 
@@ -88,8 +89,15 @@ internal sealed partial class SharpLinkServer
                                 "The handshake result was already completed.");
                         }
 
-                        await RequestSessionRefreshIfStaleAsync(runtimeSession, desiredSession, ct)
-                            .ConfigureAwait(false);
+                        // A desired-generation update can race this handshake. Delay the catch-up
+                        // refresh until NotifyConnected, which occurs only after the bootstrap
+                        // ContractManifest has been published and flushed to the client.
+                        if ((acceptedNegotiation.Options.Capabilities & ProtocolV2Capabilities.SessionRefresh) != 0)
+                        {
+                            runtimeSession.OnConnected += () => TrackServerRuntimeTask(
+                                RunSessionRefreshIfStaleAsync(runtimeSession, desiredSession),
+                                "SessionRefreshCatchUp");
+                        }
                     }
                     else
                     {
