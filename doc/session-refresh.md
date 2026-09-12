@@ -10,7 +10,7 @@ Desired configuration generation and rollout intent are distinct state:
 
 - `FutureOnly` may publish a new desired generation, but it does **not** advance rolling-refresh intent. Sessions already accepted against an older generation remain pinned even when their handshake completes after the FutureOnly publication.
 - `RollingRefresh` marks the current desired generation as an explicit rolling target and asks capable stale sessions to replace themselves.
-- Repeating `RollingRefresh` for the same desired configuration does not need to advance configuration generation, but it may start or join another stale-session scan. This permits `FutureOnly -> same-config RollingRefresh` and retry after an interrupted caller wait.
+- Repeating `RollingRefresh` for the same desired configuration does not need to advance configuration generation. Every explicit rolling request advances a server-owned rollout request epoch; if a request arrives while the current scan is still active, the worker performs another stale-session scan before releasing ownership. This permits `FutureOnly -> same-config RollingRefresh` and retry after an interrupted caller wait without losing a re-scan request.
 
 Once a rolling scan is started it is Server-owned. Caller cancellation cancels only that caller's wait; it does not cancel the rollout. Server shutdown is the lifetime boundary for the worker. Publication does not mutate `SharpLinkRuntimeContext` and does not add request-path locks.
 
@@ -31,11 +31,11 @@ A refresh request is not an endpoint failure, circuit-breaker sample, server shu
 
 ## Linearizable client admission
 
-Ready topology snapshots are intentionally lock-free, so refresh cannot rely on the order of `MarkDraining()` and a later snapshot publication. Each selected physical connection therefore takes a lightweight admission reservation before the invocation proceeds to pending-call registration. The reservation is part of `ActiveCallCount` until ownership transfers to the pending table (or to the untracked one-way active count).
+Ready topology snapshots are intentionally lock-free, so refresh cannot rely on the order of `MarkDraining()` and a later snapshot publication. Each selected physical connection therefore takes a lightweight admission reservation before the invocation proceeds to pending-call registration. The reservation is tracked separately from `ActiveCallCount` so ordinary load-balancing, pool expansion, and pending-capacity semantics remain unchanged; planned refresh retirement waits for both outstanding admission reservations and actual active work.
 
 When replacement publication establishes the refresh cut, the source publishes a stable source-to-replacement redirect before closing source admission. A reader that retained an older immutable source snapshot can therefore follow that redirect to the already-Ready replacement instead of observing a false zero-ready interval. A call that already reserved the source before the cut remains formally admitted to that source and can register/complete there.
 
-With `MaxRetiringConnections = 0`, an admitted source is hidden from new selection but remains physically Ready while its admitted work drains. It is not moved into `Draining` or counted as a retiring connection until `ActiveCallCount` reaches zero, at which point retirement is immediate. This removes the selection-to-registration retirement race without exceeding the retiring budget.
+With `MaxRetiringConnections = 0`, an admitted source is hidden from new selection but remains physically Ready while its admitted work drains. It is not moved into `Draining` or counted as a retiring connection until both its admission-reservation count and `ActiveCallCount` reach zero, at which point retirement is immediate. This removes the selection-to-registration retirement race without exceeding the retiring budget.
 
 ## Bounded replacement
 
