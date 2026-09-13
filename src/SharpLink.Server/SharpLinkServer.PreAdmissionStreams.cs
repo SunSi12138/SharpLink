@@ -49,6 +49,15 @@ internal sealed partial class SharpLinkServer
         if (clientStreamCount == 0)
             return;
 
+        ReservePreAdmissionRequestStreamsCore(session, requestId, clientStreamCount, callState);
+    }
+
+    private void ReservePreAdmissionRequestStreamsCore(
+        RpcSession session,
+        long requestId,
+        int clientStreamCount,
+        ServerCallCancellationState callState)
+    {
         var streamManager = session.StreamManager;
         var resourceGovernor = ResourceGovernor;
         streamManager.ReservePreAdmissionStreams(
@@ -85,6 +94,19 @@ internal sealed partial class SharpLinkServer
         if (clientStreamCount == 0)
             return;
 
+        // Keep captured callback state inside the streaming-only method. A lambda in
+        // this scope would allocate its display class before the no-stream return.
+        ReservePreInvocationRequestStreamsCore(
+            session, clientStreamCount, requestId, cancellationToken, retainUntilLocalCompletion);
+    }
+
+    private void ReservePreInvocationRequestStreamsCore(
+        RpcSession session,
+        int clientStreamCount,
+        long requestId,
+        CancellationToken cancellationToken,
+        bool retainUntilLocalCompletion)
+    {
         var streamManager = session.StreamManager;
         Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload> decodeCompressed = compressedPayload =>
         {
