@@ -125,6 +125,263 @@ public sealed class SharpLinkClientDeadlinePublicationTests
     }
 
     [Test]
+    public async Task TimedOneWayClientStreamShouldFailAtItsDeadlineWhileTheTransportIsStalled()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseTimeProvider(timeProvider));
+        await client.ConnectAsync();
+
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 308,
+            Kind: RpcMethodKind.OneWay,
+            HasResponsePayload: false,
+            HasClientStreams: true,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(5),
+            ClientStreamCount: 1);
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var probe = new ProducerProbe();
+        var streams = new BlockingClientStreams(probe);
+        try
+        {
+            var connection = GetOnlyReadyConnection(client);
+            await connection.Session.FlushSendQueueAsync();
+            await DrainSentFramesAsync(transport);
+            using var stall = new ManualResetEventSlim(initialState: false);
+            transport.Connection.RunOnNextOutputBufferRequest(() => stall.Wait(TimeSpan.FromSeconds(30)));
+
+            var invocation = channel.InvokeOneWayAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                in streams,
+                metadata: null,
+                cancellationToken: default).AsTask();
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+            Ensure(!invocation.IsCompleted,
+                "the caller must still be waiting for the emission of an accepted Request");
+
+            // The Request was accepted, so the pending entry owns the call. Its deadline has to end
+            // the invocation even though the transport never emitted the frame: waiting for emission
+            // on the bare caller token would leave the call blocked until the transport recovered.
+            timeProvider.Advance(TimeSpan.FromSeconds(5));
+            var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+                "a pending-owned OneWay must fail at its deadline while the transport is stalled");
+            Ensure(!probe.Started.Task.IsCompleted,
+                "the client-stream producer must not start for a call whose deadline already won");
+
+            stall.Set();
+            var published = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
+            var cancelled = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
+            Ensure(published?.Header.Type == ProtocolV2FrameType.Request,
+                "the accepted Request still reaches the peer after the deadline stopped the caller");
+            Ensure(cancelled?.Header.Type == ProtocolV2FrameType.Cancel &&
+                   cancelled!.Value.Header.RequestId == published!.Value.Header.RequestId,
+                "the deadline must still publish its cancel behind the Request it follows");
+        }
+        finally
+        {
+            probe.Release.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task TimedClientStreamingShouldFailAtItsDeadlineWhileTheTransportIsStalled()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseTimeProvider(timeProvider));
+        await client.ConnectAsync();
+
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 309,
+            Kind: RpcMethodKind.ClientStreaming,
+            HasResponsePayload: true,
+            HasClientStreams: true,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(5),
+            ClientStreamCount: 1);
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var probe = new ProducerProbe();
+        var streams = new BlockingClientStreams(probe);
+        try
+        {
+            var connection = GetOnlyReadyConnection(client);
+            await connection.Session.FlushSendQueueAsync();
+            await DrainSentFramesAsync(transport);
+            using var stall = new ManualResetEventSlim(initialState: false);
+            transport.Connection.RunOnNextOutputBufferRequest(() => stall.Wait(TimeSpan.FromSeconds(30)));
+
+            var invocation = channel.InvokeClientStreamingAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                in streams,
+                metadata: null,
+                cancellationToken: default).AsTask();
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+            Ensure(!invocation.IsCompleted,
+                "the caller must still be waiting for the emission of an accepted head Request");
+
+            timeProvider.Advance(TimeSpan.FromSeconds(5));
+            var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+                "a client-streaming call must fail at its deadline while the transport is stalled");
+            Ensure(!probe.Started.Task.IsCompleted,
+                "the stream producer must not start for a call whose deadline already won");
+
+            stall.Set();
+            var published = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
+            var cancelled = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
+            Ensure(published?.Header.Type == ProtocolV2FrameType.Request,
+                "the accepted head Request still reaches the peer after the deadline stopped the caller");
+            Ensure(cancelled?.Header.Type == ProtocolV2FrameType.Cancel &&
+                   cancelled!.Value.Header.RequestId == published!.Value.Header.RequestId,
+                "the deadline must still publish its cancel behind the head Request it follows");
+        }
+        finally
+        {
+            probe.Release.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task TimedDuplexStreamingShouldLeaveNoFrameworkTaskWhenTheDeadlineWinsAStalledWrite()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseTimeProvider(timeProvider));
+        await client.ConnectAsync();
+
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 310,
+            Kind: RpcMethodKind.DuplexStreaming,
+            HasResponsePayload: true,
+            HasClientStreams: true,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(5),
+            ClientStreamCount: 1);
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var probe = new ProducerProbe();
+        var streams = new BlockingClientStreams(probe);
+        try
+        {
+            var connection = GetOnlyReadyConnection(client);
+            await connection.Session.FlushSendQueueAsync();
+            await DrainSentFramesAsync(transport);
+            using var stall = new ManualResetEventSlim(initialState: false);
+            transport.Connection.RunOnNextOutputBufferRequest(() => stall.Wait(TimeSpan.FromSeconds(30)));
+
+            await using var enumerator = channel.InvokeDuplexStreamingAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                in streams,
+                metadata: null,
+                cancellationToken: default).GetAsyncEnumerator();
+            var moveNext = enumerator.MoveNextAsync().AsTask();
+
+            timeProvider.Advance(TimeSpan.FromSeconds(5));
+            var failure = await CaptureSharpLinkExceptionAsync(moveNext).WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+                "a duplex call must fail at its deadline while the transport is stalled");
+            Ensure(!probe.Started.Task.IsCompleted,
+                "the duplex producer must not start for a call whose deadline already won");
+
+            Ensure(await WaitForFrameworkTaskToFinishAsync(client, "DuplexStreamingInvoker"),
+                "the duplex start task must finish instead of leaking behind a stalled transport write");
+
+            stall.Set();
+            var published = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
+            var cancelled = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
+            Ensure(published?.Header.Type == ProtocolV2FrameType.Request,
+                "the accepted head Request still reaches the peer after the deadline stopped the caller");
+            Ensure(cancelled?.Header.Type == ProtocolV2FrameType.Cancel &&
+                   cancelled!.Value.Header.RequestId == published!.Value.Header.RequestId,
+                "the deadline must still publish its cancel behind the head Request it follows");
+        }
+        finally
+        {
+            probe.Release.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task TimedPlainOneWayShouldNotPublishARequestWhoseDeadlineElapsesInsideTheCompressionProvider()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var provider = new DeadlineAdvancingCompressionProvider(
+            timeProvider,
+            TimeSpan.FromSeconds(5));
+        var transport = new TestClientTransportFactory(
+            ProtocolV2Capabilities.CancellationReason | ProtocolV2Capabilities.Compression,
+            compressionProfile: provider.WireProfile);
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder
+                .UseTimeProvider(timeProvider)
+                .UseRuntime(options => options.Compression.Providers.Add(provider))
+                .UseRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
+                {
+                    Enabled = true,
+                    MinimumPayloadBytes = 0,
+                    MinimumSavingsBytes = 0,
+                    MinimumSavingsRatio = 0
+                }));
+        await client.ConnectAsync();
+
+        var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 311, TimeSpan.FromSeconds(5));
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        var streams = default(RpcNoClientStreams);
+
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
+        await DrainSentFramesAsync(transport);
+
+        // The codec is fast, so the pre-compression check still sees a live budget. The provider -
+        // user code that runs while the frame is being prepared - is what consumes the budget, which
+        // makes the linearization point the only place that can still refuse this Request. The codec
+        // still writes a payload: an empty one is skipped by the compression policy before the
+        // provider is ever asked.
+        var codec = new DeadlineAdvancingPayloadCodec(timeProvider, TimeSpan.Zero, payloadBytes: 8);
+        var invocation = channel.InvokeOneWayAsync(
+            method,
+            in request,
+            codec,
+            in streams,
+            metadata: null,
+            cancellationToken: default).AsTask();
+        var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "a plain OneWay whose budget elapsed during preparation must fail at its deadline");
+
+        var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+            "a Request that expired before admission must never be published");
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
+            "no cancel may be emitted for a request that was never published");
+    }
+
+    [Test]
     public async Task TimedPlainOneWayShouldCancelTheRemoteCallWhenItsDeadlineWinsTheEmissionRace()
     {
         var timeProvider = new ManualTimeProvider();
@@ -454,6 +711,65 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             long requestId,
             CancellationToken cancellationToken)
             => new(new TaskCompletionSource().Task);
+    }
+
+    /// <summary>Records whether the runtime ever started producing client stream items.</summary>
+    private sealed class ProducerProbe
+    {
+        internal TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    /// <summary>
+    /// Only signals that the producer ran, then waits for the test to release it. None of the calls
+    /// these tests cover may start their producer, and waiting on the call's own token keeps an
+    /// unexpected start from hanging the test run instead of failing the assertion.
+    /// </summary>
+    private readonly struct BlockingClientStreams(ProducerProbe probe) : IRpcClientStreamWriter
+    {
+        public async ValueTask WriteAsync(
+            IRpcClientStreamSink sink,
+            long requestId,
+            CancellationToken cancellationToken)
+        {
+            probe.Started.TrySetResult();
+            await probe.Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Waits for a named framework task to leave the supervisor's active set: a call that failed at
+    /// its deadline must not leave its start task parked behind a stalled transport write.
+    /// </summary>
+    private static async Task<bool> WaitForFrameworkTaskToFinishAsync(
+        SharpLinkClient client,
+        string operation)
+    {
+        var supervisor = (FrameworkTaskSupervisor)(typeof(SharpLinkClient).GetField(
+                "_frameworkTasks",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client) ?? throw new Exception("cannot find the framework task supervisor"));
+        for (var attempt = 0; attempt < 250; attempt++)
+        {
+            var active = false;
+            foreach (var entry in supervisor.CaptureSnapshot().Operations)
+            {
+                if (entry.Operation == operation)
+                {
+                    active = true;
+                    break;
+                }
+            }
+
+            if (!active)
+                return true;
+            await Task.Delay(TimeSpan.FromMilliseconds(20));
+        }
+
+        return false;
     }
 
     /// <summary>

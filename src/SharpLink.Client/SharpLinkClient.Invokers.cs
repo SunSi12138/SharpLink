@@ -639,7 +639,12 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    cancellationToken: method.HasClientStreams ? cancellationToken : CancellationToken.None,
+                    // The owned producer token, not the bare caller token: a deadline, a caller
+                    // cancellation or a closed connection all end this call by completing its
+                    // pending entry, and that entry is what cancels this token. Waiting for
+                    // emission on the caller token alone would leave the invocation blocked in
+                    // the send path after the call already reached its terminal reason.
+                    cancellationToken: method.HasClientStreams ? streamCancellationToken : CancellationToken.None,
                     publicationTable: method.HasClientStreams ? connection.PendingCalls : null);
                 if (!method.HasClientStreams && control.Deadline.HasValue)
                 {
@@ -777,7 +782,10 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    cancellationToken: cancellationToken,
+                    // Same ownership rule as the one-way client-stream shape: this call is owned by
+                    // its pending entry, so the emission wait has to observe the token that entry
+                    // cancels when it reaches a terminal reason.
+                    cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls).ConfigureAwait(false);
                 var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
                 producerLease = default;
@@ -903,7 +911,10 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 control.Metadata,
                 observeEmission: control.Deadline.HasValue,
-                cancellationToken: cancellationToken,
+                // This head Request is owned by its pending entry, so the emission wait has to
+                // observe the token that entry cancels: the deadline that ends the call also has
+                // to release the producer side from a stalled transport write.
+                cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls).ConfigureAwait(false);
             await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
         }

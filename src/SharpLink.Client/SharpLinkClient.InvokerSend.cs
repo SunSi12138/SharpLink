@@ -105,7 +105,9 @@ internal sealed partial class SharpLinkClient
             // Plain OneWay is the only dispatch shape without a pending entry, so it is also the
             // only one that has to refuse its own Request here: nothing else can retract a frame
             // whose budget already elapsed while its payload was still being serialized, and the
-            // peer would dispatch work whose caller has already failed.
+            // peer would dispatch work whose caller has already failed. This first check only
+            // spares an already expired frame the compression work; the authoritative refusal is
+            // the one taken after preparation, immediately before admission.
             if (deadline.HasValue &&
                 deadline.GetRemaining(_runtimeContext.TimeProvider) <= TimeSpan.Zero)
             {
@@ -116,6 +118,18 @@ internal sealed partial class SharpLinkClient
 
             ownsWriter = false;
             var plain = session.PrepareOutboundFrame(writer, cancellationToken);
+
+            // Preparation runs the user-provided compression provider, so the budget can elapse
+            // between the check above and the linearization point below. A Request that is already
+            // expired when it would be admitted must never be published: the peer would execute a
+            // one-way call whose caller has already failed, and the cancel that follows it cannot
+            // retract work that already ran.
+            if (deadline.HasValue && deadline.IsExpired(_runtimeContext.TimeProvider))
+            {
+                _runtimeContext.Buffers.Return(plain);
+                throw CreateDeadlineExceededException();
+            }
+
             if (!session.TryEnqueuePreparedFrame(
                     plain,
                     observeEmission,
