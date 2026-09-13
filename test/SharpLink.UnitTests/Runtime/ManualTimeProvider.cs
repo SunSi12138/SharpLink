@@ -18,6 +18,7 @@ internal sealed class ManualTimeProvider : TimeProvider
     private DateTimeOffset _utcNow;
     private long _timestamp;
     private int _utcNowReadCount;
+    private int _timestampReadCount;
 
     public ManualTimeProvider(DateTimeOffset? start = null)
     {
@@ -40,7 +41,25 @@ internal sealed class ManualTimeProvider : TimeProvider
     public override long GetTimestamp()
     {
         lock (_gate)
+        {
+            _timestampReadCount++;
             return _timestamp;
+        }
+    }
+
+    /// <summary>
+    /// Number of monotonic timestamp samples taken through this provider. Deadline arbitration
+    /// sites that must stay authoritative are the reason this is observable: a call whose read
+    /// count drops is a call that stopped sampling the clock, and every remaining sample has to
+    /// be justified by a boundary that cannot be served from stale state.
+    /// </summary>
+    public int TimestampReadCount
+    {
+        get
+        {
+            lock (_gate)
+                return _timestampReadCount;
+        }
     }
 
     public int ActiveTimerCount

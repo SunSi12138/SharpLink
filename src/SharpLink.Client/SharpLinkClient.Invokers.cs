@@ -13,8 +13,9 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: true);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: true, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -45,8 +46,9 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -79,8 +81,9 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -108,8 +111,11 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
     {
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        return InvokeServerStreamingResolved(method, request, requestCodec, responseCodec, control, cancellationToken);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
+        return InvokeServerStreamingResolved(
+            method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
 
     internal IAsyncEnumerable<TResponse> InvokeServerStreamingResolved<TRequest, TResponse>(
@@ -117,13 +123,14 @@ internal sealed partial class SharpLinkClient
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        ArgumentNullException.ThrowIfNull(interceptors);
         EnsureLogicalCallProgress(control);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -168,8 +175,11 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        return InvokeDuplexStreamingResolved(method, request, requestCodec, responseCodec, streams, control, cancellationToken);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
+        return InvokeDuplexStreamingResolved(
+            method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
     }
 
     internal IAsyncEnumerable<TResponse> InvokeDuplexStreamingResolved<TRequest, TResponse, TStreams>(
@@ -178,14 +188,15 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         in TStreams streams,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        ArgumentNullException.ThrowIfNull(interceptors);
         EnsureLogicalCallProgress(control);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -364,7 +375,9 @@ internal sealed partial class SharpLinkClient
         var reservationOwned = false;
         try
         {
-            EnsureLogicalCallProgress(control);
+            // Connection selection is the first step that can block, so the pre-registration
+            // checkpoint below is the first place a fresh sample carries new information. A sample
+            // here would only repeat the stage-local validation the call control already did.
             connection = GetReadyConnection(method, retrySelection: null, outcome);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
@@ -431,7 +444,8 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     cancellationToken: CancellationToken.None,
-                    failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null);
+                    failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null,
+                    publicationTable: connection.PendingCalls);
             }
         }
         catch (Exception exception)
@@ -440,6 +454,63 @@ internal sealed partial class SharpLinkClient
         }
 
         return operation.AsValueTask();
+    }
+
+    /// <summary>
+    /// Races a plain OneWay emission wait against the call's own deadline.
+    /// </summary>
+    /// <remarks>
+    /// A plain OneWay registers no pending entry, so there is no deadline scheduler and no cancel
+    /// path behind it: the emission wait is the only place the caller can still observe its own
+    /// end-to-end lifetime. The Request has already been published when this runs, so losing the
+    /// race never retracts or fails the frame in the transport - it only stops the caller from
+    /// blocking past its deadline, which is what the previous deferred-compaction design enforced
+    /// by dropping expired frames at emission, and it publishes the cancel that terminates the
+    /// remote call. A deadline that already elapsed before the frame was published is refused
+    /// earlier, in the send itself.
+    /// </remarks>
+    private async ValueTask AwaitPlainOneWayEmissionOrDeadlineAsync(
+        ValueTask emission,
+        ClientConnection connection,
+        long requestId,
+        ResolvedCallControl control)
+    {
+        var emissionTask = emission.AsTask();
+        var remaining = control.Deadline.GetRemaining(_runtimeContext.TimeProvider);
+        if (remaining > TimeSpan.Zero)
+        {
+            try
+            {
+                await emissionTask.WaitAsync(remaining, _runtimeContext.TimeProvider).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException)
+            {
+            }
+        }
+
+        ObserveAbandonedEmission(emissionTask);
+        _ = control.LogicalCall?.TryClaimDeadline();
+        // This shape owns no pending entry, so no terminal transition can tell the peer to stop.
+        // The Request is already in the normal queue ahead of this cancel, so the peer either
+        // cancels the call it received or discards it for a request it never got.
+        connection.TrySendDeadlineCancel(requestId);
+        throw CreateDeadlineExceededException();
+    }
+
+    private static void ObserveAbandonedEmission(Task emission)
+    {
+        if (emission.IsCompleted)
+        {
+            _ = emission.Exception;
+            return;
+        }
+
+        _ = emission.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
     }
 
     private async ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
@@ -559,7 +630,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                await SendRpcCall(
+                var emission = SendRpcCall(
                     connection!.Session,
                     method.ContractId,
                     method.MethodId,
@@ -570,13 +641,34 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    cancellationToken: method.HasClientStreams ? cancellationToken : CancellationToken.None)
-                    .ConfigureAwait(false);
+                    // The owned producer token, not the bare caller token: a deadline, a caller
+                    // cancellation or a closed connection all end this call by completing its
+                    // pending entry, and that entry is what cancels this token. Waiting for
+                    // emission on the caller token alone would leave the invocation blocked in
+                    // the send path after the call already reached its terminal reason.
+                    cancellationToken: method.HasClientStreams ? streamCancellationToken : CancellationToken.None,
+                    publicationTable: method.HasClientStreams ? connection.PendingCalls : null);
+                if (!method.HasClientStreams && control.Deadline.HasValue)
+                {
+                    // A plain OneWay owns no pending entry, so nothing else enforces the caller's
+                    // deadline while the pump holds the frame, and nothing else can tell the peer to
+                    // stop. The Request is already ahead of that cancel in the same normal queue, so
+                    // the peer either sees the cancel after the Request or discards it for a request
+                    // it already ran.
+                    await AwaitPlainOneWayEmissionOrDeadlineAsync(
+                        emission,
+                        connection!,
+                        requestId,
+                        control).ConfigureAwait(false);
+                }
+                else
+                {
+                    await emission.ConfigureAwait(false);
+                }
                 if (method.HasClientStreams)
                 {
                     await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
                     connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
-                    _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
                 }
                 else
                 {
@@ -587,8 +679,16 @@ internal sealed partial class SharpLinkClient
             {
                 if (method.HasClientStreams)
                 {
-                    connection!.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
-                    _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
+                    // Publish the local send/producer failure and let the pending table arbitrate.
+                    // The table holds the completion gate, so a deadline that expired, a caller
+                    // cancellation, or a closed connection that already claimed the call stays
+                    // authoritative; this call is then a no-op. Throwing the local exception here
+                    // would replace that terminal reason and skip observing the lease operation,
+                    // which is also what returns it to the pool.
+                    connection!.PendingCalls.TryComplete(
+                        requestId,
+                        PendingCallCompletionReason.SendFailure,
+                        exception);
                 }
                 else
                 {
@@ -598,8 +698,19 @@ internal sealed partial class SharpLinkClient
                             ? PendingCallCompletionReason.DeadlineExceeded
                             : PendingCallCompletionReason.SendFailure,
                         exception);
+                    throw exception;
                 }
-                throw exception;
+            }
+
+            if (method.HasClientStreams)
+            {
+                // The client-stream oneway lease operation owns the terminal result for this shape
+                // and is single-observation and pooled: observe it exactly once on every path. The
+                // await rethrows whichever terminal won - local stream completion, the local
+                // send/producer failure, a deadline, a caller cancellation, or a closed connection -
+                // and returns the operation to the pool. Awaiting it a second time (or not at all)
+                // is what previously hung the invocation or leaked the pooled operation.
+                _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
             }
         }
         finally
@@ -673,7 +784,11 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                    // Same ownership rule as the one-way client-stream shape: this call is owned by
+                    // its pending entry, so the emission wait has to observe the token that entry
+                    // cancels when it reaches a terminal reason.
+                    cancellationToken: streamCancellationToken,
+                    publicationTable: connection.PendingCalls).ConfigureAwait(false);
                 var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
                 producerLease = default;
                 TrackFrameworkTask(producerTask, "ClientStreamingProducer");
@@ -731,23 +846,32 @@ internal sealed partial class SharpLinkClient
                 PendingCallKind.ServerStreaming,
                 method,
                 control,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                captureTerminalSignal: control.Deadline.HasValue).ConfigureAwait(false);
             connection = registration.Connection;
             requestId = registration.RequestId;
-            await SendRpcCall(
-                connection.Session,
-                method.ContractId,
-                method.MethodId,
-                requestId,
-                cancellationToken.CanBeCanceled || control.Deadline.HasValue
-                    ? ProtocolV2FrameFlags.Cancellable
-                    : ProtocolV2FrameFlags.None,
-                request,
-                requestCodec,
-                control.Deadline,
-                control.Metadata,
-                observeEmission: control.Deadline.HasValue,
-                cancellationToken: CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                await SendRpcCall(
+                    connection.Session,
+                    method.ContractId,
+                    method.MethodId,
+                    requestId,
+                    cancellationToken.CanBeCanceled || control.Deadline.HasValue
+                        ? ProtocolV2FrameFlags.Cancellable
+                        : ProtocolV2FrameFlags.None,
+                    request,
+                    requestCodec,
+                    control.Deadline,
+                    control.Metadata,
+                    observeEmission: control.Deadline.HasValue,
+                    cancellationToken: registration.TerminalSignal?.Token ?? CancellationToken.None,
+                    publicationTable: connection.PendingCalls).ConfigureAwait(false);
+            }
+            finally
+            {
+                registration.TerminalSignal?.StopObservingTerminal();
+            }
         }
         catch (Exception exception)
         {
@@ -797,7 +921,11 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 control.Metadata,
                 observeEmission: control.Deadline.HasValue,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+                // This head Request is owned by its pending entry, so the emission wait has to
+                // observe the token that entry cancels: the deadline that ends the call also has
+                // to release the producer side from a stalled transport write.
+                cancellationToken: streamCancellationToken,
+                publicationTable: connection.PendingCalls).ConfigureAwait(false);
             await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -816,11 +944,15 @@ internal sealed partial class SharpLinkClient
         PendingCallKind kind,
         RpcMethodDescriptor method,
         ResolvedCallControl control,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool captureTerminalSignal = false)
     {
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
+        var terminalSignal = captureTerminalSignal ? new PendingCallTerminalSignal(outcome) : null;
+        IPendingCallCompletionObserver? completionObserver = terminalSignal;
+        completionObserver ??= outcome;
         ClientConnection? connection = null;
         var reservationOwned = false;
         var requestId = 0L;
@@ -835,7 +967,7 @@ internal sealed partial class SharpLinkClient
                 dispatcher,
                 control.Deadline,
                 cancellationToken,
-                outcome);
+                completionObserver);
             reservationOwned = false;
             if (!connection.PendingCalls.Contains(requestId))
             {
@@ -845,7 +977,7 @@ internal sealed partial class SharpLinkClient
             }
             dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
             connection.Session.StreamManager.Register(requestId, 0, dispatcher);
-            return ValueTask.FromResult(new StreamCallRegistration(connection, requestId));
+            return ValueTask.FromResult(new StreamCallRegistration(connection, requestId, terminalSignal));
         }
         catch (Exception exception)
         {
@@ -865,6 +997,7 @@ internal sealed partial class SharpLinkClient
             {
                 outcome?.CompleteLocalFailure(exception);
             }
+            terminalSignal?.StopObservingTerminal();
             throw exception;
         }
     }
@@ -881,78 +1014,8 @@ internal sealed partial class SharpLinkClient
             dispatcher.Complete(exception);
     }
 
-    private readonly record struct StreamCallRegistration(ClientConnection Connection, long RequestId);
-
-    private ValueTask SendRpcCall<TRequest>(
-        RpcSession session,
-        long contractId,
-        long methodId,
-        long requestId,
-        ProtocolV2FrameFlags flags,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        RpcDeadline deadline,
-        SharpLinkMetadata? metadata,
-        bool observeEmission = false,
-        CancellationToken cancellationToken = default,
-        IRequestEmissionFailureObserver? failureObserver = null)
-    {
-        var hasMetadata = metadata is { Count: > 0 };
-        var metadataLength = 0;
-        if (deadline.HasValue)
-            flags |= ProtocolV2FrameFlags.HasTimeBudget;
-        if (hasMetadata)
-        {
-            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
-            {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.Unimplemented,
-                    "The connected server did not negotiate request metadata support.");
-            }
-            metadataLength = ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata!);
-            if (metadataLength > _protocolOptions.MaxMetadataBytes)
-            {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.ResourceExhausted,
-                    $"Request metadata exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
-            }
-            flags |= ProtocolV2FrameFlags.HasMetadata;
-        }
-
-        var writer = session.RentFrameWriter();
-        var ownsWriter = true;
-        try
-        {
-            using (writer.BeginPacketScope(
-                       ProtocolV2FrameType.Request,
-                       flags,
-                       unchecked((ulong)requestId)))
-            {
-                var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
-                var span = writer.GetSpan(prefixLength);
-                BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
-                BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
-                if (deadline.HasValue)
-                    BinaryPrimitives.WriteInt64LittleEndian(span[ProtocolV2Constants.RequestPrefixBytes..], 0L);
-                writer.Advance(prefixLength);
-                if (hasMetadata)
-                {
-                    ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));
-                    ProtocolV2PayloadCodec.WriteMetadata(writer, metadata!);
-                }
-                requestCodec.Serialize(request, writer);
-            }
-
-            ownsWriter = false;
-            if (observeEmission)
-                return session.SendPacketAndObserveEmissionAsync(writer, deadline, cancellationToken);
-            session.SendPacket(writer, deadline, failureObserver);
-            return ValueTask.CompletedTask;
-        }
-        finally
-        {
-            if (ownsWriter)
-                _runtimeContext.Buffers.Return(writer);
-        }
-    }
+    private readonly record struct StreamCallRegistration(
+        ClientConnection Connection,
+        long RequestId,
+        PendingCallTerminalSignal? TerminalSignal);
 }

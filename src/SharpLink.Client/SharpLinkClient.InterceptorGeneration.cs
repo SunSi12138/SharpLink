@@ -2,7 +2,7 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    private sealed class ClientInterceptorGeneration
+    internal sealed class ClientInterceptorGeneration
     {
         private static readonly SharpLinkClientInvocationDelegate Terminal = InvokeTerminalAsync;
 
