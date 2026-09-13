@@ -118,11 +118,10 @@ internal sealed partial class SharpLinkClient
         if (method.Kind != RpcMethodKind.Unary || !method.IsIdempotent)
             return control;
 
-        var generation = CaptureRetryGeneration();
-        if (control.LogicalCall is { } logicalCall)
-            logicalCall.AttachRetryGeneration(generation);
-
-        return control with { RetryGeneration = generation };
+        // The captured retry generation lives on the control only. Any participant that re-enters
+        // the terminal invocation copies the control, so the retry policy of one logical call can
+        // never be re-captured mid-flight.
+        return control with { RetryGeneration = CaptureRetryGeneration() };
     }
 
     internal readonly record struct ClientRetrySettings(
@@ -175,14 +174,12 @@ internal sealed partial class SharpLinkClient
             Kind = kind;
             Settings = settings;
             Policy = policy;
-            SharedLogicalCall = new ClientLogicalCallState(this);
         }
 
         internal ulong Generation { get; }
         internal SharpLinkRetryPolicyKind Kind { get; }
         internal ClientRetrySettings Settings { get; }
         internal ISharpLinkRetryPolicy? Policy { get; }
-        internal ClientLogicalCallState SharedLogicalCall { get; }
         internal bool Enabled => Kind != SharpLinkRetryPolicyKind.Disabled;
     }
 }

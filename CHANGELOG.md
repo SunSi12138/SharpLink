@@ -6,7 +6,7 @@
 
 ### Changed
 
-- Plain unary and oneway client calls no longer allocate a per-call logical-call state. The shared deadline/retry state is only materialized when more than one participant can observe it (streaming dispatchers, client-stream producers, or client interceptors); single-participant calls re-check the frozen deadline directly from the resolved call control. The captured retry generation and time provider now live on the call control instead of being duplicated inside the state object, which brings unary/oneway allocation back to the 1.1.1 per-call level.
+- Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 
 ## [2.0.0] - 2026-09-13
 

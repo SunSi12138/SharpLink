@@ -214,7 +214,8 @@ internal sealed partial class SharpLinkClient
             SharpLinkClientInvocationDelegate next,
             SharpLinkClientInvocationContext context)
         {
-            if (_control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
+            if (_control.LogicalCall is { } logicalCall &&
+                !logicalCall.TryEnterProgress(_control.Deadline, _client._runtimeContext.TimeProvider))
             {
                 return ValueTask.FromException<SharpLinkClientInvocationResult>(
                     CreateDeadlineExceededException());
@@ -233,7 +234,8 @@ internal sealed partial class SharpLinkClient
         internal ValueTask<SharpLinkClientInvocationResult> InvokeComposedTerminalAsync(
             SharpLinkClientInvocationContext context)
         {
-            if (_control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
+            if (_control.LogicalCall is { } logicalCall &&
+                !logicalCall.TryEnterProgress(_control.Deadline, _client._runtimeContext.TimeProvider))
             {
                 return ValueTask.FromException<SharpLinkClientInvocationResult>(
                     CreateDeadlineExceededException());
@@ -247,18 +249,20 @@ internal sealed partial class SharpLinkClient
             => InvokeTerminalAsync(context);
 
         protected ResolvedCallControl GetTerminalControl(SharpLinkClientInvocationContext context)
-            => new(
-                _control.Deadline,
-                context.Metadata is { Count: > 0 } ? context.Metadata : null,
-                _control.LogicalCall,
-                RetryGeneration: _control.RetryGeneration,
-                TimeProvider: _control.TimeProvider ?? _client._runtimeContext.TimeProvider);
+            // The terminal boundary only replaces the metadata observed by the pipeline. Every
+            // other captured field (lifetime source, telemetry detail, retry generation, time
+            // provider, shared logical call) must stay exactly as the invocation captured it, so
+            // this copies the control instead of rebuilding it field by field.
+            => _control with
+            {
+                Metadata = context.Metadata is { Count: > 0 } ? context.Metadata : null
+            };
 
         private void ThrowIfFrozenDeadlineExpired()
         {
             if (_control.LogicalCall is { } logicalCall)
             {
-                if (!logicalCall.TryEnterProgress())
+                if (!logicalCall.TryEnterProgress(_control.Deadline, _client._runtimeContext.TimeProvider))
                     throw CreateDeadlineExceededException();
                 return;
             }
@@ -731,7 +735,7 @@ internal sealed partial class SharpLinkClient
         {
             if (logicalCall is not null)
             {
-                if (!logicalCall.TryEnterProgress())
+                if (!logicalCall.TryEnterProgress(deadline, timeProvider))
                     throw CreateDeadlineExceededException();
                 return;
             }

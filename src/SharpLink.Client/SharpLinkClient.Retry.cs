@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkClient
                 request, requestCodec, responseCodec, control, cancellationToken);
         }
 
-        var generation = control.RetryGeneration ?? control.LogicalCall?.RetryGeneration ?? CaptureRetryGeneration();
+        var generation = control.RetryGeneration ?? CaptureRetryGeneration();
         if (!generation.Enabled)
         {
             return InvokeUnaryCoreAsync(
@@ -138,7 +138,9 @@ internal sealed partial class SharpLinkClient
     {
         if (control.LogicalCall is { } logicalCall)
         {
-            if (!logicalCall.TryEnterProgress())
+            // A shared logical call is only allocated together with a resolved deadline and the
+            // time provider that produced it; every copy of the control preserves both.
+            if (!logicalCall.TryEnterProgress(control.Deadline, control.TimeProvider!))
                 throw CreateDeadlineExceededException();
             return;
         }
@@ -159,7 +161,11 @@ internal sealed partial class SharpLinkClient
             _ = control.LogicalCall?.TryClaimDeadline();
 
         if (control.LogicalCall is { } logicalCall)
-            return logicalCall.TryEnterProgress() ? exception : CreateDeadlineExceededException();
+        {
+            return logicalCall.TryEnterProgress(control.Deadline, control.TimeProvider!)
+                ? exception
+                : CreateDeadlineExceededException();
+        }
 
         return IsDeadlineElapsed(control) ? CreateDeadlineExceededException() : exception;
     }
