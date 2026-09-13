@@ -624,6 +624,16 @@ internal sealed class ClientConnection :
             _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, null)
         };
 
+    /// <summary>
+    /// Tells the peer to stop a call whose Request is already queued but whose caller gave up.
+    /// </summary>
+    /// <remarks>
+    /// Untracked dispatch shapes (plain OneWay) hold no pending entry, so nothing else observes the
+    /// terminal reason and therefore nothing else can publish the cancel.
+    /// </remarks>
+    internal void TrySendDeadlineCancel(long requestId)
+        => TrySendCancel(requestId, ProtocolV2CancelReason.DeadlineExceeded);
+
     private void TrySendCancel(long requestId, ProtocolV2CancelReason reason)
     {
         try

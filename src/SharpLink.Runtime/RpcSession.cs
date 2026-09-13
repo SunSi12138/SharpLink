@@ -217,17 +217,6 @@ internal sealed partial class RpcSession
         CancellationToken ct = default)
         => await SendPacketAsync(packet, waitForCapacity: true, forceFlush: true, ct).ConfigureAwait(false);
 
-    internal ValueTask SendPacketAndObserveEmissionAsync(
-        IRpcByteBufferWriter packet,
-        CancellationToken ct = default)
-        => SendPacketAsync(
-            packet,
-            waitForCapacity: false,
-            forceFlush: false,
-            ct,
-            allowEmpty: false,
-            waitForEmission: true);
-
     internal async ValueTask FlushSendQueueAsync(CancellationToken ct = default)
     {
         var marker = RuntimeContext.Buffers.Rent();
@@ -240,8 +229,7 @@ internal sealed partial class RpcSession
         bool waitForCapacity,
         bool forceFlush,
         CancellationToken ct = default,
-        bool allowEmpty = false,
-        bool waitForEmission = false)
+        bool allowEmpty = false)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -264,7 +252,7 @@ internal sealed partial class RpcSession
         }
         ValidateOutboundPacketOrReturn(packet, allowEmpty);
 
-        var completion = forceFlush || waitForEmission
+        var completion = forceFlush
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
         var frame = CreateFrame(packet, forceFlush, completion);
@@ -733,7 +721,7 @@ internal sealed partial class RpcSession
         Stopping
     }
 
-    private enum SendEnqueueResult
+    internal enum SendEnqueueResult
     {
         Accepted,
         Full,

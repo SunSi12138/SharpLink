@@ -463,10 +463,14 @@ internal sealed partial class SharpLinkClient
     /// end-to-end lifetime. The Request has already been published when this runs, so losing the
     /// race never retracts or fails the frame in the transport - it only stops the caller from
     /// blocking past its deadline, which is what the previous deferred-compaction design enforced
-    /// by dropping expired frames at emission.
+    /// by dropping expired frames at emission, and it publishes the cancel that terminates the
+    /// remote call. A deadline that already elapsed before the frame was published is refused
+    /// earlier, in the send itself.
     /// </remarks>
     private async ValueTask AwaitPlainOneWayEmissionOrDeadlineAsync(
         ValueTask emission,
+        ClientConnection connection,
+        long requestId,
         ResolvedCallControl control)
     {
         var emissionTask = emission.AsTask();
@@ -485,6 +489,10 @@ internal sealed partial class SharpLinkClient
 
         ObserveAbandonedEmission(emissionTask);
         _ = control.LogicalCall?.TryClaimDeadline();
+        // This shape owns no pending entry, so no terminal transition can tell the peer to stop.
+        // The Request is already in the normal queue ahead of this cancel, so the peer either
+        // cancels the call it received or discards the cancel for a request it never got.
+        connection.TrySendDeadlineCancel(requestId);
         throw CreateDeadlineExceededException();
     }
 
@@ -636,9 +644,15 @@ internal sealed partial class SharpLinkClient
                 if (!method.HasClientStreams && control.Deadline.HasValue)
                 {
                     // A plain OneWay owns no pending entry, so nothing else enforces the caller's
-                    // deadline while the pump holds the frame. The Request is already published, so
-                    // losing this race only stops the caller from blocking past its own lifetime.
-                    await AwaitPlainOneWayEmissionOrDeadlineAsync(emission, control).ConfigureAwait(false);
+                    // deadline while the pump holds the frame, and nothing else can tell the peer to
+                    // stop. The Request is already ahead of that cancel in the same normal queue, so
+                    // the peer either sees the cancel after the Request or discards it for a request
+                    // it already ran.
+                    await AwaitPlainOneWayEmissionOrDeadlineAsync(
+                        emission,
+                        connection!,
+                        requestId,
+                        control).ConfigureAwait(false);
                 }
                 else
                 {
@@ -975,105 +989,4 @@ internal sealed partial class SharpLinkClient
     }
 
     private readonly record struct StreamCallRegistration(ClientConnection Connection, long RequestId);
-
-    private ValueTask SendRpcCall<TRequest>(
-        RpcSession session,
-        long contractId,
-        long methodId,
-        long requestId,
-        ProtocolV2FrameFlags flags,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        RpcDeadline deadline,
-        SharpLinkMetadata? metadata,
-        bool observeEmission = false,
-        CancellationToken cancellationToken = default,
-        IRequestEmissionFailureObserver? failureObserver = null,
-        PendingRequestTable? publicationTable = null)
-    {
-        var hasMetadata = metadata is { Count: > 0 };
-        var metadataLength = 0;
-        if (deadline.HasValue)
-            flags |= ProtocolV2FrameFlags.HasTimeBudget;
-        if (hasMetadata)
-        {
-            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
-            {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.Unimplemented,
-                    "The connected server did not negotiate request metadata support.");
-            }
-            metadataLength = ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata!);
-            if (metadataLength > _protocolOptions.MaxMetadataBytes)
-            {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.ResourceExhausted,
-                    $"Request metadata exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
-            }
-            flags |= ProtocolV2FrameFlags.HasMetadata;
-        }
-
-        var writer = session.RentFrameWriter();
-        var ownsWriter = true;
-        try
-        {
-            using (writer.BeginPacketScope(
-                       ProtocolV2FrameType.Request,
-                       flags,
-                       unchecked((ulong)requestId)))
-            {
-                var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
-                var span = writer.GetSpan(prefixLength);
-                BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
-                BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
-                if (deadline.HasValue)
-                    BinaryPrimitives.WriteInt64LittleEndian(
-                        span[ProtocolV2Constants.RequestPrefixBytes..],
-                        deadline.GetRemaining(_runtimeContext.TimeProvider).Ticks);
-                writer.Advance(prefixLength);
-                if (hasMetadata)
-                {
-                    ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));
-                    ProtocolV2PayloadCodec.WriteMetadata(writer, metadata!);
-                }
-                requestCodec.Serialize(request, writer);
-            }
-
-            if (publicationTable is { } table)
-            {
-                // Hand ownership to the session before publishing: every dispatch entry point
-                // returns the writer itself when it fails before the frame is queued.
-                ownsWriter = false;
-                if (!table.TryPublishRequest(
-                        requestId,
-                        session,
-                        writer,
-                        observeEmission,
-                        cancellationToken,
-                        failureObserver,
-                        out var emission))
-                {
-                    // The call already reached its terminal decision while this Request was still
-                    // being serialized. Publishing it now would deliver a Request after the cancel
-                    // that terminal decision just emitted - a cancel the peer discards, followed by
-                    // a Request it happily dispatches. Drop the frame instead; the caller observes
-                    // the terminal reason through its pending operation.
-                    _runtimeContext.Buffers.Return(writer);
-                    return ValueTask.CompletedTask;
-                }
-                return emission;
-            }
-
-            ownsWriter = false;
-            if (observeEmission)
-                return session.SendPacketAndObserveEmissionAsync(writer, cancellationToken);
-            session.SendPacket(writer, failureObserver);
-            return ValueTask.CompletedTask;
-        }
-        finally
-        {
-            if (ownsWriter)
-                _runtimeContext.Buffers.Return(writer);
-        }
-    }
 }
