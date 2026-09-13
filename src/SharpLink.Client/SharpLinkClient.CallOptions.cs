@@ -158,7 +158,10 @@ internal sealed partial class SharpLinkClient
         try
         {
             if (!await SharpLinkTimer.DelayAsync(
-                    delay, deadline, _runtimeContext.TimeProvider, linkedCancellation.Token).ConfigureAwait(false))
+                    delay,
+                    deadline,
+                    _runtimeContext.TimeProvider,
+                    linkedCancellation.Token).ConfigureAwait(false))
             {
                 throw CreateDeadlineExceededException();
             }
