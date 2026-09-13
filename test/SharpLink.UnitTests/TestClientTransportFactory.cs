@@ -17,13 +17,16 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
 
     private readonly ProtocolV2Capabilities _negotiatedCapabilities;
     private readonly KeyValuePair<long, RpcHash128>[] _contractManifest;
+    private readonly string? _compressionProfile;
 
     internal TestClientTransportFactory(
         ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
-        IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null)
+        IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
+        string? compressionProfile = null)
     {
         _negotiatedCapabilities = negotiatedCapabilities;
         _contractManifest = contractManifest?.ToArray() ?? DefaultContractManifest;
+        _compressionProfile = compressionProfile;
     }
 
     public TestTransportConnection Connection { get; } = new();
@@ -36,6 +39,7 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
         await Connection.InjectSuccessfulHandshakeAsync(
             _negotiatedCapabilities,
             _contractManifest,
+            _compressionProfile,
             cancellationToken);
         return Connection;
     }
@@ -72,6 +76,7 @@ internal sealed class TestTransportConnection : ITransportConnection
     internal async Task InjectSuccessfulHandshakeAsync(
         ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
         IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
+        string? compressionProfile = null,
         CancellationToken cancellationToken = default)
     {
         negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
@@ -81,7 +86,8 @@ internal sealed class TestTransportConnection : ITransportConnection
             negotiatedCapabilities,
             4 * 1024 * 1024,
             1024 * 1024,
-            16 * 1024 * 1024));
+            16 * 1024 * 1024,
+            compressionProfile));
         await InjectFrameAsync(
             ProtocolV2FrameType.HandshakeResponse,
             ProtocolV2FrameFlags.None,
@@ -171,6 +177,24 @@ internal sealed class TestTransportConnection : ITransportConnection
         catch (ChannelClosedException)
         {
             return false;
+        }
+    }
+
+    /// <summary>Reads the next frame the client wrote, in write order, or <c>null</c> on timeout.</summary>
+    internal async Task<TestSentFrame?> TryReadNextSentFrameAsync(TimeSpan timeout)
+    {
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        try
+        {
+            return await _sentPackets.Reader.ReadAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (ChannelClosedException)
+        {
+            return null;
         }
     }
 

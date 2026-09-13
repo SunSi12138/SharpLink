@@ -6,20 +6,20 @@ internal sealed class RpcSessionFlushPolicyGeneration
         ulong generation,
         int flushSizeThreshold,
         TimeSpan maxLatency,
-        bool deadlineBatchingEnabled,
+        bool explicitBatchWindowEnabled,
         bool flushEveryFrame)
     {
         Generation = generation;
         FlushSizeThreshold = flushSizeThreshold;
         MaxLatency = maxLatency;
-        DeadlineBatchingEnabled = deadlineBatchingEnabled;
+        ExplicitBatchWindowEnabled = explicitBatchWindowEnabled;
         FlushEveryFrame = flushEveryFrame;
     }
 
     internal ulong Generation { get; }
     internal int FlushSizeThreshold { get; }
     internal TimeSpan MaxLatency { get; }
-    internal bool DeadlineBatchingEnabled { get; }
+    internal bool ExplicitBatchWindowEnabled { get; }
     internal bool FlushEveryFrame { get; }
 }
 
@@ -43,7 +43,7 @@ internal sealed class RpcSessionFlushPolicyState
                 generation: 0,
                 configured.FlushSizeThreshold,
                 configured.MaxLatency,
-                deadlineBatchingEnabled: true,
+                explicitBatchWindowEnabled: true,
                 flushEveryFrame: false));
         }
 
@@ -54,21 +54,21 @@ internal sealed class RpcSessionFlushPolicyState
                     generation: 0,
                     flushSizeThreshold: 1,
                     maxLatency: TimeSpan.Zero,
-                    deadlineBatchingEnabled: false,
+                    explicitBatchWindowEnabled: false,
                     flushEveryFrame: true)),
             SharpLinkPerformanceProfile.Throughput => new RpcSessionFlushPolicyState(
                 new RpcSessionFlushPolicyGeneration(
                     generation: 0,
                     flushSizeThreshold: 64 * 1024,
                     maxLatency: TimeSpan.Zero,
-                    deadlineBatchingEnabled: false,
+                    explicitBatchWindowEnabled: false,
                     flushEveryFrame: false)),
             _ => new RpcSessionFlushPolicyState(
                 new RpcSessionFlushPolicyGeneration(
                     generation: 0,
                     flushSizeThreshold: 16 * 1024,
                     maxLatency: TimeSpan.Zero,
-                    deadlineBatchingEnabled: false,
+                    explicitBatchWindowEnabled: false,
                     flushEveryFrame: false))
         };
     }
@@ -84,7 +84,7 @@ internal sealed class RpcSessionFlushPolicyState
             var current = Capture();
             if (current.FlushSizeThreshold == flushSizeThreshold &&
                 current.MaxLatency == maxLatency &&
-                current.DeadlineBatchingEnabled &&
+                current.ExplicitBatchWindowEnabled &&
                 !current.FlushEveryFrame)
             {
                 return false;
@@ -98,7 +98,7 @@ internal sealed class RpcSessionFlushPolicyState
                     current.Generation + 1,
                     flushSizeThreshold,
                     maxLatency,
-                    deadlineBatchingEnabled: true,
+                    explicitBatchWindowEnabled: true,
                     flushEveryFrame: false));
             changed = _changed;
         }

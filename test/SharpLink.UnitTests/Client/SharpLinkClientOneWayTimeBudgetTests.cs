@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
@@ -8,17 +9,13 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkClientOneWayTimeBudgetTests
 {
     [Test]
-    public async Task TimedOneWayClientStreamShouldNotStartProducerUntilRequestSurvivesEmission()
+    public async Task TimedOneWayClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder =>
-            {
-                builder.UseTimeProvider(timeProvider);
-                builder.UseRpcSessionFlush(1024 * 1024, TimeSpan.FromSeconds(10));
-            });
+            builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
 
         var method = new RpcMethodDescriptor(
@@ -50,22 +47,30 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             metadata: null,
             cancellationToken: default).AsTask();
 
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
+            "the wire TimeBudget must be the remaining sampled once when the frame is created");
+        await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(probe.RequestId == sent.Header.RequestId,
+            "the OneWay producer must be bound to the owning Request that reached the transport");
+
+        // The pending deadline owns the terminal decision now that the send pump publishes
+        // frames verbatim; the failed call must not keep producing payload for a dropped owner.
+        timeProvider.Advance(TimeSpan.Zero);
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "an initial OneWay client-stream Request that expires at the emission boundary must fail locally");
-        Ensure(!probe.Started,
-            "the OneWay client-stream producer must not start until its owning Request survives emission");
+            "an emitted OneWay Request whose budget elapsed must fail through its pending deadline");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
                 ProtocolV2FrameType.StreamData,
                 TimeSpan.FromMilliseconds(50)),
-            "no orphan OneWay StreamData may be emitted after the owning Request is dropped");
+            "no orphan OneWay StreamData may follow the failed owning Request");
     }
 
     [Test]
     public async Task TimedOneWayClientStreamShouldFailWhenTheDeadlineElapsesDuringTheProducer()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
@@ -109,7 +114,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
     public async Task OneWayClientStreamShouldSurfaceConnectionClosedWhenTheProducerFailsAfterTheConnectionDies()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
@@ -146,7 +151,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
     public async Task OneWayClientStreamShouldSurfaceCallerCancellationWhenTheProducerFailsAfterTheCallerCancels()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
@@ -180,7 +185,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
     public async Task OneWayClientStreamShouldSurfaceTheProducerFailure()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
@@ -233,6 +238,10 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         throw new Exception("expected the invocation to fail");
     }
 
+    private static TimeSpan ReadTimeBudget(TestSentFrame sent)
+        => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
+
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {
         var connections = (ClientConnection[])(typeof(SharpLinkClient).GetField(
@@ -259,7 +268,10 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
 
     private sealed class ProducerProbe
     {
-        internal bool Started;
+        internal TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal ulong RequestId;
     }
 
     private readonly struct ProbeClientStreams(ProducerProbe probe) : IRpcClientStreamWriter
@@ -269,7 +281,8 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             long requestId,
             CancellationToken cancellationToken)
         {
-            probe.Started = true;
+            probe.RequestId = unchecked((ulong)requestId);
+            probe.Started.TrySetResult();
             return ValueTask.CompletedTask;
         }
     }
