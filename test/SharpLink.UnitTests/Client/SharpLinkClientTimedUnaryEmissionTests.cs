@@ -6,10 +6,10 @@ using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
-public sealed class SharpLinkClientTrackedEmissionDeadlineTests
+public sealed class SharpLinkClientTimedUnaryEmissionTests
 {
     [Test]
-    public async Task TimedUnaryShouldObserveEmissionWithinTheSendPumpLifetime()
+    public async Task TimedUnaryShouldEmitThroughTheSendPumpOwnerWithoutAPerCallTask()
     {
         var timeProvider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();

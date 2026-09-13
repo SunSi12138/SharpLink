@@ -250,7 +250,7 @@ internal sealed partial class RpcSession
                     // latency bound before the transport flush; request deadlines no longer
                     // participate in that decision, they are enforced end to end by the
                     // caller's pending deadline and the remote cancellation path.
-                    if (_flushPolicyState.Capture().DeadlineBatchingEnabled &&
+                    if (_flushPolicyState.Capture().ExplicitBatchWindowEnabled &&
                         await WaitForMoreUntilFlushBoundaryAsync(
                             batchStartTimestamp,
                             bytesAccumulated).ConfigureAwait(false) &&
@@ -345,7 +345,7 @@ internal sealed partial class RpcSession
             int bytesAccumulated)
         {
             // Queue publication and policy publication share one wake authority. Every wake
-            // rechecks the queue, policy, stop state, and original batch deadline: a producer
+            // rechecks the queue, policy, stop state, and original batch window: a producer
             // may signal only after the pump has already consumed its published frame.
             while (true)
             {
@@ -355,7 +355,7 @@ internal sealed partial class RpcSession
                 var policy = _flushPolicyState.Capture();
                 if (policy.FlushEveryFrame || bytesAccumulated >= policy.FlushSizeThreshold)
                     return false;
-                if (!policy.DeadlineBatchingEnabled)
+                if (!policy.ExplicitBatchWindowEnabled)
                     return false;
 
                 var deadline = SharpLinkTime.AddDuration(
@@ -386,14 +386,14 @@ internal sealed partial class RpcSession
                     continue;
 
                 // A wake is a request to recheck state, not an independent flush boundary.
-                // Delayed signals for already consumed frames must not flush a timed batch.
+                // Delayed signals for already consumed frames must not flush a batched window early.
                 if (woke)
                     continue;
 
                 if (remaining <= MaximumTimerDelay)
                     return false;
                 // One chunk of a very long MaxLatency expired without a policy change. Recompute
-                // the remaining part of the same deadline before arming the next chunk.
+                // the remaining part of the same batch window before arming the next chunk.
             }
         }
 
