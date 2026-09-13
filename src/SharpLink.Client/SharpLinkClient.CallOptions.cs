@@ -59,9 +59,19 @@ internal sealed partial class SharpLinkClient
         var timeProvider = _runtimeContext.TimeProvider;
         // Untimed calls have no local anchor to preserve. Inherited deadlines below
         // still observe their own shared-clock or cross-clock projection boundary.
-        var deadline = selectedTimeout is { } timeout
-            ? RpcDeadline.Create(timeout, timeProvider.GetTimestamp(), timeProvider.TimestampFrequency)
-            : default;
+        // The stage keeps one timestamp: either the creation sample of this call's own deadline or
+        // the parent-clock observation that produced an inherited boundary. Validating the
+        // selected deadline against that sample costs nothing and cannot be stale, because the
+        // sample belongs to the same stage that selected it. The samples that decide whether the
+        // request may still be published are deliberately taken later, at pre-registration and in
+        // the publication gate, where observing the current clock is the point.
+        long validationTimestamp = 0;
+        var deadline = default(RpcDeadline);
+        if (selectedTimeout is { } timeout)
+        {
+            validationTimestamp = timeProvider.GetTimestamp();
+            deadline = RpcDeadline.Create(timeout, validationTimestamp, timeProvider.TimestampFrequency);
+        }
 
         var ambientCall = SharpLinkCallContext.Current;
         if (ambientCall is not null &&
@@ -118,11 +128,12 @@ internal sealed partial class SharpLinkClient
             if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, comparisonTimestamp))
             {
                 deadline = inheritedDeadline;
+                validationTimestamp = comparisonTimestamp;
                 lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
             }
         }
 
-        if (deadline.IsExpired(timeProvider))
+        if (deadline.HasValue && deadline.IsExpired(validationTimestamp))
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
             deadline,

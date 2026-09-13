@@ -28,7 +28,11 @@ public sealed class Stack13ClockTests
         client.UpdateRequestTimeout(TimeSpan.FromSeconds(1));
         clock.Reads = 0;
         var call = client.ResolveCallControl(null, true, false, null);
-        Ensure(call.Deadline.HasValue && clock.Reads == 2, "timed call captures and checks its boundary");
+        // Resolution captures the boundary once. Validating it against a second sample belongs to
+        // the boundary that can still fail the call before publication - the pre-registration
+        // checkpoint and the publication gate each take their own authoritative sample, and
+        // SharpLinkClientDeadlineClockReadTests pins the resulting per-call read budget.
+        Ensure(call.Deadline.HasValue && clock.Reads == 1, "timed call captures its boundary once");
         client.DisableRequestTimeout();
         clock.Reads = 0;
         call = client.ResolveCallControl(null, true, false, null);
