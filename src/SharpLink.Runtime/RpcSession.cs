@@ -178,7 +178,10 @@ internal sealed partial class RpcSession
         }
     }
 
-    internal void SendPacket(IRpcByteBufferWriter packet, RpcDeadline deadline = default)
+    internal void SendPacket(
+        IRpcByteBufferWriter packet,
+        RpcDeadline deadline = default,
+        IRequestEmissionFailureObserver? failureObserver = null)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -199,7 +202,7 @@ internal sealed partial class RpcSession
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
         var result = GetOrCreatePumpOrReturn(packet)
-            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null, deadline));
+            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null, deadline, failureObserver));
         if (result == SendEnqueueResult.Full)
         {
             throw SharpLinkResourceExhaustion.Create(
@@ -354,13 +357,15 @@ internal sealed partial class RpcSession
         IRpcByteBufferWriter packet,
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
-        RpcDeadline deadline = default)
+        RpcDeadline deadline = default,
+        IRequestEmissionFailureObserver? failureObserver = null)
         => new(
             packet,
             forceFlush,
             flushCompletion,
             IsProtocolProgressFrame(packet.WrittenSpan),
-            deadline);
+            deadline,
+            failureObserver);
 
     private static void ObserveAbandonedFlushCompletion(Task flushCompletion)
         => _ = ObserveAbandonedFlushCompletionAsync(flushCompletion);
