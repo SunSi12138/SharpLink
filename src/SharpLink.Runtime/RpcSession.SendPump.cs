@@ -203,13 +203,13 @@ internal sealed partial class RpcSession
                             batchStartTimestamp = _timeProvider.GetTimestamp();
 
                         // Take ownership of the frame before any write can fail: a fault during
-                        // WriteFrame/FlushAsync must still release the frame and complete its
+                        // the batch copy/FlushAsync must still release the frame and complete its
                         // flush waiter through the terminal ReleaseBatch in the finally block.
                         pending.Add(frame);
                         // The frame already carries the wire TimeBudget stamped once by the
-                        // producer. The pump copies frames as they arrive and never samples,
-                        // rewrites, or compacts a process-local deadline.
-                        WriteFrame(frame);
+                        // producer, so the pump never samples, rewrites, or compacts a
+                        // process-local deadline. It only coalesces the batch's frames into one
+                        // output span at flush time.
                         bytesAccumulated += frame.Length;
 
                         var flushPolicy = _flushPolicyState.Capture();
@@ -291,7 +291,6 @@ internal sealed partial class RpcSession
                    _progressQueue.Reader.TryRead(out var frame))
             {
                 pending.Add(frame);
-                WriteFrame(frame);
                 drained = true;
                 drainedCount++;
                 if (_flushPolicyState.Capture().FlushEveryFrame)
@@ -300,15 +299,32 @@ internal sealed partial class RpcSession
             return drained;
         }
 
-        private void WriteFrame(OwnedFrame frame)
+        /// <summary>
+        /// Copies every frame the batch still owns into one output span before the flush.
+        /// Serializing at flush time keeps the transport segments large instead of emitting one
+        /// span per arriving frame; the frames have already been serialized with their wire
+        /// TimeBudget, so this copy inspects no deadline.
+        /// </summary>
+        private void WritePendingBatch(List<OwnedFrame> pending)
         {
-            var source = frame.Memory.Span;
-            if (source.IsEmpty)
+            var length = 0;
+            for (var index = 0; index < pending.Count; index++)
+                length = checked(length + pending[index].Length);
+            if (length == 0)
                 return;
-            SharpLinkTelemetry.RecordSentBytes(source.Length);
-            var destination = _output.GetSpan(source.Length);
-            source.CopyTo(destination);
-            _output.Advance(source.Length);
+
+            var destination = _output.GetSpan(length);
+            var offset = 0;
+            for (var index = 0; index < pending.Count; index++)
+            {
+                var frame = pending[index];
+                if (frame.Length == 0)
+                    continue;
+                frame.Memory.Span.CopyTo(destination[offset..]);
+                offset += frame.Length;
+            }
+            _output.Advance(offset);
+            SharpLinkTelemetry.RecordSentBytes(offset);
         }
 
         private async ValueTask FlushAndReleaseAsync(List<OwnedFrame> pending)
@@ -316,6 +332,7 @@ internal sealed partial class RpcSession
             if (pending.Count == 0)
                 return;
 
+            WritePendingBatch(pending);
             var flush = _output.FlushAsync(_sessionCancellation);
             var result = await flush.ConfigureAwait(false);
             if (result.IsCanceled || result.IsCompleted)

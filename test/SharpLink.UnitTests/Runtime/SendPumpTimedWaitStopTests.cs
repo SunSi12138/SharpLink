@@ -19,7 +19,11 @@ public class SendPumpTimedWaitStopTests
             blockingWriter,
             RpcSessionTestFixture.ClientOptions(
                 context,
-                new RpcSessionFlushOptions(1024 * 1024, TimeSpan.MaxValue)));
+                // A threshold below the staged frame makes the pump flush the frame as soon as it
+                // dequeues it, so the write is in flight when the stop arrives. MaxLatency stays at
+                // its effectively infinite value: the next queue drain must arm that timed wait
+                // with the stop already latched.
+                new RpcSessionFlushOptions(FlushSizeThreshold: 16, TimeSpan.MaxValue)));
         var frame = CreateFrame(session, 32, requestId: 1);
 
         try
@@ -27,10 +31,10 @@ public class SendPumpTimedWaitStopTests
             session.SendPacket(frame);
             await blockingWriter.Entered;
 
-            // The pump has dequeued the frame but is blocked inside WriteFrame. Stop now:
-            // its wake is latched before the timed wait can arm. Once the write resumes,
-            // stale data-wake cleanup must not swallow this stop and park the pump on the
-            // effectively infinite MaxLatency timer.
+            // The pump has dequeued the frame and is blocked inside the batch write that its own
+            // flush triggered. Stop now: its wake is latched before the timed wait can arm. Once
+            // the write resumes, stale data-wake cleanup must not swallow this stop and park the
+            // pump on the effectively infinite MaxLatency timer.
             var dispose = session.DisposeAsync().AsTask();
             blockingWriter.Release();
 
