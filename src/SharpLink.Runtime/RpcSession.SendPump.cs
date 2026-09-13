@@ -33,7 +33,6 @@ internal sealed partial class RpcSession
         private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
         private readonly WakeupSignal _wakeup = new();
-        private readonly List<OwnedFrame> _expiredFrames = [];
         private readonly Task _pumpTask;
         private TaskCompletionSource<bool>? _capacityChanged;
         private long _queuedBytes;
@@ -164,8 +163,6 @@ internal sealed partial class RpcSession
             Exception terminalException = CreateTransportClosedException();
             var bytesAccumulated = 0;
             var batchStartTimestamp = 0L;
-            var writtenCount = 0;
-            var deferWrites = false;
 
             try
             {
@@ -186,19 +183,15 @@ internal sealed partial class RpcSession
                         continue;
                     }
 
-                    if (await DrainProgressQueueAsync(pending, deferWrites).ConfigureAwait(false))
+                    if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
                     {
                         // Progress frames must not wait for a full batch:
                         // flush whatever the batch still holds (LowLatency
                         // already flushed per frame inside the drain).
-                        if (!deferWrites)
-                            writtenCount = pending.Count;
                         if (pending.Count > 0)
                         {
-                            await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
+                            await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                             bytesAccumulated = 0;
-                            writtenCount = 0;
-                            deferWrites = false;
                         }
                         batchStartTimestamp = 0;
                     }
@@ -210,36 +203,23 @@ internal sealed partial class RpcSession
                             batchStartTimestamp = _timeProvider.GetTimestamp();
 
                         // Take ownership of the frame before any write can fail: a fault during
-                        // WriteFrame/FlushAsync must still release the frame and complete its
+                        // the batch copy/FlushAsync must still release the frame and complete its
                         // flush waiter through the terminal ReleaseBatch in the finally block.
                         pending.Add(frame);
-                        var hasTimeBudget = HasTimeBudget(frame);
-                        if (!deferWrites)
-                        {
-                            if (hasTimeBudget)
-                                deferWrites = true;
-                            else
-                            {
-                                WriteFrame(frame);
-                                writtenCount++;
-                            }
-                        }
+                        // The frame already carries the wire TimeBudget stamped once by the
+                        // producer, so the pump never samples, rewrites, or compacts a
+                        // process-local deadline. It only coalesces the batch's frames into one
+                        // output span at flush time.
                         bytesAccumulated += frame.Length;
 
-                        // Already queued requests can share one publication boundary. All
-                        // copies precede a single deadline sample, and a timed suffix never
-                        // waits for new arrivals or the configured batching timer.
                         var flushPolicy = _flushPolicyState.Capture();
-                        if ((deferWrites && normalFramesSinceInterleave >= NormalFramesPerInterleave - 1) ||
-                            frame.ForceFlush ||
+                        if (frame.ForceFlush ||
                             flushPolicy.FlushEveryFrame ||
                             bytesAccumulated >= flushPolicy.FlushSizeThreshold)
                         {
-                            await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
+                            await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                             bytesAccumulated = 0;
                             batchStartTimestamp = 0;
-                            writtenCount = 0;
-                            deferWrites = false;
                         }
 
                         // Bounded progress interleave: the progress check is
@@ -251,16 +231,12 @@ internal sealed partial class RpcSession
                         if (normalFramesSinceInterleave >= NormalFramesPerInterleave)
                         {
                             normalFramesSinceInterleave = 0;
-                            if (await DrainProgressQueueAsync(pending, deferWrites).ConfigureAwait(false))
+                            if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
                             {
-                                if (!deferWrites)
-                                    writtenCount = pending.Count;
                                 if (pending.Count > 0)
                                 {
-                                    await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
+                                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                                     bytesAccumulated = 0;
-                                    writtenCount = 0;
-                                    deferWrites = false;
                                 }
                                 batchStartTimestamp = 0;
                             }
@@ -270,11 +246,11 @@ internal sealed partial class RpcSession
                     if (pending.Count == 0)
                         continue;
 
-                    // Profile-default batching still flushes when the queue drains. Only an
-                    // explicitly timed generation waits; runtime updates publish such a generation
-                    // and wake this same pump so the active batch is re-evaluated from its original
-                    // start timestamp.
-                    if (!deferWrites && _flushPolicyState.Capture().DeadlineBatchingEnabled &&
+                    // Profile batching still coalesces queued frames up to the configured
+                    // latency bound before the transport flush; request deadlines no longer
+                    // participate in that decision, they are enforced end to end by the
+                    // caller's pending deadline and the remote cancellation path.
+                    if (_flushPolicyState.Capture().ExplicitBatchWindowEnabled &&
                         await WaitForMoreUntilFlushBoundaryAsync(
                             batchStartTimestamp,
                             bytesAccumulated).ConfigureAwait(false) &&
@@ -283,11 +259,9 @@ internal sealed partial class RpcSession
                         continue;
                     }
 
-                    await FlushAndReleaseAsync(pending, writtenCount).ConfigureAwait(false);
+                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                     bytesAccumulated = 0;
                     batchStartTimestamp = 0;
-                    writtenCount = 0;
-                    deferWrites = false;
                 }
             }
             catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
@@ -307,163 +281,63 @@ internal sealed partial class RpcSession
             }
         }
 
-        private async ValueTask<bool> DrainProgressQueueAsync(
-            List<OwnedFrame> pending,
-            bool deferWrites)
+        private async ValueTask<bool> DrainProgressQueueAsync(List<OwnedFrame> pending)
         {
             // The drain runs until the progress queue is empty so the service
-            // rate always matches the arrival rate. If an earlier deadline-bearing
-            // frame is deferred, progress stays behind it; otherwise preserve the
-            // original immediate-copy ordering and only delay the transport flush.
+            // rate always matches the arrival rate.
             var drained = false;
             var drainedCount = 0;
             while (drainedCount < ProgressFramesPerDrain &&
                    _progressQueue.Reader.TryRead(out var frame))
             {
                 pending.Add(frame);
-                if (!deferWrites)
-                    WriteFrame(frame);
                 drained = true;
                 drainedCount++;
                 if (_flushPolicyState.Capture().FlushEveryFrame)
-                {
-                    await FlushAndReleaseAsync(
-                        pending,
-                        deferWrites ? 0 : pending.Count).ConfigureAwait(false);
-                }
+                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
             }
             return drained;
         }
 
-        private static bool HasTimeBudget(OwnedFrame frame)
-        {
-            var source = frame.Memory.Span;
-            return source.Length >=
-                       ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes + sizeof(long) &&
-                   (ProtocolV2FrameType)source[5] == ProtocolV2FrameType.Request &&
-                   (((ProtocolV2FrameFlags)source[6]) & ProtocolV2FrameFlags.HasTimeBudget) != 0;
-        }
-
-        private void WriteFrame(OwnedFrame frame)
-        {
-            var source = frame.Memory.Span;
-            if (source.IsEmpty)
-                return;
-            SharpLinkTelemetry.RecordSentBytes(source.Length);
-            var destination = _output.GetSpan(source.Length);
-            source.CopyTo(destination);
-            _output.Advance(source.Length);
-        }
-
-        private int WriteRetainedBatchAtEmission(
-            List<OwnedFrame> pending,
-            int writtenCount,
-            List<OwnedFrame> expired)
+        /// <summary>
+        /// Copies every frame the batch still owns into one output span before the flush.
+        /// Serializing at flush time keeps the transport segments large instead of emitting one
+        /// span per arriving frame; the frames have already been serialized with their wire
+        /// TimeBudget, so this copy inspects no deadline.
+        /// </summary>
+        private void WritePendingBatch(List<OwnedFrame> pending)
         {
             var length = 0;
-            for (var index = writtenCount; index < pending.Count; index++)
-            {
-                var frame = pending[index];
-                if (HasTimeBudget(frame) && !frame.Deadline.HasValue)
-                {
-                    throw new InvalidOperationException(
-                        "A Request carrying TimeBudget must retain its process-local RpcDeadline until emission.");
-                }
-                length = checked(length + frame.Length);
-            }
+            for (var index = 0; index < pending.Count; index++)
+                length = checked(length + pending[index].Length);
             if (length == 0)
-                return 0;
+                return;
 
-            // Acquire one span and finish every payload copy before sampling the clock.
-            // No later frame can call a custom writer/provider between the shared sample
-            // and publication. The bounded pass below only compacts expired frames and
-            // stamps surviving budgets in this already acquired span.
-            expired.EnsureCapacity(pending.Count - writtenCount);
             var destination = _output.GetSpan(length);
             var offset = 0;
-            for (var index = writtenCount; index < pending.Count; index++)
+            for (var index = 0; index < pending.Count; index++)
             {
                 var frame = pending[index];
+                if (frame.Length == 0)
+                    continue;
                 frame.Memory.Span.CopyTo(destination[offset..]);
                 offset += frame.Length;
             }
-            var frequency = _timeProvider.TimestampFrequency;
-            var timestamp = _timeProvider.GetTimestamp();
-            var sourceOffset = 0;
-            var destinationOffset = 0;
-            for (var index = writtenCount; index < pending.Count;)
-            {
-                var frame = pending[index];
-                var timed = HasTimeBudget(frame);
-                var remaining = timed
-                    ? frame.Deadline.GetRemaining(timestamp, frequency)
-                    : TimeSpan.MaxValue;
-                if (remaining <= TimeSpan.Zero)
-                {
-                    expired.Add(frame);
-                    pending.RemoveAt(index);
-                    sourceOffset += frame.Length;
-                    continue;
-                }
-                if (sourceOffset != destinationOffset)
-                    destination.Slice(sourceOffset, frame.Length).CopyTo(destination[destinationOffset..]);
-                if (timed)
-                {
-                    var budgetOffset = destinationOffset + ProtocolV2Constants.HeaderBytes +
-                        ProtocolV2Constants.RequestPrefixBytes;
-                    BinaryPrimitives.WriteInt64LittleEndian(
-                        destination.Slice(budgetOffset, sizeof(long)), remaining.Ticks);
-                }
-                sourceOffset += frame.Length;
-                destinationOffset += frame.Length;
-                index++;
-            }
-            _output.Advance(destinationOffset);
-            return destinationOffset;
+            _output.Advance(offset);
+            SharpLinkTelemetry.RecordSentBytes(offset);
         }
 
-        private async ValueTask FlushAndReleaseAsync(
-            List<OwnedFrame> pending,
-            int writtenCount)
+        private async ValueTask FlushAndReleaseAsync(List<OwnedFrame> pending)
         {
-            var expired = _expiredFrames;
-            try
-            {
-                var sentBytes = WriteRetainedBatchAtEmission(pending, writtenCount, expired);
-                if (pending.Count == 0)
-                    return;
+            if (pending.Count == 0)
+                return;
 
-                // Initiate publication before callbacks for dropped requests or telemetry:
-                // neither may consume a surviving request's already sampled wire budget.
-                var flush = _output.FlushAsync(_sessionCancellation);
-                CompleteExpiredBatch(expired);
-                if (sentBytes > 0)
-                    SharpLinkTelemetry.RecordSentBytes(sentBytes);
-                var result = await flush.ConfigureAwait(false);
-                if (result.IsCanceled || result.IsCompleted)
-                    throw CreateTransportClosedException();
-                ReleaseBatch(pending, exception: null);
-            }
-            finally
-            {
-                CompleteExpiredBatch(expired);
-            }
-        }
-
-        private void CompleteExpiredBatch(List<OwnedFrame> expired)
-        {
-            while (expired.Count > 0)
-            {
-                var index = expired.Count - 1;
-                var frame = expired[index];
-                expired.RemoveAt(index);
-                CompleteReserved(
-                    frame,
-                    new SharpLinkException(
-                        SharpLinkErrorCode.DeadlineExceeded,
-                        "Request deadline expired before transport emission."),
-                    completeFlushWaiter: true);
-            }
+            WritePendingBatch(pending);
+            var flush = _output.FlushAsync(_sessionCancellation);
+            var result = await flush.ConfigureAwait(false);
+            if (result.IsCanceled || result.IsCompleted)
+                throw CreateTransportClosedException();
+            ReleaseBatch(pending, exception: null);
         }
 
         private async ValueTask<bool> WaitForMoreUntilFlushBoundaryAsync(
@@ -471,7 +345,7 @@ internal sealed partial class RpcSession
             int bytesAccumulated)
         {
             // Queue publication and policy publication share one wake authority. Every wake
-            // rechecks the queue, policy, stop state, and original batch deadline: a producer
+            // rechecks the queue, policy, stop state, and original batch window: a producer
             // may signal only after the pump has already consumed its published frame.
             while (true)
             {
@@ -481,7 +355,7 @@ internal sealed partial class RpcSession
                 var policy = _flushPolicyState.Capture();
                 if (policy.FlushEveryFrame || bytesAccumulated >= policy.FlushSizeThreshold)
                     return false;
-                if (!policy.DeadlineBatchingEnabled)
+                if (!policy.ExplicitBatchWindowEnabled)
                     return false;
 
                 var deadline = SharpLinkTime.AddDuration(
@@ -512,14 +386,14 @@ internal sealed partial class RpcSession
                     continue;
 
                 // A wake is a request to recheck state, not an independent flush boundary.
-                // Delayed signals for already consumed frames must not flush a timed batch.
+                // Delayed signals for already consumed frames must not flush a batched window early.
                 if (woke)
                     continue;
 
                 if (remaining <= MaximumTimerDelay)
                     return false;
                 // One chunk of a very long MaxLatency expired without a policy change. Recompute
-                // the remaining part of the same deadline before arming the next chunk.
+                // the remaining part of the same batch window before arming the next chunk.
             }
         }
 

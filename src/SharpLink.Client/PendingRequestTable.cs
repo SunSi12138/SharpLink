@@ -29,7 +29,8 @@ internal readonly record struct PendingCallCompletion(
     PendingCallKind Kind,
     PendingCallCompletionReason Reason,
     IStreamDispatcher? Dispatcher,
-    Exception? Exception);
+    Exception? Exception,
+    bool RequestPublished);
 
 internal interface IPendingCallOwner
 {
@@ -61,7 +62,7 @@ internal interface IPendingCallCompletionObserver
 /// so response, cancellation, deadline and disconnect races converge on one terminal path. The
 /// operation object is returned to its type-specific pool only after its caller observes GetResult.
 /// </remarks>
-internal sealed class PendingRequestTable : IDisposable, IRequestEmissionFailureObserver
+internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissionFailureObserver
 {
     private readonly int _indexMask;
     private readonly int _capacity;
@@ -908,7 +909,8 @@ internal sealed class PendingRequestTable : IDisposable, IRequestEmissionFailure
                 call.Kind,
                 reason,
                 call.Dispatcher,
-                exception);
+                exception,
+                call.RequestPublished);
             // Decode response payloads before reporting the terminal admission outcome so malformed
             // endpoint responses are not published as successful attempts.
             call.CompletionObserver?.OnPendingCallCompleted(in completion);
@@ -1122,6 +1124,7 @@ internal sealed class PendingRequestTable : IDisposable, IRequestEmissionFailure
         private CancellationTokenSource? _producerCancellation;
         private IPendingCallCompletionObserver? _completionObserver;
         private int _registered;
+        private bool _requestPublished;
 
         public object CompletionGate { get; } = new();
 
@@ -1134,6 +1137,20 @@ internal sealed class PendingRequestTable : IDisposable, IRequestEmissionFailure
         public CancellationToken ProducerCancellationToken
             => _producerCancellation?.Token ?? CancellationToken.None;
         public IPendingCallCompletionObserver? CompletionObserver => _completionObserver;
+
+        /// <summary>
+        /// Whether the owning Request frame reached the session send queue while this call was
+        /// still live.
+        /// </summary>
+        /// <remarks>
+        /// Written once by the publisher while it holds <see cref="CompletionGate"/> and only read
+        /// after the call left the slot, so the gate orders the flag against every terminal
+        /// transition. A terminal transition that observes this as false must not emit a cancel:
+        /// the peer would discard a cancel for a request it never received.
+        /// </remarks>
+        public bool RequestPublished => _requestPublished;
+
+        public void MarkRequestPublished() => _requestPublished = true;
 
         public static PendingCall Rent(
             PendingRequestTable table,
@@ -1152,6 +1169,7 @@ internal sealed class PendingRequestTable : IDisposable, IRequestEmissionFailure
 
             call._table = table;
             Volatile.Write(ref call._registered, 0);
+            call._requestPublished = false;
             call.Id = id;
             call.Kind = kind;
             call.Operation = operation;

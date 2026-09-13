@@ -49,7 +49,8 @@ internal sealed partial class SharpLinkClient
                 if (deadline.HasValue)
                 {
                     BinaryPrimitives.WriteInt64LittleEndian(
-                        span[ProtocolV2Constants.RequestPrefixBytes..], 0L);
+                        span[ProtocolV2Constants.RequestPrefixBytes..],
+                        deadline.GetRemaining(_runtimeContext.TimeProvider).Ticks);
                 }
                 writer.Advance(prefixLength);
                 if (hasMetadata)
@@ -61,7 +62,7 @@ internal sealed partial class SharpLinkClient
             }
 
             ownsWriter = false;
-            session.SendPacket(writer, deadline);
+            session.SendPacket(writer);
         }
         finally
         {

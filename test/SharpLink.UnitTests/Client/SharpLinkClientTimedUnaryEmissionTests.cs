@@ -1,13 +1,15 @@
+using System.Buffers.Binary;
 using System.Reflection;
+using System.Threading;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
-public sealed class SharpLinkClientTrackedEmissionDeadlineTests
+public sealed class SharpLinkClientTimedUnaryEmissionTests
 {
     [Test]
-    public async Task TimedUnaryShouldObserveEmissionWithinTheSendPumpLifetime()
+    public async Task TimedUnaryShouldEmitThroughTheSendPumpOwnerWithoutAPerCallTask()
     {
         var timeProvider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
@@ -58,17 +60,13 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
     }
 
     [Test]
-    public async Task TimedUnaryDroppedAtEmissionShouldCompleteWithoutDeadlineTimerCallback()
+    public async Task TimedUnaryShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder =>
-            {
-                builder.UseTimeProvider(timeProvider);
-                builder.UseRpcSessionFlush(1024 * 1024, TimeSpan.FromSeconds(10));
-            });
+            builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
 
         var method = new RpcMethodDescriptor(
@@ -97,14 +95,82 @@ public sealed class SharpLinkClientTrackedEmissionDeadlineTests
             metadata: null,
             cancellationToken: default).AsTask();
 
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
+            "the wire TimeBudget must be the remaining sampled once when the frame is created");
+
+        // The send pump no longer drops an expired frame: the Request reaches the transport and
+        // the pending deadline scan owns the terminal failure end to end.
+        timeProvider.Advance(TimeSpan.Zero);
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "a tracked Unary Request dropped at emission must complete its pending call immediately");
-        Ensure(!await transport.Connection.TryWaitForSentPacket(
-                ProtocolV2FrameType.Request,
-                TimeSpan.FromMilliseconds(50)),
-            "an expired Unary Request must not reach the transport");
+            "an emitted Unary whose budget elapsed must fail through its pending deadline");
+        var cancel = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        Ensure(cancel.Header.RequestId == sent.Header.RequestId,
+            "the pending deadline must cancel the already-emitted remote call");
     }
+
+    [Test]
+    public async Task TimedUnaryStuckInTheTransportWriteQueueShouldStillFailAtItsDeadline()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseTimeProvider(timeProvider));
+        await client.ConnectAsync();
+
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
+
+        using var releaseWrite = new ManualResetEventSlim();
+        var writeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.Connection.RunOnNextOutputBufferRequest(() =>
+        {
+            writeEntered.TrySetResult();
+            releaseWrite.Wait(TimeSpan.FromSeconds(10));
+        });
+
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 293,
+            Kind: RpcMethodKind.Unary,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(5));
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        try
+        {
+            var invocation = channel.InvokeUnaryAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                metadata: null,
+                cancellationToken: default).AsTask();
+            await writeEntered.Task;
+            Ensure(!invocation.IsCompleted,
+                "a Request blocked inside the transport write must still be in flight");
+
+            // The pump cannot publish any further frame while the transport write is blocked, so
+            // this failure can only come from the client's own pending deadline.
+            timeProvider.Advance(TimeSpan.FromSeconds(5));
+            var failure = await CaptureSharpLinkExceptionAsync(invocation)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+                "a Request stuck in the transport write queue must still fail at its deadline");
+        }
+        finally
+        {
+            releaseWrite.Set();
+        }
+    }
+
+    private static TimeSpan ReadTimeBudget(TestSentFrame sent)
+        => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {
