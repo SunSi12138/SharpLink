@@ -28,11 +28,56 @@ public sealed class Stack13ClockTests
         client.UpdateRequestTimeout(TimeSpan.FromSeconds(1));
         clock.Reads = 0;
         var call = client.ResolveCallControl(null, true, false, null);
-        Ensure(call.Deadline.HasValue && clock.Reads == 2, "timed call captures and checks its boundary");
+        // Resolution captures the boundary once. Validating it against a second sample belongs to
+        // the boundary that can still fail the call before publication - the pre-registration
+        // checkpoint and the publication gate each take their own authoritative sample, and
+        // SharpLinkClientDeadlineClockReadTests pins the resulting per-call read budget.
+        Ensure(call.Deadline.HasValue && clock.Reads == 1, "timed call captures its boundary once");
         client.DisableRequestTimeout();
         clock.Reads = 0;
         call = client.ResolveCallControl(null, true, false, null);
         Ensure(!call.Deadline.HasValue && clock.Reads == 0, "disable only affects future calls");
+    }
+
+    [Test]
+    public async Task ResolveShouldValidateLocalDeadlineAtLaterInheritedComparisonSample()
+    {
+        var clock = new CountingClock();
+        await using var publicClient = CreateClient(clock);
+        var client = (SharpLinkClient)publicClient;
+        var parentDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), clock);
+        using var scope = SharpLinkCallContext.Push(
+            new SharpLinkCallContextSnapshot("parent", null, parentDeadline, clock));
+
+        clock.Reads = 0;
+        var resolveStarted = clock.Now;
+        clock.AfterRead = read =>
+        {
+            if (read == 1)
+                clock.Now = resolveStarted + 2 * clock.TimestampFrequency;
+        };
+
+        try
+        {
+            try
+            {
+                _ = client.ResolveCallControl(
+                    null,
+                    includeClientDefault: true,
+                    hasMethodTimeout: true,
+                    methodTimeout: TimeSpan.FromSeconds(1));
+                throw new Exception("expired local deadline was accepted after inherited comparison");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded,
+                    "the later inherited-comparison sample must validate the selected local deadline");
+            }
+        }
+        finally
+        {
+            clock.AfterRead = null;
+        }
     }
 
     [Test]
@@ -89,11 +134,14 @@ public sealed class Stack13ClockTests
     {
         internal long Now = 1000000;
         internal int Reads;
+        internal Action<int>? AfterRead;
         public override long TimestampFrequency => 1000000000;
         public override long GetTimestamp()
         {
+            var now = Now;
             Reads++;
-            return Now;
+            AfterRead?.Invoke(Reads);
+            return now;
         }
     }
 

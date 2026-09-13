@@ -375,7 +375,9 @@ internal sealed partial class SharpLinkClient
         var reservationOwned = false;
         try
         {
-            EnsureLogicalCallProgress(control);
+            // Connection selection is the first step that can block, so the pre-registration
+            // checkpoint below is the first place a fresh sample carries new information. A sample
+            // here would only repeat the stage-local validation the call control already did.
             connection = GetReadyConnection(method, retrySelection: null, outcome);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);

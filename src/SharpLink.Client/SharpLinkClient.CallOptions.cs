@@ -59,9 +59,18 @@ internal sealed partial class SharpLinkClient
         var timeProvider = _runtimeContext.TimeProvider;
         // Untimed calls have no local anchor to preserve. Inherited deadlines below
         // still observe their own shared-clock or cross-clock projection boundary.
-        var deadline = selectedTimeout is { } timeout
-            ? RpcDeadline.Create(timeout, timeProvider.GetTimestamp(), timeProvider.TimestampFrequency)
-            : default;
+        // Validation reuses timestamps this stage already needs. A local deadline starts with its
+        // creation sample; if inherited-deadline comparison observes a later child-clock sample,
+        // that newer sample validates whichever deadline wins. The samples that decide whether the
+        // request may still be published are deliberately taken later, at pre-registration and in
+        // the publication gate, where observing the current clock is the point.
+        long validationTimestamp = 0;
+        var deadline = default(RpcDeadline);
+        if (selectedTimeout is { } timeout)
+        {
+            validationTimestamp = timeProvider.GetTimestamp();
+            deadline = RpcDeadline.Create(timeout, validationTimestamp, timeProvider.TimestampFrequency);
+        }
 
         var ambientCall = SharpLinkCallContext.Current;
         if (ambientCall is not null &&
@@ -115,6 +124,7 @@ internal sealed partial class SharpLinkClient
                     timeProvider.TimestampFrequency);
             }
 
+            validationTimestamp = comparisonTimestamp;
             if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, comparisonTimestamp))
             {
                 deadline = inheritedDeadline;
@@ -122,7 +132,7 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        if (deadline.IsExpired(timeProvider))
+        if (deadline.HasValue && deadline.IsExpired(validationTimestamp))
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
             deadline,
