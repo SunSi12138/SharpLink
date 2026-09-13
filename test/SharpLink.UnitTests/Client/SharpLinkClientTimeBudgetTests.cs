@@ -316,87 +316,87 @@ public class SharpLinkClientTimeBudgetTests
         switch (kind)
         {
             case RpcMethodKind.Unary:
-            {
-                var invocation = channel.InvokeUnaryAsync(
-                    method,
-                    in request,
-                    RpcEmptyRequestCodec.Instance,
-                    responseCodec,
-                    metadata: null,
-                    cancellationToken: cancellation.Token);
-                var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
-                Ensure(HasTimeBudget(sent),
-                    "the client default must reach a unary method that declares no [Timeout]");
-                Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(30),
-                    "the unary Request must carry the client default budget for the benchmark shape");
-                await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
-                await invocation;
-                return;
-            }
+                {
+                    var invocation = channel.InvokeUnaryAsync(
+                        method,
+                        in request,
+                        RpcEmptyRequestCodec.Instance,
+                        responseCodec,
+                        metadata: null,
+                        cancellationToken: cancellation.Token);
+                    var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+                    Ensure(HasTimeBudget(sent),
+                        "the client default must reach a unary method that declares no [Timeout]");
+                    Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(30),
+                        "the unary Request must carry the client default budget for the benchmark shape");
+                    await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
+                    await invocation;
+                    return;
+                }
             case RpcMethodKind.OneWay:
-            {
-                var invocation = channel.InvokeOneWayAsync(
-                    method,
-                    in request,
-                    RpcEmptyRequestCodec.Instance,
-                    in noStreams,
-                    metadata: null,
-                    cancellationToken: default).AsTask();
-                var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
-                Ensure(!HasTimeBudget(sent),
-                    "the client default must not reach a plain OneWay benchmark method");
-                await invocation;
-                return;
-            }
+                {
+                    var invocation = channel.InvokeOneWayAsync(
+                        method,
+                        in request,
+                        RpcEmptyRequestCodec.Instance,
+                        in noStreams,
+                        metadata: null,
+                        cancellationToken: default).AsTask();
+                    var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+                    Ensure(!HasTimeBudget(sent),
+                        "the client default must not reach a plain OneWay benchmark method");
+                    await invocation;
+                    return;
+                }
             case RpcMethodKind.ClientStreaming:
-            {
-                var invocation = channel.InvokeClientStreamingAsync(
-                    method,
-                    in request,
-                    RpcEmptyRequestCodec.Instance,
-                    responseCodec,
-                    in producer,
-                    metadata: null,
-                    cancellationToken: cancellation.Token).AsTask();
-                var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
-                Ensure(!HasTimeBudget(sent),
-                    "the client default must not reach a client-streaming benchmark Request");
-                await CancelAndIgnoreAsync(cancellation, invocation);
-                return;
-            }
+                {
+                    var invocation = channel.InvokeClientStreamingAsync(
+                        method,
+                        in request,
+                        RpcEmptyRequestCodec.Instance,
+                        responseCodec,
+                        in producer,
+                        metadata: null,
+                        cancellationToken: cancellation.Token).AsTask();
+                    var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+                    Ensure(!HasTimeBudget(sent),
+                        "the client default must not reach a client-streaming benchmark Request");
+                    await CancelAndIgnoreAsync(cancellation, invocation);
+                    return;
+                }
             case RpcMethodKind.ServerStreaming:
-            {
-                await using var enumerator = channel.InvokeServerStreamingAsync(
-                    method,
-                    in request,
-                    RpcEmptyRequestCodec.Instance,
-                    responseCodec,
-                    metadata: null,
-                    cancellationToken: cancellation.Token).GetAsyncEnumerator();
-                var moveNext = enumerator.MoveNextAsync().AsTask();
-                var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
-                Ensure(!HasTimeBudget(sent),
-                    "the client default must not reach a server-streaming benchmark Request");
-                await CancelAndIgnoreAsync(cancellation, moveNext);
-                return;
-            }
+                {
+                    await using var enumerator = channel.InvokeServerStreamingAsync(
+                        method,
+                        in request,
+                        RpcEmptyRequestCodec.Instance,
+                        responseCodec,
+                        metadata: null,
+                        cancellationToken: cancellation.Token).GetAsyncEnumerator();
+                    var moveNext = enumerator.MoveNextAsync().AsTask();
+                    var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+                    Ensure(!HasTimeBudget(sent),
+                        "the client default must not reach a server-streaming benchmark Request");
+                    await CancelAndIgnoreAsync(cancellation, moveNext);
+                    return;
+                }
             default:
-            {
-                await using var enumerator = channel.InvokeDuplexStreamingAsync(
-                    method,
-                    in request,
-                    RpcEmptyRequestCodec.Instance,
-                    responseCodec,
-                    in producer,
-                    metadata: null,
-                    cancellationToken: cancellation.Token).GetAsyncEnumerator();
-                var moveNext = enumerator.MoveNextAsync().AsTask();
-                var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
-                Ensure(!HasTimeBudget(sent),
-                    "the client default must not reach a duplex benchmark Request");
-                await CancelAndIgnoreAsync(cancellation, moveNext);
-                return;
-            }
+                {
+                    await using var enumerator = channel.InvokeDuplexStreamingAsync(
+                        method,
+                        in request,
+                        RpcEmptyRequestCodec.Instance,
+                        responseCodec,
+                        in producer,
+                        metadata: null,
+                        cancellationToken: cancellation.Token).GetAsyncEnumerator();
+                    var moveNext = enumerator.MoveNextAsync().AsTask();
+                    var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+                    Ensure(!HasTimeBudget(sent),
+                        "the client default must not reach a duplex benchmark Request");
+                    await CancelAndIgnoreAsync(cancellation, moveNext);
+                    return;
+                }
         }
     }
 
