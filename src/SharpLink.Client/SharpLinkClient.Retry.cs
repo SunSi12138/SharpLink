@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkClient
                 request, requestCodec, responseCodec, control, cancellationToken);
         }
 
-        var generation = control.LogicalCall?.RetryGeneration ?? CaptureRetryGeneration();
+        var generation = control.RetryGeneration ?? control.LogicalCall?.RetryGeneration ?? CaptureRetryGeneration();
         if (!generation.Enabled)
         {
             return InvokeUnaryCoreAsync(
@@ -136,9 +136,20 @@ internal sealed partial class SharpLinkClient
 
     internal static void EnsureLogicalCallProgress(in ResolvedCallControl control)
     {
-        if (control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
+        if (control.LogicalCall is { } logicalCall)
+        {
+            if (!logicalCall.TryEnterProgress())
+                throw CreateDeadlineExceededException();
+            return;
+        }
+
+        if (IsDeadlineElapsed(control))
             throw CreateDeadlineExceededException();
     }
+
+    private static bool IsDeadlineElapsed(in ResolvedCallControl control)
+        => control is { Deadline.HasValue: true, TimeProvider: { } provider }
+           && control.Deadline.IsExpired(provider);
 
     internal static Exception ArbitrateLogicalCallFailure(
         in ResolvedCallControl control,
@@ -146,9 +157,11 @@ internal sealed partial class SharpLinkClient
     {
         if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
             _ = control.LogicalCall?.TryClaimDeadline();
-        if (control.LogicalCall is { } logicalCall && !logicalCall.TryEnterProgress())
-            return CreateDeadlineExceededException();
-        return exception;
+
+        if (control.LogicalCall is { } logicalCall)
+            return logicalCall.TryEnterProgress() ? exception : CreateDeadlineExceededException();
+
+        return IsDeadlineElapsed(control) ? CreateDeadlineExceededException() : exception;
     }
 
     private static SharpLinkRetryDecision EvaluateRetryDecision(

@@ -22,7 +22,8 @@ internal sealed partial class SharpLinkClient
         bool includeClientDefault,
         bool hasMethodTimeout,
         TimeSpan? methodTimeout,
-        ref ClientCallLifetimeSource lifetimeSource)
+        ref ClientCallLifetimeSource lifetimeSource,
+        bool allocateSharedLogicalCall = true)
     {
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
@@ -126,9 +127,12 @@ internal sealed partial class SharpLinkClient
         return new ResolvedCallControl(
             deadline,
             metadata is { Count: > 0 } ? metadata : null,
-            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null,
+            deadline.HasValue && allocateSharedLogicalCall
+                ? new ClientLogicalCallState(deadline, timeProvider)
+                : null,
             lifetimeSource,
-            telemetryDetailMode);
+            telemetryDetailMode,
+            timeProvider);
     }
 
     private async ValueTask DelayForRetryOrAdmissionAsync(
@@ -212,5 +216,7 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? Metadata,
         ClientLogicalCallState? LogicalCall,
         ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None,
-        SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed);
+        SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed,
+        TimeProvider? TimeProvider = null,
+        ClientRetryGeneration? RetryGeneration = null);
 }

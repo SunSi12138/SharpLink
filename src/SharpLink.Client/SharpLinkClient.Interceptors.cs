@@ -250,7 +250,9 @@ internal sealed partial class SharpLinkClient
             => new(
                 _control.Deadline,
                 context.Metadata is { Count: > 0 } ? context.Metadata : null,
-                _control.LogicalCall);
+                _control.LogicalCall,
+                RetryGeneration: _control.RetryGeneration,
+                TimeProvider: _control.TimeProvider ?? _client._runtimeContext.TimeProvider);
 
         private void ThrowIfFrozenDeadlineExpired()
         {

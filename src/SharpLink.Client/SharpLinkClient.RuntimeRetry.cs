@@ -120,12 +120,9 @@ internal sealed partial class SharpLinkClient
 
         var generation = CaptureRetryGeneration();
         if (control.LogicalCall is { } logicalCall)
-        {
             logicalCall.AttachRetryGeneration(generation);
-            return control;
-        }
 
-        return control with { LogicalCall = generation.SharedLogicalCall };
+        return control with { RetryGeneration = generation };
     }
 
     internal readonly record struct ClientRetrySettings(
