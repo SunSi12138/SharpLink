@@ -8,6 +8,10 @@
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 
+### Fixed
+
+- Fixed a hung OneWay call with client streams when the logical deadline elapsed while the producer was still running. The pending call was terminated by the deadline first, and the invoker then awaited the pooled lease operation a second time, which never completes; the invocation never returned, its producer stayed alive, and the client's logical invocation accounting never drained. The invoker now observes the pending call's terminal result exactly once and lets the pending terminal reason win over the local send failure.
+
 ## [2.0.0] - 2026-09-13
 
 ### Release boundaries

@@ -587,7 +587,6 @@ internal sealed partial class SharpLinkClient
                 {
                     await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
                     connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
-                    _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
                 }
                 else
                 {
@@ -598,8 +597,16 @@ internal sealed partial class SharpLinkClient
             {
                 if (method.HasClientStreams)
                 {
-                    connection!.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
-                    _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
+                    // Publish the local send/producer failure and let the pending table arbitrate.
+                    // The table holds the completion gate, so a deadline that expired, a caller
+                    // cancellation, or a closed connection that already claimed the call stays
+                    // authoritative; this call is then a no-op. Throwing the local exception here
+                    // would replace that terminal reason and skip observing the lease operation,
+                    // which is also what returns it to the pool.
+                    connection!.PendingCalls.TryComplete(
+                        requestId,
+                        PendingCallCompletionReason.SendFailure,
+                        exception);
                 }
                 else
                 {
@@ -609,8 +616,19 @@ internal sealed partial class SharpLinkClient
                             ? PendingCallCompletionReason.DeadlineExceeded
                             : PendingCallCompletionReason.SendFailure,
                         exception);
+                    throw exception;
                 }
-                throw exception;
+            }
+
+            if (method.HasClientStreams)
+            {
+                // The client-stream oneway lease operation owns the terminal result for this shape
+                // and is single-observation and pooled: observe it exactly once on every path. The
+                // await rethrows whichever terminal won - local stream completion, the local
+                // send/producer failure, a deadline, a caller cancellation, or a closed connection -
+                // and returns the operation to the pool. Awaiting it a second time (or not at all)
+                // is what previously hung the invocation or leaked the pooled operation.
+                _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
             }
         }
         finally
