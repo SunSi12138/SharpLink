@@ -13,8 +13,9 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: true);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: true, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -45,8 +46,9 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -79,8 +81,9 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -108,8 +111,11 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
     {
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        return InvokeServerStreamingResolved(method, request, requestCodec, responseCodec, control, cancellationToken);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
+        return InvokeServerStreamingResolved(
+            method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
 
     internal IAsyncEnumerable<TResponse> InvokeServerStreamingResolved<TRequest, TResponse>(
@@ -117,13 +123,14 @@ internal sealed partial class SharpLinkClient
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        ArgumentNullException.ThrowIfNull(interceptors);
         EnsureLogicalCallProgress(control);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -168,8 +175,11 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var control = ResolveCallControlForInvocation(method, metadata, includeClientDefault: false);
-        return InvokeDuplexStreamingResolved(method, request, requestCodec, responseCodec, streams, control, cancellationToken);
+        var interceptors = CaptureInterceptorGenerationForInvocation();
+        var control = ResolveCallControlForInvocation(
+            method, metadata, includeClientDefault: false, interceptors);
+        return InvokeDuplexStreamingResolved(
+            method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
     }
 
     internal IAsyncEnumerable<TResponse> InvokeDuplexStreamingResolved<TRequest, TResponse, TStreams>(
@@ -178,14 +188,15 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         in TStreams streams,
+        ClientInterceptorGeneration interceptors,
         ResolvedCallControl control,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        ArgumentNullException.ThrowIfNull(interceptors);
         EnsureLogicalCallProgress(control);
-        var interceptors = Volatile.Read(ref _clientInterceptorGeneration);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {

@@ -22,7 +22,8 @@ internal sealed partial class SharpLinkClient
         bool includeClientDefault,
         bool hasMethodTimeout,
         TimeSpan? methodTimeout,
-        ref ClientCallLifetimeSource lifetimeSource)
+        ref ClientCallLifetimeSource lifetimeSource,
+        bool allocateSharedLogicalCall = true)
     {
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
@@ -126,9 +127,12 @@ internal sealed partial class SharpLinkClient
         return new ResolvedCallControl(
             deadline,
             metadata is { Count: > 0 } ? metadata : null,
-            deadline.HasValue ? new ClientLogicalCallState(deadline, timeProvider) : null,
+            deadline.HasValue && allocateSharedLogicalCall
+                ? new ClientLogicalCallState()
+                : null,
             lifetimeSource,
-            telemetryDetailMode);
+            telemetryDetailMode,
+            timeProvider);
     }
 
     private async ValueTask DelayForRetryOrAdmissionAsync(
@@ -162,36 +166,22 @@ internal sealed partial class SharpLinkClient
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
 
+    // The only state that genuinely has to be shared between the participants of one logical call
+    // is the deadline-claim arbitration. Every immutable input (frozen deadline, time provider,
+    // captured retry generation, telemetry detail) lives on the resolved call control, so this
+    // object stays a single mutable flag and cannot drift out of sync with a copied control.
     internal sealed class ClientLogicalCallState
     {
-        private readonly RpcDeadline _deadline;
-        private readonly TimeProvider? _timeProvider;
-        private ClientRetryGeneration? _retryGeneration;
         private int _deadlineClaimed;
 
-        internal ClientLogicalCallState(
-            RpcDeadline deadline,
-            TimeProvider timeProvider)
+        internal bool TryEnterProgress(RpcDeadline deadline, TimeProvider timeProvider)
         {
-            _deadline = deadline;
-            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
-        }
-
-        internal ClientLogicalCallState(ClientRetryGeneration retryGeneration)
-            => _retryGeneration = retryGeneration ?? throw new ArgumentNullException(nameof(retryGeneration));
-
-        internal ClientRetryGeneration? RetryGeneration => _retryGeneration;
-
-        internal void AttachRetryGeneration(ClientRetryGeneration retryGeneration)
-            => _retryGeneration = retryGeneration ?? throw new ArgumentNullException(nameof(retryGeneration));
-
-        internal bool TryEnterProgress()
-        {
-            if (!_deadline.HasValue)
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            if (!deadline.HasValue)
                 return true;
             if (Volatile.Read(ref _deadlineClaimed) != 0)
                 return false;
-            if (_deadline.IsExpired(_timeProvider!))
+            if (deadline.IsExpired(timeProvider))
             {
                 _ = TryClaimDeadline();
                 return false;
@@ -200,11 +190,7 @@ internal sealed partial class SharpLinkClient
         }
 
         internal bool TryClaimDeadline()
-        {
-            if (!_deadline.HasValue)
-                return false;
-            return Interlocked.CompareExchange(ref _deadlineClaimed, 1, 0) == 0;
-        }
+            => Interlocked.CompareExchange(ref _deadlineClaimed, 1, 0) == 0;
     }
 
     internal readonly record struct ResolvedCallControl(
@@ -212,5 +198,7 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? Metadata,
         ClientLogicalCallState? LogicalCall,
         ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None,
-        SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed);
+        SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed,
+        TimeProvider? TimeProvider = null,
+        ClientRetryGeneration? RetryGeneration = null);
 }
