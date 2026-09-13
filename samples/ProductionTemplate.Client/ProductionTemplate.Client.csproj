@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ProductionTemplate.Contracts\ProductionTemplate.Contracts.csproj" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseSharpLinkPackages)' == 'true'">
