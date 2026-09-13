@@ -489,6 +489,9 @@ internal sealed partial class SharpLinkClient
 
         ObserveAbandonedEmission(emissionTask);
         _ = control.LogicalCall?.TryClaimDeadline();
+        // This shape owns no pending entry, so no terminal transition can tell the peer to stop.
+        // The Request is already in the normal queue ahead of this cancel, so the peer either
+        // cancels the call it received or discards it for a request it never got.
         connection.TrySendDeadlineCancel(requestId);
         throw CreateDeadlineExceededException();
     }
@@ -636,10 +639,20 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
+                    // The owned producer token, not the bare caller token: a deadline, a caller
+                    // cancellation or a closed connection all end this call by completing its
+                    // pending entry, and that entry is what cancels this token. Waiting for
+                    // emission on the caller token alone would leave the invocation blocked in
+                    // the send path after the call already reached its terminal reason.
                     cancellationToken: method.HasClientStreams ? streamCancellationToken : CancellationToken.None,
                     publicationTable: method.HasClientStreams ? connection.PendingCalls : null);
                 if (!method.HasClientStreams && control.Deadline.HasValue)
                 {
+                    // A plain OneWay owns no pending entry, so nothing else enforces the caller's
+                    // deadline while the pump holds the frame, and nothing else can tell the peer to
+                    // stop. The Request is already ahead of that cancel in the same normal queue, so
+                    // the peer either sees the cancel after the Request or discards it for a request
+                    // it already ran.
                     await AwaitPlainOneWayEmissionOrDeadlineAsync(
                         emission,
                         connection!,
@@ -664,6 +677,12 @@ internal sealed partial class SharpLinkClient
             {
                 if (method.HasClientStreams)
                 {
+                    // Publish the local send/producer failure and let the pending table arbitrate.
+                    // The table holds the completion gate, so a deadline that expired, a caller
+                    // cancellation, or a closed connection that already claimed the call stays
+                    // authoritative; this call is then a no-op. Throwing the local exception here
+                    // would replace that terminal reason and skip observing the lease operation,
+                    // which is also what returns it to the pool.
                     connection!.PendingCalls.TryComplete(
                         requestId,
                         PendingCallCompletionReason.SendFailure,
@@ -682,7 +701,15 @@ internal sealed partial class SharpLinkClient
             }
 
             if (method.HasClientStreams)
+            {
+                // The client-stream oneway lease operation owns the terminal result for this shape
+                // and is single-observation and pooled: observe it exactly once on every path. The
+                // await rethrows whichever terminal won - local stream completion, the local
+                // send/producer failure, a deadline, a caller cancellation, or a closed connection -
+                // and returns the operation to the pool. Awaiting it a second time (or not at all)
+                // is what previously hung the invocation or leaked the pooled operation.
                 _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -755,6 +782,9 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
+                    // Same ownership rule as the one-way client-stream shape: this call is owned by
+                    // its pending entry, so the emission wait has to observe the token that entry
+                    // cancels when it reaches a terminal reason.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls).ConfigureAwait(false);
                 var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
@@ -889,6 +919,9 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 control.Metadata,
                 observeEmission: control.Deadline.HasValue,
+                // This head Request is owned by its pending entry, so the emission wait has to
+                // observe the token that entry cancels: the deadline that ends the call also has
+                // to release the producer side from a stalled transport write.
                 cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls).ConfigureAwait(false);
             await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
