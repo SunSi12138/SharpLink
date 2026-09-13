@@ -73,6 +73,58 @@ public sealed class SharpLinkClientDeadlinePublicationTests
     }
 
     [Test]
+    public async Task TimedUnaryShouldNotPublishARequestWhenTheDeadlineElapsedWithoutItsTimerRunning()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder => builder.UseTimeProvider(timeProvider));
+        await client.ConnectAsync();
+
+        var method = MethodWithTimeout(RpcMethodKind.Unary, methodId: 312, TimeSpan.FromSeconds(5));
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+
+        var connection = GetOnlyReadyConnection(client);
+        await connection.Session.FlushSendQueueAsync();
+        await DrainSentFramesAsync(transport);
+
+        // The codec moves the clock past the deadline without running its timer, and the frame is
+        // small enough for the send queue to accept. The publication gate itself therefore has to be
+        // the deadline authority: the scheduler callback is only a wake-up, and a late callback must
+        // not let a Request with an already elapsed budget reach the peer.
+        var codec = new DeadlineAdvancingPayloadCodec(
+            timeProvider,
+            TimeSpan.FromSeconds(5),
+            runTimers: false);
+        var invocation = channel.InvokeUnaryAsync(
+            method,
+            in request,
+            codec,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default).AsTask();
+
+        for (var attempt = 0; attempt < 50 && !invocation.IsCompleted; attempt++)
+            await Task.Delay(TimeSpan.FromMilliseconds(20));
+        Ensure(invocation.IsCompleted,
+            "publication must refuse a Request whose deadline elapsed while its timer was still pending");
+
+        // Release the scheduler so the failure below is observable, not blocked, in either ordering.
+        timeProvider.Advance(TimeSpan.Zero);
+        var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "an elapsed deadline that the scheduler has not reported yet must still fail the call");
+
+        var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+            "a Request whose budget already elapsed must not be published by the gate that admits it");
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
+            "no cancel may be emitted for a request the gate refused to publish");
+    }
+
+    [Test]
     public async Task TimedUnaryShouldRefusePublicationWhenTheDeadlineElapsesInsideTheCompressionProvider()
     {
         var timeProvider = new ManualTimeProvider();
@@ -703,14 +755,19 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             => default;
     }
 
-    /// <summary>Never writes client stream items: the tests it serves stop before the producer runs.</summary>
+    /// <summary>
+    /// Never writes client stream items, and only ends when the call's own producer token does. The
+    /// refused-publication path still reaches the producer - with an already cancelled token - so a
+    /// writer that ignored that token would park the invocation instead of letting it observe the
+    /// terminal reason the pending table already chose.
+    /// </summary>
     private readonly struct SilentClientStreams : IRpcClientStreamWriter
     {
-        public ValueTask WriteAsync(
+        public async ValueTask WriteAsync(
             IRpcClientStreamSink sink,
             long requestId,
             CancellationToken cancellationToken)
-            => new(new TaskCompletionSource().Task);
+            => await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Records whether the runtime ever started producing client stream items.</summary>
