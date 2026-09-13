@@ -46,8 +46,8 @@ public sealed class SharpLinkClientDeadlineClockReadTests
         // starts waiting, publication samples once, and the response terminal samples once. The
         // remainder belongs to the send pump and the session activity stamp, which are per-batch
         // infrastructure shared with untimed traffic.
-        Ensure(reads <= 8,
-            $"a plain timed Unary must stay within its boundary budget, but took {reads} samples");
+        Ensure(reads == 8,
+            $"a plain timed Unary must take exactly its eight boundary/infrastructure samples, but took {reads}");
     }
 
     private static async Task PrepareAsync(SharpLinkClient client)
