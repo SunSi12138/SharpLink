@@ -59,10 +59,9 @@ internal sealed partial class SharpLinkClient
         var timeProvider = _runtimeContext.TimeProvider;
         // Untimed calls have no local anchor to preserve. Inherited deadlines below
         // still observe their own shared-clock or cross-clock projection boundary.
-        // The stage keeps one timestamp: either the creation sample of this call's own deadline or
-        // the parent-clock observation that produced an inherited boundary. Validating the
-        // selected deadline against that sample costs nothing and cannot be stale, because the
-        // sample belongs to the same stage that selected it. The samples that decide whether the
+        // Validation reuses timestamps this stage already needs. A local deadline starts with its
+        // creation sample; if inherited-deadline comparison observes a later child-clock sample,
+        // that newer sample validates whichever deadline wins. The samples that decide whether the
         // request may still be published are deliberately taken later, at pre-registration and in
         // the publication gate, where observing the current clock is the point.
         long validationTimestamp = 0;
@@ -125,10 +124,10 @@ internal sealed partial class SharpLinkClient
                     timeProvider.TimestampFrequency);
             }
 
+            validationTimestamp = comparisonTimestamp;
             if (!deadline.HasValue || inheritedDeadline.IsEarlierOrEqual(deadline, comparisonTimestamp))
             {
                 deadline = inheritedDeadline;
-                validationTimestamp = comparisonTimestamp;
                 lifetimeSource = ClientCallLifetimeSource.InheritedTimeBudget;
             }
         }
@@ -159,10 +158,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             if (!await SharpLinkTimer.DelayAsync(
-                    delay,
-                    deadline,
-                    _runtimeContext.TimeProvider,
-                    linkedCancellation.Token).ConfigureAwait(false))
+                    delay, deadline, _runtimeContext.TimeProvider, linkedCancellation.Token).ConfigureAwait(false))
             {
                 throw CreateDeadlineExceededException();
             }
