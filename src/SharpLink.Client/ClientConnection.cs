@@ -459,6 +459,11 @@ internal sealed class ClientConnection :
             PendingCallCompletionReason.UserCancellation or
             PendingCallCompletionReason.DeadlineExceeded or
             PendingCallCompletionReason.ConsumerAbandoned;
+        // Local cleanup follows shouldSendCancel - a dispatcher must be torn down even when the
+        // Request never reached the peer. Only the transport cancel is gated on publication: a
+        // cancel for a Request the peer never received is discarded by it, and emitting one would
+        // also let the cancel overtake a Request this connection is still serializing.
+        var shouldNotifyPeer = shouldSendCancel && completion.RequestPublished;
 
         if (completion.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
         {
@@ -503,6 +508,7 @@ internal sealed class ClientConnection :
                                 drain,
                                 completion.RequestId,
                                 GetCancelReason(completion.Reason),
+                                shouldNotifyPeer,
                                 localAbort),
                             "CancellationDispatchCleanup");
                     }
@@ -523,7 +529,7 @@ internal sealed class ClientConnection :
             }
         }
 
-        if (shouldSendCancel)
+        if (shouldNotifyPeer)
             TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason));
     }
 
@@ -540,13 +546,15 @@ internal sealed class ClientConnection :
         ValueTask drain,
         long requestId,
         ProtocolV2CancelReason reason,
+        bool notifyPeer,
         IStreamLocalAbortDispatcher? localAbort)
     {
         try
         {
             await drain.ConfigureAwait(false);
             localAbort?.RetireLocalAbortBuffer();
-            TrySendCancel(requestId, reason);
+            if (notifyPeer)
+                TrySendCancel(requestId, reason);
         }
         catch (Exception exception)
         {

@@ -442,7 +442,8 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     cancellationToken: CancellationToken.None,
-                    failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null);
+                    failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null,
+                    publicationTable: connection.PendingCalls);
             }
         }
         catch (Exception exception)
@@ -451,6 +452,55 @@ internal sealed partial class SharpLinkClient
         }
 
         return operation.AsValueTask();
+    }
+
+    /// <summary>
+    /// Races a plain OneWay emission wait against the call's own deadline.
+    /// </summary>
+    /// <remarks>
+    /// A plain OneWay registers no pending entry, so there is no deadline scheduler and no cancel
+    /// path behind it: the emission wait is the only place the caller can still observe its own
+    /// end-to-end lifetime. The Request has already been published when this runs, so losing the
+    /// race never retracts or fails the frame in the transport - it only stops the caller from
+    /// blocking past its deadline, which is what the previous deferred-compaction design enforced
+    /// by dropping expired frames at emission.
+    /// </remarks>
+    private async ValueTask AwaitPlainOneWayEmissionOrDeadlineAsync(
+        ValueTask emission,
+        ResolvedCallControl control)
+    {
+        var emissionTask = emission.AsTask();
+        var remaining = control.Deadline.GetRemaining(_runtimeContext.TimeProvider);
+        if (remaining > TimeSpan.Zero)
+        {
+            try
+            {
+                await emissionTask.WaitAsync(remaining, _runtimeContext.TimeProvider).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException)
+            {
+            }
+        }
+
+        ObserveAbandonedEmission(emissionTask);
+        _ = control.LogicalCall?.TryClaimDeadline();
+        throw CreateDeadlineExceededException();
+    }
+
+    private static void ObserveAbandonedEmission(Task emission)
+    {
+        if (emission.IsCompleted)
+        {
+            _ = emission.Exception;
+            return;
+        }
+
+        _ = emission.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
     }
 
     private async ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
@@ -570,7 +620,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                await SendRpcCall(
+                var emission = SendRpcCall(
                     connection!.Session,
                     method.ContractId,
                     method.MethodId,
@@ -581,8 +631,19 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    cancellationToken: method.HasClientStreams ? cancellationToken : CancellationToken.None)
-                    .ConfigureAwait(false);
+                    cancellationToken: method.HasClientStreams ? cancellationToken : CancellationToken.None,
+                    publicationTable: method.HasClientStreams ? connection.PendingCalls : null);
+                if (!method.HasClientStreams && control.Deadline.HasValue)
+                {
+                    // A plain OneWay owns no pending entry, so nothing else enforces the caller's
+                    // deadline while the pump holds the frame. The Request is already published, so
+                    // losing this race only stops the caller from blocking past its own lifetime.
+                    await AwaitPlainOneWayEmissionOrDeadlineAsync(emission, control).ConfigureAwait(false);
+                }
+                else
+                {
+                    await emission.ConfigureAwait(false);
+                }
                 if (method.HasClientStreams)
                 {
                     await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
@@ -702,7 +763,8 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                    cancellationToken: cancellationToken,
+                    publicationTable: connection.PendingCalls).ConfigureAwait(false);
                 var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
                 producerLease = default;
                 TrackFrameworkTask(producerTask, "ClientStreamingProducer");
@@ -776,7 +838,8 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 control.Metadata,
                 observeEmission: control.Deadline.HasValue,
-                cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                cancellationToken: CancellationToken.None,
+                publicationTable: connection.PendingCalls).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -826,7 +889,8 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 control.Metadata,
                 observeEmission: control.Deadline.HasValue,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+                cancellationToken: cancellationToken,
+                publicationTable: connection.PendingCalls).ConfigureAwait(false);
             await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -924,7 +988,8 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? metadata,
         bool observeEmission = false,
         CancellationToken cancellationToken = default,
-        IRequestEmissionFailureObserver? failureObserver = null)
+        IRequestEmissionFailureObserver? failureObserver = null,
+        PendingRequestTable? publicationTable = null)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
@@ -972,6 +1037,31 @@ internal sealed partial class SharpLinkClient
                     ProtocolV2PayloadCodec.WriteMetadata(writer, metadata!);
                 }
                 requestCodec.Serialize(request, writer);
+            }
+
+            if (publicationTable is { } table)
+            {
+                // Hand ownership to the session before publishing: every dispatch entry point
+                // returns the writer itself when it fails before the frame is queued.
+                ownsWriter = false;
+                if (!table.TryPublishRequest(
+                        requestId,
+                        session,
+                        writer,
+                        observeEmission,
+                        cancellationToken,
+                        failureObserver,
+                        out var emission))
+                {
+                    // The call already reached its terminal decision while this Request was still
+                    // being serialized. Publishing it now would deliver a Request after the cancel
+                    // that terminal decision just emitted - a cancel the peer discards, followed by
+                    // a Request it happily dispatches. Drop the frame instead; the caller observes
+                    // the terminal reason through its pending operation.
+                    _runtimeContext.Buffers.Return(writer);
+                    return ValueTask.CompletedTask;
+                }
+                return emission;
             }
 
             ownsWriter = false;
