@@ -176,17 +176,13 @@ public class SharpLinkClientTimeBudgetTests
     }
 
     [Test]
-    public async Task TimedClientStreamShouldNotStartProducerUntilRequestSurvivesEmission()
+    public async Task TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder =>
-            {
-                builder.UseTimeProvider(timeProvider);
-                builder.UseRpcSessionFlush(1024 * 1024, TimeSpan.FromSeconds(10));
-            });
+            builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
 
         var method = new RpcMethodDescriptor(
@@ -204,8 +200,9 @@ public class SharpLinkClientTimeBudgetTests
         var request = default(RpcEmptyRequest);
 
         // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
-        // Advancing the manual clock from the target Request's output-buffer acquisition makes
-        // the send pump arbitrate expiry at the real emission boundary without racing registration.
+        // The ownership gate is unchanged: the producer still starts only after the owning
+        // Request finished emission. What changed is that emission no longer re-samples or
+        // arbitrates the TimeBudget, so the frame carries the remaining sampled at creation.
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         transport.Connection.RunOnNextOutputBufferRequest(
@@ -219,13 +216,19 @@ public class SharpLinkClientTimeBudgetTests
             metadata: null,
             cancellationToken: default).AsTask();
 
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
+            "the wire TimeBudget must be the remaining sampled once when the frame is created");
+        await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(!invocation.IsCompleted,
+            "starting the client-stream producer must not complete the call on its own");
+
+        // The pending deadline owns the terminal decision now that the send pump publishes
+        // frames verbatim, so the elapsed budget fails the call and cancels the remote stream.
+        timeProvider.Advance(TimeSpan.Zero);
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "an initial client-stream Request that expires in the send queue must fail locally");
-        Ensure(!probe.Started,
-            "the client-stream producer must not start until its owning Request survives emission");
-        Ensure(!await transport.Connection.TryWaitForSentPacket(ProtocolV2FrameType.StreamData, TimeSpan.FromMilliseconds(50)),
-            "no orphan StreamData may be emitted after the owning Request is dropped");
+            "an emitted client-stream Request whose budget elapsed must fail through its pending deadline");
     }
 
     [Test]
@@ -317,7 +320,10 @@ public class SharpLinkClientTimeBudgetTests
 
     private sealed class ProducerProbe
     {
-        internal bool Started;
+        internal TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal ulong RequestId;
     }
 
     private readonly struct ProbeClientStreams(ProducerProbe probe) : IRpcClientStreamWriter
@@ -327,7 +333,8 @@ public class SharpLinkClientTimeBudgetTests
             long requestId,
             CancellationToken cancellationToken)
         {
-            probe.Started = true;
+            probe.RequestId = unchecked((ulong)requestId);
+            probe.Started.TrySetResult();
             return ValueTask.CompletedTask;
         }
     }

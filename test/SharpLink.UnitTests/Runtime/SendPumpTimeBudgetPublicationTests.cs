@@ -1,14 +1,19 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Linq;
 
 namespace SharpLink.UnitTests.Runtime;
 
+/// <summary>
+/// The request's wire TimeBudget is produced exactly once by the caller that builds the frame.
+/// The send pump copies frames verbatim: it does not re-sample, re-stamp, compact, or locally
+/// expire deadline-bearing requests. End-to-end expiry is enforced by the caller's pending
+/// deadline and by the remote cancellation path, not by the local send queue.
+/// </summary>
 public class SendPumpTimeBudgetPublicationTests
 {
     [Test]
-    public async Task TimeBudgetShouldIncludeOutputSpanAcquisitionDelay()
+    public async Task TimedRequestShouldReachTheTransportVerbatim()
     {
         var clock = new ManualTimeProvider();
         var input = new Pipe();
@@ -18,28 +23,26 @@ public class SendPumpTimeBudgetPublicationTests
             .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
-            "time-budget-output-span-delay",
+            "time-budget-verbatim",
             input.Reader,
             advancingWriter,
             RpcSessionTestFixture.ClientOptions(context));
-        var frame = CreateTimedRequestFrame();
-        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(10), clock);
+        var budget = TimeSpan.FromSeconds(7);
+        var frame = CreateTimedRequestFrame(budget);
 
         try
         {
+            // Local buffer acquisition and copy still consume wall-clock time. That delay is no
+            // longer folded into the wire budget: the producer stamped it before the pump ran.
             advancingWriter.AdvanceClockOnNextBufferRequest(TimeSpan.FromSeconds(3));
-            session.SendPacket(frame, deadline);
+            session.SendPacket(frame);
 
             var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
             var bytes = read.Buffer.ToArray();
             output.Reader.AdvanceTo(read.Buffer.End);
-            var budget = BinaryPrimitives.ReadInt64LittleEndian(
-                bytes.AsSpan(
-                    ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes,
-                    sizeof(long)));
 
-            Ensure(budget == TimeSpan.FromSeconds(7).Ticks,
-                "the wire budget must include local PipeWriter span acquisition/copy delay");
+            Ensure(ReadPublishedBudget(bytes) == budget.Ticks,
+                "the pump must publish the producer-stamped wire budget unchanged");
         }
         finally
         {
@@ -50,43 +53,42 @@ public class SendPumpTimeBudgetPublicationTests
     }
 
     [Test]
-    public async Task TimedRequestShouldPublishWithoutWaitingForLaterBatchWork()
+    public async Task TimedRequestShouldFollowTheConfiguredBatchLatency()
     {
         var clock = new ManualTimeProvider();
-        var maxLatency = TimeSpan.FromSeconds(30);
         var input = new Pipe();
         var output = new Pipe();
         using var context = new SharpLinkRuntimeContextBuilder()
             .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
-            "time-budget-publication-boundary",
+            "time-budget-batch-boundary",
             input.Reader,
             output.Writer,
             RpcSessionTestFixture.ClientOptions(
                 context,
-                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
-        var frame = CreateTimedRequestFrame();
-        var deadline = RpcDeadline.Create(TimeSpan.FromMinutes(1), clock);
+                new RpcSessionFlushOptions(1024 * 1024, TimeSpan.FromSeconds(30))));
+        var budget = TimeSpan.FromMinutes(1);
+        var frame = CreateTimedRequestFrame(budget);
 
         try
         {
-            session.SendPacket(frame, deadline);
+            session.SendPacket(frame);
 
-            // Do not advance the fake clock. A ready deadline-bearing batch publishes
-            // immediately instead of waiting for future work or the batching timer.
-            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            // A deadline no longer bypasses the configured batch latency: the pump treats every
+            // frame the same and publishes at the batch boundary. The budget the caller stamped
+            // is what the peer sees, so the wait is deducted end to end by the peer's own clock.
+            var pendingRead = output.Reader.ReadAsync().AsTask();
+            var first = await Task.WhenAny(pendingRead, Task.Delay(TimeSpan.FromMilliseconds(250)));
+            Ensure(!ReferenceEquals(first, pendingRead),
+                "a quiet queue must hold the batch until the configured latency boundary");
+
+            clock.Advance(TimeSpan.FromSeconds(30));
+            var read = await pendingRead.WaitAsync(TimeSpan.FromSeconds(2));
             var bytes = read.Buffer.ToArray();
             output.Reader.AdvanceTo(read.Buffer.End);
-            var budget = BinaryPrimitives.ReadInt64LittleEndian(
-                bytes.AsSpan(
-                    ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes,
-                    sizeof(long)));
-
-            Ensure(budget == TimeSpan.FromMinutes(1).Ticks,
-                "a timed Request published without local delay must retain its full remaining budget");
-            Ensure(clock.ActiveTimerCount == 0,
-                "a timed Request publication boundary must not wait on the configured batch-latency timer");
+            Ensure(ReadPublishedBudget(bytes) == budget.Ticks,
+                "the batch boundary must not rewrite the caller's wire budget");
         }
         finally
         {
@@ -97,167 +99,112 @@ public class SendPumpTimeBudgetPublicationTests
     }
 
     [Test]
-    [Arguments(0)]
-    [Arguments(1)]
-    [Arguments(2)]
-    [Arguments(3)]
-    [Arguments(4)]
-    public async Task QueuedTimedRequestsShouldSharePublicationAndDropExpiredFrames(int expiredPosition)
+    public async Task ExpiredTimedRequestsShouldStillBePublishedInOrder()
     {
         var clock = new ManualTimeProvider();
         var input = new Pipe();
-        using var writer = new BatchRecordingPipeWriter(clock);
+        var output = new Pipe();
         using var context = new SharpLinkRuntimeContextBuilder()
             .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
-            "timed-request-batch", input.Reader, writer,
-            RpcSessionTestFixture.ClientOptions(
-                context, new RpcSessionFlushOptions(1024 * 1024, TimeSpan.FromSeconds(30))));
-        var observer = new RecordingFailureObserver(clock);
+            "time-budget-no-local-expiry",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(context));
+        var observer = new RecordingFailureObserver();
         var owners = new List<PooledByteBufferWriter>();
+        var expiredBudget = TimeSpan.Zero;
+        var freshBudget = TimeSpan.FromSeconds(10);
+
         try
         {
-            var prefix = CreateRequestFrame(0, timed: false);
-            owners.Add(prefix);
-            session.SendPacket(prefix);
-            await writer.FirstBufferRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            for (var requestId = 1; requestId <= 3; requestId++)
-            {
-                var expires = expiredPosition == requestId || expiredPosition == 4;
-                var owner = CreateRequestFrame(requestId, timed: true);
-                owners.Add(owner);
-                session.SendPacket(
-                    owner, RpcDeadline.Create(TimeSpan.FromSeconds(expires ? 3 : 10), clock), observer);
-                if (requestId == 2)
-                {
-                    var untimed = CreateRequestFrame(99, timed: false);
-                    owners.Add(untimed);
-                    session.SendPacket(untimed);
-                }
-            }
-            writer.ReleaseFirstBuffer.Set();
-            var publication = await writer.FirstPublication.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await session.FlushSendQueueAsync();
+            // The first request is already past its deadline when it enters the queue. The local
+            // pump must not drop it: the caller's pending deadline (or the peer) owns that outcome.
+            owners.Add(CreateRequestFrame(1, expiredBudget));
+            owners.Add(CreateRequestFrame(2, null));
+            owners.Add(CreateRequestFrame(3, freshBudget));
+            session.SendPacket(owners[0], observer);
+            session.SendPacket(owners[1]);
+            session.SendPacket(owners[2]);
 
-            var expectedIds = new long[] { 1, 2, 99, 3 }
-                .Where(id => id == 99 || (expiredPosition != id && expiredPosition != 4)).ToArray();
-            var actualIds = new List<long>();
-            var bytes = publication.Bytes;
-            var offset = ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes;
+            var bytes = await ReadAllAsync(output.Reader).WaitAsync(TimeSpan.FromSeconds(2));
+            var requestIds = new List<long>();
+            var offset = 0;
+            var bounds = new List<long?>();
             while (offset < bytes.Length)
             {
                 var requestId = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(offset + 7, sizeof(long)));
-                actualIds.Add(requestId);
                 var timed = (((ProtocolV2FrameFlags)bytes[offset + 6]) & ProtocolV2FrameFlags.HasTimeBudget) != 0;
-                Ensure(timed == (requestId != 99), "compaction must preserve each frame's time-budget flag");
-                if (timed)
-                {
-                    var budget = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(
-                        offset + ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
-                    Ensure(budget == TimeSpan.FromSeconds(7).Ticks,
-                        "every surviving request must deduct all batch-copy delay from its wire budget");
-                }
+                requestIds.Add(requestId);
+                bounds.Add(timed
+                    ? BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(
+                        offset + ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes,
+                        sizeof(long)))
+                    : null);
                 offset += ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes +
                     (timed ? sizeof(long) : 0);
             }
-            Ensure(actualIds.SequenceEqual(expectedIds),
-                "one publication must contain every surviving queued request in order and no expired request");
-            Ensure(offset == bytes.Length, "compaction must preserve exact frame boundaries");
-            Ensure(publication.Timestamp == TimeSpan.FromSeconds(3).Ticks,
-                "expired-request callbacks must run after the surviving batch starts publication");
-            var expectedExpired = Enumerable.Range(1, 3)
-                .Where(id => expiredPosition == id || expiredPosition == 4).Select(id => (long)id);
-            Ensure(observer.RequestIds.Order().SequenceEqual(expectedExpired),
-                "every dropped request must complete its original owner exactly once without timer callbacks");
-            foreach (var owner in owners)
-            {
-                var returned = false;
-                try { _ = owner.WrittenCount; }
-                catch (ObjectDisposedException) { returned = true; }
-                Ensure(returned, "every standalone frame writer must be disposed after publication or expiry");
-            }
+
+            Ensure(requestIds.SequenceEqual([1L, 2L, 3L]),
+                "every queued request must be published in order, including an already-expired one");
+            Ensure(bounds[0] == expiredBudget.Ticks && bounds[1] is null && bounds[2] == freshBudget.Ticks,
+                "the pump must publish each caller-stamped budget unchanged");
+            Ensure(offset == bytes.Length, "publication must preserve exact frame boundaries");
+            Ensure(observer.RequestIds.Count == 0,
+                "the local pump must not report emission-time deadline failures");
             Ensure(session.QueuedSendBytes == 0,
-                "publication and expiry must return every frame owner and reservation");
-            Ensure(clock.ActiveTimerCount == 0, "a ready timed batch must not wait for the batching timer");
+                "publication must return every frame owner and reservation");
         }
         finally
         {
-            writer.ReleaseFirstBuffer.Set();
             await session.DisposeAsync();
             await input.Writer.CompleteAsync();
         }
     }
 
-    private sealed class RecordingFailureObserver(ManualTimeProvider clock) : IRequestEmissionFailureObserver
+    private static async Task<byte[]> ReadAllAsync(PipeReader reader)
+    {
+        var buffer = new MemoryStream();
+        while (buffer.Length == 0)
+        {
+            var read = await reader.ReadAsync().AsTask();
+            buffer.Write(read.Buffer.ToArray());
+            reader.AdvanceTo(read.Buffer.End);
+        }
+        return buffer.ToArray();
+    }
+
+    private static long ReadPublishedBudget(byte[] bytes)
+        => BinaryPrimitives.ReadInt64LittleEndian(
+            bytes.AsSpan(
+                ProtocolV2Constants.HeaderBytes + ProtocolV2Constants.RequestPrefixBytes,
+                sizeof(long)));
+
+    private sealed class RecordingFailureObserver : IRequestEmissionFailureObserver
     {
         internal List<long> RequestIds { get; } = [];
-        public void OnRequestEmissionFailure(long requestId, Exception exception)
-        {
-            Ensure(exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-                "only deadline expiry may remove a live transport's queued request");
-            RequestIds.Add(requestId);
-            clock.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(100));
-        }
+        public void OnRequestEmissionFailure(long requestId, Exception exception) => RequestIds.Add(requestId);
     }
 
-    private sealed class BatchRecordingPipeWriter(ManualTimeProvider clock) : PipeWriter, IDisposable
-    {
-        private readonly ArrayBufferWriter<byte> _buffer = new();
-        private int _bufferRequests;
-        internal ManualResetEventSlim ReleaseFirstBuffer { get; } = new();
-        internal TaskCompletionSource FirstBufferRequested { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource<(byte[] Bytes, long Timestamp)> FirstPublication { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public override void Advance(int bytes) => _buffer.Advance(bytes);
-        public override void CancelPendingFlush() { }
-        public override void Complete(Exception? exception = null) { }
-        public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
-        {
-            FirstPublication.TrySetResult((_buffer.WrittenSpan.ToArray(), clock.GetTimestamp()));
-            _buffer.Clear();
-            return new(new FlushResult(isCanceled: false, isCompleted: false));
-        }
-        public override Memory<byte> GetMemory(int sizeHint = 0)
-        {
-            BeforeBufferRequest();
-            return _buffer.GetMemory(sizeHint);
-        }
-        public override Span<byte> GetSpan(int sizeHint = 0)
-        {
-            BeforeBufferRequest();
-            return _buffer.GetSpan(sizeHint);
-        }
-        private void BeforeBufferRequest()
-        {
-            var request = ++_bufferRequests;
-            if (request == 1)
-            {
-                FirstBufferRequested.TrySetResult();
-                if (!ReleaseFirstBuffer.Wait(TimeSpan.FromSeconds(10)))
-                    throw new TimeoutException("test did not release the initial output buffer");
-            }
-            else if (request == 2)
-                clock.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(3));
-        }
-        public void Dispose() => ReleaseFirstBuffer.Dispose();
-    }
+    private static PooledByteBufferWriter CreateTimedRequestFrame(TimeSpan budget)
+        => CreateRequestFrame(1, budget);
 
-    private static PooledByteBufferWriter CreateTimedRequestFrame()
-        => CreateRequestFrame(1, timed: true);
-
-    private static PooledByteBufferWriter CreateRequestFrame(long requestId, bool timed)
+    private static PooledByteBufferWriter CreateRequestFrame(long requestId, TimeSpan? budget)
     {
         var frame = new PooledByteBufferWriter();
         var token = ProtocolV2FrameWriter.BeginFrame(
             frame,
             ProtocolV2FrameType.Request,
-            timed ? ProtocolV2FrameFlags.HasTimeBudget : ProtocolV2FrameFlags.None,
+            budget.HasValue ? ProtocolV2FrameFlags.HasTimeBudget : ProtocolV2FrameFlags.None,
             unchecked((ulong)requestId));
         frame.Advance(ProtocolV2Constants.RequestPrefixBytes);
-        if (timed)
+        if (budget.HasValue)
+        {
+            var budgetSpan = frame.GetSpan(sizeof(long));
+            BinaryPrimitives.WriteInt64LittleEndian(budgetSpan, budget.Value.Ticks);
             frame.Advance(sizeof(long));
+        }
         ProtocolV2FrameWriter.EndFrame(frame, token);
         return frame;
     }

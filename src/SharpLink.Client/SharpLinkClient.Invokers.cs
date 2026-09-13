@@ -962,7 +962,9 @@ internal sealed partial class SharpLinkClient
                 BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
                 if (deadline.HasValue)
-                    BinaryPrimitives.WriteInt64LittleEndian(span[ProtocolV2Constants.RequestPrefixBytes..], 0L);
+                    BinaryPrimitives.WriteInt64LittleEndian(
+                        span[ProtocolV2Constants.RequestPrefixBytes..],
+                        deadline.GetRemaining(_runtimeContext.TimeProvider).Ticks);
                 writer.Advance(prefixLength);
                 if (hasMetadata)
                 {
@@ -974,8 +976,8 @@ internal sealed partial class SharpLinkClient
 
             ownsWriter = false;
             if (observeEmission)
-                return session.SendPacketAndObserveEmissionAsync(writer, deadline, cancellationToken);
-            session.SendPacket(writer, deadline, failureObserver);
+                return session.SendPacketAndObserveEmissionAsync(writer, cancellationToken);
+            session.SendPacket(writer, failureObserver);
             return ValueTask.CompletedTask;
         }
         finally

@@ -19,7 +19,6 @@ internal readonly struct OwnedFrame
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
         bool isProtocolProgress,
-        RpcDeadline deadline = default,
         IRequestEmissionFailureObserver? failureObserver = null)
     {
         Owner = owner;
@@ -28,27 +27,7 @@ internal readonly struct OwnedFrame
         ForceFlush = forceFlush;
         IsProtocolProgress = isProtocolProgress;
 
-        if (owner is PooledByteBufferWriter pooledOwner)
-        {
-            pooledOwner.EmissionDeadline = deadline;
-            _completionState = (object?)flushCompletion ?? failureObserver;
-        }
-        else if (!deadline.HasValue)
-        {
-            _completionState = (object?)flushCompletion ?? failureObserver;
-        }
-        else if (failureObserver is not null)
-        {
-            _completionState = new FailureDeadlineState(failureObserver, deadline);
-        }
-        else if (flushCompletion is null)
-        {
-            _completionState = new DeadlineState(deadline);
-        }
-        else
-        {
-            _completionState = new CompletionDeadlineState(flushCompletion, deadline);
-        }
+        _completionState = (object?)flushCompletion ?? failureObserver;
     }
 
     public IRpcByteBufferWriter Owner { get; }
@@ -59,38 +38,6 @@ internal readonly struct OwnedFrame
 
     public bool ForceFlush { get; }
 
-    public TaskCompletionSource<bool>? FlushCompletion
-        => _completionState switch
-        {
-            TaskCompletionSource<bool> completion => completion,
-            CompletionDeadlineState state => state.Completion,
-            _ => null
-        };
-
-    public IRequestEmissionFailureObserver? FailureObserver
-        => _completionState switch
-        {
-            IRequestEmissionFailureObserver observer => observer,
-            FailureDeadlineState state => state.Observer,
-            _ => null
-        };
-
-    /// <summary>
-    /// The process-local request lifetime retained until the transport emission boundary.
-    /// Default pooled writers retain it on the writer lease so this hot-path struct does not grow;
-    /// custom writers fall back to the existing completion-state reference slot.
-    /// </summary>
-    public RpcDeadline Deadline
-        => Owner is PooledByteBufferWriter pooledOwner
-            ? pooledOwner.EmissionDeadline
-            : _completionState switch
-            {
-                DeadlineState state => state.Deadline,
-                CompletionDeadlineState state => state.Deadline,
-                FailureDeadlineState state => state.Deadline,
-                _ => default
-            };
-
     /// <summary>
     /// True when the frame carries protocol progress (ping/pong, window
     /// update, go-away) rather than RPC data. The send pump admits and
@@ -99,24 +46,9 @@ internal readonly struct OwnedFrame
     /// </summary>
     public bool IsProtocolProgress { get; }
 
-    private sealed class DeadlineState(RpcDeadline deadline)
-    {
-        internal RpcDeadline Deadline { get; } = deadline;
-    }
+    public TaskCompletionSource<bool>? FlushCompletion
+        => _completionState as TaskCompletionSource<bool>;
 
-    private sealed class CompletionDeadlineState(
-        TaskCompletionSource<bool> completion,
-        RpcDeadline deadline)
-    {
-        internal TaskCompletionSource<bool> Completion { get; } = completion;
-        internal RpcDeadline Deadline { get; } = deadline;
-    }
-
-    private sealed class FailureDeadlineState(
-        IRequestEmissionFailureObserver observer,
-        RpcDeadline deadline)
-    {
-        internal IRequestEmissionFailureObserver Observer { get; } = observer;
-        internal RpcDeadline Deadline { get; } = deadline;
-    }
+    public IRequestEmissionFailureObserver? FailureObserver
+        => _completionState as IRequestEmissionFailureObserver;
 }
