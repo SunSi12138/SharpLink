@@ -93,9 +93,26 @@ internal static class SharpLinkTimer
 
             var timeout = deadline.GetRemaining(timeProvider);
             var slice = timeout > MaximumDelay ? MaximumDelay : timeout;
+            using var waitCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var waitTask = task.WaitAsync(slice, timeProvider, waitCancellation.Token);
+
+            // The timeout above is relative. Time may cross the absolute RPC deadline after the
+            // remaining duration is sampled but before the provider arms that relative timer. In
+            // that race the freshly armed timer would otherwise wait one stale timeout beyond the
+            // deadline (and a manual provider would require another Advance). Re-sample only after
+            // the waiter owns its timer, then cancel that waiter if the deadline already won.
+            if (deadline.IsExpired(timeProvider))
+            {
+                waitCancellation.Cancel();
+                try { await waitTask.ConfigureAwait(false); }
+                catch { }
+                return false;
+            }
+
             try
             {
-                await task.WaitAsync(slice, timeProvider, cancellationToken).ConfigureAwait(false);
+                await waitTask.ConfigureAwait(false);
                 return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
             }
             catch (TimeoutException) when (!task.IsCompleted)
