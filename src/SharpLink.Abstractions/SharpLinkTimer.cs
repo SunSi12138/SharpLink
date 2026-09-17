@@ -125,6 +125,10 @@ internal static class SharpLinkTimer
             {
                 if (deadline.IsExpired(timeProvider))
                     return false;
+
+                // WaitAsync observes the linked waiter token. Re-publish caller cancellation with
+                // the original token so the public cancellation identity contract remains intact.
+                cancellationToken.ThrowIfCancellationRequested();
                 throw;
             }
             catch
