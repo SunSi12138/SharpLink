@@ -108,7 +108,7 @@ internal static class SharpLinkTimer
 
             waitCancellation.Cancel();
             try { await waitTask.ConfigureAwait(false); }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+            catch (OperationCanceledException) { }
 
             if (task.IsCompleted)
                 return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
