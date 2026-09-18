@@ -86,7 +86,7 @@ const KNOWN_RUNTIME_IDENTITIES = Object.freeze({
     }),
     'browser-wasm-browser-coreclr-net11': Object.freeze({
         os: 'browser', processArchitecture: 'wasm', executionEnvironment: 'browser', runtimeFamily: 'CoreCLR',
-        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'browser-wasm', targetFramework: 'net11.0/browser-wasm', pointerSize: 4
+        runtimeFamilySource: 'build-runtime-selection', runtimeIdentifier: 'browser-wasm', targetFramework: 'net11.0/browser-wasm', pointerSize: 4
     }),
     'android-x64-emulator-mono-net10': Object.freeze({
         os: 'android', processArchitecture: 'x64', executionEnvironment: 'emulator', runtimeFamily: 'Mono',
