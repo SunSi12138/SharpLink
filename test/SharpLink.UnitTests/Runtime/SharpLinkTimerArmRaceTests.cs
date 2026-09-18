@@ -21,6 +21,27 @@ public class SharpLinkTimerArmRaceTests
             "the stale relative timeout must be canceled after post-arm deadline arbitration");
     }
 
+    [Test]
+    public async Task TaskWaitShouldRebaseTimeoutAfterPartialClockAdvanceDuringTimerArm()
+    {
+        var provider = new AdvancingOnFirstTimerTimeProvider(TimeSpan.FromSeconds(2));
+        var owner = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+
+        var wait = SharpLinkTimer.WaitAsync(
+            owner.Task,
+            deadline,
+            provider,
+            CancellationToken.None).AsTask();
+
+        provider.Advance(TimeSpan.FromSeconds(3));
+
+        Ensure(!await wait.WaitAsync(TimeSpan.FromSeconds(2)),
+            "the owned timeout must be rebased to the remaining absolute deadline after timer creation");
+        Ensure(provider.ActiveTimerCount == 0,
+            "the absolute-deadline timer must be disposed after the deadline wins");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -33,6 +54,8 @@ public class SharpLinkTimerArmRaceTests
         private int _advanced;
 
         public int ActiveTimerCount => _inner.ActiveTimerCount;
+
+        public void Advance(TimeSpan elapsed) => _inner.Advance(elapsed);
 
         public override long TimestampFrequency => _inner.TimestampFrequency;
 
