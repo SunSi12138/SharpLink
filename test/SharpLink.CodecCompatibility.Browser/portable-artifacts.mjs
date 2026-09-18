@@ -423,8 +423,10 @@ function validateBrowserAutoLayoutEvidenceOnly(item, source) {
             }
             return;
         case 'DESERIALIZE_REJECTED':
+            // Fixture verification can compute logicalEquality=false before diagnostic value
+            // rendering throws; the catch then records the row as DESERIALIZE_REJECTED.
             if (item.crossDeserializeResult !== false
-                || item.logicalEquality != null
+                || (item.logicalEquality != null && item.logicalEquality !== false)
                 || item.segmentedCrossDeserializeResult != null
                 || item.segmentedLogicalEquality != null) {
                 throw new Error(`${source} has inconsistent Browser auto-layout deserialize-rejected evidence for ${String(item.fixture)}.`);
