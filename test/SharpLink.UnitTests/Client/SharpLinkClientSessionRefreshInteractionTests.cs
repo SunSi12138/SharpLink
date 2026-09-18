@@ -275,8 +275,13 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         try { await call.WaitAsync(Timeout); }
         catch (SharpLinkException exception) { observed = exception; }
         Ensure(ReferenceEquals(observed, failure), "cleanup preserves the originating connection failure");
+        while (client.FrameworkTaskSnapshotForDiagnostics.Operations.Any(operation =>
+                   operation.Operation.EndsWith("DisconnectedConnectionCleanup", StringComparison.Ordinal)))
+        {
+            await Task.Yield();
+        }
         Ensure(source!.CallAdmissionReservationCount == 0 && source.ActiveCallCount == 0,
-            "detached cleanup releases all call ownership");
+            "the supervised detached cleanup releases all call ownership before it completes");
     }
 
     [Test]
