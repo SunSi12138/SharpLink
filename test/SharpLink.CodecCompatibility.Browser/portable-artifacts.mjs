@@ -4,6 +4,14 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const BUILTIN_RAW_CATEGORY = 'builtin-semantic-raw';
+const BROWSER_EVIDENCE_ONLY_AUTO_LAYOUT_CATEGORY = 'auto-layout-release-scoped';
+const BROWSER_AUTO_LAYOUT_EVIDENCE_CLASSIFICATIONS = new Set([
+    'SIZE_OR_LAYOUT_MISMATCH',
+    'DESERIALIZE_REJECTED',
+    'DESERIALIZED_VALUE_MISMATCH',
+    'SEGMENTED_DESERIALIZE_REJECTED',
+    'SEGMENTED_DESERIALIZED_VALUE_MISMATCH'
+]);
 const BROWSER_PLATFORM_TAG = 'browser-wasm-browser-mono-net10';
 const EXPECTED_FIXTURE_POLICY_SHA256 = '9e3c6ed421a21c15ffba4ee7027fa8aab166bf385247cd9e8d65de8a68a62cf5';
 const ONE_BYTE_FIXTURE_ID_SET = new Set(['Byte', 'ByteEnum']);
@@ -391,6 +399,66 @@ function validateByteClassification(item, source, raw) {
     }
 }
 
+function isBrowserAutoLayoutEvidenceOnly(item, report) {
+    const producer = String(item.producer ?? '');
+    const consumer = String(report?.consumer?.platformTag ?? '');
+    const browserDesktopEdge = (producer === BROWSER_PLATFORM_TAG && DESKTOP_PLATFORM_TAGS.includes(consumer))
+        || (consumer === BROWSER_PLATFORM_TAG && DESKTOP_PLATFORM_TAGS.includes(producer));
+    return browserDesktopEdge
+        && item.category === BROWSER_EVIDENCE_ONLY_AUTO_LAYOUT_CATEGORY
+        && item.blocking === false
+        && BROWSER_AUTO_LAYOUT_EVIDENCE_CLASSIFICATIONS.has(String(item.classification ?? ''));
+}
+
+function validateBrowserAutoLayoutEvidenceOnly(item, source) {
+    const classification = String(item.classification ?? '');
+    switch (classification) {
+        case 'SIZE_OR_LAYOUT_MISMATCH':
+            if (Number(item.producerSize) === Number(item.consumerSize)
+                || item.crossDeserializeResult != null
+                || item.logicalEquality != null
+                || item.segmentedCrossDeserializeResult != null
+                || item.segmentedLogicalEquality != null) {
+                throw new Error(`${source} has inconsistent Browser auto-layout size/layout evidence for ${String(item.fixture)}.`);
+            }
+            return;
+        case 'DESERIALIZE_REJECTED':
+            if (item.crossDeserializeResult !== false
+                || item.logicalEquality != null
+                || item.segmentedCrossDeserializeResult != null
+                || item.segmentedLogicalEquality != null) {
+                throw new Error(`${source} has inconsistent Browser auto-layout deserialize-rejected evidence for ${String(item.fixture)}.`);
+            }
+            return;
+        case 'DESERIALIZED_VALUE_MISMATCH':
+            if (item.crossDeserializeResult !== true
+                || item.logicalEquality !== false
+                || item.segmentedCrossDeserializeResult != null
+                || item.segmentedLogicalEquality != null) {
+                throw new Error(`${source} has inconsistent Browser auto-layout logical-mismatch evidence for ${String(item.fixture)}.`);
+            }
+            return;
+        case 'SEGMENTED_DESERIALIZE_REJECTED':
+            if (item.crossDeserializeResult !== true
+                || item.logicalEquality !== true
+                || item.segmentedCrossDeserializeResult !== false
+                || item.segmentedLogicalEquality != null) {
+                throw new Error(`${source} has inconsistent Browser auto-layout segmented-rejected evidence for ${String(item.fixture)}.`);
+            }
+            return;
+        case 'SEGMENTED_DESERIALIZED_VALUE_MISMATCH':
+            if (item.crossDeserializeResult !== true
+                || item.logicalEquality !== true
+                || item.segmentedCrossDeserializeResult !== true
+                || item.segmentedLogicalEquality !== false) {
+                throw new Error(`${source} has inconsistent Browser auto-layout segmented-mismatch evidence for ${String(item.fixture)}.`);
+            }
+            return;
+        default:
+            throw new Error(`${source} has unsupported Browser auto-layout evidence classification ${classification}.`);
+    }
+}
+
 function validateStrictResultSemantics(
     report,
     source,
@@ -433,6 +501,11 @@ function validateStrictResultSemantics(
             && item.segmentedLogicalEquality == null;
         if (expectedNativeWidthDifference) {
             validateExpectedNativeWidthDifference(item, fixture, source);
+            continue;
+        }
+
+        if (isBrowserAutoLayoutEvidenceOnly(item, report)) {
+            validateBrowserAutoLayoutEvidenceOnly(item, source);
             continue;
         }
 
