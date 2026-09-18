@@ -21,7 +21,7 @@ The release-gated desktop matrix in `.github/workflows/codec-compatibility.yml` 
 
 The workflow is invoked by both PR Quick and Release Gate. Every desktop target is both a producer and a consumer: each consumer downloads all six producer corpora and invokes its own `UnsafeBlitCodec<T>` to deserialize producer bytes. A central Linux summary job only aggregates the per-runtime reports; it does not stand in for Windows or macOS decode execution.
 
-Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, runtime-family provenance, RID, endianness, compilation mode, execution environment, and SharpLink commit. Compilation mode is observed in-process. Runtime-family provenance is explicit: desktop uses runtime reflection, Android inspects loaded runtime libraries, while Browser/iOS record Mono as derived from the selected platform/runtime pack rather than presenting that platform fact as an independent runtime-family assertion. Expected lane values never overwrite recorded identity fields. The manifest and its provenance fields are the evidence source of truth.
+Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, runtime-family provenance, RID, endianness, compilation mode, execution environment, and SharpLink commit. Compilation mode is observed in-process. Runtime-family provenance is explicit: desktop uses runtime reflection, Android inspects loaded runtime libraries, Browser/iOS Mono is derived from the selected platform/runtime pack, while Browser CoreCLR records the explicit `UseMonoRuntime=false` build selection as its runtime-family provenance. Expected lane values never overwrite recorded identity fields. The manifest and its provenance fields are the evidence source of truth.
 
 A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
 
@@ -33,7 +33,8 @@ A combination or explicitly named producer/consumer edge is Verified when retain
 
 The current evidence-backed environments include:
 
-- Browser WebAssembly: `browser-wasm`, wasm32, Mono, Interpreter, executed in a real headless Chrome instance;
+- Browser WebAssembly: `browser-wasm`, wasm32, Mono, Interpreter on .NET 10, executed in a real headless Chrome instance;
+- Browser WebAssembly: `browser-wasm`, wasm32, CoreCLR on the pinned .NET 11 RC SDK, executed in the same real headless Chrome harness as experimental evidence;
 - Android x64 emulator: Mono;
 - Android x64 emulator: .NET 10 CoreCLR experimental runtime;
 - iOS Simulator x64: Mono, Interpreter;
@@ -41,6 +42,10 @@ The current evidence-backed environments include:
 - .NET 10 servicing baseline/latest evidence on Linux x64 CoreCLR, executed by the scheduled/manual Nightly lane.
 
 Browser evidence in `.github/workflows/codec-compatibility.yml` is bidirectional with the six desktop identities. The Browser consumer downloads all six desktop corpora plus its own corpus. Separately, six non-gating desktop evidence consumers download the Browser-produced corpus and execute the safe fixtures on Linux x64/arm64, Windows x64/arm64, and macOS x64/arm64. Framework-owned raw fixtures are compared as representation evidence rather than unsafe semantic materialization. The Browser gate additionally requires the observed wasm32 identity (`pointerSize=4`, `runtimeIdentifier=browser-wasm`, and `targetFramework=net10.0/browser-wasm`) rather than relying on the platform tag alone.
+
+A separate non-blocking Browser CoreCLR evidence graph pins the .NET 11 RC SDK and publishes the same Browser/WASM probe with `UseMonoRuntime=false`. Its manifest must report `browser-wasm-browser-coreclr-net11`, `runtimeFamily=CoreCLR`, `runtimeFamilySource=build-runtime-selection`, `pointerSize=4`, and `targetFramework=net11.0/browser-wasm`. The CoreCLR Browser consumer verifies all six desktop corpora, the .NET 10 Browser Mono corpus, and its own corpus; six desktop consumers independently verify the CoreCLR Browser producer corpus. This lane is experimental evidence and remains `continue-on-error` while .NET 11 Browser CoreCLR is pre-GA, so it cannot weaken or block the existing release contract.
+
+The `auto-layout-release-scoped` fixtures are deliberately evidence-only on Browser <-> hosted-desktop edges and on Browser Mono <-> Browser CoreCLR cross-runtime edges. `LayoutKind.Auto` and framework-owned nested value layouts are runtime implementation details rather than a supported raw ABI contract. The probe still records size, byte, decode, logical-value, and classification failures for those rows, and validates that each non-blocking row has a recognized layout-mismatch shape. Browser self-roundtrip within the same runtime identity, all desktop <-> desktop rows, fixed/sequential/explicit-layout fixtures outside that category, native-width policy checks, fixture completeness, hashes, and every other codec failure remain blocking under their existing contracts.
 
 .NET 10 servicing evidence is defined by `.github/workflows/codec-servicing-compatibility.yml`. It intentionally keeps the non-servicing identity fixed as `linux-x64-hosted-desktop-coreclr-net10` so SDK/runtime servicing is the variable under test. The baseline SDK is read from the repository `global.json`; its paired CoreCLR runtime is resolved from that SDK's `Microsoft.NETCoreSdk.BundledVersions.props` `BundledNETCoreAppPackageVersion`. The latest lane resolves the current `10.0.x` SDK and its bundled CoreCLR runtime in the same way. Both SDK and runtime versions are recorded in the manifest rather than inferred from the lane name.
 
