@@ -224,6 +224,7 @@ internal static class Program
                 AppendProgress(progressFile, begin);
 
                 var result = fixture.Verify(producerBytes, producerCase, producer, consumer);
+                CompatibilityPolicy.ApplyBrowserAutoLayoutEvidencePolicy(result, producer, consumer);
                 report.Results.Add(result);
 
                 var end = $"VERIFY_END producer={producer.PlatformTag} consumer={consumer.PlatformTag} fixture={producerCase.Id} classification={result.Classification} blocking={result.Blocking}";
