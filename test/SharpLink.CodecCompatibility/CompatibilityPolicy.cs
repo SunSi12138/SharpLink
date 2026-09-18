@@ -232,7 +232,7 @@ internal static class CompatibilityPolicy
 
         if (!result.Blocking
             || !string.Equals(result.Category, BrowserEvidenceOnlyAutoLayoutCategory, StringComparison.Ordinal)
-            || !IsBrowserDesktopEdge(producer, consumer)
+            || !IsBrowserAutoLayoutEvidenceEdge(producer, consumer)
             || result.Classification is not (
                 "SIZE_OR_LAYOUT_MISMATCH"
                 or "DESERIALIZE_REJECTED"
@@ -244,18 +244,24 @@ internal static class CompatibilityPolicy
         }
 
         // LayoutKind.Auto and framework-owned nested layouts are runtime implementation details.
-        // Browser evidence intentionally records these mismatches across the Mono/wasm32 and
-        // hosted-desktop boundary, but that unsupported ABI edge is not a release contract.
+        // Browser evidence intentionally records these mismatches across Browser/desktop and
+        // Browser cross-runtime edges, but those unsupported ABI edges are not release contracts.
         result.Blocking = false;
     }
 
-    private static bool IsBrowserDesktopEdge(RuntimeManifest producer, RuntimeManifest consumer)
+    private static bool IsBrowserAutoLayoutEvidenceEdge(RuntimeManifest producer, RuntimeManifest consumer)
     {
         var producerIsBrowser = string.Equals(producer.ExecutionEnvironment, "browser", StringComparison.Ordinal);
         var consumerIsBrowser = string.Equals(consumer.ExecutionEnvironment, "browser", StringComparison.Ordinal);
         var producerIsDesktop = string.Equals(producer.ExecutionEnvironment, "hosted-desktop", StringComparison.Ordinal);
         var consumerIsDesktop = string.Equals(consumer.ExecutionEnvironment, "hosted-desktop", StringComparison.Ordinal);
-        return (producerIsBrowser && consumerIsDesktop) || (consumerIsBrowser && producerIsDesktop);
+
+        if ((producerIsBrowser && consumerIsDesktop) || (consumerIsBrowser && producerIsDesktop))
+            return true;
+
+        return producerIsBrowser
+            && consumerIsBrowser
+            && !string.Equals(producer.RuntimeFamily, consumer.RuntimeFamily, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSha256(string value)

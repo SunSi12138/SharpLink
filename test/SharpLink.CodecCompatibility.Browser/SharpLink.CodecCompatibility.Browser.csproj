@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.WebAssembly">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <SharpLinkBrowserRuntime Condition="'$(SharpLinkBrowserRuntime)' == ''">Mono</SharpLinkBrowserRuntime>
+    <TargetFramework Condition="'$(SharpLinkBrowserRuntime)' != 'CoreCLR'">net10.0</TargetFramework>
+    <TargetFramework Condition="'$(SharpLinkBrowserRuntime)' == 'CoreCLR'">net11.0</TargetFramework>
+    <UseMonoRuntime Condition="'$(SharpLinkBrowserRuntime)' == 'CoreCLR'">false</UseMonoRuntime>
+    <DefineConstants Condition="'$(SharpLinkBrowserRuntime)' == 'CoreCLR'">$(DefineConstants);SHARPLINK_BROWSER_CORECLR</DefineConstants>
     <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
     <OutputType>Exe</OutputType>
     <AssemblyName>SharpLink.CodecCompatibility</AssemblyName>

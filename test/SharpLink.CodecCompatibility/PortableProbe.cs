@@ -341,7 +341,13 @@ internal static class PortableProbe
     private static (string Family, string Source) DetectRuntimeFamily()
     {
         if (OperatingSystem.IsBrowser())
-            return ("Mono", "platform-runtime-pack");
+        {
+            // .NET 10 Browser/WASM is Mono. .NET 11 can run the same browser-wasm
+            // application on CoreCLR when UseMonoRuntime=false.
+            return Type.GetType("Mono.Runtime") is null
+                ? ("CoreCLR", "runtime-reflection")
+                : ("Mono", "platform-runtime-pack");
+        }
 
         if (OperatingSystem.IsAndroid())
             return (DetectAndroidRuntimeFamily(), "loaded-runtime-library");
