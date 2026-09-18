@@ -80,7 +80,7 @@ internal sealed class RuntimeManifest : IJsonOnDeserialized
                 ValidateKnownIdentity("browser", "wasm", "browser", "Mono", "platform-runtime-pack", "browser-wasm", "net10.0/browser-wasm", 4);
                 break;
             case "browser-wasm-browser-coreclr-net11":
-                ValidateKnownIdentity("browser", "wasm", "browser", "CoreCLR", "runtime-reflection", "browser-wasm", "net11.0/browser-wasm", 4);
+                ValidateKnownIdentity("browser", "wasm", "browser", "CoreCLR", "build-runtime-selection", "browser-wasm", "net11.0/browser-wasm", 4);
                 break;
             case "android-x64-emulator-mono-net10":
             case "android-x64-emulator-coreclr-net10":
