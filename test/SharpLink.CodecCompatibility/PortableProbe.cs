@@ -342,11 +342,13 @@ internal static class PortableProbe
     {
         if (OperatingSystem.IsBrowser())
         {
-            // .NET 10 Browser/WASM is Mono. .NET 11 can run the same browser-wasm
-            // application on CoreCLR when UseMonoRuntime=false.
-            return Type.GetType("Mono.Runtime") is null
-                ? ("CoreCLR", "runtime-reflection")
-                : ("Mono", "platform-runtime-pack");
+#if SHARPLINK_BROWSER_CORECLR
+            // Browser CoreCLR is selected by this probe project's UseMonoRuntime=false build.
+            // Mono.Runtime reflection is not a reliable discriminator in Browser/WASM.
+            return ("CoreCLR", "build-runtime-selection");
+#else
+            return ("Mono", "platform-runtime-pack");
+#endif
         }
 
         if (OperatingSystem.IsAndroid())
