@@ -89,6 +89,11 @@ internal static class SharpLinkTimer
         if (task.IsCompleted)
             return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
 
+        // Preserve a caller cancellation that was already terminal before timer ownership begins.
+        // Keep this after the source-completed fast path so an already-completed source retains its
+        // existing priority, but before CreateTimer can advance the provider to the deadline.
+        cancellationToken.ThrowIfCancellationRequested();
+
         // Establish timer ownership before sampling the relative delay that will represent the
         // absolute deadline. A TimeProvider is allowed to advance while CreateTimer runs; creating
         // the timer disarmed first prevents that arm latency from being added to a stale remaining
