@@ -140,7 +140,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         if (!string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
         {
-            await plugin.GetStaticTask("ServerStreamDisposed").WaitAsync(TimeSpan.FromSeconds(2));
+            // Consumer disposal publishes abandonment locally and sends Cancel, but remote iterator
+            // finalization remains asynchronous. Do not turn scheduler/transport latency into a
+            // per-round two-second contract; the enclosing integration test timeout still catches
+            // a genuinely lost cancellation or stuck server iterator.
+            await plugin.GetStaticTask("ServerStreamDisposed");
         }
         proxy = null;
         var service = await harness.Server.UnregisterAssemblyAsync(
