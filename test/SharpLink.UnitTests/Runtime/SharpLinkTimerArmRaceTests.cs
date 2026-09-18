@@ -22,6 +22,29 @@ public class SharpLinkTimerArmRaceTests
     }
 
     [Test]
+    public async Task TaskWaitShouldPreserveCallerCancellationBeforeTimerArmAdvancesDeadline()
+    {
+        var provider = new AdvancingOnFirstTimerTimeProvider(TimeSpan.FromSeconds(5));
+        var owner = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(5), provider);
+        using var cancellation = new CancellationTokenSource();
+
+        cancellation.Cancel();
+
+        var failure = await CaptureFailureAsync(
+            SharpLinkTimer.WaitAsync(
+                owner.Task,
+                deadline,
+                provider,
+                cancellation.Token).AsTask());
+
+        Ensure(
+            failure is OperationCanceledException canceled &&
+            canceled.CancellationToken == cancellation.Token,
+            "caller cancellation that predates timer ownership must remain terminal");
+    }
+
+    [Test]
     public async Task TaskWaitShouldRebaseTimeoutAfterPartialClockAdvanceDuringTimerArm()
     {
         var provider = new AdvancingOnFirstTimerTimeProvider(TimeSpan.FromSeconds(2));
@@ -40,6 +63,19 @@ public class SharpLinkTimerArmRaceTests
             "the owned timeout must be rebased to the remaining absolute deadline after timer creation");
         Ensure(provider.ActiveTimerCount == 0,
             "the absolute-deadline timer must be disposed after the deadline wins");
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static void Ensure(bool condition, string message)
