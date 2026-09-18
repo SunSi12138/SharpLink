@@ -153,7 +153,9 @@ internal static class PortableProbe
                         $"Wire hash mismatch for {producer.PlatformTag}/{producerCase.Id}: manifest={producerCase.WireSha256}, observed={observedHash}.");
                 }
 
-                report.Results.Add(fixture.Verify(producerBytes, producerCase, producer, consumer));
+                var result = fixture.Verify(producerBytes, producerCase, producer, consumer);
+                CompatibilityPolicy.ApplyBrowserAutoLayoutEvidencePolicy(result, producer, consumer);
+                report.Results.Add(result);
             }
         }
 
