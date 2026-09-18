@@ -219,7 +219,15 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
             await Task.Delay(200);
         }
 
-        await using var factory = new SharedMemoryClientTransportFactory(name, options);
+        // The listener's 100ms timeout is the contract under test for rejecting an
+        // already-connected bad handshake. Do not also make the healthy recovery client
+        // consume that same budget while it waits for the listener to cycle back to accept.
+        var clientOptions = new SharedMemoryTransportOptions
+        {
+            CapacityPerDirectionBytes = 64 * 1024,
+            HandshakeTimeout = TimeSpan.FromSeconds(2)
+        };
+        await using var factory = new SharedMemoryClientTransportFactory(name, clientOptions);
         await using var client = await factory.ConnectAsync();
         await using var server = await accept.WaitAsync(TimeSpan.FromSeconds(2));
     }
