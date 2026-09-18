@@ -12,7 +12,12 @@ const BROWSER_AUTO_LAYOUT_EVIDENCE_CLASSIFICATIONS = new Set([
     'SEGMENTED_DESERIALIZE_REJECTED',
     'SEGMENTED_DESERIALIZED_VALUE_MISMATCH'
 ]);
-const BROWSER_PLATFORM_TAG = 'browser-wasm-browser-mono-net10';
+const BROWSER_MONO_PLATFORM_TAG = 'browser-wasm-browser-mono-net10';
+const BROWSER_CORECLR_PLATFORM_TAG = 'browser-wasm-browser-coreclr-net11';
+const BROWSER_PLATFORM_TAGS = Object.freeze([
+    BROWSER_MONO_PLATFORM_TAG,
+    BROWSER_CORECLR_PLATFORM_TAG
+]);
 const EXPECTED_FIXTURE_POLICY_SHA256 = '9e3c6ed421a21c15ffba4ee7027fa8aab166bf385247cd9e8d65de8a68a62cf5';
 const ONE_BYTE_FIXTURE_ID_SET = new Set(['Byte', 'ByteEnum']);
 const EXPECTED_PADDING_POISON_FIXTURE_IDS = Object.freeze(['ByteInt32', 'Int64Byte']);
@@ -78,6 +83,10 @@ const KNOWN_RUNTIME_IDENTITIES = Object.freeze({
     'browser-wasm-browser-mono-net10': Object.freeze({
         os: 'browser', processArchitecture: 'wasm', executionEnvironment: 'browser', runtimeFamily: 'Mono',
         runtimeFamilySource: 'platform-runtime-pack', runtimeIdentifier: 'browser-wasm', targetFramework: 'net10.0/browser-wasm', pointerSize: 4
+    }),
+    'browser-wasm-browser-coreclr-net11': Object.freeze({
+        os: 'browser', processArchitecture: 'wasm', executionEnvironment: 'browser', runtimeFamily: 'CoreCLR',
+        runtimeFamilySource: 'runtime-reflection', runtimeIdentifier: 'browser-wasm', targetFramework: 'net11.0/browser-wasm', pointerSize: 4
     }),
     'android-x64-emulator-mono-net10': Object.freeze({
         os: 'android', processArchitecture: 'x64', executionEnvironment: 'emulator', runtimeFamily: 'Mono',
@@ -186,7 +195,10 @@ function validateRuntimeManifestIdentity(manifest, source) {
     validateSchemaVersion(manifest, source);
     const registry = validateFixtureRegistry(manifest, source);
     const platformTag = String(manifest?.platformTag ?? '');
-    const derivedTag = `${String(manifest?.os ?? '')}-${String(manifest?.processArchitecture ?? '')}-${String(manifest?.executionEnvironment ?? '')}-${String(manifest?.runtimeFamily ?? '').toLowerCase()}-net10`;
+    const targetFramework = String(manifest?.targetFramework ?? '').split('/', 1)[0];
+    const frameworkBase = targetFramework.includes('-') ? targetFramework.split('-', 1)[0] : targetFramework;
+    const frameworkTag = frameworkBase.includes('.') ? frameworkBase.split('.', 1)[0].toLowerCase() : frameworkBase.toLowerCase();
+    const derivedTag = `${String(manifest?.os ?? '')}-${String(manifest?.processArchitecture ?? '')}-${String(manifest?.executionEnvironment ?? '')}-${String(manifest?.runtimeFamily ?? '').toLowerCase()}-${frameworkTag}`;
     if (platformTag !== derivedTag) {
         throw new Error(`${source} platformTag mismatch: recorded=${platformTag || '<missing>'}, derived=${derivedTag}.`);
     }
@@ -402,9 +414,13 @@ function validateByteClassification(item, source, raw) {
 function isBrowserAutoLayoutEvidenceOnly(item, report) {
     const producer = String(item.producer ?? '');
     const consumer = String(report?.consumer?.platformTag ?? '');
-    const browserDesktopEdge = (producer === BROWSER_PLATFORM_TAG && DESKTOP_PLATFORM_TAGS.includes(consumer))
-        || (consumer === BROWSER_PLATFORM_TAG && DESKTOP_PLATFORM_TAGS.includes(producer));
-    return browserDesktopEdge
+    const producerIsBrowser = BROWSER_PLATFORM_TAGS.includes(producer);
+    const consumerIsBrowser = BROWSER_PLATFORM_TAGS.includes(consumer);
+    const browserEvidenceEdge =
+        (producerIsBrowser && DESKTOP_PLATFORM_TAGS.includes(consumer))
+        || (consumerIsBrowser && DESKTOP_PLATFORM_TAGS.includes(producer))
+        || (producerIsBrowser && consumerIsBrowser && producer !== consumer);
+    return browserEvidenceEdge
         && item.category === BROWSER_EVIDENCE_ONLY_AUTO_LAYOUT_CATEGORY
         && item.blocking === false
         && BROWSER_AUTO_LAYOUT_EVIDENCE_CLASSIFICATIONS.has(String(item.classification ?? ''));
@@ -744,16 +760,19 @@ export async function checkDesktopIdentities(reportRoot, expectedCsv) {
     return reportFiles.length;
 }
 
-export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot) {
+async function checkBrowserRuntimeEvidence(
+    forwardReportFile,
+    reverseReportRoot,
+    browserPlatformTag,
+    expectedForwardProducers) {
     const forward = JSON.parse(await fs.readFile(forwardReportFile, 'utf8'));
     validateVerificationReportSchema(forward, forwardReportFile);
     validateResultConsumers(forward, forwardReportFile);
-    if (String(forward.consumer.platformTag ?? '') !== BROWSER_PLATFORM_TAG) {
+    if (String(forward.consumer.platformTag ?? '') !== browserPlatformTag) {
         throw new Error(
-            `Browser forward consumer identity mismatch: expected=${BROWSER_PLATFORM_TAG}, actual=${String(forward.consumer.platformTag ?? '<missing>')}.`);
+            `Browser forward consumer identity mismatch: expected=${browserPlatformTag}, actual=${String(forward.consumer.platformTag ?? '<missing>')}.`);
     }
     const registry = validateFixtureRegistry(forward.consumer, 'Browser forward fixture registry');
-    const expectedForwardProducers = [...DESKTOP_PLATFORM_TAGS, BROWSER_PLATFORM_TAG];
     assertExactSet(
         forward.results.map(item => String(item.producer ?? '')),
         expectedForwardProducers,
@@ -791,11 +810,11 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
         }
         assertExactSet(
             report.results.map(item => String(item.producer ?? '')),
-            [BROWSER_PLATFORM_TAG],
+            [browserPlatformTag],
             `${reportFile} Browser producer identity`);
         assertExactResultKeySet(
             report,
-            [BROWSER_PLATFORM_TAG],
+            [browserPlatformTag],
             registry.fixtureIds,
             `${reportFile} Browser-to-desktop result keys`);
         validateStrictResultSemantics(report, reportFile, true, true);
@@ -808,6 +827,22 @@ export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot)
         reverseReports: reverseReportFiles.length,
         reverseRows
     };
+}
+
+export async function checkBrowserEvidence(forwardReportFile, reverseReportRoot) {
+    return checkBrowserRuntimeEvidence(
+        forwardReportFile,
+        reverseReportRoot,
+        BROWSER_MONO_PLATFORM_TAG,
+        [...DESKTOP_PLATFORM_TAGS, BROWSER_MONO_PLATFORM_TAG]);
+}
+
+export async function checkBrowserCoreClrEvidence(forwardReportFile, reverseReportRoot) {
+    return checkBrowserRuntimeEvidence(
+        forwardReportFile,
+        reverseReportRoot,
+        BROWSER_CORECLR_PLATFORM_TAG,
+        [...DESKTOP_PLATFORM_TAGS, BROWSER_MONO_PLATFORM_TAG, BROWSER_CORECLR_PLATFORM_TAG]);
 }
 
 async function main() {
@@ -841,12 +876,19 @@ async function main() {
     if (command === 'check-browser-evidence' && args.length === 3) {
         const result = await checkBrowserEvidence(args[1], args[2]);
         console.log(
-            `Verified bidirectional Browser evidence: ${result.forwardRows} Browser-consumer rows and ` +
+            `Verified bidirectional Browser Mono evidence: ${result.forwardRows} Browser-consumer rows and ` +
             `${result.reverseRows} Browser-to-desktop rows across ${result.reverseReports} desktop consumers.`);
         return;
     }
+    if (command === 'check-browser-coreclr-evidence' && args.length === 3) {
+        const result = await checkBrowserCoreClrEvidence(args[1], args[2]);
+        console.log(
+            `Verified Browser CoreCLR evidence: ${result.forwardRows} CoreCLR-consumer rows and ` +
+            `${result.reverseRows} CoreCLR-to-desktop rows across ${result.reverseReports} desktop consumers.`);
+        return;
+    }
     throw new Error(
-        'Usage: portable-artifacts.mjs <unpack|pack|append-raw|check-report|check-desktop-identities|check-browser-evidence> ...');
+        'Usage: portable-artifacts.mjs <unpack|pack|append-raw|check-report|check-desktop-identities|check-browser-evidence|check-browser-coreclr-evidence> ...');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
