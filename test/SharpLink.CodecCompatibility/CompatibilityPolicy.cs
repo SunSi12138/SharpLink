@@ -13,6 +13,7 @@ internal readonly record struct FixturePolicyEntry(
 internal static class CompatibilityPolicy
 {
     internal const int ArtifactSchemaVersion = 1;
+    internal const string BrowserEvidenceOnlyAutoLayoutCategory = "auto-layout-release-scoped";
     internal const string BaselineFixturePolicySha256 = "9e3c6ed421a21c15ffba4ee7027fa8aab166bf385247cd9e8d65de8a68a62cf5";
 
     private static readonly FixturePolicyEntry[] RequiredFixtures =
@@ -218,6 +219,43 @@ internal static class CompatibilityPolicy
             throw new InvalidOperationException(
                 $"Runtime manifest {platformTag} requires known exact-runtime identity field {field}; observed '{value}'.");
         }
+    }
+
+    internal static void ApplyBrowserAutoLayoutEvidencePolicy(
+        VerificationEntry result,
+        RuntimeManifest producer,
+        RuntimeManifest consumer)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(producer);
+        ArgumentNullException.ThrowIfNull(consumer);
+
+        if (!result.Blocking
+            || !string.Equals(result.Category, BrowserEvidenceOnlyAutoLayoutCategory, StringComparison.Ordinal)
+            || !IsBrowserDesktopEdge(producer, consumer)
+            || result.Classification is not (
+                "SIZE_OR_LAYOUT_MISMATCH"
+                or "DESERIALIZE_REJECTED"
+                or "DESERIALIZED_VALUE_MISMATCH"
+                or "SEGMENTED_DESERIALIZE_REJECTED"
+                or "SEGMENTED_DESERIALIZED_VALUE_MISMATCH"))
+        {
+            return;
+        }
+
+        // LayoutKind.Auto and framework-owned nested layouts are runtime implementation details.
+        // Browser evidence intentionally records these mismatches across the Mono/wasm32 and
+        // hosted-desktop boundary, but that unsupported ABI edge is not a release contract.
+        result.Blocking = false;
+    }
+
+    private static bool IsBrowserDesktopEdge(RuntimeManifest producer, RuntimeManifest consumer)
+    {
+        var producerIsBrowser = string.Equals(producer.ExecutionEnvironment, "browser", StringComparison.Ordinal);
+        var consumerIsBrowser = string.Equals(consumer.ExecutionEnvironment, "browser", StringComparison.Ordinal);
+        var producerIsDesktop = string.Equals(producer.ExecutionEnvironment, "hosted-desktop", StringComparison.Ordinal);
+        var consumerIsDesktop = string.Equals(consumer.ExecutionEnvironment, "hosted-desktop", StringComparison.Ordinal);
+        return (producerIsBrowser && consumerIsDesktop) || (consumerIsBrowser && producerIsDesktop);
     }
 
     private static bool IsSha256(string value)
