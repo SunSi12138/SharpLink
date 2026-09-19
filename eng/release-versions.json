@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "2.0.0",
+  "release": "2.0.1",
   "publishedBaseline": {
     "version": "1.1.1",
     "commit": "201b1621cc706ee221e10ac20947af5fc62b087e"
