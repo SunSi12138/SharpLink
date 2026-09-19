@@ -9,9 +9,7 @@ The policy is intentionally closed-world and default-deny: every production proj
 The policy applies to production projects discovered under `src/`. The current registered set is:
 
 - `SharpLink.Abstractions`
-- `SharpLink.GenerationControl`
 - `SharpLink.Runtime`
-- `SharpLink.Compression.Zstd`
 - `SharpLink.Client`
 - `SharpLink.Server`
 - `SharpLink.Hosting`
@@ -29,10 +27,7 @@ An arrow means "the project on the left may reference the project on the right".
 
 ```mermaid
 graph LR
-    GenerationControl[SharpLink.GenerationControl] --> Abstractions[SharpLink.Abstractions]
-    GenerationControl -. analyzer-only .-> Generator[SharpLink.Generator]
     Runtime[SharpLink.Runtime] --> Abstractions[SharpLink.Abstractions]
-    Compression[SharpLink.Compression.Zstd] --> Runtime
     Client[SharpLink.Client] --> Runtime
     Client --> Abstractions
     Server[SharpLink.Server] --> Runtime
@@ -46,7 +41,7 @@ graph LR
     Hosting -. temporary exception #337 umbrella .-> Server
 ```
 
-`SharpLink.Abstractions` and `SharpLink.Generator` have no permitted production assembly references. The `Sdk -> Generator` and `GenerationControl -> Generator` edges are not runtime/assembly dependencies: they must remain analyzer-only `ProjectReference` edges with the mode semantics specified below.
+`SharpLink.Abstractions` and `SharpLink.Generator` have no permitted production assembly references. The `Sdk -> Generator` edge is not a runtime/assembly dependency: it must remain an analyzer-only `ProjectReference` with the mode semantics specified below.
 
 ## Reference mode semantics
 
@@ -94,10 +89,7 @@ A forbidden reference introduced through an imported `.props` or `.targets` file
 
 | From | To | Mode | Conditions |
 | --- | --- | --- | --- |
-| `SharpLink.GenerationControl` | `SharpLink.Abstractions` | assembly | assembly mode semantics |
-| `SharpLink.GenerationControl` | `SharpLink.Generator` | analyzer | `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"` |
 | `SharpLink.Runtime` | `SharpLink.Abstractions` | assembly | assembly mode semantics |
-| `SharpLink.Compression.Zstd` | `SharpLink.Runtime` | assembly | assembly mode semantics |
 | `SharpLink.Client` | `SharpLink.Runtime` | assembly | assembly mode semantics |
 | `SharpLink.Client` | `SharpLink.Abstractions` | assembly | assembly mode semantics |
 | `SharpLink.Server` | `SharpLink.Runtime` | assembly | assembly mode semantics |
@@ -117,7 +109,7 @@ Because the policy is default-deny, an edge does not need a separate blacklist e
 - `Client -> Server` and `Server -> Client`.
 - `Client -> Hosting`, `Server -> Hosting`, `Runtime -> Client/Server/Hosting`, or `Abstractions ->` any other SharpLink production project.
 - `Serializer.* -> Runtime/Client/Server/Hosting/Sdk/Generator`.
-- production assembly references from or into `SharpLink.Generator`; the only permitted generator edges are `Sdk -> Generator` and `GenerationControl -> Generator`, both in analyzer-only mode.
+- production assembly references from or into `SharpLink.Generator`; the only permitted generator edge is `Sdk -> Generator` in analyzer-only mode.
 - production references to projects under `test/`, `samples/`, demo roots, or any project not named in the policy.
 - any newly-added production `ProjectReference` declaration that is not an exact match for an `allowed_references` entry or an explicit `temporary_exceptions` entry, regardless of its `Condition`.
 - any allowed `from`/`to` pair whose MSBuild metadata does not satisfy the edge's declared `mode`.
@@ -146,9 +138,7 @@ The policy was checked against the production project files on `dev` while defin
 | Project | Current production `ProjectReference` targets |
 | --- | --- |
 | `SharpLink.Abstractions` | none |
-| `SharpLink.GenerationControl` | `SharpLink.Abstractions`, `SharpLink.Generator` (analyzer-only) |
 | `SharpLink.Runtime` | `SharpLink.Abstractions` |
-| `SharpLink.Compression.Zstd` | `SharpLink.Runtime` |
 | `SharpLink.Client` | `SharpLink.Runtime`, `SharpLink.Abstractions` |
 | `SharpLink.Server` | `SharpLink.Runtime`, `SharpLink.Abstractions` |
 | `SharpLink.Hosting` | `SharpLink.Client`, `SharpLink.Server`, `SharpLink.Runtime`, `SharpLink.Abstractions` |
@@ -156,7 +146,7 @@ The policy was checked against the production project files on `dev` while defin
 | `SharpLink.Sdk` | `SharpLink.Abstractions`, `SharpLink.Generator` (analyzer-only; conditioned on `PublishAot != true`) |
 | `SharpLink.Serializer.SharpPack` | `SharpLink.Abstractions` |
 
-Every current production edge is therefore either an allowed edge or one of the two explicit Hosting exceptions. The current set of production `.csproj` files under `src/` also matches the ten paths registered in the YAML. The repository currently has no repository-imported production `ProjectReference` that changes this inventory, but imported declarations and conditions remain in scope for future enforcement.
+Every current production edge is therefore either an allowed edge or one of the two explicit Hosting exceptions. The current set of production `.csproj` files under `src/` also matches the eight paths registered in the YAML. The repository currently has no repository-imported production `ProjectReference` that changes this inventory, but imported declarations and conditions remain in scope for future enforcement.
 
 ## Mechanical interpretation
 

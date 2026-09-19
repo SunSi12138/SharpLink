@@ -66,12 +66,6 @@ Desired configuration generation 与 rolling-refresh intent 是两个不同的 c
 
 这种语义避免把“desired configuration 已提交”与“某个 caller 是否成功等到通知 cohort 完成”混为一个事务：配置 publication 保持原子，rolling notification 是可重复、幂等趋近的后续 control-plane operation。
 
-## Generation control extension
-
-`SharpLink.GenerationControl` 延续同一条 structured-result 边界。Stage/activate 的预期 reconciliation outcome 使用 `SharpLinkGenerationOperationStatus`：`Succeeded`、`AlreadySatisfied`、`ProcessReplacementRequired`、`Rejected` 或 `Unsupported`；`Message` 只用于诊断。非法 descriptor、caller cancellation、application-owned artifact/provider fault 与内部 invariant failure 仍通过异常传播。
-
-`GetInventoryAsync` 是 desired/actual source of truth；`WatchAsync` 只提供带 revision 的 invalidation fast path。掉线、通知丢失或 revision 不连续时重新 query inventory，而不是依赖事件日志重建 correctness。
-
 ## Audit scope and follow-up boundaries
 
 本契约只统一 expected runtime outcome 的建模规则，不把相邻问题合并成一个大改动。以下行为保持独立演进：

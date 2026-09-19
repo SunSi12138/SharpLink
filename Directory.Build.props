@@ -41,7 +41,6 @@
         <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Compression.Zstd'">Official Zstandard compression provider for SharpLink RPC on .NET 10.</Description>
         <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Client'">High-performance SharpLink RPC client with generated proxies, streaming, resilience, and multiple transports.</Description>
         <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Generator'">Compile-time analyzers and source generators used by SharpLink.Sdk.</Description>
-        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.GenerationControl'">Optional cross-endpoint generation synchronization control contract for SharpLink RPC.</Description>
         <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Hosting'">Microsoft.Extensions.Hosting and dependency-injection integration for SharpLink RPC clients and servers.</Description>
         <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Runtime'">Protocol v2 sessions, flow control, codecs, and transport runtime for SharpLink RPC.</Description>
         <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Sdk'">SharpLink RPC contract attributes, analyzers, and source generators.</Description>
