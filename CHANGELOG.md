@@ -14,6 +14,18 @@
 
 - Fixed a hung OneWay call with client streams when the logical deadline elapsed while the producer was still running. The pending call was terminated by the deadline first, and the invoker then awaited the pooled lease operation a second time, which never completes; the invocation never returned, its producer stayed alive, and the client's logical invocation accounting never drained. The invoker now publishes the local send/producer failure to the pending request table and observes the lease operation exactly once on every path, so the terminal that actually won - local completion, send failure, deadline, caller cancellation, or a connection close - is what the caller sees, and the pooled operation is always returned.
 
+## [2.0.1] - 2026-09-19
+
+### Fixed
+
+- Closed the SharpLink timer deadline-arm race so a deadline that expires while its timer is being armed cannot be lost, eliminating the associated lifecycle regression covered by #698.
+
+### Changed
+
+- Updated the shipping .NET 10 dependency line to the latest servicing patches used by SharpLink: `System.Text.Json` 10.0.12, `System.Threading.RateLimiting` 10.0.12, and the applicable `Microsoft.Extensions.*` packages at 10.0.12.
+- Declared the dependency-injection/logging abstractions consumed by `SharpLink.Runtime` and `SharpLink.Server` explicitly in their project/package metadata so NuGet consumers receive the same dependency graph validated in-repository.
+- Updated the pinned CodeQL action pair to 4.38.0 and retained the expanded Browser/CoreCLR codec compatibility evidence used by the release gate.
+
 ## [2.0.0] - 2026-09-13
 
 ### Release boundaries
