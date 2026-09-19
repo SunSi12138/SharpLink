@@ -5,9 +5,10 @@
     <Nullable>enable</Nullable>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <AssemblyName>SharpLink.OldGeneratorNewAbstractions</AssemblyName>
+    <SharpLinkCurrentVersion Condition="'$(SharpLinkCurrentVersion)' == ''">2.0.0</SharpLinkCurrentVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="SharpLink.Sdk" Version="[1.1.1]" />
-    <PackageReference Include="SharpLink.Abstractions" Version="[2.0.0]" />
+    <PackageReference Include="SharpLink.Abstractions" Version="[$(SharpLinkCurrentVersion)]" />
   </ItemGroup>
 </Project>

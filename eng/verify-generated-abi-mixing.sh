@@ -5,10 +5,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="$ROOT/test/SharpLink.PackageSmoke/NuGet.config"
 ARTIFACT_ROOT="$ROOT/artifacts/generated-abi-mixing"
 PACKAGE_CACHE="$ARTIFACT_ROOT/packages"
+current_version="$(python3 -c 'import sys, xml.etree.ElementTree as ET; print(ET.parse(sys.argv[1]).findtext(".//VersionPrefix"))' "$ROOT/Directory.Build.props")"
 
-if [[ ! -f "$ROOT/artifacts/nuget/SharpLink.Sdk.2.0.0.nupkg" ]] ||
-   [[ ! -f "$ROOT/artifacts/nuget/SharpLink.Abstractions.2.0.0.nupkg" ]]; then
-  echo "Pack SharpLink 2.0.0 into artifacts/nuget before running the ABI mixing gate." >&2
+if [[ ! -f "$ROOT/artifacts/nuget/SharpLink.Sdk.$current_version.nupkg" ]] ||
+   [[ ! -f "$ROOT/artifacts/nuget/SharpLink.Abstractions.$current_version.nupkg" ]]; then
+  echo "Pack SharpLink $current_version into artifacts/nuget before running the ABI mixing gate." >&2
   exit 2
 fi
 
@@ -25,9 +26,11 @@ verify_rejected() {
 
   rm -rf "$project_directory/bin" "$project_directory/obj"
   if NUGET_PACKAGES="$PACKAGE_CACHE" dotnet restore "$project" \
-      --force --no-cache --configfile "$CONFIG" >"$log" 2>&1; then
+      --force --no-cache --configfile "$CONFIG" \
+      -p:SharpLinkCurrentVersion="$current_version" >"$log" 2>&1; then
     if NUGET_PACKAGES="$PACKAGE_CACHE" dotnet build "$project" \
         -c Release --no-restore -m:1 -p:UseSharedCompilation=false -nodeReuse:false \
+        -p:SharpLinkCurrentVersion="$current_version" \
         >>"$log" 2>&1; then
       echo "$name unexpectedly restored and compiled." >&2
       return 1
