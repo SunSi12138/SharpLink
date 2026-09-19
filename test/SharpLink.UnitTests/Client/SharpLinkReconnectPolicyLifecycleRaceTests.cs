@@ -173,9 +173,11 @@ public sealed class SharpLinkReconnectPolicyLifecycleRaceTests
             await replacementFactoryMaterialized.Task.WaitAsync(TimeSpan.FromSeconds(3));
             await resolver.PublishedSnapshotProcessed.WaitAsync(TimeSpan.FromSeconds(3));
 
-            // Snapshot processing includes topology commit plus reconnect reconciliation. Depending on
-            // race order, the retired owner's cancelled wait may exit before ever re-arming, so only
-            // require that the current generation has armed at least one replacement wait.
+            // Snapshot processing can return after the replacement owner armed the previous
+            // generation's ten-second delay but before the policy-wake continuation re-arms that
+            // owner against the latest one-second policy. A created-timer count can therefore see
+            // only a cancelled stale wait, so require the exact live one-second timer first.
+            await time.WaitForPendingTimerAsync(TimeSpan.FromSeconds(1));
             var beforeFirstReplacementDial = time.CreatedTimerCount;
             Ensure(beforeFirstReplacementDial > beforeReplacement,
                 "the accepted replacement generation must arm a reconnect wait");

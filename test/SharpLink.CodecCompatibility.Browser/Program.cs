@@ -13,13 +13,24 @@ internal static class Program
 [SupportedOSPlatform("browser")]
 public static partial class BrowserExports
 {
+#if SHARPLINK_BROWSER_CORECLR
+    private const string TargetFrameworkIdentity = "net11.0/browser-wasm";
+    private const string? ExpectedCompilationMode = null;
+    private const string? ExpectedRuntimeFamily = "CoreCLR";
+#else
+    private const string TargetFrameworkIdentity = "net10.0/browser-wasm";
+    private const string? ExpectedCompilationMode = "Interpreter";
+    private const string? ExpectedRuntimeFamily = null;
+#endif
+
     [JSExport]
     public static string Produce(string sharpLinkCommit, string sdkVersion)
         => PortableProbe.ProduceJson(
             sharpLinkCommit,
             sdkVersion,
-            "net10.0/browser-wasm",
-            expectedCompilationMode: "Interpreter",
+            TargetFrameworkIdentity,
+            expectedCompilationMode: ExpectedCompilationMode,
+            expectedRuntimeFamily: ExpectedRuntimeFamily,
             executionEnvironmentOverride: "browser");
 
     [JSExport]
@@ -28,7 +39,8 @@ public static partial class BrowserExports
             envelopesJson,
             sharpLinkCommit,
             sdkVersion,
-            "net10.0/browser-wasm",
-            expectedCompilationMode: "Interpreter",
+            TargetFrameworkIdentity,
+            expectedCompilationMode: ExpectedCompilationMode,
+            expectedRuntimeFamily: ExpectedRuntimeFamily,
             executionEnvironmentOverride: "browser");
 }

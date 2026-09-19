@@ -84,39 +84,118 @@ internal static class SharpLinkTimer
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(timeProvider);
-        while (true)
+        if (deadline.IsExpired(timeProvider))
+            return false;
+        if (task.IsCompleted)
+            return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
+
+        // Preserve a caller cancellation that was already terminal before timer ownership begins.
+        // Keep this after the source-completed fast path so an already-completed source retains its
+        // existing priority, but before CreateTimer can advance the provider to the deadline.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Establish timer ownership before sampling the relative delay that will represent the
+        // absolute deadline. A TimeProvider is allowed to advance while CreateTimer runs; creating
+        // the timer disarmed first prevents that arm latency from being added to a stale remaining
+        // duration. AbsoluteDeadlineSignal then re-samples the deadline and programs the owned timer.
+        using var deadlineSignal = new AbsoluteDeadlineSignal(deadline, timeProvider);
+        if (deadlineSignal.IsCompleted)
+            return false;
+
+        using var waitCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var waitTask = task.WaitAsync(waitCancellation.Token);
+        var completed = await Task.WhenAny(waitTask, deadlineSignal.Completion).ConfigureAwait(false);
+        if (ReferenceEquals(completed, deadlineSignal.Completion))
         {
-            if (deadline.IsExpired(timeProvider))
-                return false;
             if (task.IsCompleted)
                 return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
 
-            var timeout = deadline.GetRemaining(timeProvider);
-            var slice = timeout > MaximumDelay ? MaximumDelay : timeout;
-            try
-            {
-                await task.WaitAsync(slice, timeProvider, cancellationToken).ConfigureAwait(false);
+            waitCancellation.Cancel();
+            try { await waitTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+
+            if (task.IsCompleted)
                 return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
-            }
-            catch (TimeoutException) when (!task.IsCompleted)
-            {
-                if (deadline.IsExpired(timeProvider))
-                    return false;
-            }
-            catch (OperationCanceledException) when (
-                cancellationToken.IsCancellationRequested && !task.IsCompleted)
-            {
-                if (deadline.IsExpired(timeProvider))
-                    return false;
-                throw;
-            }
-            catch
-            {
-                if (task.IsCompleted)
-                    return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
-                throw;
-            }
+            return false;
         }
+
+        try
+        {
+            await waitTask.ConfigureAwait(false);
+            return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested && !task.IsCompleted)
+        {
+            if (deadline.IsExpired(timeProvider))
+                return false;
+
+            // WaitAsync observes the linked waiter token. Re-publish caller cancellation with
+            // the original token so the public cancellation identity contract remains intact.
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
+        }
+        catch
+        {
+            if (task.IsCompleted)
+                return await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private sealed class AbsoluteDeadlineSignal : IDisposable
+    {
+        private readonly RpcDeadline _deadline;
+        private readonly TimeProvider _timeProvider;
+        private readonly TaskCompletionSource _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ITimer _timer;
+
+        internal AbsoluteDeadlineSignal(RpcDeadline deadline, TimeProvider timeProvider)
+        {
+            _deadline = deadline;
+            _timeProvider = timeProvider;
+
+            // Create the timer without a due time so timer ownership is established before the
+            // absolute deadline is projected into a relative delay.
+            _timer = timeProvider.CreateTimer(
+                static state => ((AbsoluteDeadlineSignal)state!).OnTimer(),
+                this,
+                Timeout.InfiniteTimeSpan,
+                Timeout.InfiniteTimeSpan);
+            ArmFromAbsoluteDeadline();
+        }
+
+        internal Task Completion => _completion.Task;
+
+        internal bool IsCompleted => _completion.Task.IsCompleted;
+
+        private void OnTimer()
+        {
+            if (_deadline.IsExpired(_timeProvider))
+            {
+                _completion.TrySetResult();
+                return;
+            }
+
+            ArmFromAbsoluteDeadline();
+        }
+
+        private void ArmFromAbsoluteDeadline()
+        {
+            var remaining = _deadline.GetRemaining(_timeProvider);
+            if (remaining == TimeSpan.Zero)
+            {
+                _completion.TrySetResult();
+                return;
+            }
+
+            var dueTime = remaining > MaximumDelay ? MaximumDelay : remaining;
+            _timer.Change(dueTime, Timeout.InfiniteTimeSpan);
+        }
+
+        public void Dispose() => _timer.Dispose();
     }
 
     private static async ValueTask<bool> ClaimTaskCompletionAsync(

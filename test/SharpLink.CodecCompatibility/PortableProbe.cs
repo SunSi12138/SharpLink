@@ -153,7 +153,9 @@ internal static class PortableProbe
                         $"Wire hash mismatch for {producer.PlatformTag}/{producerCase.Id}: manifest={producerCase.WireSha256}, observed={observedHash}.");
                 }
 
-                report.Results.Add(fixture.Verify(producerBytes, producerCase, producer, consumer));
+                var result = fixture.Verify(producerBytes, producerCase, producer, consumer);
+                CompatibilityPolicy.ApplyBrowserAutoLayoutEvidencePolicy(result, producer, consumer);
+                report.Results.Add(result);
             }
         }
 
@@ -339,7 +341,15 @@ internal static class PortableProbe
     private static (string Family, string Source) DetectRuntimeFamily()
     {
         if (OperatingSystem.IsBrowser())
+        {
+#if SHARPLINK_BROWSER_CORECLR
+            // Browser CoreCLR is selected by this probe project's UseMonoRuntime=false build.
+            // Mono.Runtime reflection is not a reliable discriminator in Browser/WASM.
+            return ("CoreCLR", "build-runtime-selection");
+#else
             return ("Mono", "platform-runtime-pack");
+#endif
+        }
 
         if (OperatingSystem.IsAndroid())
             return (DetectAndroidRuntimeFamily(), "loaded-runtime-library");
