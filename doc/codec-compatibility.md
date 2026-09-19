@@ -2,90 +2,99 @@
 
 `UnsafeBlitCodec<T>` is SharpLink's high-performance fallback for value types that do not contain managed references. It serializes the current runtime's managed representation directly, so it is intentionally treated as ABI-sensitive rather than assumed to be stable across every OS, architecture, runtime family, pointer width, or future .NET major.
 
-This document defines the 2.0 compatibility evidence model. It does not replace, restrict, or slow down the production codec hot path.
+This document defines the current compatibility contract and evidence model. The primary compatibility matrix is CoreCLR. Mono is tracked as auxiliary evidence with narrower, type/layout-specific claims. This model does not replace, restrict, or slow down the production codec hot path.
 
 ## Compatibility tiers
 
-### Guaranteed / release-gated
+### Core compatibility matrix
 
-A runtime/platform combination is Guaranteed only when the release gate actually executes the compatibility probe on that runtime and the full desktop producer/consumer matrix passes for the exact release commit.
+SharpLink's primary codec compatibility matrix is **CoreCLR**. A platform is only part of this matrix when the compatibility probe actually executes on that runtime and retains producer/consumer evidence; build-only support is not compatibility evidence.
 
-The release-gated desktop matrix in `.github/workflows/codec-compatibility.yml` currently contains six hosted identities:
+The release hard gate is the .NET 10 hosted-desktop CoreCLR matrix in `.github/workflows/codec-compatibility.yml`:
 
 - Linux x64 CoreCLR;
 - Linux arm64 CoreCLR;
 - Windows x64 CoreCLR;
 - Windows arm64 CoreCLR;
-- macOS arm64 CoreCLR;
-- macOS x64 CoreCLR.
+- macOS x64 CoreCLR;
+- macOS arm64 CoreCLR.
 
-The workflow is invoked by both PR Quick and Release Gate. Every desktop target is both a producer and a consumer: each consumer downloads all six producer corpora and invokes its own `UnsafeBlitCodec<T>` to deserialize producer bytes. A central Linux summary job only aggregates the per-runtime reports; it does not stand in for Windows or macOS decode execution.
+Every desktop identity is both a producer and a consumer, yielding a full 6 x 6 directed matrix. Each consumer downloads all six producer corpora and invokes its own `UnsafeBlitCodec<T>` to perform the cross-deserialize. The central summary only aggregates those reports; it does not substitute Linux execution for another runtime.
 
-Runner labels are infrastructure selectors, not compatibility identities. Each producer manifest records the OS, process/OS architecture, pointer size, .NET SDK/runtime, runtime family, runtime-family provenance, RID, endianness, compilation mode, execution environment, and SharpLink commit. Compilation mode is observed in-process. Runtime-family provenance is explicit: desktop uses runtime reflection, Android inspects loaded runtime libraries, Browser/iOS Mono is derived from the selected platform/runtime pack, while Browser CoreCLR records the explicit `UseMonoRuntime=false` build selection as its runtime-family provenance. Expected lane values never overwrite recorded identity fields. The manifest and its provenance fields are the evidence source of truth.
+A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch on a release-gated edge is a blocker. A byte-only difference with successful semantic cross-decode is retained as evidence and is not automatically a blocker.
 
-A self-roundtrip failure, fixed-width size/layout mismatch, deserialize rejection, segmented-deserialize rejection, or logical-value mismatch is a release blocker. A byte-only difference with successful semantic cross-decode is reported as evidence and is not automatically a blocker.
+The manifest is the identity source of truth. It records the exact SharpLink commit, target framework, SDK/runtime versions, OS and process architecture, pointer size, runtime family and provenance, RID, endianness, compilation mode, and execution environment.
 
-The six-platform desktop expansion is exercised as six producers × six consumers × the current retained fixture registry. The summary derives the expected fixture IDs from producer manifests and rejects missing or duplicate rows; a historical fixture count is not part of the compatibility contract. A run is only considered green if every expected producer fixture is present exactly once for every desktop edge and all blocking matrix entries complete without blockers.
+### Verified CoreCLR expansion
 
-### Verified / evidence-backed
+CoreCLR environments outside the six hosted-desktop release gate are evidence-backed rather than automatically promoted to the release guarantee.
 
-A combination or explicitly named producer/consumer edge is Verified when retained compatibility evidence exists for an exact commit/runtime/platform but the environment is not part of every release hard gate.
+Current CoreCLR evidence includes:
 
-The current evidence-backed environments include:
+- Browser WebAssembly: wasm32, .NET 11 CoreCLR, executed in real headless Chrome with `UseMonoRuntime=false`;
+- Android x64 emulator: .NET 10 CoreCLR;
+- iOS Simulator x64: .NET 11 CoreCLR;
+- iOS Simulator arm64: .NET 11 CoreCLR, currently an experimental lane;
+- .NET 10 baseline/latest servicing compatibility on Linux x64 CoreCLR.
 
-- Browser WebAssembly: `browser-wasm`, wasm32, Mono, Interpreter on .NET 10, executed in a real headless Chrome instance;
-- Browser WebAssembly: `browser-wasm`, wasm32, CoreCLR on the pinned .NET 11 RC SDK, executed in the same real headless Chrome harness as experimental evidence;
-- Android x64 emulator: Mono;
-- Android x64 emulator: .NET 10 CoreCLR experimental runtime;
-- iOS Simulator x64: Mono, Interpreter;
-- iOS Simulator arm64: Mono, Interpreter;
-- .NET 10 servicing baseline/latest evidence on Linux x64 CoreCLR, executed by the scheduled/manual Nightly lane.
+Browser CoreCLR is exercised in both directions against the six desktop CoreCLR identities: all six desktop corpora are consumed in Browser CoreCLR, Browser CoreCLR verifies itself, and all six desktop consumers independently consume the Browser CoreCLR corpus. The Browser manifest must identify `browser-wasm-browser-coreclr-net11`, `runtimeFamily=CoreCLR`, `runtimeFamilySource=build-runtime-selection`, `pointerSize=4`, and `targetFramework=net11.0/browser-wasm`.
 
-Browser evidence in `.github/workflows/codec-compatibility.yml` is bidirectional with the six desktop identities. The Browser consumer downloads all six desktop corpora plus its own corpus. Separately, six non-gating desktop evidence consumers download the Browser-produced corpus and execute the safe fixtures on Linux x64/arm64, Windows x64/arm64, and macOS x64/arm64. Framework-owned raw fixtures are compared as representation evidence rather than unsafe semantic materialization. The Browser gate additionally requires the observed wasm32 identity (`pointerSize=4`, `runtimeIdentifier=browser-wasm`, and `targetFramework=net10.0/browser-wasm`) rather than relying on the platform tag alone.
+The current non-Mono mobile workflow is intentionally an evidence graph rather than an all-to-all mobile matrix:
 
-A separate non-blocking Browser CoreCLR evidence graph pins the .NET 11 RC SDK and publishes the same Browser/WASM probe with `UseMonoRuntime=false`. Its manifest must report `browser-wasm-browser-coreclr-net11`, `runtimeFamily=CoreCLR`, `runtimeFamilySource=build-runtime-selection`, `pointerSize=4`, and `targetFramework=net11.0/browser-wasm`. The CoreCLR Browser consumer verifies all six desktop corpora, the .NET 10 Browser Mono corpus, and its own corpus; six desktop consumers independently verify the CoreCLR Browser producer corpus. This lane is experimental evidence and remains `continue-on-error` while .NET 11 Browser CoreCLR is pre-GA, so it cannot weaken or block the existing release contract.
+- Linux x64 desktop CoreCLR -> Android x64 emulator CoreCLR, plus Android CoreCLR self;
+- Linux x64 desktop CoreCLR -> iOS Simulator x64 CoreCLR, plus iOS x64 CoreCLR self;
+- Linux x64 desktop CoreCLR -> iOS Simulator arm64 CoreCLR, plus iOS arm64 CoreCLR self.
 
-The `auto-layout-release-scoped` fixtures are deliberately evidence-only on Browser <-> hosted-desktop edges and on Browser Mono <-> Browser CoreCLR cross-runtime edges. `LayoutKind.Auto` and framework-owned nested value layouts are runtime implementation details rather than a supported raw ABI contract. The probe still records size, byte, decode, logical-value, and classification failures for those rows, and validates that each non-blocking row has a recognized layout-mismatch shape. Browser self-roundtrip within the same runtime identity, all desktop <-> desktop rows, fixed/sequential/explicit-layout fixtures outside that category, native-width policy checks, fixture completeness, hashes, and every other codec failure remain blocking under their existing contracts.
+There is currently no retained Android <-> iOS, iOS x64 <-> iOS arm64, or mobile -> desktop codec evidence. Those missing edges must not be described as verified compatibility. Simulator/emulator evidence must not be presented as physical-device evidence.
 
-.NET 10 servicing evidence is defined by `.github/workflows/codec-servicing-compatibility.yml`. It intentionally keeps the non-servicing identity fixed as `linux-x64-hosted-desktop-coreclr-net10` so SDK/runtime servicing is the variable under test. The baseline SDK is read from the repository `global.json`; its paired CoreCLR runtime is resolved from that SDK's `Microsoft.NETCoreSdk.BundledVersions.props` `BundledNETCoreAppPackageVersion`. The latest lane resolves the current `10.0.x` SDK and its bundled CoreCLR runtime in the same way. Both SDK and runtime versions are recorded in the manifest rather than inferred from the lane name.
+The .NET 10 servicing workflow keeps the platform identity fixed to Linux x64 CoreCLR and varies the exact SDK/runtime pair. Baseline and latest each act as producer and consumer, yielding baseline -> baseline, baseline -> latest, latest -> baseline, and latest -> latest. Exact runtime versions are pinned and validated in the manifests.
 
-The servicing workflow prevents a newer shared framework already installed on the hosted runner from silently substituting for the intended runtime. It pins the exact SDK, passes the exact `RuntimeFrameworkVersion`, sets `DOTNET_ROLL_FORWARD=Disable`, and fails if the probe manifest does not report the expected runtime version. Each runtime then acts as a consumer for both corpora, producing the four explicit edges baseline -> baseline, baseline -> latest, latest -> baseline, and latest -> latest. The servicing summary validates exact producer/consumer SDK and runtime identity, fixture completeness, raw-wire hashes, contiguous semantic cross-decode, segmented semantic cross-decode, and blocking classifications before publishing evidence.
+### Mono compatibility boundary
 
-This servicing lane is called by scheduled/manual Nightly and is not added to the normal `dev` push path or release hard gate. Its successful artifacts therefore establish Verified / evidence-backed servicing edges, not a broader Guaranteed promise for every .NET 10 servicing patch.
+Mono is **not part of the core compatibility matrix** and is not a blanket SharpLink cross-runtime ABI guarantee. Mono evidence is retained only where an actual Mono runtime executed the shared probe, and claims are scoped to the exercised edge and fixture category.
 
-Mobile evidence is defined by `.github/workflows/codec-mobile-compatibility.yml`. It is intentionally an evidence graph rather than an all-to-all five-platform matrix. The currently documented edges are:
+For Mono-related evidence, "compatible" means that the consumer can deserialize the producer bytes and recover the same logical value. It does **not** imply that the two runtimes emit canonical byte-for-byte identical representations.
 
-- Linux x64 desktop reference -> Android Mono consumer;
-- Linux x64 desktop reference -> Android CoreCLR consumer;
-- Android Mono -> Android Mono and Android CoreCLR;
-- Android CoreCLR -> Android Mono and Android CoreCLR;
-- Linux x64 desktop reference -> iOS Simulator x64 consumer;
-- iOS Simulator x64 -> itself;
-- Linux x64 desktop reference -> iOS Simulator arm64 consumer;
-- iOS Simulator arm64 -> itself.
+#### Types/layouts that can be semantically compatible
 
-There is currently no retained Android <-> iOS, iOS x64 <-> iOS arm64, or mobile -> desktop evidence in that workflow. Those absent edges must not be described as verified matrix compatibility. The mobile summary aggregates only the explicitly exercised reports.
+On retained Mono evidence edges, the strict compatibility path covers unmanaged value types whose size/layout contract agrees between producer and consumer, including the current fixture categories:
 
-The mobile workflow executes the same shared fixture corpus in the target runtime. Android runs both Mono and the .NET 10 experimental CoreCLR runtime inside an x64 emulator. iOS runs Mono inside x64 and arm64 iOS Simulators. These are runtime-executed results, not build-only claims.
+- fixed-width/no-padding primitives and controls such as integers, floating-point values, `Half`, `Int128`, `UInt128`, `Guid`, and fixed-width value structs;
+- sequential and explicit-layout value structs;
+- explicit Pack 1/2/4/8 controls;
+- enums and enum-containing structs;
+- ordinary nested/alignment/user-like unmanaged value structs when producer and consumer report compatible size/offsets;
+- large unmanaged value structs, including the segmented read paths.
 
-Evidence is tied to the environment recorded in the artifact manifest. In particular, simulator/emulator evidence must not be presented as physical-device evidence, and successful execution of an experimental runtime does not turn that runtime into a SharpLink product guarantee.
+Internal or tail padding does not by itself make a type semantically incompatible. The cross-decode can still succeed when the field layout agrees. However, source padding bytes are not a canonical wire contract: equal logical values can serialize to different raw bytes because the fallback copies the managed representation, including padding state.
 
-Evidence claims must be backed by successful current-head workflow artifacts after probe or evidence-contract changes; older successful artifacts do not validate newer harness behavior.
+#### Types/layouts that are not portable contracts
+
+The following categories must not be described as generally Mono/CoreCLR-compatible raw ABI:
+
+- **Auto layout / runtime-owned layout.** The `auto-layout-release-scoped` fixtures intentionally remain evidence-only across Browser <-> desktop and Browser Mono <-> Browser CoreCLR edges. `LayoutKind.Auto` and framework-owned nested layouts are runtime implementation details. Known evidence includes size/layout differences and decode/value mismatches. These failures remain visible but are not a supported cross-runtime raw ABI contract.
+- **Native-width values across pointer widths.** `nint`, `nuint`, `IntPtr`, `UIntPtr`, and structs containing them are architecture-dependent. A wasm32 Mono producer/consumer and a 64-bit CoreCLR peer do not have a general same-layout guarantee; such rows are classified `EXPECTED_ARCH_DEPENDENT` only when the pointer widths actually differ.
+- **Framework semantic structs as raw representation.** `DateOnlyRaw`, `DateTimeRaw`, `DateTimeOffsetRaw`, `TimeOnlyRaw`, `TimeSpanRaw`, `IndexRaw`, `RangeRaw`, `RuneRaw`, and `DecimalRaw` are representation evidence only on portable cross-runtime edges. They are not materialized blindly as a semantic compatibility promise. This does not reduce the stability of SharpLink's specialized production codecs selected for those semantic types.
+- **Canonical padding bytes.** Padding-bearing structs may be semantically cross-decodable while still producing different raw hashes. Byte equality therefore must not be used as the sole compatibility definition.
+
+Browser Mono remains useful as an auxiliary canary because it combines a different runtime family with wasm32 pointer width, but a green Mono evidence lane does not enlarge the CoreCLR release guarantee. Conversely, a known Mono-only layout mismatch must not block a CoreCLR release unless the same failure exists on a CoreCLR edge that is part of the relevant contract.
+
+Evidence claims must always be tied to the exact environment recorded in the artifact manifest. Historical Mono mobile artifacts do not become current-head guarantees after the mobile workflow changes; current mobile compatibility claims follow the CoreCLR lanes actually executed by `.github/workflows/codec-mobile-compatibility.yml`.
 
 ### Investigational / not guaranteed yet
 
-Platforms, runtime combinations, or producer/consumer edges that have not been executed by the release gate or reviewed evidence lane remain Investigational. Current examples include:
+Platforms, runtime combinations, or producer/consumer edges that have not been executed by the relevant release/evidence workflow remain Investigational. Current examples include:
 
-- physical Android and iOS devices;
-- Android arm64 device/emulator execution;
-- Android <-> iOS cross-runtime edges;
+- physical Android and iOS devices without retained current-head evidence;
+- Android arm64 device/emulator execution without a reviewed current-head device artifact;
+- Android <-> iOS cross-platform edges;
 - iOS Simulator x64 <-> arm64 cross-architecture edges;
 - mobile producer -> desktop consumer edges;
-- NativeAOT compatibility beyond existing dedicated smoke coverage;
-- future .NET major versions and servicing/runtime combinations not represented by retained servicing evidence;
-- other pointer-width, runtime-family, or architecture combinations not represented by retained evidence.
+- NativeAOT compatibility beyond the existing dedicated smoke coverage;
+- future .NET major/servicing combinations not represented by retained evidence;
+- other pointer-width, runtime-family, or architecture combinations not represented by retained artifacts.
 
-`Codec Android ARM64 Device Evidence` provides a manual path for a prepared self-hosted ARM64 runner with one attached physical `arm64-v8a` Android device. The workflow rejects emulator devices before execution, while the Android host independently records its in-process RID and classifies the execution environment rather than hard-coding the x64-emulator identity. The uploaded artifact retains the desktop reference corpus, device-local corpora, verification reports, and aggregate summary. Until such a physical-device run is retained and reviewed, Android ARM64 remains Investigational.
+`Codec Android ARM64 Device Evidence` provides a manual path for one prepared self-hosted ARM64 runner with an attached physical `arm64-v8a` Android device. Until such a run is retained and reviewed for the current probe contract, Android ARM64 remains Investigational.
 
 "Investigational" means "not yet verified". It should not be rewritten as "unsupported" unless SharpLink explicitly makes that product decision.
 
@@ -166,10 +175,12 @@ The preferred progression is:
 
 Build-only, emulator, simulator, and physical-device results must always be labeled as the environment that actually executed the probe.
 
-## 2.0 release evidence boundary
+## Core compatibility boundary
 
-The six desktop CoreCLR identities are the blocking compatibility matrix. Browser/Mono/WASM
-remains an investigation lane tracked by #253; a green desktop summary is not a claim that the
-Browser bidirectional evidence passed. In candidate run 34708344598, Browser production succeeded
-but Browser and desktop consumption of that corpus failed. Keep those failures visible; do not
-promote Browser/Mono interoperability to a supported guarantee from this release's desktop result.
+The compatibility center of gravity is CoreCLR.
+
+The six hosted-desktop .NET 10 CoreCLR identities form the blocking release matrix. Browser CoreCLR and mobile CoreCLR extend the evidence envelope, but they remain explicitly scoped to the edges that their workflows execute. Mono is auxiliary evidence rather than a second core matrix.
+
+For Mono, compatibility claims are type/layout-specific: fixed-width and explicit/sequential layouts can be semantically cross-compatible when size and offsets agree; Auto layout is not a portable ABI contract; native-width values depend on pointer width; framework semantic structs are raw-representation evidence rather than a generic semantic wire promise; and padding bytes are not canonical.
+
+Do not let an explicitly non-contractual Mono/AutoLayout mismatch block a CoreCLR release. Do not, however, generalize a green CoreCLR matrix into untested mobile/device/NativeAOT edges or treat evidence-only rows as guaranteed ABI.
