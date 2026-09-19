@@ -6,6 +6,7 @@ PROJECT="$ROOT/test/fixtures/protocol-v2-cross-version/SharpLink.ProtocolV2Cross
 CONFIG="$ROOT/test/SharpLink.PackageSmoke/NuGet.config"
 ARTIFACT_ROOT="$ROOT/artifacts/protocol-v2-cross-version"
 PACKAGE_CACHE="$ARTIFACT_ROOT/packages"
+current_version="$(python3 -c 'import sys, xml.etree.ElementTree as ET; print(ET.parse(sys.argv[1]).findtext(".//VersionPrefix"))' "$ROOT/Directory.Build.props")"
 ACTIVE_SERVER_PID=""
 
 cleanup_server() {
@@ -15,8 +16,8 @@ cleanup_server() {
 }
 trap cleanup_server EXIT
 
-if [[ ! -f "$ROOT/artifacts/nuget/SharpLink.Sdk.2.0.0.nupkg" ]]; then
-  echo "Pack SharpLink 2.0.0 into artifacts/nuget before running the Protocol v2 process gate." >&2
+if [[ ! -f "$ROOT/artifacts/nuget/SharpLink.Sdk.$current_version.nupkg" ]]; then
+  echo "Pack SharpLink $current_version into artifacts/nuget before running the Protocol v2 process gate." >&2
   exit 2
 fi
 
@@ -25,18 +26,18 @@ mkdir -p "$ARTIFACT_ROOT" "$PACKAGE_CACHE"
 
 NUGET_PACKAGES="$PACKAGE_CACHE" dotnet restore "$PROJECT" \
   --force --no-cache --configfile "$CONFIG" \
-  -p:SharpLinkVersion=2.0.0 \
-  -p:BaseIntermediateOutputPath="$ARTIFACT_ROOT/v200-obj/"
+  -p:SharpLinkVersion="$current_version" \
+  -p:BaseIntermediateOutputPath="$ARTIFACT_ROOT/current-obj/"
 NUGET_PACKAGES="$PACKAGE_CACHE" dotnet build "$PROJECT" \
   -c Release --no-restore -m:1 -p:UseSharedCompilation=false -nodeReuse:false \
-  -p:SharpLinkVersion=2.0.0 \
-  -p:BaseIntermediateOutputPath="$ARTIFACT_ROOT/v200-obj/" \
-  -p:OutputPath="$ARTIFACT_ROOT/v200-bin/"
+  -p:SharpLinkVersion="$current_version" \
+  -p:BaseIntermediateOutputPath="$ARTIFACT_ROOT/current-obj/" \
+  -p:OutputPath="$ARTIFACT_ROOT/current-bin/"
 
-server_dll="$ARTIFACT_ROOT/v200-bin/SharpLink.ProtocolV2CrossVersion.dll"
-client_dll="$ARTIFACT_ROOT/v200-bin/SharpLink.ProtocolV2CrossVersion.dll"
-server_log="$ARTIFACT_ROOT/v200-server.log"
-client_log="$ARTIFACT_ROOT/v200-client.log"
+server_dll="$ARTIFACT_ROOT/current-bin/SharpLink.ProtocolV2CrossVersion.dll"
+client_dll="$ARTIFACT_ROOT/current-bin/SharpLink.ProtocolV2CrossVersion.dll"
+server_log="$ARTIFACT_ROOT/current-server.log"
+client_log="$ARTIFACT_ROOT/current-client.log"
 
 dotnet "$server_dll" server >"$server_log" 2>&1 &
 ACTIVE_SERVER_PID=$!
@@ -53,7 +54,7 @@ for _ in $(seq 1 200); do
   sleep 0.05
 done
 if [[ -z "$port" ]]; then
-  echo "SharpLink 2.0 server did not publish its bound endpoint." >&2
+  echo "SharpLink $current_version server did not publish its bound endpoint." >&2
   tail -n 40 "$server_log" >&2
   exit 1
 fi
@@ -71,4 +72,4 @@ ACTIVE_SERVER_PID=""
 grep -Fx "CLIENT_PASS" "$client_log" >/dev/null
 grep -Fx "SERVER_PASS" "$server_log" >/dev/null
 
-echo "Protocol v2 process gate passed for the SharpLink 2.0 package set. Pre-2.0 cross-version compatibility is intentionally out of scope."
+echo "Protocol v2 process gate passed for SharpLink $current_version. Pre-2.0 cross-version compatibility is intentionally out of scope."
