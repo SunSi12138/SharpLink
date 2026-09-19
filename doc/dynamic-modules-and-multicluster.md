@@ -138,6 +138,12 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 替换不是覆盖字典：新 generation 先完整验证并发布，旧 generation 进入 draining；已开始调用继续使用旧服务/Codec，新的调用路由到新 generation。注销等待 active calls/streams 和 adapter scope 释放，超时不会假装成功。
 
+## 跨端 generation control
+
+当一次部署同时改变调用侧 generated proxy/codec/contract generation 与服务侧 implementation generation 时，单端的 `ISharpLinkAssemblyRegistry` 不负责通知另一个 endpoint。可选包 [`SharpLink.GenerationControl`](generation-control.md) 提供独立的静态 RPC 控制契约：查询 desired/actual inventory、stage、activate，以及基于 revision 的 watch 通知。
+
+该扩展不改变 Protocol v2，也不传输 artifact bytes。JIT 部署可以在应用实现中把 stage/activate 映射到 artifact provider、collectible ALC 与 assembly registry；NativeAOT 部署仍使用同一 desired/actual 模型，但可以明确返回 process replacement required，而不是伪造运行时动态加载。
+
 ## AssemblyLoadContext 所有权
 
 要真正卸载插件，插件及其依赖必须位于 collectible `AssemblyLoadContext`，且应用不能保留：

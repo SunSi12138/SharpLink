@@ -314,6 +314,7 @@ jobs:
         run: |
           packages=(
             SharpLink.Abstractions
+            SharpLink.GenerationControl
             SharpLink.Runtime
             SharpLink.Sdk
             SharpLink.Serializer.SharpPack
