@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the optional `SharpLink.GenerationControl` package with a statically generated RPC control contract for cross-endpoint desired/actual generation inventory, stage/activate reconciliation, revision-based watch invalidation, and explicit hot-replace versus process-replacement capability. Artifact transport, signature verification, rollout policy, dynamic assembly loading, and NativeAOT process replacement remain application/deployment concerns; Protocol v2 and ordinary RPC hot paths are unchanged.
+
 ### Changed
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.

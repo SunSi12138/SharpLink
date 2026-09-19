@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net;
@@ -6,6 +7,7 @@ using System.Net.Sockets;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Compression.Zstd;
+using SharpLink.GenerationControl;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
@@ -14,6 +16,12 @@ using SharpPack;
 [assembly: SharpLinkClusterContractAssembly(
     "runtime",
     typeof(SharpLink.PackageSmoke.IPackageSmokeService))]
+// 新增契约必须**显式登记到集群清单**，服务端才会在契约清单里宣告它。
+// 不登记时客户端 Get<T>() 会以 FailedPrecondition 失败并报
+// 「Remote contract manifest does not advertise RPC contract ...」。
+[assembly: SharpLinkClusterContractAssembly(
+    "generation-control",
+    typeof(SharpLink.GenerationControl.ISharpLinkGenerationControl))]
 
 namespace SharpLink.PackageSmoke;
 
@@ -42,6 +50,69 @@ public sealed partial class PackageSmokeEnvelope
     public List<int> Values { get; set; } = [];
 }
 
+/// <summary>
+/// Package-smoke 用的最小 generation-control 实现。
+/// 存在的意义：只有注册了**实现**的服务端才会在契约清单里宣告对应契约；
+/// 纯契约包（SharpLink.GenerationControl）本身没有实现，因此必须由消费者提供。
+/// </summary>
+[RpcService]
+public sealed class PackageSmokeGenerationControl : ISharpLinkGenerationControl
+{
+    private const long Revision = 1;
+
+    public ValueTask<SharpLinkGenerationInventory> GetInventoryAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new SharpLinkGenerationInventory
+        {
+            Revision = Revision,
+            MaterializationMode = SharpLinkGenerationMaterializationMode.HotReplaceSupported,
+            Desired = [],
+            Actual = []
+        });
+    }
+
+    public ValueTask<SharpLinkGenerationOperationResult> StageAsync(
+        SharpLinkGenerationDescriptor descriptor,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(descriptor);
+        // 冒烟实现不做真实 staging，直接回报「未支持」，避免伪造成功语义。
+        return ValueTask.FromResult(new SharpLinkGenerationOperationResult
+        {
+            Status = SharpLinkGenerationOperationStatus.Unsupported,
+            Revision = Revision,
+            Message = "package smoke does not materialize generations"
+        });
+    }
+
+    public ValueTask<SharpLinkGenerationOperationResult> ActivateAsync(
+        SharpLinkGenerationActivationRequest request,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(request);
+        return ValueTask.FromResult(new SharpLinkGenerationOperationResult
+        {
+            Status = SharpLinkGenerationOperationStatus.Unsupported,
+            Revision = Revision,
+            Message = "package smoke does not materialize generations"
+        });
+    }
+
+    public async IAsyncEnumerable<SharpLinkGenerationChange> WatchAsync(
+        long afterRevision,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // 冒烟实现只发一次「当前 revision」；真实实现应由 provider 驱动。
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (afterRevision < Revision)
+            yield return new SharpLinkGenerationChange { Revision = Revision, CapabilityId = string.Empty };
+    }
+}
+
 [RpcService]
 public sealed class PackageSmokeService : IPackageSmokeService
 {
@@ -66,6 +137,7 @@ public static class Program
 
     public static async Task Main()
     {
+        AssertGenerationControlPackageSurface();
         AssertEnginePublicApiBoundary();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
@@ -389,6 +461,47 @@ public static class Program
         if (!File.Exists(path))
             throw new FileNotFoundException("The reference-rooting package smoke assembly was not built.", path);
         return path;
+    }
+
+    private static void AssertGenerationControlPackageSurface()
+    {
+        var contract = typeof(ISharpLinkGenerationControl);
+        if (!typeof(IService).IsAssignableFrom(contract) ||
+            contract.GetCustomAttributes(typeof(RpcContractAttribute), inherit: false).Length != 1)
+        {
+            throw new InvalidOperationException(
+                "Generation-control package did not expose the expected static RPC contract.");
+        }
+
+        var methods = contract.GetMethods()
+            .Select(static method => method.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        string[] expectedMethods = ["ActivateAsync", "GetInventoryAsync", "StageAsync", "WatchAsync"];
+        if (!methods.SequenceEqual(expectedMethods, StringComparer.Ordinal))
+            throw new InvalidOperationException("Generation-control package contract surface changed unexpectedly.");
+
+        var descriptor = new SharpLinkGenerationDescriptor
+        {
+            Identity = new SharpLinkGenerationIdentity
+            {
+                CapabilityId = "package-smoke",
+                GenerationId = "g1"
+            },
+            WireIdentity = "wire-v1",
+            GeneratedAbiIdentity = "abi-v1",
+            ArtifactHash = "sha256:package-smoke",
+            ArtifactReference = "package-smoke://g1"
+        };
+        var inventory = new SharpLinkGenerationInventory
+        {
+            Revision = 1,
+            MaterializationMode = SharpLinkGenerationMaterializationMode.HotReplaceSupported,
+            Desired = [descriptor],
+            Actual = [new SharpLinkGenerationSnapshot { Descriptor = descriptor, State = SharpLinkGenerationState.Ready }]
+        };
+        if (inventory.Desired.Length != 1 || inventory.Actual[0].State != SharpLinkGenerationState.Ready)
+            throw new InvalidOperationException("Generation-control package DTO surface could not be consumed.");
     }
 
     private static void AssertEnginePublicApiBoundary()
