@@ -15,6 +15,7 @@ on:
       - 'eng/run-quickstart-package-smoke.sh'
       - 'src/SharpLink.Sdk/**'
       - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.GenerationControl/**'
       - 'src/SharpLink.Client/**'
       - 'src/SharpLink.Server/**'
       - 'Directory.Build.props'
@@ -50,6 +51,14 @@ jobs:
 
       - name: Verify NuGet package contracts
         uses: ./.github/actions/verify-packages
+
+      - name: Verify reviewed public API
+        shell: bash
+        run: |
+          if ! bash ./eng/verify-public-api.sh; then
+            cat artifacts/public-api/current/public-api.diff || true
+            exit 1
+          fi
 
       - name: Run NuGet package smoke
         uses: ./.github/actions/package-smoke
