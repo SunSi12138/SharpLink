@@ -20,6 +20,7 @@ SharpLink 是一个面向 .NET 10 的高性能 RPC 框架。契约、代理、St
 | Server | `SharpLink.Server` + `SharpLink.Sdk` | Server runtime，以及当前 Server 编译中的 service/bootstrap 生成 |
 | Client | `SharpLink.Client` + `SharpLink.Sdk` | Client runtime，以及当前 Client 编译中的静态 manifest/bootstrap 生成 |
 | Host/DI（可选） | `SharpLink.Hosting` | `Microsoft.Extensions.Hosting` / DI 集成 |
+| Generation control（可选） | `SharpLink.GenerationControl` | 跨端 desired/actual、stage/activate/watch 控制契约；artifact 分发和进程替换由应用负责 |
 
 `SharpLink.Sdk` 的 NuGet 包会把 `SharpLink.Generator.dll` 放在 `analyzers/dotnet/cs`，所以通常**不要**再单独安装 `SharpLink.Generator`。SDK 传递依赖 `SharpLink.Abstractions`，**不依赖 `SharpLink.Runtime`**；纯 Contracts 项目不需要为了定义 RPC contract 引入完整 Runtime。
 
