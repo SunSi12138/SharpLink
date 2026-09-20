@@ -66,6 +66,14 @@ Desired configuration generation 与 rolling-refresh intent 是两个不同的 c
 
 这种语义避免把“desired configuration 已提交”与“某个 caller 是否成功等到通知 cohort 完成”混为一个事务：配置 publication 保持原子，rolling notification 是可重复、幂等趋近的后续 control-plane operation。
 
+## Generation control extension
+
+`SharpLink.GenerationControl` 的远程 RPC surface 不返回“执行命令”的 structured result，因为 peer 不能 stage/activate 对端。SharpLink 当前只允许 Client 发起 RPC，因此声明面使用 `GetInventoryAsync` 供 Client 查询 Server，并使用 Client 发起的 `SynchronizeAsync` duplex stream 双向交换完整 generation inventory/revision；Server 不需要、也不能反向发起 Request。
+
+本地 `ISharpLinkGenerationProvider` 的 stage/validate/activate/drain 继续使用 `SharpLinkGenerationOperationStatus`：`Succeeded`、`AlreadySatisfied`、`ProcessReplacementRequired`、`Rejected` 或 `Unsupported`；`Message` 只用于诊断。非法 descriptor、caller cancellation、application-owned artifact/provider fault 与内部 invariant failure 仍通过异常传播。
+
+每个 endpoint 的本地 inventory 是自己的 source of truth。每个 inventory 携带 `EndpointEpoch`；`Revision` 只在相同 epoch 内可比较。revision 可能重置或声明 authority 切换时必须更换 epoch；观察到新 epoch 时必须接受新的完整 snapshot，即使 revision 数值比旧 epoch 更低。duplex stream 的首个元素应是当前完整 snapshot，后续元素携带该 epoch 内更新后的完整 revision；掉线或重连时重新建流并再次发送当前完整 snapshot，本地 reconciler 只根据收到的 peer 声明决定是否更新自己。
+
 ## Audit scope and follow-up boundaries
 
 本契约只统一 expected runtime outcome 的建模规则，不把相邻问题合并成一个大改动。以下行为保持独立演进：
