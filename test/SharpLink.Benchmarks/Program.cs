@@ -81,6 +81,18 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--stream-codec-dispatch-evidence", StringComparison.Ordinal))
+        {
+            await StreamCodecDispatchEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--stream-codec-dispatch-jit-evidence", StringComparison.Ordinal))
+        {
+            StreamCodecDispatchEvidenceRunner.RunJitProbe(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--buffer-writer-growth-evidence", StringComparison.Ordinal))
         {
             BufferWriterGrowthEvidenceRunner.Run();
