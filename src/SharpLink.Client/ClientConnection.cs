@@ -361,6 +361,10 @@ internal sealed class ClientConnection :
         if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
+        var exactSizeCodec = codec as IRpcSizedCodec<T>;
+        if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+            exactSizeCodec = null;
+
         try
         {
             await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
@@ -380,6 +384,7 @@ internal sealed class ClientConnection :
                     streamId,
                     enumerator.Current,
                     codec,
+                    exactSizeCodec,
                     deadline,
                     _timeProvider,
                     cancellationToken).ConfigureAwait(false);
