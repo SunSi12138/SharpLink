@@ -52,7 +52,7 @@ public partial class RpcGenerator
             var complexIndex = complexIndexes[member.Name];
             sb.AppendLine($"            var __nestedSize_{complexIndex} = 0;");
             sb.AppendLine(
-                $"            if (__codec_{complexIndex} is IRpcSizedCodec<{member.TypeName}> __sized_{complexIndex} && __sized_{complexIndex}.CanExactSize");
+                $"            if ((object)__codec_{complexIndex} is IRpcSizedCodec<{member.TypeName}> __sized_{complexIndex} && __sized_{complexIndex}.CanExactSize");
             sb.AppendLine("            {");
             sb.AppendLine(
                 $"                if (!__sized_{complexIndex}.TryGetEncodedSize(__complex_{memberIndex}, out __nestedSize_{complexIndex}))");
@@ -140,7 +140,7 @@ public partial class RpcGenerator
                 continue;
             var index = complexIndexes[member.Name];
             sb.AppendLine(
-                $"        if (__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index} && snapshot.__nestedSnapshot_{index} is not null)");
+                $"        if ((object)__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index} && snapshot.__nestedSnapshot_{index} is not null)");
             sb.AppendLine($"            __sized_{index}.ReleaseSnapshot(snapshot.__nestedSnapshot_{index});");
         }
         sb.AppendLine("    }");
@@ -437,7 +437,7 @@ public partial class RpcGenerator
                     sb.AppendLine($"        RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
                     sb.AppendLine($"        var lengthToken_{index} = RpcGeneratedCodecWire.BeginLength(rpcWriter);");
                     sb.AppendLine(
-                        $"        if (__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index})");
+                        $"        if ((object)__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index})");
                     sb.AppendLine($"            __sized_{index}.SerializeSized(__snapshot.__complex_{memberIndex}, buffer, __snapshot.__nestedSize_{index}, __snapshot.__nestedSnapshot_{index});");
                     sb.AppendLine("        else");
                     sb.AppendLine($"            __codec_{index}.Serialize(__snapshot.__complex_{memberIndex}, buffer);");
