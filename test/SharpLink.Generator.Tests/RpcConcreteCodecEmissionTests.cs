@@ -139,6 +139,46 @@ public interface IConcreteBindingContract : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task ExplicitInterfaceCustomCodecShouldKeepInterfaceFallback()
+    {
+        var source = AddAssemblyAttribute(UseCurrentIdentitySdk(BuildSource("""
+public sealed class ExplicitPayload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x7267UL, 0x7268UL)]
+public sealed class ExplicitPayloadCodec : SharpLink.Abstractions.IRpcCodec<ExplicitPayload>
+{
+    void SharpLink.Abstractions.IRpcCodec<ExplicitPayload>.Serialize(
+        in ExplicitPayload value,
+        System.Buffers.IBufferWriter<byte> buffer) => throw new NotImplementedException();
+
+    ExplicitPayload? SharpLink.Abstractions.IRpcCodec<ExplicitPayload>.Deserialize(
+        in System.Buffers.ReadOnlySequence<byte> buffer) => throw new NotImplementedException();
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IExplicitCodecContract : SharpLink.Sdk.IService
+{
+    ValueTask<ExplicitPayload> Echo(ExplicitPayload value, CancellationToken cancellationToken);
+}
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodec(typeof(ExplicitPayload), typeof(ExplicitPayloadCodec))]");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains(
+                "private readonly IRpcCodec<global::ExplicitPayload>",
+                StringComparison.Ordinal),
+            "a custom Codec with explicit interface implementations must retain interface storage because direct concrete calls are not callable");
+        Ensure(!generated.Contains(
+                "private readonly global::ExplicitPayloadCodec ",
+                StringComparison.Ordinal),
+            "explicit-interface custom Codec implementations must not be emitted as direct concrete fields");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ReferencedGeneratedCodecShouldKeepInterfaceFallback()
     {
         var support = CreateMetadataReference(
