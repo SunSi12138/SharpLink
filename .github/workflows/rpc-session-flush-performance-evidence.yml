@@ -55,6 +55,13 @@ jobs:
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs"
           cp test/SharpLink.Benchmarks/Program.cs \
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/Program.cs"
+          # Program.cs may gain a new benchmark-only command before that runner exists on the
+          # exact base commit. Copy only the missing command dependency for this transition;
+          # once the runner is present on the base, keep using the base copy.
+          if [ ! -f "$BASE_WORKTREE/test/SharpLink.Benchmarks/StreamCodecSpecializationEvidenceRunner.cs" ]; then
+            cp test/SharpLink.Benchmarks/StreamCodecSpecializationEvidenceRunner.cs \
+              "$BASE_WORKTREE/test/SharpLink.Benchmarks/StreamCodecSpecializationEvidenceRunner.cs"
+          fi
           echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
 
       - name: Build exact base benchmark harness
