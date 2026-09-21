@@ -921,4 +921,5 @@ internal static partial class StructCoreEvidenceRunner
 
         Console.WriteLine("struct-core-jit-probe checksum=" + checksum);
     }
+#endif
 }
