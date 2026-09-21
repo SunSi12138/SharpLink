@@ -101,33 +101,33 @@ internal static class StreamCodecDispatchEvidenceRunner
             case "interface-per-item":
             {
                 IRpcCodec<int> codec = new UnmanagedSizedClassCodec<int>();
-                checksum = RunInterfacePerItemStreams(codec, in value, writer, 10_000, streamCount);
-                checksum += RunInterfaceDeserializeStreams(codec, in payload, 10_000, streamCount);
+                checksum = RunInterfacePerItemStreams(codec, value, writer, 10_000, streamCount);
+                checksum += RunInterfaceDeserializeStreams(codec, payload, 10_000, streamCount);
                 break;
             }
             case "interface-hoisted":
             {
                 IRpcCodec<int> codec = new UnmanagedSizedClassCodec<int>();
-                checksum = RunInterfaceHoistedStreams(codec, in value, writer, 10_000, streamCount);
-                checksum += RunInterfaceDeserializeStreams(codec, in payload, 10_000, streamCount);
+                checksum = RunInterfaceHoistedStreams(codec, value, writer, 10_000, streamCount);
+                checksum += RunInterfaceDeserializeStreams(codec, payload, 10_000, streamCount);
                 break;
             }
             case "generic-class":
             {
                 var codec = new UnmanagedSizedClassCodec<int>();
                 checksum = RunGenericSizedStreams<int, UnmanagedSizedClassCodec<int>>(
-                    codec, in value, writer, 10_000, streamCount);
+                    codec, value, writer, 10_000, streamCount);
                 checksum += RunGenericDeserializeStreams<int, UnmanagedSizedClassCodec<int>>(
-                    codec, in payload, 10_000, streamCount);
+                    codec, payload, 10_000, streamCount);
                 break;
             }
             case "generic-struct":
             {
                 var codec = new UnmanagedSizedStructCodec<int>();
                 checksum = RunGenericSizedStreams<int, UnmanagedSizedStructCodec<int>>(
-                    codec, in value, writer, 10_000, streamCount);
+                    codec, value, writer, 10_000, streamCount);
                 checksum += RunGenericDeserializeStreams<int, UnmanagedSizedStructCodec<int>>(
-                    codec, in payload, 10_000, streamCount);
+                    codec, payload, 10_000, streamCount);
                 break;
             }
             default:
@@ -149,16 +149,16 @@ internal static class StreamCodecDispatchEvidenceRunner
             switch (shape)
             {
                 case "interface-per-item":
-                    AddInterfacePerItemMeasurements(payloadName, in value, streamLength, measurements);
+                    AddInterfacePerItemMeasurements(payloadName, value, streamLength, measurements);
                     break;
                 case "interface-hoisted":
-                    AddInterfaceHoistedMeasurements(payloadName, in value, streamLength, measurements);
+                    AddInterfaceHoistedMeasurements(payloadName, value, streamLength, measurements);
                     break;
                 case "generic-class":
-                    AddGenericClassMeasurements(payloadName, in value, streamLength, measurements);
+                    AddGenericClassMeasurements(payloadName, value, streamLength, measurements);
                     break;
                 case "generic-struct":
-                    AddGenericStructMeasurements(payloadName, in value, streamLength, measurements);
+                    AddGenericStructMeasurements(payloadName, value, streamLength, measurements);
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(shape), shape, null);
@@ -168,7 +168,7 @@ internal static class StreamCodecDispatchEvidenceRunner
 
     private static void AddInterfacePerItemMeasurements<T>(
         string payloadName,
-        in T value,
+        T value,
         int streamLength,
         List<StreamCodecDispatchMeasurement> measurements)
         where T : unmanaged
@@ -182,22 +182,22 @@ internal static class StreamCodecDispatchEvidenceRunner
             payloadName,
             "sized-serialize",
             streamLength,
-            count => RunInterfacePerItemStreams(sizedCodec, in value, writer, streamLength, count)));
+            count => RunInterfacePerItemStreams(sizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "unsized-serialize",
             streamLength,
-            count => RunInterfacePerItemStreams(unsizedCodec, in value, writer, streamLength, count)));
+            count => RunInterfacePerItemStreams(unsizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "deserialize",
             streamLength,
-            count => RunInterfaceDeserializeStreams(sizedCodec, in payload, streamLength, count)));
+            count => RunInterfaceDeserializeStreams(sizedCodec, payload, streamLength, count)));
     }
 
     private static void AddInterfaceHoistedMeasurements<T>(
         string payloadName,
-        in T value,
+        T value,
         int streamLength,
         List<StreamCodecDispatchMeasurement> measurements)
         where T : unmanaged
@@ -211,22 +211,22 @@ internal static class StreamCodecDispatchEvidenceRunner
             payloadName,
             "sized-serialize",
             streamLength,
-            count => RunInterfaceHoistedStreams(sizedCodec, in value, writer, streamLength, count)));
+            count => RunInterfaceHoistedStreams(sizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "unsized-serialize",
             streamLength,
-            count => RunInterfaceHoistedStreams(unsizedCodec, in value, writer, streamLength, count)));
+            count => RunInterfaceHoistedStreams(unsizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "deserialize",
             streamLength,
-            count => RunInterfaceDeserializeStreams(sizedCodec, in payload, streamLength, count)));
+            count => RunInterfaceDeserializeStreams(sizedCodec, payload, streamLength, count)));
     }
 
     private static void AddGenericClassMeasurements<T>(
         string payloadName,
-        in T value,
+        T value,
         int streamLength,
         List<StreamCodecDispatchMeasurement> measurements)
         where T : unmanaged
@@ -241,24 +241,24 @@ internal static class StreamCodecDispatchEvidenceRunner
             "sized-serialize",
             streamLength,
             count => RunGenericSizedStreams<T, UnmanagedSizedClassCodec<T>>(
-                sizedCodec, in value, writer, streamLength, count)));
+                sizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "unsized-serialize",
             streamLength,
             count => RunGenericUnsizedStreams<T, UnmanagedClassCodec<T>>(
-                unsizedCodec, in value, writer, streamLength, count)));
+                unsizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "deserialize",
             streamLength,
             count => RunGenericDeserializeStreams<T, UnmanagedSizedClassCodec<T>>(
-                sizedCodec, in payload, streamLength, count)));
+                sizedCodec, payload, streamLength, count)));
     }
 
     private static void AddGenericStructMeasurements<T>(
         string payloadName,
-        in T value,
+        T value,
         int streamLength,
         List<StreamCodecDispatchMeasurement> measurements)
         where T : unmanaged
@@ -273,19 +273,19 @@ internal static class StreamCodecDispatchEvidenceRunner
             "sized-serialize",
             streamLength,
             count => RunGenericSizedStreams<T, UnmanagedSizedStructCodec<T>>(
-                sizedCodec, in value, writer, streamLength, count)));
+                sizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "unsized-serialize",
             streamLength,
             count => RunGenericUnsizedStreams<T, UnmanagedStructCodec<T>>(
-                unsizedCodec, in value, writer, streamLength, count)));
+                unsizedCodec, value, writer, streamLength, count)));
         measurements.Add(Measure(
             payloadName,
             "deserialize",
             streamLength,
             count => RunGenericDeserializeStreams<T, UnmanagedSizedStructCodec<T>>(
-                sizedCodec, in payload, streamLength, count)));
+                sizedCodec, payload, streamLength, count)));
     }
 
     private static StreamCodecDispatchMeasurement Measure(
@@ -382,7 +382,7 @@ internal static class StreamCodecDispatchEvidenceRunner
 
     private static long RunInterfacePerItemStreams<T>(
         IRpcCodec<T> codec,
-        in T value,
+        T value,
         ScratchBufferWriter writer,
         int streamLength,
         int streamCount)
@@ -396,7 +396,7 @@ internal static class StreamCodecDispatchEvidenceRunner
 
     private static long RunInterfaceHoistedStreams<T>(
         IRpcCodec<T> codec,
-        in T value,
+        T value,
         ScratchBufferWriter writer,
         int streamLength,
         int streamCount)
@@ -410,7 +410,7 @@ internal static class StreamCodecDispatchEvidenceRunner
 
     private static long RunInterfaceDeserializeStreams<T>(
         IRpcCodec<T> codec,
-        in ReadOnlySequence<byte> payload,
+        ReadOnlySequence<byte> payload,
         int streamLength,
         int streamCount)
         where T : unmanaged
@@ -423,7 +423,7 @@ internal static class StreamCodecDispatchEvidenceRunner
 
     private static long RunGenericSizedStreams<T, TCodec>(
         TCodec codec,
-        in T value,
+        T value,
         ScratchBufferWriter writer,
         int streamLength,
         int streamCount)
@@ -439,7 +439,7 @@ internal static class StreamCodecDispatchEvidenceRunner
 
     private static long RunGenericUnsizedStreams<T, TCodec>(
         TCodec codec,
-        in T value,
+        T value,
         ScratchBufferWriter writer,
         int streamLength,
         int streamCount)
@@ -455,7 +455,7 @@ internal static class StreamCodecDispatchEvidenceRunner
 
     private static long RunGenericDeserializeStreams<T, TCodec>(
         TCodec codec,
-        in ReadOnlySequence<byte> payload,
+        ReadOnlySequence<byte> payload,
         int streamLength,
         int streamCount)
         where T : unmanaged
