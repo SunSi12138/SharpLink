@@ -192,7 +192,7 @@ public partial class RpcGenerator
                         sb.AppendLine($"        __snapshot.__complex_{memberIndex} = {value};");
                         var index = complexIndexes[member.Name];
                         sb.AppendLine(
-                            $"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
+                            $"        if ((object)__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
                         sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
                         sb.AppendLine(
                             $"            !__sized_{index}.TryGetEncodedSize(__snapshot.__complex_{memberIndex}, out __snapshot.__nestedSize_{index}, out __snapshot.__nestedSnapshot_{index}))");
@@ -299,7 +299,7 @@ public partial class RpcGenerator
                     {
                         var index = complexIndexes[member.Name];
                         var keySize = GetFieldKeySize(member.FieldId, 6);
-                        sb.AppendLine($"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
+                        sb.AppendLine($"        if ((object)__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
                         sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
                         sb.AppendLine($"            !__sized_{index}.TryGetEncodedSize({value}, out var __nestedSize_{index}))");
                         sb.AppendLine("        {");
