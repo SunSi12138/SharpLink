@@ -11,14 +11,14 @@ using SharpLink.Abstractions;
 
 namespace SharpLink.StreamCodecStructCoreEvidence;
 
-internal static class GeneratedCodecBindingEvidenceRunner
+internal static partial class GeneratedCodecBindingEvidenceRunner
 {
     private const int Rounds = 3;
     private const int TargetCallsPerRound = 1_000_000;
     private const int TargetItemsPerRound = 1_000_000;
     private static readonly int[] StreamLengths = [1_000, 10_000, 100_000];
 
-    internal static void Run(string[] args)
+    private static void RunLegacy(string[] args)
     {
 #if GENERATED_BINDING_INTERFACE
         RunFixed("interface", args);
