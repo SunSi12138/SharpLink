@@ -1,0 +1,261 @@
+name: Stream Codec Dispatch Performance Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'test/SharpLink.Benchmarks/StreamCodecDispatchEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - '.github/workflows/stream-codec-dispatch-performance-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  same-machine-comparison:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/performance/stream-codec-dispatch
+      EVIDENCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE_ROOT"
+          dotnet --info > "$EVIDENCE_ROOT/dotnet-info.txt"
+          uname -a > "$EVIDENCE_ROOT/uname.txt"
+          lscpu > "$EVIDENCE_ROOT/cpu.txt"
+          printf 'commit=%s\nrunner=%s\n'             "$EVIDENCE_SHA"             "${{ runner.name }}"             > "$EVIDENCE_ROOT/provenance.txt"
+
+      - name: Build benchmark harness once
+        shell: bash
+        run: |
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj             -c Release -v minimal
+
+      - name: Run same-machine PGO and specialization evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local label="$1"
+            local shape="$2"
+            local tiered_pgo="$3"
+            local repetition="$4"
+            local output="$EVIDENCE_ROOT/${label}-r${repetition}.json"
+
+            echo "::group::${label} repetition ${repetition}"
+            env               DOTNET_ReadyToRun=0               DOTNET_TieredCompilation=1               DOTNET_TieredPGO="$tiered_pgo"               SHARPLINK_BENCHMARK_SHA="$EVIDENCE_SHA"               dotnet run -c Release --no-build                 --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --                 --stream-codec-dispatch-evidence "$shape" "$output"
+            echo "::endgroup::"
+          }
+
+          # Alternate order between repetitions to reduce monotonic runner drift.
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              run_case pgo-disabled-interface interface-per-item 0 "$repetition"
+              run_case dynamic-pgo-interface interface-per-item 1 "$repetition"
+              run_case dynamic-pgo-hoisted interface-hoisted 1 "$repetition"
+              run_case dynamic-pgo-generic-class generic-class 1 "$repetition"
+              run_case dynamic-pgo-generic-struct generic-struct 1 "$repetition"
+            else
+              run_case dynamic-pgo-generic-struct generic-struct 1 "$repetition"
+              run_case dynamic-pgo-generic-class generic-class 1 "$repetition"
+              run_case dynamic-pgo-hoisted interface-hoisted 1 "$repetition"
+              run_case dynamic-pgo-interface interface-per-item 1 "$repetition"
+              run_case pgo-disabled-interface interface-per-item 0 "$repetition"
+            fi
+          done
+
+      - name: Summarize same-machine evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-dispatch")
+          states = (
+              "pgo-disabled-interface",
+              "dynamic-pgo-interface",
+              "dynamic-pgo-hoisted",
+              "dynamic-pgo-generic-class",
+              "dynamic-pgo-generic-struct",
+          )
+
+          docs = {}
+          for state in states:
+              state_docs = []
+              for path in sorted(root.glob(f"{state}-r*.json")):
+                  state_docs.append(json.loads(path.read_text()))
+              if not state_docs:
+                  raise SystemExit(f"missing evidence for {state}")
+              docs[state] = state_docs
+
+          def key(row):
+              return (row["operation"], row["payload"], row["streamLength"])
+
+          def aggregate(state):
+              grouped = {}
+              for doc in docs[state]:
+                  for row in doc["measurements"]:
+                      grouped.setdefault(key(row), []).append(row)
+              result = {}
+              for scenario, scenario_rows in grouped.items():
+                  result[scenario] = {
+                      "ns": statistics.median(r["nanosecondsPerItem"] for r in scenario_rows),
+                      "cpuNs": statistics.median(r["cpuNanosecondsPerItem"] for r in scenario_rows),
+                      "alloc": statistics.median(r["allocatedBytesPerItem"] for r in scenario_rows),
+                  }
+              return result
+
+          aggregated = {state: aggregate(state) for state in states}
+          scenarios = sorted(set.intersection(*(set(state_rows) for state_rows in aggregated.values())))
+
+          def improvement(baseline, candidate):
+              return 0.0 if baseline == 0 else (baseline - candidate) * 100.0 / baseline
+
+          rows = []
+          for scenario in scenarios:
+              off = aggregated["pgo-disabled-interface"][scenario]
+              pgo = aggregated["dynamic-pgo-interface"][scenario]
+              hoisted = aggregated["dynamic-pgo-hoisted"][scenario]
+              generic_class = aggregated["dynamic-pgo-generic-class"][scenario]
+              generic_struct = aggregated["dynamic-pgo-generic-struct"][scenario]
+              rows.append({
+                  "operation": scenario[0],
+                  "payload": scenario[1],
+                  "streamLength": scenario[2],
+                  "pgoDisabledNs": off["ns"],
+                  "dynamicPgoNs": pgo["ns"],
+                  "hoistedNs": hoisted["ns"],
+                  "genericClassNs": generic_class["ns"],
+                  "genericStructNs": generic_struct["ns"],
+                  "dynamicPgoVsDisabledImprovementPct": improvement(off["ns"], pgo["ns"]),
+                  "hoistVsDynamicPgoImprovementPct": improvement(pgo["ns"], hoisted["ns"]),
+                  "genericClassVsHoistedImprovementPct": improvement(hoisted["ns"], generic_class["ns"]),
+                  "genericClassVsDynamicPgoImprovementPct": improvement(pgo["ns"], generic_class["ns"]),
+                  "genericStructVsGenericClassImprovementPct": improvement(generic_class["ns"], generic_struct["ns"]),
+                  "pgoDisabledAllocatedBytesPerItem": off["alloc"],
+                  "dynamicPgoAllocatedBytesPerItem": pgo["alloc"],
+                  "hoistedAllocatedBytesPerItem": hoisted["alloc"],
+                  "genericClassAllocatedBytesPerItem": generic_class["alloc"],
+                  "genericStructAllocatedBytesPerItem": generic_struct["alloc"],
+              })
+
+          comparison = {
+              "commit": docs["dynamic-pgo-interface"][0]["commit"],
+              "repetitions": len(docs["dynamic-pgo-interface"]),
+              "states": {
+                  state: {
+                      "tieredCompilation": docs[state][0]["tieredCompilation"],
+                      "tieredPgo": docs[state][0]["tieredPgo"],
+                      "readyToRun": docs[state][0]["readyToRun"],
+                      "shape": docs[state][0]["shape"],
+                  }
+                  for state in states
+              },
+              "rows": rows,
+              "medianImprovementsPct": {
+                  "dynamicPgoVsDisabled": statistics.median(
+                      row["dynamicPgoVsDisabledImprovementPct"] for row in rows),
+                  "hoistVsDynamicPgo": statistics.median(
+                      row["hoistVsDynamicPgoImprovementPct"] for row in rows),
+                  "genericClassVsHoisted": statistics.median(
+                      row["genericClassVsHoistedImprovementPct"] for row in rows),
+                  "genericClassVsDynamicPgo": statistics.median(
+                      row["genericClassVsDynamicPgoImprovementPct"] for row in rows),
+                  "genericStructVsGenericClass": statistics.median(
+                      row["genericStructVsGenericClassImprovementPct"] for row in rows),
+              },
+          }
+          (root / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
+
+          medians = comparison["medianImprovementsPct"]
+          lines = [
+              "# Stream codec dispatch same-machine evidence",
+              "",
+              f"- commit: {comparison['commit']}",
+              "- three independent repetitions run in alternating order on one GitHub-hosted runner",
+              "- positive improvement means fewer ns/item",
+              "- PGO disabled and enabled both use tiered compilation with ReadyToRun disabled; only DOTNET_TieredPGO changes",
+              "- generic-class / generic-struct run with Dynamic PGO enabled",
+              "",
+              "## Median improvement across all payload / operation / stream-length scenarios",
+              "",
+              f"- Dynamic PGO vs PGO disabled interface baseline: {medians['dynamicPgoVsDisabled']:+.2f}%",
+              f"- Phase A hoisting vs Dynamic PGO interface baseline: {medians['hoistVsDynamicPgo']:+.2f}%",
+              f"- <TCodec> class specialization vs hoisted interface: {medians['genericClassVsHoisted']:+.2f}%",
+              f"- <TCodec> class specialization vs Dynamic PGO interface baseline: {medians['genericClassVsDynamicPgo']:+.2f}%",
+              f"- struct TCodec vs class TCodec: {medians['genericStructVsGenericClass']:+.2f}%",
+              "",
+              "| Operation | Payload | Stream | PGO off ns/item | Dynamic PGO | Hoisted | TCodec class | TCodec struct | PGO gain | Hoist gain | TCodec class vs hoist |",
+              "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+          ]
+          for row in rows:
+              lines.append(
+                  f"| {row['operation']} | {row['payload']} | {row['streamLength']} | "
+                  f"{row['pgoDisabledNs']:.2f} | {row['dynamicPgoNs']:.2f} | "
+                  f"{row['hoistedNs']:.2f} | {row['genericClassNs']:.2f} | "
+                  f"{row['genericStructNs']:.2f} | "
+                  f"{row['dynamicPgoVsDisabledImprovementPct']:+.2f}% | "
+                  f"{row['hoistVsDynamicPgoImprovementPct']:+.2f}% | "
+                  f"{row['genericClassVsHoistedImprovementPct']:+.2f}% |"
+              )
+
+          lines += [
+              "",
+              "## Interpretation",
+              "",
+              "- Dynamic PGO vs PGO disabled isolates runtime profile-guided devirtualization on the unchanged interface shape.",
+              "- Hoisted vs Dynamic PGO isolates Phase A capability-test hoisting after giving the JIT its best profile-guided opportunity.",
+              "- TCodec class vs hoisted isolates the additional value of a reference-type concrete generic context.",
+              "- TCodec struct is diagnostic evidence for constrained calls/code sharing; it is not automatically a production recommendation.",
+          ]
+          summary = "\n".join(lines) + "\n"
+          (root / "comparison.md").write_text(summary)
+          print(summary)
+          PY
+
+      - name: Publish comparison summary
+        shell: bash
+        run: cat "$EVIDENCE_ROOT/comparison.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Capture JIT disassembly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          capture() {
+            local label="$1"
+            local shape="$2"
+            local tiered_pgo="$3"
+            env               DOTNET_ReadyToRun=0               DOTNET_TieredCompilation=1               DOTNET_TieredPGO="$tiered_pgo"               COMPlus_JitDisasm="StreamCodecEvidence_*"               COMPlus_JitDisasmDiffable=1               SHARPLINK_BENCHMARK_SHA="$EVIDENCE_SHA"               dotnet run -c Release --no-build                 --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --                 --stream-codec-dispatch-jit-evidence "$shape" 64                 > "$EVIDENCE_ROOT/${label}-jit-disasm.txt" 2>&1
+          }
+
+          capture pgo-disabled-interface interface-per-item 0
+          capture dynamic-pgo-interface interface-per-item 1
+          capture dynamic-pgo-generic-class generic-class 1
+          capture dynamic-pgo-generic-struct generic-struct 1
+
+      - name: Upload stream codec evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stream-codec-dispatch-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/performance/stream-codec-dispatch
+          if-no-files-found: error
+          retention-days: 30
