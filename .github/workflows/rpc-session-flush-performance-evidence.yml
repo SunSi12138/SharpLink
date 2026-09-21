@@ -55,6 +55,8 @@ jobs:
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs"
           cp test/SharpLink.Benchmarks/Program.cs \
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/Program.cs"
+          cp test/SharpLink.Benchmarks/StreamCodecDispatchEvidenceRunner.cs \
+            "$BASE_WORKTREE/test/SharpLink.Benchmarks/StreamCodecDispatchEvidenceRunner.cs"
           echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
 
       - name: Build exact base benchmark harness
