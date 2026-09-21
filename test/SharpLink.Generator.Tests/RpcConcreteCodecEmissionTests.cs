@@ -96,6 +96,11 @@ public sealed class AdaptedPayload
     public int Value { get; set; }
 }
 
+public sealed class AdaptedEnvelope
+{
+    public AdaptedPayload Value { get; set; } = new();
+}
+
 [SharpLink.Sdk.RpcCodecSemanticIdentity(0x7263UL, 0x7264UL)]
 public sealed class AdaptedPayloadAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 {
@@ -109,6 +114,7 @@ public interface IConcreteBindingContract : SharpLink.Sdk.IService
 {
     ValueTask<CustomPayload> EchoCustom(CustomPayload value, CancellationToken cancellationToken);
     ValueTask<AdaptedPayload> EchoAdapted(AdaptedPayload value, CancellationToken cancellationToken);
+    ValueTask<AdaptedEnvelope> EchoEnvelope(AdaptedEnvelope value, CancellationToken cancellationToken);
 }
 """)),
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(CustomPayload), typeof(CustomPayloadCodec))]",
@@ -131,6 +137,10 @@ public interface IConcreteBindingContract : SharpLink.Sdk.IService
         Ensure(lines.Any(static line =>
                 line.Contains("private readonly IRpcCodec<global::AdaptedPayload>", StringComparison.Ordinal)),
             "Adapter-backed Codecs must keep IRpcCodec<T> storage because the concrete runtime implementation is not statically known");
+        Ensure(generated.Contains(
+                "private readonly IRpcCodec<global::AdaptedPayload> __codec_0;",
+                StringComparison.Ordinal),
+            "a Contract-owned parent DTO must not reuse a global native concrete child Codec when the child is Adapter-backed");
         Ensure(!generated.Contains(
                 "(global::AdaptedPayloadAdapter)codecs.GetCodec<global::AdaptedPayload>()",
                 StringComparison.Ordinal),
