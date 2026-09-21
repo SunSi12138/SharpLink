@@ -120,13 +120,13 @@ internal static class StreamCodecSpecializationEvidenceRunner
     {
         measurements.Add(MeasureUnsized(
             "send/int32/unsized-class", "send", "int32", "unsized-class",
-            0x12345678, new BlitUnsizedClassCodec<int>(), mode, rounds, itemsPerRound));
+            UnsizedCodecInt32.Create(), new BlitUnsizedClassCodec<UnsizedCodecInt32>(), mode, rounds, itemsPerRound));
         measurements.Add(MeasureUnsized(
             "send/16b/unsized-class", "send", "16b", "unsized-class",
-            CodecPayload16.Create(), new BlitUnsizedClassCodec<CodecPayload16>(), mode, rounds, itemsPerRound));
+            UnsizedCodecPayload16.Create(), new BlitUnsizedClassCodec<UnsizedCodecPayload16>(), mode, rounds, itemsPerRound));
         measurements.Add(MeasureUnsized(
             "send/64b/unsized-class", "send", "64b", "unsized-class",
-            CodecPayload64.Create(), new BlitUnsizedClassCodec<CodecPayload64>(), mode, rounds, itemsPerRound));
+            UnsizedCodecPayload64.Create(), new BlitUnsizedClassCodec<UnsizedCodecPayload64>(), mode, rounds, itemsPerRound));
     }
 
     private static void AddExactStructMeasurements(
@@ -137,10 +137,10 @@ internal static class StreamCodecSpecializationEvidenceRunner
     {
         measurements.Add(MeasureExact(
             "send/int32/exact-struct", "send", "int32", "exact-struct",
-            0x12345678, new BlitStructCodec<int>(), mode, rounds, itemsPerRound));
+            StructCodecInt32.Create(), new BlitStructCodec<StructCodecInt32>(), mode, rounds, itemsPerRound));
         measurements.Add(MeasureExact(
             "send/16b/exact-struct", "send", "16b", "exact-struct",
-            CodecPayload16.Create(), new BlitStructCodec<CodecPayload16>(), mode, rounds, itemsPerRound));
+            StructCodecPayload16.Create(), new BlitStructCodec<StructCodecPayload16>(), mode, rounds, itemsPerRound));
     }
 
     private static void AddReceiveMeasurements(
@@ -163,10 +163,10 @@ internal static class StreamCodecSpecializationEvidenceRunner
             CodecPayload64.Create(), new BlitClassCodec<CodecPayload64>(), mode, rounds, itemsPerRound));
         measurements.Add(MeasureReceive(
             "receive/int32/unsized-class", "int32", "unsized-class",
-            0x12345678, new BlitUnsizedClassCodec<int>(), mode, rounds, itemsPerRound));
+            UnsizedCodecInt32.Create(), new BlitUnsizedClassCodec<UnsizedCodecInt32>(), mode, rounds, itemsPerRound));
         measurements.Add(MeasureReceive(
             "receive/int32/exact-struct", "int32", "exact-struct",
-            0x12345678, new BlitStructCodec<int>(), mode, rounds, itemsPerRound));
+            StructCodecInt32.Create(), new BlitStructCodec<StructCodecInt32>(), mode, rounds, itemsPerRound));
     }
 
     private static StreamCodecEvidenceMeasurement MeasureExact<T, TCodec>(
@@ -734,6 +734,53 @@ internal static class BlitCodecWire<T>
         buffer.Slice(0, size).CopyTo(temporary);
         return MemoryMarshal.Read<T>(temporary);
     }
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct UnsizedCodecInt32(int Value)
+{
+    internal static UnsizedCodecInt32 Create() => new(0x12345678);
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct UnsizedCodecPayload16(long A, long B)
+{
+    internal static UnsizedCodecPayload16 Create() => new(0x0102030405060708L, 0x1112131415161718L);
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct UnsizedCodecPayload64(
+    long A,
+    long B,
+    long C,
+    long D,
+    long E,
+    long F,
+    long G,
+    long H)
+{
+    internal static UnsizedCodecPayload64 Create()
+        => new(
+            0x0102030405060708L,
+            0x1112131415161718L,
+            0x2122232425262728L,
+            0x3132333435363738L,
+            0x4142434445464748L,
+            0x5152535455565758L,
+            0x6162636465666768L,
+            0x7172737475767778L);
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct StructCodecInt32(int Value)
+{
+    internal static StructCodecInt32 Create() => new(0x12345678);
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct StructCodecPayload16(long A, long B)
+{
+    internal static StructCodecPayload16 Create() => new(0x0102030405060708L, 0x1112131415161718L);
 }
 
 [StructLayout(LayoutKind.Sequential)]
