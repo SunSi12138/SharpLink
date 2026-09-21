@@ -363,6 +363,10 @@ internal sealed class ClientConnection :
 
         try
         {
+            var exactSizeCodec = codec as IRpcSizedCodec<T>;
+            if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+                exactSizeCodec = null;
+
             await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
             while (true)
             {
@@ -380,6 +384,7 @@ internal sealed class ClientConnection :
                     streamId,
                     enumerator.Current,
                     codec,
+                    exactSizeCodec,
                     deadline,
                     _timeProvider,
                     cancellationToken).ConfigureAwait(false);
