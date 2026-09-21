@@ -291,7 +291,7 @@ public partial class RpcGenerator
             sb.AppendLine($"        var lengthOffset_{index} = rpcWriter.WrittenCount;");
             sb.AppendLine("        writer.Advance(sizeof(int));");
             sb.AppendLine($"        var start_{index} = rpcWriter.WrittenCount;");
-            sb.AppendLine($"        __codec_{parameter.Name}.Serialize(value.{EscapeIdentifier(parameter.Name)}, writer);");
+            sb.AppendLine($"        __codec_{parameter.Name}.Serialize(value.{EscapeIdentifier(parameter.Name)}!, writer);");
             sb.AppendLine($"        var length_{index} = rpcWriter.WrittenCount - start_{index};");
             sb.AppendLine($"        var written_{index} = rpcWriter.WrittenSpan;");
             sb.AppendLine($"        BinaryPrimitives.WriteInt32LittleEndian(written_{index}.Slice(lengthOffset_{index}, sizeof(int)), length_{index});");
