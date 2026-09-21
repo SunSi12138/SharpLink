@@ -128,39 +128,15 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         foreach (var length in StreamLengths)
         {
             rows.Add(Measure("int", "stream-sized-serialize", length, count =>
-                RunGuardedSizedStreams<int, GeneratedIntCodec, GeneratedIntCore>(
-                    resolved,
-                    generated,
-                    static wrapper => wrapper.Core,
-                    value,
-                    writer,
-                    length,
-                    count)));
+                RunFlatGuardedValueSizedStreams(resolved, generated, value, writer, length, count)));
             rows.Add(Measure("int", "stream-deserialize", length, count =>
-                RunGuardedDeserializeStreams<int, GeneratedIntCodec, GeneratedIntCore>(
-                    resolved,
-                    generated,
-                    static wrapper => wrapper.Core,
-                    payload,
-                    length,
-                    count)));
+                RunFlatGuardedValueDeserializeStreams(resolved, generated, payload, length, count)));
         }
 
         rows.Add(MeasureCalls("int", "unary-serialize", count =>
-            RunGuardedUnarySerialize<int, GeneratedIntCodec, GeneratedIntCore>(
-                resolved,
-                generated,
-                static wrapper => wrapper.Core,
-                value,
-                writer,
-                count)));
+            RunFlatGuardedValueUnarySerialize(resolved, generated, value, writer, count)));
         rows.Add(MeasureCalls("int", "unary-deserialize", count =>
-            RunGuardedUnaryDeserialize<int, GeneratedIntCodec, GeneratedIntCore>(
-                resolved,
-                generated,
-                static wrapper => wrapper.Core,
-                payload,
-                count)));
+            RunFlatGuardedValueUnaryDeserialize(resolved, generated, payload, count)));
     }
 
     private static void AddFlatGuardedRef(List<Measurement> rows)
@@ -241,39 +217,15 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         foreach (var length in StreamLengths)
         {
             rows.Add(Measure("generated-like64", "stream-sized-serialize", length, count =>
-                RunGuardedSizedStreams<Nested64, GeneratedNested64Codec, GeneratedNested64Core>(
-                    resolved,
-                    generated,
-                    static wrapper => wrapper.Core,
-                    value,
-                    writer,
-                    length,
-                    count)));
+                RunNestedGuardedValueSizedStreams(resolved, generated, value, writer, length, count)));
             rows.Add(Measure("generated-like64", "stream-deserialize", length, count =>
-                RunGuardedDeserializeStreams<Nested64, GeneratedNested64Codec, GeneratedNested64Core>(
-                    resolved,
-                    generated,
-                    static wrapper => wrapper.Core,
-                    payload,
-                    length,
-                    count)));
+                RunNestedGuardedValueDeserializeStreams(resolved, generated, payload, length, count)));
         }
 
         rows.Add(MeasureCalls("generated-like64", "unary-serialize", count =>
-            RunGuardedUnarySerialize<Nested64, GeneratedNested64Codec, GeneratedNested64Core>(
-                resolved,
-                generated,
-                static wrapper => wrapper.Core,
-                value,
-                writer,
-                count)));
+            RunNestedGuardedValueUnarySerialize(resolved, generated, value, writer, count)));
         rows.Add(MeasureCalls("generated-like64", "unary-deserialize", count =>
-            RunGuardedUnaryDeserialize<Nested64, GeneratedNested64Codec, GeneratedNested64Core>(
-                resolved,
-                generated,
-                static wrapper => wrapper.Core,
-                payload,
-                count)));
+            RunNestedGuardedValueUnaryDeserialize(resolved, generated, payload, count)));
     }
 
     private static void AddNestedGuardedRef(List<Measurement> rows)
@@ -558,6 +510,198 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         {
             var value = core.Deserialize(in payload);
             checksum += Unsafe.As<T, byte>(ref value);
+        }
+        return checksum;
+    }
+
+    private static long RunFlatGuardedValueSizedStreams(
+        IRpcCodec<int> fallback,
+        GeneratedIntCodec? generated,
+        int value,
+        ScratchBufferWriter writer,
+        int length,
+        int streamCount)
+    {
+        long checksum = 0;
+        for (var stream = 0; stream < streamCount; stream++)
+        {
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                checksum += PumpSized<int, GeneratedIntCore>(core, in value, writer, length);
+            }
+            else
+            {
+                checksum += PumpInterfaceSized(fallback, (IRpcSizedCodec<int>)fallback, in value, writer, length);
+            }
+        }
+        return checksum;
+    }
+
+    private static long RunFlatGuardedValueDeserializeStreams(
+        IRpcCodec<int> fallback,
+        GeneratedIntCodec? generated,
+        ReadOnlySequence<byte> payload,
+        int length,
+        int streamCount)
+    {
+        long checksum = 0;
+        for (var stream = 0; stream < streamCount; stream++)
+        {
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                checksum += PumpDeserialize<int, GeneratedIntCore>(core, in payload, length);
+            }
+            else
+            {
+                checksum += PumpInterfaceDeserialize(fallback, in payload, length);
+            }
+        }
+        return checksum;
+    }
+
+    private static long RunFlatGuardedValueUnarySerialize(
+        IRpcCodec<int> fallback,
+        GeneratedIntCodec? generated,
+        int value,
+        ScratchBufferWriter writer,
+        int count)
+    {
+        long checksum = 0;
+        for (var i = 0; i < count; i++)
+        {
+            writer.Reset();
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                core.Serialize(in value, writer);
+            }
+            else
+            {
+                fallback.Serialize(in value, writer);
+            }
+            checksum += writer.WrittenSpan[0];
+        }
+        return checksum;
+    }
+
+    private static long RunFlatGuardedValueUnaryDeserialize(
+        IRpcCodec<int> fallback,
+        GeneratedIntCodec? generated,
+        ReadOnlySequence<byte> payload,
+        int count)
+    {
+        long checksum = 0;
+        for (var i = 0; i < count; i++)
+        {
+            int value;
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                value = core.Deserialize(in payload);
+            }
+            else
+            {
+                value = fallback.Deserialize(in payload);
+            }
+            checksum += value;
+        }
+        return checksum;
+    }
+
+    private static long RunNestedGuardedValueSizedStreams(
+        IRpcCodec<Nested64> fallback,
+        GeneratedNested64Codec? generated,
+        Nested64 value,
+        ScratchBufferWriter writer,
+        int length,
+        int streamCount)
+    {
+        long checksum = 0;
+        for (var stream = 0; stream < streamCount; stream++)
+        {
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                checksum += PumpSized<Nested64, GeneratedNested64Core>(core, in value, writer, length);
+            }
+            else
+            {
+                checksum += PumpInterfaceSized(fallback, (IRpcSizedCodec<Nested64>)fallback, in value, writer, length);
+            }
+        }
+        return checksum;
+    }
+
+    private static long RunNestedGuardedValueDeserializeStreams(
+        IRpcCodec<Nested64> fallback,
+        GeneratedNested64Codec? generated,
+        ReadOnlySequence<byte> payload,
+        int length,
+        int streamCount)
+    {
+        long checksum = 0;
+        for (var stream = 0; stream < streamCount; stream++)
+        {
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                checksum += PumpDeserialize<Nested64, GeneratedNested64Core>(core, in payload, length);
+            }
+            else
+            {
+                checksum += PumpInterfaceDeserialize(fallback, in payload, length);
+            }
+        }
+        return checksum;
+    }
+
+    private static long RunNestedGuardedValueUnarySerialize(
+        IRpcCodec<Nested64> fallback,
+        GeneratedNested64Codec? generated,
+        Nested64 value,
+        ScratchBufferWriter writer,
+        int count)
+    {
+        long checksum = 0;
+        for (var i = 0; i < count; i++)
+        {
+            writer.Reset();
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                core.Serialize(in value, writer);
+            }
+            else
+            {
+                fallback.Serialize(in value, writer);
+            }
+            checksum += writer.WrittenSpan[0];
+        }
+        return checksum;
+    }
+
+    private static long RunNestedGuardedValueUnaryDeserialize(
+        IRpcCodec<Nested64> fallback,
+        GeneratedNested64Codec? generated,
+        ReadOnlySequence<byte> payload,
+        int count)
+    {
+        long checksum = 0;
+        for (var i = 0; i < count; i++)
+        {
+            Nested64 value;
+            if (generated is not null)
+            {
+                var core = generated.Core;
+                value = core.Deserialize(in payload);
+            }
+            else
+            {
+                value = fallback.Deserialize(in payload);
+            }
+            checksum += Unsafe.As<Nested64, byte>(ref value);
         }
         return checksum;
     }
