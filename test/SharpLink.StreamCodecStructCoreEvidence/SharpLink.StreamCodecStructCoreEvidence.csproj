@@ -21,6 +21,18 @@
   <PropertyGroup Condition="'$(EvidenceShape)' == 'direct-core'">
     <DefineConstants>$(DefineConstants);STRUCT_CORE_EVIDENCE_DIRECT</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-interface'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_INTERFACE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-guarded-value'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_GUARDED_VALUE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-guarded-ref'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_GUARDED_REF</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-direct'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_DIRECT</DefineConstants>
+  </PropertyGroup>
 
   <Target Name="ValidateEvidenceShape" BeforeTargets="CoreCompile">
     <Error
@@ -29,7 +41,11 @@
                  '$(EvidenceShape)' != 'shell-interface' and
                  '$(EvidenceShape)' != 'open-value' and
                  '$(EvidenceShape)' != 'open-in' and
-                 '$(EvidenceShape)' != 'direct-core'"
+                 '$(EvidenceShape)' != 'direct-core' and
+                 '$(EvidenceShape)' != 'generated-interface' and
+                 '$(EvidenceShape)' != 'generated-guarded-value' and
+                 '$(EvidenceShape)' != 'generated-guarded-ref' and
+                 '$(EvidenceShape)' != 'generated-direct'"
       Text="Unsupported EvidenceShape '$(EvidenceShape)'." />
   </Target>
 
