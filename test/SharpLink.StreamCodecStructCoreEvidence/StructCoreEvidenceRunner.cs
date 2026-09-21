@@ -642,7 +642,7 @@ internal static class StructCoreEvidenceRunner
     {
         long checksum = 0;
         for (var stream = 0; stream < streamCount; stream++)
-            checksum += StreamCodecStructCore_PumpGenericDeserialize(core, in payload, streamLength);
+            checksum += StreamCodecStructCore_PumpGenericDeserialize<T, TCore>(core, in payload, streamLength);
         return checksum;
     }
 
@@ -1069,7 +1069,7 @@ internal static class StructCoreEvidenceRunner
 
         public long Visit<TCore>(TCore core)
             where TCore : struct, IRpcCodec<T>
-            => StreamCodecStructCore_PumpGenericDeserialize(
+            => StreamCodecStructCore_PumpGenericDeserialize<T, TCore>(
                 core, in _state.Payload, _state.ItemCount);
     }
 
@@ -1082,7 +1082,7 @@ internal static class StructCoreEvidenceRunner
 
         public long Visit<TCore>(in TCore core)
             where TCore : struct, IRpcCodec<T>
-            => StreamCodecStructCore_PumpGenericDeserializeIn(
+            => StreamCodecStructCore_PumpGenericDeserializeIn<T, TCore>(
                 in core, in _state.Payload, _state.ItemCount);
     }
 
@@ -1215,7 +1215,7 @@ internal static class StructCoreEvidenceRunner
     private sealed class FlatUnsizedCodecShell<T> : IRpcCodec<T>, ICoreOpener<T>
         where T : unmanaged
     {
-        private readonly FlatUnsizedCore<T> _core;
+        private readonly FlatUnsizedCore<T> _core = default;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Serialize(in T value, IBufferWriter<byte> buffer)
@@ -1242,7 +1242,7 @@ internal static class StructCoreEvidenceRunner
         ISizedCoreOpener<T>
         where T : unmanaged
     {
-        private readonly FlatSizedCore<T> _core;
+        private readonly FlatSizedCore<T> _core = default;
 
         public bool CanExactSize => true;
 
