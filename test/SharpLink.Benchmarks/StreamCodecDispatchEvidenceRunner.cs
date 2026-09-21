@@ -99,37 +99,37 @@ internal static class StreamCodecDispatchEvidenceRunner
         switch (shape)
         {
             case "interface-per-item":
-            {
-                IRpcCodec<int> codec = new UnmanagedSizedClassCodec<int>();
-                checksum = RunInterfacePerItemStreams(codec, value, writer, 10_000, streamCount);
-                checksum += RunInterfaceDeserializeStreams(codec, payload, 10_000, streamCount);
-                break;
-            }
+                {
+                    IRpcCodec<int> codec = new UnmanagedSizedClassCodec<int>();
+                    checksum = RunInterfacePerItemStreams(codec, value, writer, 10_000, streamCount);
+                    checksum += RunInterfaceDeserializeStreams(codec, payload, 10_000, streamCount);
+                    break;
+                }
             case "interface-hoisted":
-            {
-                IRpcCodec<int> codec = new UnmanagedSizedClassCodec<int>();
-                checksum = RunInterfaceHoistedStreams(codec, value, writer, 10_000, streamCount);
-                checksum += RunInterfaceDeserializeStreams(codec, payload, 10_000, streamCount);
-                break;
-            }
+                {
+                    IRpcCodec<int> codec = new UnmanagedSizedClassCodec<int>();
+                    checksum = RunInterfaceHoistedStreams(codec, value, writer, 10_000, streamCount);
+                    checksum += RunInterfaceDeserializeStreams(codec, payload, 10_000, streamCount);
+                    break;
+                }
             case "generic-class":
-            {
-                var codec = new UnmanagedSizedClassCodec<int>();
-                checksum = RunGenericSizedStreams<int, UnmanagedSizedClassCodec<int>>(
-                    codec, value, writer, 10_000, streamCount);
-                checksum += RunGenericDeserializeStreams<int, UnmanagedSizedClassCodec<int>>(
-                    codec, payload, 10_000, streamCount);
-                break;
-            }
+                {
+                    var codec = new UnmanagedSizedClassCodec<int>();
+                    checksum = RunGenericSizedStreams<int, UnmanagedSizedClassCodec<int>>(
+                        codec, value, writer, 10_000, streamCount);
+                    checksum += RunGenericDeserializeStreams<int, UnmanagedSizedClassCodec<int>>(
+                        codec, payload, 10_000, streamCount);
+                    break;
+                }
             case "generic-struct":
-            {
-                var codec = new UnmanagedSizedStructCodec<int>();
-                checksum = RunGenericSizedStreams<int, UnmanagedSizedStructCodec<int>>(
-                    codec, value, writer, 10_000, streamCount);
-                checksum += RunGenericDeserializeStreams<int, UnmanagedSizedStructCodec<int>>(
-                    codec, payload, 10_000, streamCount);
-                break;
-            }
+                {
+                    var codec = new UnmanagedSizedStructCodec<int>();
+                    checksum = RunGenericSizedStreams<int, UnmanagedSizedStructCodec<int>>(
+                        codec, value, writer, 10_000, streamCount);
+                    checksum += RunGenericDeserializeStreams<int, UnmanagedSizedStructCodec<int>>(
+                        codec, payload, 10_000, streamCount);
+                    break;
+                }
             default:
                 throw new ArgumentOutOfRangeException(nameof(args), shape, "Unknown JIT evidence shape.");
         }
