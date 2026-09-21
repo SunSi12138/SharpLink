@@ -971,7 +971,7 @@ internal static class StructCoreEvidenceRunner
             where TVisitor : struct, ISizedCoreInVisitor<T>;
     }
 
-    private sealed class SerializeState<T>
+    private class SerializeState<T>
         where T : unmanaged
     {
         public SerializeState(T value, ScratchBufferWriter writer, int itemCount)
