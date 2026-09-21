@@ -440,7 +440,7 @@ public partial class RpcGenerator
                         $"        if ((object)__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index})");
                     sb.AppendLine($"            __sized_{index}.SerializeSized(__snapshot.__complex_{memberIndex}, buffer, __snapshot.__nestedSize_{index}, __snapshot.__nestedSnapshot_{index});");
                     sb.AppendLine("        else");
-                    sb.AppendLine($"            __codec_{index}.Serialize(__snapshot.__complex_{memberIndex}, buffer);");
+                    sb.AppendLine($"            __codec_{index}.Serialize(__snapshot.__complex_{memberIndex}!, buffer);");
                     sb.AppendLine($"        RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_{index});");
                     break;
             }
