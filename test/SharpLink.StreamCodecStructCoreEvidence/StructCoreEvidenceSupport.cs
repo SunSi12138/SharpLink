@@ -11,8 +11,6 @@ namespace SharpLink.StreamCodecStructCoreEvidence;
 
 internal static partial class StructCoreEvidenceRunner
 {
-#endif
-
     private interface ICoreVisitor<T>
         where T : unmanaged
     {
