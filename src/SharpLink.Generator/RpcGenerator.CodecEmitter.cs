@@ -126,7 +126,7 @@ public partial class RpcGenerator
         string codecLookupType,
         IReadOnlyDictionary<string, string> concreteCodecTypes)
         => concreteCodecTypes.TryGetValue(codecLookupType, out var concreteType)
-            ? $"({concreteType}){providerExpression}.GetCodec<{payloadType}>()"
+            ? $"({concreteType}){providerExpression}.GetCodec<{codecLookupType}>()"
             : $"{providerExpression}.GetCodec<{payloadType}>()";
 
     private static string GetWireType(int fixedSize) => fixedSize switch
