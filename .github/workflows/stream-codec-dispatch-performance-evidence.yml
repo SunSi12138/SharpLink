@@ -261,8 +261,8 @@ jobs:
 
           for shape in interface hoisted generic-class generic-struct; do
             publish="$EVIDENCE_ROOT/aot/bin-$shape"
-            intermediate="$RUNNER_TEMP/stream-codec-aot/$shape"
-            dotnet publish "$project"               -c Release               -r linux-x64               --self-contained true               -p:PublishAot=true               -p:StreamCodecEvidenceShape="$shape"               -p:BaseIntermediateOutputPath="$intermediate/obj/"               -p:BaseOutputPath="$intermediate/bin/"               -o "$publish"               -v minimal
+            rm -rf test/SharpLink.StreamCodecAotEvidence/bin test/SharpLink.StreamCodecAotEvidence/obj
+            dotnet publish "$project"               -c Release               -r linux-x64               --self-contained true               -p:PublishAot=true               -p:StreamCodecEvidenceShape="$shape"               -o "$publish"               -v minimal
 
             executable="$publish/SharpLink.StreamCodecAotEvidence"
             test -x "$executable"
