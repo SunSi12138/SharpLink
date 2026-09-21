@@ -401,6 +401,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          dotnet build "$PROJECT" -c Release -v minimal
 
           run_case() {
             local pgo="$1"
