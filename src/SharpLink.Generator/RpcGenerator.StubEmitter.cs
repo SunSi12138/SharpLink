@@ -155,7 +155,7 @@ public partial class RpcGenerator
             sb.AppendLine("    {");
             sb.AppendLine("        var result = await task.ConfigureAwait(false);");
             sb.AppendLine($"        __ValidateResponse(result, {responseNullable});");
-            sb.AppendLine($"        {codecField}.Serialize(result, output);");
+            sb.AppendLine($"        {codecField}.Serialize(result!, output);");
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -445,7 +445,7 @@ public partial class RpcGenerator
     {
         sb.AppendLine($"                    var result = {resultExpression};");
         sb.AppendLine($"                    __ValidateResponse(result, {(method.ResponseNullable ? "true" : "false")});");
-        sb.AppendLine($"                    {GetStubResponseCodecField(method)}.Serialize(result, output);");
+        sb.AppendLine($"                    {GetStubResponseCodecField(method)}.Serialize(result!, output);");
     }
 
     private static void AppendSizeFieldsByType(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
