@@ -48,7 +48,7 @@ public partial class RpcGenerator
         AppendCancellationSupport(sb, model.Methods);
         AppendMethodDescriptors(sb, model);
         AppendStubResponseAwaitHelpers(sb, responseMethods);
-        sb.AppendLine($"""
+        sb.AppendLine($$"""
                             private static void __ValidateResponse<T>(T result, bool responseNullable)
                             {
                                 if (!responseNullable && default(T) is null && result is null)
