@@ -70,7 +70,7 @@ public interface IConcreteCodecContract : SharpLink.Sdk.IService
             "generated DTO/Union/Collection child Codec fields must retain concrete generated Codec types");
         Ensure(lines.Any(static line =>
                 line.Contains("__responseCodec_", StringComparison.Ordinal) &&
-                line.Contains(".Serialize(result, output);", StringComparison.Ordinal)),
+                line.Contains(".Serialize(result!, output);", StringComparison.Ordinal)),
             "non-streaming Stub response encode must call Serialize through the concrete response field");
         Ensure(!generated.Contains("__SerializeResponse(", StringComparison.Ordinal),
             "Stub response encode must not re-erase a concrete Codec through the old IRpcCodec<T> helper");
