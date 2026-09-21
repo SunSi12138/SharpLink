@@ -110,7 +110,7 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         RpcGeneratedCodecWire.WriteUnmanaged<int>(writer, __fixed_1);
         RpcGeneratedCodecWire.WriteFieldKey(writer, 381526208U, RpcGeneratedWireType.LengthDelimited);
         var lengthToken_0 = RpcGeneratedCodecWire.BeginLength(rpcWriter);
-        __codec_0.Serialize(__complex_2, writer);
+        __codec_0.Serialize(__complex_2!, writer);
         RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_0);
         RpcGeneratedCodecWire.WriteObjectEnd(writer);
     }
@@ -221,7 +221,7 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         if ((object)__codec_0 is IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0)
             __sized_0.SerializeSized(__snapshot.__complex_2, buffer, __snapshot.__nestedSize_0, __snapshot.__nestedSnapshot_0);
         else
-            __codec_0.Serialize(__snapshot.__complex_2, buffer);
+            __codec_0.Serialize(__snapshot.__complex_2!, buffer);
         RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_0);
         RpcGeneratedCodecWire.WriteObjectEnd(buffer);
     }
