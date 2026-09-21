@@ -1,0 +1,368 @@
+name: Stream Codec Specialization Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'src/SharpLink.Client/ClientConnection.cs'
+      - 'src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs'
+      - 'src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs'
+      - 'src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs'
+      - 'src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs'
+      - 'src/SharpLink.Abstractions/IRpcCodec.cs'
+      - 'src/SharpLink.Abstractions/IRpcSizedCodec.cs'
+      - 'test/SharpLink.Benchmarks/StreamCodecSpecializationEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - '.github/workflows/stream-codec-specialization-evidence.yml'
+  workflow_dispatch:
+    inputs:
+      trials:
+        description: Same-machine alternating trials per configuration
+        required: true
+        default: '5'
+      rounds:
+        description: Measured rounds inside each process
+        required: true
+        default: '3'
+      items_per_round:
+        description: Items per measured stream-shaped loop
+        required: true
+        default: '250000'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stream-codec-specialization-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  same-machine-codec-ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/performance/stream-codec-specialization
+      EVIDENCE_TRIALS: ${{ inputs.trials || '5' }}
+      EVIDENCE_ROUNDS: ${{ inputs.rounds || '3' }}
+      EVIDENCE_ITEMS: ${{ inputs.items_per_round || '250000' }}
+      SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Checkout exact evidence head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record environment and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          dotnet --info > "$EVIDENCE_ROOT/dotnet-info.txt"
+          uname -a > "$EVIDENCE_ROOT/uname.txt"
+          lscpu > "$EVIDENCE_ROOT/cpu.txt"
+          {
+            printf 'event=%s\n' '${{ github.event_name }}'
+            printf 'head=%s\n' "$SHARPLINK_BENCHMARK_SHA"
+            printf 'base=%s\n' '${{ github.event.pull_request.base.sha }}'
+            printf 'trials=%s\n' "$EVIDENCE_TRIALS"
+            printf 'rounds=%s\n' "$EVIDENCE_ROUNDS"
+            printf 'items_per_round=%s\n' "$EVIDENCE_ITEMS"
+          } > "$EVIDENCE_ROOT/provenance.txt"
+
+      - name: Build evidence harness once
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+            -c Release -v minimal
+
+      - name: Run alternating same-machine PGO and specialization trials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVIDENCE_TRIALS" -lt 1 ] || [ "$EVIDENCE_ROUNDS" -lt 1 ] || [ "$EVIDENCE_ITEMS" -lt 1 ]; then
+            echo "trials, rounds, and items_per_round must all be positive integers" >&2
+            exit 2
+          fi
+
+          run_case() {
+            local config="$1"
+            local mode="$2"
+            local tiered_pgo="$3"
+            local trial="$4"
+            local output="$EVIDENCE_ROOT/trial-${trial}-${config}.json"
+
+            echo "== trial ${trial}: ${config} =="
+            SHARPLINK_CODEC_EVIDENCE_CONFIG="$config" \
+            SHARPLINK_CODEC_EVIDENCE_TRIAL="$trial" \
+            DOTNET_ReadyToRun=0 \
+            DOTNET_TieredCompilation=1 \
+            DOTNET_TieredPGO="$tiered_pgo" \
+            DOTNET_TC_QuickJitForLoops=1 \
+            DOTNET_TC_OnStackReplacement=1 \
+            dotnet run -c Release --no-build \
+              --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+              --stream-codec-specialization-evidence \
+              "$mode" "$EVIDENCE_ROUNDS" "$EVIDENCE_ITEMS" "$output"
+          }
+
+          for trial in $(seq 1 "$EVIDENCE_TRIALS"); do
+            if (( trial % 2 == 1 )); then
+              run_case pgo-disabled-interface interface 0 "$trial"
+              run_case pgo-enabled-interface interface 1 "$trial"
+              run_case pgo-enabled-hoisted hoisted 1 "$trial"
+              run_case pgo-enabled-specialized specialized 1 "$trial"
+            else
+              run_case pgo-enabled-specialized specialized 1 "$trial"
+              run_case pgo-enabled-hoisted hoisted 1 "$trial"
+              run_case pgo-enabled-interface interface 1 "$trial"
+              run_case pgo-disabled-interface interface 0 "$trial"
+            fi
+          done
+
+      - name: Summarize paired evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path('artifacts/performance/stream-codec-specialization')
+          docs = []
+          for path in sorted(root.glob('trial-*.json')):
+              doc = json.loads(path.read_text())
+              doc['_path'] = path.name
+              docs.append(doc)
+
+          configs = (
+              'pgo-disabled-interface',
+              'pgo-enabled-interface',
+              'pgo-enabled-hoisted',
+              'pgo-enabled-specialized',
+          )
+          by_key = {}
+          metadata = {}
+          for doc in docs:
+              config = doc['configuration']
+              trial = doc['trial']
+              for row in doc['measurements']:
+                  scenario = row['scenario']
+                  by_key[(scenario, config, trial)] = row
+                  metadata[scenario] = row
+
+          scenarios = sorted(metadata)
+          trials = sorted({doc['trial'] for doc in docs})
+          missing = [
+              (scenario, config, trial)
+              for scenario in scenarios
+              for config in configs
+              for trial in trials
+              if (scenario, config, trial) not in by_key
+          ]
+          if missing:
+              raise SystemExit(f'missing paired measurements: {missing[:10]}')
+
+          def median(values):
+              return statistics.median(values)
+
+          def mad(values):
+              center = median(values)
+              return median([abs(value - center) for value in values])
+
+          def delta(candidate, baseline):
+              return 0.0 if baseline == 0 else (candidate - baseline) * 100.0 / baseline
+
+          def config_values(scenario, config, field='nanosecondsPerItem'):
+              return [by_key[(scenario, config, trial)][field] for trial in trials]
+
+          def paired_delta(scenario, candidate, baseline):
+              return median([
+                  delta(
+                      by_key[(scenario, candidate, trial)]['nanosecondsPerItem'],
+                      by_key[(scenario, baseline, trial)]['nanosecondsPerItem'])
+                  for trial in trials
+              ])
+
+          rows = []
+          for scenario in scenarios:
+              off = config_values(scenario, 'pgo-disabled-interface')
+              on = config_values(scenario, 'pgo-enabled-interface')
+              hoisted = config_values(scenario, 'pgo-enabled-hoisted')
+              specialized = config_values(scenario, 'pgo-enabled-specialized')
+              meta = metadata[scenario]
+              rows.append({
+                  'scenario': scenario,
+                  'direction': meta['direction'],
+                  'payload': meta['payload'],
+                  'payloadBytes': meta['payloadBytes'],
+                  'codecShape': meta['codecShape'],
+                  'pgoDisabledInterfaceNs': median(off),
+                  'pgoDisabledInterfaceMadNs': mad(off),
+                  'pgoEnabledInterfaceNs': median(on),
+                  'pgoEnabledHoistedNs': median(hoisted),
+                  'pgoEnabledSpecializedNs': median(specialized),
+                  'dynamicPgoDeltaPct': paired_delta(
+                      scenario, 'pgo-enabled-interface', 'pgo-disabled-interface'),
+                  'hoistingDeltaPct': paired_delta(
+                      scenario, 'pgo-enabled-hoisted', 'pgo-enabled-interface'),
+                  'specializationVsHoistedDeltaPct': paired_delta(
+                      scenario, 'pgo-enabled-specialized', 'pgo-enabled-hoisted'),
+                  'specializationVsPgoInterfaceDeltaPct': paired_delta(
+                      scenario, 'pgo-enabled-specialized', 'pgo-enabled-interface'),
+                  'specializationVsPgoDisabledDeltaPct': paired_delta(
+                      scenario, 'pgo-enabled-specialized', 'pgo-disabled-interface'),
+                  'pgoDisabledAllocationBItem': median(config_values(
+                      scenario, 'pgo-disabled-interface', 'allocatedBytesPerItem')),
+                  'pgoEnabledSpecializedAllocationBItem': median(config_values(
+                      scenario, 'pgo-enabled-specialized', 'allocatedBytesPerItem')),
+              })
+
+          primary = [
+              row for row in rows
+              if row['direction'] == 'send' and row['codecShape'] == 'exact-class'
+          ]
+          class_rows = [row for row in rows if row['codecShape'].endswith('-class')]
+
+          def med(rows, field):
+              return median([row[field] for row in rows]) if rows else None
+
+          aggregate = {
+              'trials': trials,
+              'scenarioCount': len(rows),
+              'primaryExactClassSend': {
+                  'dynamicPgoDeltaPct': med(primary, 'dynamicPgoDeltaPct'),
+                  'hoistingDeltaPct': med(primary, 'hoistingDeltaPct'),
+                  'specializationVsHoistedDeltaPct': med(primary, 'specializationVsHoistedDeltaPct'),
+                  'specializationVsPgoInterfaceDeltaPct': med(primary, 'specializationVsPgoInterfaceDeltaPct'),
+              },
+              'allClassScenarios': {
+                  'dynamicPgoDeltaPct': med(class_rows, 'dynamicPgoDeltaPct'),
+                  'hoistingDeltaPct': med(class_rows, 'hoistingDeltaPct'),
+                  'specializationVsHoistedDeltaPct': med(class_rows, 'specializationVsHoistedDeltaPct'),
+                  'specializationVsPgoInterfaceDeltaPct': med(class_rows, 'specializationVsPgoInterfaceDeltaPct'),
+              },
+          }
+
+          comparison = {
+              'headCommit': docs[0]['commit'] if docs else 'unknown',
+              'runtime': docs[0]['framework'] if docs else 'unknown',
+              'configs': list(configs),
+              'rows': rows,
+              'aggregate': aggregate,
+              'interpretation': {
+                  'negativeNsDeltaMeans': 'candidate is faster',
+                  'dynamicPgoDeltaPct': 'PGO enabled interface vs PGO disabled interface',
+                  'hoistingDeltaPct': 'PGO enabled hoisted interface vs PGO enabled per-item interface',
+                  'specializationVsHoistedDeltaPct': 'PGO enabled concrete TCodec vs PGO enabled hoisted interface',
+              },
+          }
+          (root / 'comparison.json').write_text(json.dumps(comparison, indent=2) + '\n')
+
+          lines = [
+              '# Stream Codec specialization same-machine evidence',
+              '',
+              f"- head: `{comparison['headCommit']}`",
+              f"- runtime: `{comparison['runtime']}`",
+              f"- paired trials: {len(trials)} ({', '.join(str(t) for t in trials)})",
+              '- lower ns/item is better; negative delta means the candidate is faster',
+              '- production-representative primary rows are sealed class exact-sized codecs; struct rows are an experimental specialization ceiling',
+              '',
+              '| Scenario | PGO off interface ns | PGO on interface Δ | Hoist Δ vs PGO interface | TCodec Δ vs hoist | TCodec Δ vs PGO interface |',
+              '| --- | ---: | ---: | ---: | ---: | ---: |',
+          ]
+          for row in rows:
+              lines.append(
+                  f"| {row['scenario']} | {row['pgoDisabledInterfaceNs']:.2f} "
+                  f"(MAD {row['pgoDisabledInterfaceMadNs']:.2f}) | "
+                  f"{row['dynamicPgoDeltaPct']:+.2f}% | "
+                  f"{row['hoistingDeltaPct']:+.2f}% | "
+                  f"{row['specializationVsHoistedDeltaPct']:+.2f}% | "
+                  f"{row['specializationVsPgoInterfaceDeltaPct']:+.2f}% |"
+              )
+
+          primary_summary = aggregate['primaryExactClassSend']
+          class_summary = aggregate['allClassScenarios']
+          lines += [
+              '',
+              '## Median paired deltas',
+              '',
+              'Primary: exact-sized sealed-class send rows',
+              '',
+              f"- Dynamic PGO vs PGO disabled: {primary_summary['dynamicPgoDeltaPct']:+.2f}%",
+              f"- Capability hoisting vs Dynamic-PGO interface: {primary_summary['hoistingDeltaPct']:+.2f}%",
+              f"- `<TCodec>` vs hoisted interface: {primary_summary['specializationVsHoistedDeltaPct']:+.2f}%",
+              f"- `<TCodec>` vs Dynamic-PGO per-item interface: {primary_summary['specializationVsPgoInterfaceDeltaPct']:+.2f}%",
+              '',
+              'All class-codec send/receive rows',
+              '',
+              f"- Dynamic PGO vs PGO disabled: {class_summary['dynamicPgoDeltaPct']:+.2f}%",
+              f"- Capability hoisting vs Dynamic-PGO interface: {class_summary['hoistingDeltaPct']:+.2f}%",
+              f"- `<TCodec>` vs hoisted interface: {class_summary['specializationVsHoistedDeltaPct']:+.2f}%",
+              f"- `<TCodec>` vs Dynamic-PGO per-item interface: {class_summary['specializationVsPgoInterfaceDeltaPct']:+.2f}%",
+              '',
+              'Raw per-round JSON, CPU/allocation fields, environment provenance, and JIT disassembly are uploaded as artifacts.',
+          ]
+          summary = '\n'.join(lines) + '\n'
+          (root / 'comparison.md').write_text(summary)
+          print(summary)
+          PY
+
+      - name: Capture targeted JIT disassembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT/disasm"
+
+          run_disasm() {
+            local config="$1"
+            local mode="$2"
+            local tiered_pgo="$3"
+            local method="$4"
+            local log="$EVIDENCE_ROOT/disasm/${config}-${method}.txt"
+            local json="$EVIDENCE_ROOT/disasm/${config}-${method}.json"
+
+            SHARPLINK_CODEC_EVIDENCE_CONFIG="$config-disasm" \
+            SHARPLINK_CODEC_EVIDENCE_TRIAL=0 \
+            DOTNET_ReadyToRun=0 \
+            DOTNET_TieredCompilation=1 \
+            DOTNET_TieredPGO="$tiered_pgo" \
+            DOTNET_TC_QuickJitForLoops=1 \
+            DOTNET_TC_OnStackReplacement=1 \
+            COMPlus_JitDisasm="$method" \
+            COMPlus_JitDisasmDiffable=1 \
+            COMPlus_JitPrintInlinedMethods=1 \
+            dotnet run -c Release --no-build \
+              --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- \
+              --stream-codec-specialization-evidence \
+              "$mode" 1 20000 "$json" > "$log" 2>&1
+          }
+
+          run_disasm pgo-disabled-interface interface 0 RunCurrentInterfaceSend
+          run_disasm pgo-enabled-interface interface 1 RunCurrentInterfaceSend
+          run_disasm pgo-enabled-hoisted hoisted 1 RunHoistedSizedInterfaceSend
+          run_disasm pgo-enabled-specialized specialized 1 RunSpecializedSend
+
+      - name: Publish comparison summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$EVIDENCE_ROOT/comparison.md" ]; then
+            cat "$EVIDENCE_ROOT/comparison.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload stream Codec performance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stream-codec-specialization-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/performance/stream-codec-specialization
+          if-no-files-found: error
+          retention-days: 30
