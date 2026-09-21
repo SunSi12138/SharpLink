@@ -397,12 +397,298 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Run generated-binding JIT evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local pgo="$1"
+            local shape="$2"
+            local repetition="$3"
+            local output="$EVIDENCE_ROOT/generated-jit-pgo${pgo}-${shape}-r${repetition}.json"
+
+            env \
+              DOTNET_ReadyToRun=0 \
+              DOTNET_TieredCompilation=1 \
+              DOTNET_TieredPGO="$pgo" \
+              dotnet run -c Release --no-build --project "$PROJECT" -- \
+                --generated-binding "$shape" "$output"
+          }
+
+          for repetition in 1 2 3; do
+            for pgo in 0 1; do
+              if (( repetition % 2 == 1 )); then
+                for shape in interface guarded-value guarded-ref direct; do
+                  run_case "$pgo" "$shape" "$repetition"
+                done
+              else
+                for shape in direct guarded-ref guarded-value interface; do
+                  run_case "$pgo" "$shape" "$repetition"
+                done
+              fi
+            done
+          done
+
+      - name: Summarize generated-binding JIT evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-struct-core")
+          shapes = ("interface", "guarded-value", "guarded-ref", "direct")
+
+          def load(pgo, shape):
+              return [
+                  json.loads(p.read_text())
+                  for p in sorted(root.glob(f"generated-jit-pgo{pgo}-{shape}-r*.json"))
+              ]
+
+          def key(row):
+              return (row["payload"], row["operation"], row["streamLength"])
+
+          def aggregate(docs):
+              grouped = {}
+              for doc in docs:
+                  for row in doc["measurements"]:
+                      grouped.setdefault(key(row), []).append(row["nanosecondsPerItem"])
+              return {k: statistics.median(v) for k, v in grouped.items()}
+
+          def gain(a, b, pred=lambda k: True):
+              vals = [(a[k] - b[k]) * 100.0 / a[k] for k in set(a) & set(b) if pred(k)]
+              return statistics.median(vals) if vals else None
+
+          out = {}
+          for pgo in (0, 1):
+              data = {s: aggregate(load(pgo, s)) for s in shapes}
+              stream = lambda k: k[1].startswith("stream-")
+              unary = lambda k: k[1].startswith("unary-")
+              flat = lambda k: k[0] == "int"
+              nested = lambda k: k[0] == "generated-like64"
+              out[str(pgo)] = {
+                  "guardedValueVsInterface": gain(data["interface"], data["guarded-value"]),
+                  "guardedRefVsValue": gain(data["guarded-value"], data["guarded-ref"]),
+                  "directVsGuardedValue": gain(data["guarded-value"], data["direct"]),
+                  "streamGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], stream),
+                  "unaryGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], unary),
+                  "flatGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], flat),
+                  "generatedLikeGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], nested),
+                  "unarySerialize": gain(data["interface"], data["guarded-value"], lambda k: k[1] == "unary-serialize"),
+                  "unaryDeserialize": gain(data["interface"], data["guarded-value"], lambda k: k[1] == "unary-deserialize"),
+              }
+
+          (root / "generated-jit-summary.json").write_text(json.dumps(out, indent=2) + "\n")
+
+          def fmt(v):
+              return "n/a" if v is None else f"{v:+.2f}%"
+
+          lines = ["# Generated wrapper -> concrete core JIT evidence", ""]
+          for pgo in ("1", "0"):
+              lines += [
+                  f"## Dynamic PGO {'enabled' if pgo == '1' else 'disabled'}",
+                  "",
+                  f"- guarded generated-wrapper fast path vs interface: {fmt(out[pgo]['guardedValueVsInterface'])}",
+                  f"- streams only: {fmt(out[pgo]['streamGuardedValueVsInterface'])}",
+                  f"- unary only: {fmt(out[pgo]['unaryGuardedValueVsInterface'])}",
+                  f"- unary serialize: {fmt(out[pgo]['unarySerialize'])}",
+                  f"- unary deserialize: {fmt(out[pgo]['unaryDeserialize'])}",
+                  f"- flat generated codec: {fmt(out[pgo]['flatGuardedValueVsInterface'])}",
+                  f"- generated-like core with child interfaces: {fmt(out[pgo]['generatedLikeGuardedValueVsInterface'])}",
+                  f"- ref core vs value core: {fmt(out[pgo]['guardedRefVsValue'])}",
+                  f"- unconditional direct core vs guarded fast path: {fmt(out[pgo]['directVsGuardedValue'])}",
+                  "",
+              ]
+
+          (root / "generated-jit-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Capture generated-binding JIT disassembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pgo in 0 1; do
+            for shape in interface guarded-value guarded-ref direct; do
+              env \
+                DOTNET_ReadyToRun=0 \
+                DOTNET_TieredCompilation=1 \
+                DOTNET_TieredPGO="$pgo" \
+                COMPlus_JitDisasm="GeneratedCodecBindingEvidenceRunner:*" \
+                COMPlus_JitDisasmDiffable=1 \
+                dotnet run -c Release --no-build --project "$PROJECT" -- \
+                  --generated-binding --jit-probe "$shape" \
+                  > "$EVIDENCE_ROOT/generated-jit-pgo${pgo}-${shape}-disasm.txt" 2>&1
+            done
+          done
+
+      - name: Publish generated-binding NativeAOT variants
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for shape in generated-interface generated-guarded-value generated-guarded-ref generated-direct; do
+            publish="$EVIDENCE_ROOT/aot/bin-$shape"
+            rm -rf test/SharpLink.StreamCodecStructCoreEvidence/bin \
+              test/SharpLink.StreamCodecStructCoreEvidence/obj
+
+            dotnet publish "$PROJECT" \
+              -c Release \
+              -r linux-x64 \
+              --self-contained true \
+              -p:PublishAot=true \
+              -p:EvidenceShape="$shape" \
+              -o "$publish" \
+              -v minimal
+
+            executable="$publish/SharpLink.StreamCodecStructCoreEvidence"
+            test -x "$executable"
+            stat -c '%s' "$executable" > "$EVIDENCE_ROOT/aot-$shape-binary-bytes.txt"
+
+            symbols="$executable"
+            if [[ -f "$executable.dbg" ]]; then
+              symbols="$executable.dbg"
+            fi
+            nm -C "$symbols" 2>/dev/null \
+              | grep -E 'GeneratedCodecBindingEvidenceRunner|GeneratedIntCore|GeneratedNested64Core|System.__Canon' \
+              > "$EVIDENCE_ROOT/aot-$shape-symbols.txt" || true
+          done
+
+      - name: Run generated-binding NativeAOT evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local compiled="$1"
+            local result="$2"
+            local repetition="$3"
+            local executable="$EVIDENCE_ROOT/aot/bin-$compiled/SharpLink.StreamCodecStructCoreEvidence"
+            local output="$EVIDENCE_ROOT/aot-$compiled-r$repetition.json"
+            "$executable" "$output"
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              run_case generated-interface interface "$repetition"
+              run_case generated-guarded-value guarded-value "$repetition"
+              run_case generated-guarded-ref guarded-ref "$repetition"
+              run_case generated-direct direct "$repetition"
+            else
+              run_case generated-direct direct "$repetition"
+              run_case generated-guarded-ref guarded-ref "$repetition"
+              run_case generated-guarded-value guarded-value "$repetition"
+              run_case generated-interface interface "$repetition"
+            fi
+          done
+
+      - name: Summarize generated-binding NativeAOT evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-struct-core")
+          compiled = {
+              "interface": "generated-interface",
+              "guarded-value": "generated-guarded-value",
+              "guarded-ref": "generated-guarded-ref",
+              "direct": "generated-direct",
+          }
+
+          def load(shape):
+              prefix = compiled[shape]
+              return [
+                  json.loads(p.read_text())
+                  for p in sorted(root.glob(f"aot-{prefix}-r*.json"))
+              ]
+
+          def key(row):
+              return (row["payload"], row["operation"], row["streamLength"])
+
+          def aggregate(docs):
+              grouped = {}
+              for doc in docs:
+                  for row in doc["measurements"]:
+                      grouped.setdefault(key(row), []).append(row["nanosecondsPerItem"])
+              return {k: statistics.median(v) for k, v in grouped.items()}
+
+          def gain(a, b, pred=lambda k: True):
+              vals = [(a[k] - b[k]) * 100.0 / a[k] for k in set(a) & set(b) if pred(k)]
+              return statistics.median(vals) if vals else None
+
+          data = {s: aggregate(load(s)) for s in compiled}
+          stream = lambda k: k[1].startswith("stream-")
+          unary = lambda k: k[1].startswith("unary-")
+          flat = lambda k: k[0] == "int"
+          nested = lambda k: k[0] == "generated-like64"
+
+          binary = {
+              s: int((root / f"aot-{prefix}-binary-bytes.txt").read_text().strip())
+              for s, prefix in compiled.items()
+          }
+          base = binary["interface"]
+
+          out = {
+              "guardedValueVsInterface": gain(data["interface"], data["guarded-value"]),
+              "guardedRefVsValue": gain(data["guarded-value"], data["guarded-ref"]),
+              "directVsGuardedValue": gain(data["guarded-value"], data["direct"]),
+              "streamGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], stream),
+              "unaryGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], unary),
+              "flatGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], flat),
+              "generatedLikeGuardedValueVsInterface": gain(data["interface"], data["guarded-value"], nested),
+              "unarySerialize": gain(data["interface"], data["guarded-value"], lambda k: k[1] == "unary-serialize"),
+              "unaryDeserialize": gain(data["interface"], data["guarded-value"], lambda k: k[1] == "unary-deserialize"),
+              "binaryBytes": binary,
+              "binaryDeltaPct": {s: (v - base) * 100.0 / base for s, v in binary.items()},
+          }
+
+          (root / "generated-aot-summary.json").write_text(json.dumps(out, indent=2) + "\n")
+
+          def fmt(v):
+              return "n/a" if v is None else f"{v:+.2f}%"
+
+          lines = [
+              "# Generated wrapper -> concrete core NativeAOT evidence",
+              "",
+              f"- guarded generated-wrapper fast path vs interface: {fmt(out['guardedValueVsInterface'])}",
+              f"- streams only: {fmt(out['streamGuardedValueVsInterface'])}",
+              f"- unary only: {fmt(out['unaryGuardedValueVsInterface'])}",
+              f"- unary serialize: {fmt(out['unarySerialize'])}",
+              f"- unary deserialize: {fmt(out['unaryDeserialize'])}",
+              f"- flat generated codec: {fmt(out['flatGuardedValueVsInterface'])}",
+              f"- generated-like core with child interfaces: {fmt(out['generatedLikeGuardedValueVsInterface'])}",
+              f"- ref core vs value core: {fmt(out['guardedRefVsValue'])}",
+              f"- unconditional direct core vs guarded fast path: {fmt(out['directVsGuardedValue'])}",
+              "",
+              "## Native executable size",
+              "",
+              "| Shape | Bytes | Delta vs interface |",
+              "| --- | ---: | ---: |",
+          ]
+          for shape in ("interface", "guarded-value", "guarded-ref", "direct"):
+              lines.append(
+                  f"| {shape} | {binary[shape]} | {out['binaryDeltaPct'][shape]:+.2f}% |"
+              )
+
+          (root / "generated-aot-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Publish evidence summary
         shell: bash
         run: |
           cat "$EVIDENCE_ROOT/jit-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$EVIDENCE_ROOT/aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$EVIDENCE_ROOT/generated-jit-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$EVIDENCE_ROOT/generated-aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove native binaries from artifact
         if: always()
