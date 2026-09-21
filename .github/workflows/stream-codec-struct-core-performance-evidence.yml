@@ -1,0 +1,419 @@
+name: Stream Codec Struct Core Performance Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'test/SharpLink.StreamCodecStructCoreEvidence/**'
+      - '.github/workflows/stream-codec-struct-core-performance-evidence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  same-machine-comparison:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/performance/stream-codec-struct-core
+      EVIDENCE_SHA: ${{ github.event.pull_request.head.sha }}
+      PROJECT: test/SharpLink.StreamCodecStructCoreEvidence/SharpLink.StreamCodecStructCoreEvidence.csproj
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE_ROOT"
+          dotnet --info > "$EVIDENCE_ROOT/dotnet-info.txt"
+          uname -a > "$EVIDENCE_ROOT/uname.txt"
+          lscpu > "$EVIDENCE_ROOT/cpu.txt"
+          printf 'phase_a_dev=%s\nhead=%s\n' \
+            '172a4bab78ba117cf66832a234c7495076ff7961' \
+            "$EVIDENCE_SHA" \
+            > "$EVIDENCE_ROOT/provenance.txt"
+
+      - name: Build JIT evidence host
+        shell: bash
+        run: dotnet build "$PROJECT" -c Release -v minimal
+
+      - name: Run same-machine JIT evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local pgo="$1"
+            local shape="$2"
+            local repetition="$3"
+            local output="$EVIDENCE_ROOT/jit-pgo${pgo}-${shape}-r${repetition}.json"
+
+            echo "::group::JIT PGO=$pgo $shape repetition $repetition"
+            env \
+              DOTNET_ReadyToRun=0 \
+              DOTNET_TieredCompilation=1 \
+              DOTNET_TieredPGO="$pgo" \
+              SHARPLINK_BENCHMARK_SHA="$EVIDENCE_SHA" \
+              dotnet run -c Release --no-build --project "$PROJECT" -- \
+                "$shape" "$output"
+            echo "::endgroup::"
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              for shape in production-interface shell-interface open-value open-in direct-core; do
+                run_case 1 "$shape" "$repetition"
+              done
+              for shape in production-interface open-value open-in; do
+                run_case 0 "$shape" "$repetition"
+              done
+            else
+              for shape in open-in open-value production-interface; do
+                run_case 0 "$shape" "$repetition"
+              done
+              for shape in direct-core open-in open-value shell-interface production-interface; do
+                run_case 1 "$shape" "$repetition"
+              done
+            fi
+          done
+
+      - name: Summarize JIT evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-struct-core")
+          shapes = ("production-interface", "shell-interface", "open-value", "open-in", "direct-core")
+
+          def load(prefix, shape):
+              return [json.loads(p.read_text()) for p in sorted(root.glob(f"{prefix}-{shape}-r*.json"))]
+
+          def key(row):
+              return (row["payload"], row["profile"], row["operation"], row["streamLength"])
+
+          def aggregate(docs):
+              grouped = {}
+              for doc in docs:
+                  for row in doc["measurements"]:
+                      grouped.setdefault(key(row), []).append(row)
+              return {
+                  k: {
+                      "ns": statistics.median(r["nanosecondsPerItem"] for r in rows),
+                      "cpu": statistics.median(r["cpuNanosecondsPerItem"] for r in rows),
+                      "alloc": statistics.median(r["allocatedBytesPerItem"] for r in rows),
+                      "coreBytes": rows[0]["coreSizeBytes"],
+                  }
+                  for k, rows in grouped.items()
+              }
+
+          def improvement(base, candidate):
+              return 0.0 if base == 0 else (base - candidate) * 100.0 / base
+
+          def compare(a, b, predicate=lambda k: True):
+              common = sorted(set(a) & set(b))
+              values = [improvement(a[k]["ns"], b[k]["ns"]) for k in common if predicate(k)]
+              return statistics.median(values) if values else None
+
+          steady = lambda k: k[3] >= 1000 and k[0] != "int-open-cost"
+          flat = lambda k: steady(k) and k[1] == "flat"
+          generated = lambda k: steady(k) and k[1] == "generated-like-child-interface"
+
+          pgo1 = {s: aggregate(load("jit-pgo1", s)) for s in shapes}
+          pgo0 = {s: aggregate(load("jit-pgo0", s)) for s in ("production-interface", "open-value", "open-in")}
+
+          summary = {
+              "pgoEnabled": {
+                  "shellVsProduction": compare(pgo1["production-interface"], pgo1["shell-interface"], steady),
+                  "openValueVsProduction": compare(pgo1["production-interface"], pgo1["open-value"], steady),
+                  "openInVsOpenValue": compare(pgo1["open-value"], pgo1["open-in"], steady),
+                  "directVsOpenValue": compare(pgo1["open-value"], pgo1["direct-core"], steady),
+                  "openValueFlatVsProduction": compare(pgo1["production-interface"], pgo1["open-value"], flat),
+                  "openValueGeneratedLikeVsProduction": compare(pgo1["production-interface"], pgo1["open-value"], generated),
+              },
+              "pgoDisabled": {
+                  "openValueVsProduction": compare(pgo0["production-interface"], pgo0["open-value"], steady),
+                  "openInVsOpenValue": compare(pgo0["open-value"], pgo0["open-in"], steady),
+              },
+              "operations": {},
+              "shortStreams": {},
+          }
+
+          for op in ("sized-serialize", "unsized-serialize", "deserialize"):
+              pred = lambda k, op=op: steady(k) and k[2] == op
+              summary["operations"][op] = compare(
+                  pgo1["production-interface"], pgo1["open-value"], pred)
+
+          for length in (1, 8, 64):
+              pred = lambda k, length=length: k[0] == "int-open-cost" and k[3] == length
+              summary["shortStreams"][str(length)] = compare(
+                  pgo1["production-interface"], pgo1["open-value"], pred)
+
+          (root / "jit-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+          def fmt(value):
+              return "n/a" if value is None else f"{value:+.2f}%"
+
+          lines = [
+              "# Stream codec class-shell / struct-core JIT evidence",
+              "",
+              "Positive means the second shape uses fewer ns/item.",
+              "",
+              "## Dynamic PGO enabled, 1k/10k/100k streams",
+              "",
+              f"- class shell forwarding to struct core, still interface-called, vs current production-style class: {fmt(summary['pgoEnabled']['shellVsProduction'])}",
+              f"- open concrete struct core once per stream vs current production-style class/interface loop: {fmt(summary['pgoEnabled']['openValueVsProduction'])}",
+              f"- open/pass core by in vs by value: {fmt(summary['pgoEnabled']['openInVsOpenValue'])}",
+              f"- statically-known direct core vs open-once: {fmt(summary['pgoEnabled']['directVsOpenValue'])}",
+              f"- open-once flat core vs production baseline: {fmt(summary['pgoEnabled']['openValueFlatVsProduction'])}",
+              f"- open-once generated-like core with child interface fields vs production baseline: {fmt(summary['pgoEnabled']['openValueGeneratedLikeVsProduction'])}",
+              "",
+              "## Dynamic PGO disabled",
+              "",
+              f"- open concrete struct core once per stream vs production baseline: {fmt(summary['pgoDisabled']['openValueVsProduction'])}",
+              f"- in vs by-value after open: {fmt(summary['pgoDisabled']['openInVsOpenValue'])}",
+              "",
+              "## Open-once gain by operation with Dynamic PGO enabled",
+              "",
+          ]
+          for op, value in summary["operations"].items():
+              lines.append(f"- {op}: {fmt(value)}")
+          lines += [
+              "",
+              "## Open-once gain on tiny int streams",
+              "",
+          ]
+          for length, value in summary["shortStreams"].items():
+              lines.append(f"- {length} items/stream: {fmt(value)}")
+
+          (root / "jit-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Capture JIT disassembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pgo in 0 1; do
+            for shape in production-interface open-value open-in direct-core; do
+              env \
+                DOTNET_ReadyToRun=0 \
+                DOTNET_TieredCompilation=1 \
+                DOTNET_TieredPGO="$pgo" \
+                COMPlus_JitDisasm="StreamCodecStructCore_*" \
+                COMPlus_JitDisasmDiffable=1 \
+                dotnet run -c Release --no-build --project "$PROJECT" -- \
+                  --jit-probe "$shape" 64 \
+                  > "$EVIDENCE_ROOT/jit-pgo${pgo}-${shape}-disasm.txt" 2>&1
+            done
+          done
+
+      - name: Publish NativeAOT evidence variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT/aot"
+
+          for shape in production-interface shell-interface open-value open-in direct-core; do
+            publish="$EVIDENCE_ROOT/aot/bin-$shape"
+            rm -rf test/SharpLink.StreamCodecStructCoreEvidence/bin \
+              test/SharpLink.StreamCodecStructCoreEvidence/obj
+            dotnet publish "$PROJECT" \
+              -c Release \
+              -r linux-x64 \
+              --self-contained true \
+              -p:PublishAot=true \
+              -p:EvidenceShape="$shape" \
+              -o "$publish" \
+              -v minimal
+
+            executable="$publish/SharpLink.StreamCodecStructCoreEvidence"
+            test -x "$executable"
+            stat -c '%s' "$executable" > "$EVIDENCE_ROOT/aot-$shape-binary-bytes.txt"
+
+            symbols="$executable"
+            if [[ -f "$executable.dbg" ]]; then
+              symbols="$executable.dbg"
+            fi
+            nm -C "$symbols" 2>/dev/null \
+              | grep -E 'StreamCodecStructCore_|FlatSizedCore|Nested64SizedCore|System.__Canon' \
+              > "$EVIDENCE_ROOT/aot-$shape-symbols.txt" || true
+          done
+
+      - name: Run same-machine NativeAOT evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local shape="$1"
+            local repetition="$2"
+            local executable="$EVIDENCE_ROOT/aot/bin-$shape/SharpLink.StreamCodecStructCoreEvidence"
+            local output="$EVIDENCE_ROOT/aot-$shape-r$repetition.json"
+
+            echo "::group::NativeAOT $shape repetition $repetition"
+            env SHARPLINK_BENCHMARK_SHA="$EVIDENCE_SHA" "$executable" "$output"
+            echo "::endgroup::"
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              for shape in production-interface shell-interface open-value open-in direct-core; do
+                run_case "$shape" "$repetition"
+              done
+            else
+              for shape in direct-core open-in open-value shell-interface production-interface; do
+                run_case "$shape" "$repetition"
+              done
+            fi
+          done
+
+      - name: Summarize NativeAOT evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-struct-core")
+          shapes = ("production-interface", "shell-interface", "open-value", "open-in", "direct-core")
+
+          def load(shape):
+              return [json.loads(p.read_text()) for p in sorted(root.glob(f"aot-{shape}-r*.json"))]
+
+          def key(row):
+              return (row["payload"], row["profile"], row["operation"], row["streamLength"])
+
+          def aggregate(docs):
+              grouped = {}
+              for doc in docs:
+                  for row in doc["measurements"]:
+                      grouped.setdefault(key(row), []).append(row)
+              return {
+                  k: {
+                      "ns": statistics.median(r["nanosecondsPerItem"] for r in rows),
+                      "cpu": statistics.median(r["cpuNanosecondsPerItem"] for r in rows),
+                      "alloc": statistics.median(r["allocatedBytesPerItem"] for r in rows),
+                      "coreBytes": rows[0]["coreSizeBytes"],
+                  }
+                  for k, rows in grouped.items()
+              }
+
+          def improvement(base, candidate):
+              return 0.0 if base == 0 else (base - candidate) * 100.0 / base
+
+          def compare(a, b, predicate=lambda k: True):
+              values = [
+                  improvement(a[k]["ns"], b[k]["ns"])
+                  for k in sorted(set(a) & set(b))
+                  if predicate(k)
+              ]
+              return statistics.median(values) if values else None
+
+          steady = lambda k: k[3] >= 1000 and k[0] != "int-open-cost"
+          flat = lambda k: steady(k) and k[1] == "flat"
+          generated = lambda k: steady(k) and k[1] == "generated-like-child-interface"
+
+          data = {s: aggregate(load(s)) for s in shapes}
+          binary = {
+              s: int((root / f"aot-{s}-binary-bytes.txt").read_text().strip())
+              for s in shapes
+          }
+          base_bytes = binary["production-interface"]
+
+          summary = {
+              "shellVsProduction": compare(data["production-interface"], data["shell-interface"], steady),
+              "openValueVsProduction": compare(data["production-interface"], data["open-value"], steady),
+              "openInVsOpenValue": compare(data["open-value"], data["open-in"], steady),
+              "directVsOpenValue": compare(data["open-value"], data["direct-core"], steady),
+              "openValueFlatVsProduction": compare(data["production-interface"], data["open-value"], flat),
+              "openValueGeneratedLikeVsProduction": compare(data["production-interface"], data["open-value"], generated),
+              "operations": {},
+              "shortStreams": {},
+              "binaryBytes": binary,
+              "binaryDeltaPct": {
+                  s: (binary[s] - base_bytes) * 100.0 / base_bytes for s in shapes
+              },
+          }
+
+          for op in ("sized-serialize", "unsized-serialize", "deserialize"):
+              pred = lambda k, op=op: steady(k) and k[2] == op
+              summary["operations"][op] = compare(
+                  data["production-interface"], data["open-value"], pred)
+
+          for length in (1, 8, 64):
+              pred = lambda k, length=length: k[0] == "int-open-cost" and k[3] == length
+              summary["shortStreams"][str(length)] = compare(
+                  data["production-interface"], data["open-value"], pred)
+
+          (root / "aot-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+          def fmt(value):
+              return "n/a" if value is None else f"{value:+.2f}%"
+
+          lines = [
+              "# Stream codec class-shell / struct-core NativeAOT evidence",
+              "",
+              f"- class shell forwarding to struct core, still interface-called, vs production baseline: {fmt(summary['shellVsProduction'])}",
+              f"- open concrete struct core once per stream vs production baseline: {fmt(summary['openValueVsProduction'])}",
+              f"- open/pass core by in vs by value: {fmt(summary['openInVsOpenValue'])}",
+              f"- statically-known direct core vs open-once: {fmt(summary['directVsOpenValue'])}",
+              f"- open-once flat core vs production baseline: {fmt(summary['openValueFlatVsProduction'])}",
+              f"- open-once generated-like core with child interface fields vs production baseline: {fmt(summary['openValueGeneratedLikeVsProduction'])}",
+              "",
+              "## Open-once gain by operation",
+              "",
+          ]
+          for op, value in summary["operations"].items():
+              lines.append(f"- {op}: {fmt(value)}")
+          lines += ["", "## Tiny stream opener amortization", ""]
+          for length, value in summary["shortStreams"].items():
+              lines.append(f"- {length} items/stream: {fmt(value)}")
+          lines += [
+              "",
+              "## Native executable size",
+              "",
+              "| Shape | Bytes | Delta vs production baseline |",
+              "| --- | ---: | ---: |",
+          ]
+          for shape in shapes:
+              lines.append(
+                  f"| {shape} | {binary[shape]} | {summary['binaryDeltaPct'][shape]:+.2f}% |"
+              )
+
+          (root / "aot-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Publish evidence summary
+        shell: bash
+        run: |
+          cat "$EVIDENCE_ROOT/jit-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$EVIDENCE_ROOT/aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove native binaries from artifact
+        if: always()
+        shell: bash
+        run: rm -rf "$EVIDENCE_ROOT"/aot/bin-*
+
+      - name: Upload struct-core evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stream-codec-struct-core-${{ github.event.pull_request.head.sha }}
+          path: artifacts/performance/stream-codec-struct-core
+          if-no-files-found: error
+          retention-days: 30
