@@ -7,6 +7,7 @@ on:
     paths:
       - 'test/SharpLink.Benchmarks/StreamCodecDispatchEvidenceRunner.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'test/SharpLink.StreamCodecAotEvidence/**'
       - '.github/workflows/stream-codec-dispatch-performance-evidence.yml'
   workflow_dispatch:
 
@@ -250,6 +251,201 @@ jobs:
           capture dynamic-pgo-interface interface-per-item 1
           capture dynamic-pgo-generic-class generic-class 1
           capture dynamic-pgo-generic-struct generic-struct 1
+
+      - name: Publish NativeAOT evidence variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          project="test/SharpLink.StreamCodecAotEvidence/SharpLink.StreamCodecAotEvidence.csproj"
+          mkdir -p "$EVIDENCE_ROOT/aot"
+
+          for shape in interface hoisted generic-class generic-struct; do
+            publish="$EVIDENCE_ROOT/aot/bin-$shape"
+            intermediate="$RUNNER_TEMP/stream-codec-aot/$shape"
+            dotnet publish "$project"               -c Release               -r linux-x64               --self-contained true               -p:PublishAot=true               -p:StreamCodecEvidenceShape="$shape"               -p:BaseIntermediateOutputPath="$intermediate/obj/"               -p:BaseOutputPath="$intermediate/bin/"               -o "$publish"               -v minimal
+
+            executable="$publish/SharpLink.StreamCodecAotEvidence"
+            test -x "$executable"
+            stat -c '%s' "$executable" > "$EVIDENCE_ROOT/aot-$shape-binary-bytes.txt"
+          done
+
+      - name: Run same-machine NativeAOT specialization evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_aot_case() {
+            local shape="$1"
+            local repetition="$2"
+            local output="$EVIDENCE_ROOT/aot-$shape-r$repetition.json"
+            local executable="$EVIDENCE_ROOT/aot/bin-$shape/SharpLink.StreamCodecAotEvidence"
+
+            echo "::group::NativeAOT $shape repetition $repetition"
+            env SHARPLINK_BENCHMARK_SHA="$EVIDENCE_SHA"               "$executable" "$output"
+            echo "::endgroup::"
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              run_aot_case interface "$repetition"
+              run_aot_case hoisted "$repetition"
+              run_aot_case generic-class "$repetition"
+              run_aot_case generic-struct "$repetition"
+            else
+              run_aot_case generic-struct "$repetition"
+              run_aot_case generic-class "$repetition"
+              run_aot_case hoisted "$repetition"
+              run_aot_case interface "$repetition"
+            fi
+          done
+
+      - name: Summarize NativeAOT evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-dispatch")
+          states = ("interface", "hoisted", "generic-class", "generic-struct")
+
+          docs = {
+              state: [
+                  json.loads(path.read_text())
+                  for path in sorted(root.glob(f"aot-{state}-r*.json"))
+              ]
+              for state in states
+          }
+          for state, state_docs in docs.items():
+              if not state_docs:
+                  raise SystemExit(f"missing NativeAOT evidence for {state}")
+
+          def scenario_key(row):
+              return (row["operation"], row["payload"], row["streamLength"])
+
+          def aggregate(state):
+              grouped = {}
+              for doc in docs[state]:
+                  for row in doc["measurements"]:
+                      grouped.setdefault(scenario_key(row), []).append(row)
+              return {
+                  scenario: {
+                      "ns": statistics.median(
+                          row["nanosecondsPerItem"] for row in scenario_rows),
+                      "cpuNs": statistics.median(
+                          row["cpuNanosecondsPerItem"] for row in scenario_rows),
+                      "alloc": statistics.median(
+                          row["allocatedBytesPerItem"] for row in scenario_rows),
+                  }
+                  for scenario, scenario_rows in grouped.items()
+              }
+
+          aggregated = {state: aggregate(state) for state in states}
+          scenarios = sorted(
+              set.intersection(*(set(rows) for rows in aggregated.values())))
+
+          def improvement(baseline, candidate):
+              return 0.0 if baseline == 0 else (
+                  baseline - candidate) * 100.0 / baseline
+
+          rows = []
+          for scenario in scenarios:
+              interface = aggregated["interface"][scenario]
+              hoisted = aggregated["hoisted"][scenario]
+              generic_class = aggregated["generic-class"][scenario]
+              generic_struct = aggregated["generic-struct"][scenario]
+              rows.append({
+                  "operation": scenario[0],
+                  "payload": scenario[1],
+                  "streamLength": scenario[2],
+                  "interfaceNs": interface["ns"],
+                  "hoistedNs": hoisted["ns"],
+                  "genericClassNs": generic_class["ns"],
+                  "genericStructNs": generic_struct["ns"],
+                  "hoistVsInterfaceImprovementPct": improvement(
+                      interface["ns"], hoisted["ns"]),
+                  "genericClassVsHoistedImprovementPct": improvement(
+                      hoisted["ns"], generic_class["ns"]),
+                  "genericClassVsInterfaceImprovementPct": improvement(
+                      interface["ns"], generic_class["ns"]),
+                  "genericStructVsGenericClassImprovementPct": improvement(
+                      generic_class["ns"], generic_struct["ns"]),
+                  "interfaceAllocatedBytesPerItem": interface["alloc"],
+                  "hoistedAllocatedBytesPerItem": hoisted["alloc"],
+                  "genericClassAllocatedBytesPerItem": generic_class["alloc"],
+                  "genericStructAllocatedBytesPerItem": generic_struct["alloc"],
+              })
+
+          binary_bytes = {
+              state: int(
+                  (root / f"aot-{state}-binary-bytes.txt").read_text().strip())
+              for state in states
+          }
+          interface_bytes = binary_bytes["interface"]
+          size_delta_pct = {
+              state: (binary_bytes[state] - interface_bytes) * 100.0 / interface_bytes
+              for state in states
+          }
+
+          comparison = {
+              "commit": docs["interface"][0]["commit"],
+              "runtime": "NativeAOT",
+              "repetitions": len(docs["interface"]),
+              "binaryBytes": binary_bytes,
+              "binarySizeDeltaVsInterfacePct": size_delta_pct,
+              "rows": rows,
+              "medianImprovementsPct": {
+                  "hoistVsInterface": statistics.median(
+                      row["hoistVsInterfaceImprovementPct"] for row in rows),
+                  "genericClassVsHoisted": statistics.median(
+                      row["genericClassVsHoistedImprovementPct"] for row in rows),
+                  "genericClassVsInterface": statistics.median(
+                      row["genericClassVsInterfaceImprovementPct"] for row in rows),
+                  "genericStructVsGenericClass": statistics.median(
+                      row["genericStructVsGenericClassImprovementPct"] for row in rows),
+              },
+          }
+          (root / "aot-comparison.json").write_text(
+              json.dumps(comparison, indent=2) + "\n")
+
+          medians = comparison["medianImprovementsPct"]
+          lines = [
+              "# NativeAOT stream codec specialization evidence",
+              "",
+              f"- commit: {comparison['commit']}",
+              "- three independent repetitions, alternating order, same runner",
+              "- positive improvement means fewer ns/item",
+              "",
+              "## Median performance improvement",
+              "",
+              f"- capability hoisting vs interface-per-item: {medians['hoistVsInterface']:+.2f}%",
+              f"- class <TCodec> vs hoisted interface: {medians['genericClassVsHoisted']:+.2f}%",
+              f"- class <TCodec> vs interface-per-item: {medians['genericClassVsInterface']:+.2f}%",
+              f"- struct <TCodec> vs class <TCodec>: {medians['genericStructVsGenericClass']:+.2f}%",
+              "",
+              "## Native executable size",
+              "",
+              "| Shape | Bytes | Delta vs interface |",
+              "| --- | ---: | ---: |",
+          ]
+          for state in states:
+              lines.append(
+                  f"| {state} | {binary_bytes[state]} | "
+                  f"{size_delta_pct[state]:+.2f}% |")
+
+          lines += [
+              "",
+              "Full per-payload, per-operation, per-stream-length rows are in aot-comparison.json.",
+          ]
+          summary = "\n".join(lines) + "\n"
+          (root / "aot-comparison.md").write_text(summary)
+          print(summary)
+          PY
+
+      - name: Publish NativeAOT summary
+        shell: bash
+        run: cat "$EVIDENCE_ROOT/aot-comparison.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload stream codec evidence
         if: always()
