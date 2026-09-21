@@ -38,10 +38,6 @@ internal sealed partial class RpcSession
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(codec);
 
-        var exactSizeCodec = codec as IRpcSizedCodec<T>;
-        if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
-            exactSizeCodec = null;
-
         var callContext = SharpLinkCallContext.Current;
         var deadline = callContext?.LocalRpcDeadline ?? default;
         var deadlineTimeProvider = callContext?.DeadlineTimeProvider;
@@ -50,6 +46,10 @@ internal sealed partial class RpcSession
         var deadlineWon = false;
         try
         {
+            var exactSizeCodec = codec as IRpcSizedCodec<T>;
+            if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+                exactSizeCodec = null;
+
             while (true)
             {
                 var moveNext = enumerator.MoveNextAsync();
