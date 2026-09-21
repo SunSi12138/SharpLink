@@ -141,7 +141,7 @@ public interface IConcreteBindingContract : SharpLink.Sdk.IService
     [Test]
     public Task ExplicitInterfaceCustomCodecShouldKeepInterfaceFallback()
     {
-        var source = AddAssemblyAttribute(UseCurrentIdentitySdk(BuildSource("""
+        var source = UseCurrentIdentitySdk(BuildSource("""
 public sealed class ExplicitPayload
 {
     public int Value { get; set; }
@@ -154,7 +154,7 @@ public sealed class ExplicitPayloadCodec : SharpLink.Abstractions.IRpcCodec<Expl
         in ExplicitPayload value,
         System.Buffers.IBufferWriter<byte> buffer) => throw new NotImplementedException();
 
-    ExplicitPayload? SharpLink.Abstractions.IRpcCodec<ExplicitPayload>.Deserialize(
+    ExplicitPayload SharpLink.Abstractions.IRpcCodec<ExplicitPayload>.Deserialize(
         in System.Buffers.ReadOnlySequence<byte> buffer) => throw new NotImplementedException();
 }
 
@@ -163,7 +163,19 @@ public interface IExplicitCodecContract : SharpLink.Sdk.IService
 {
     ValueTask<ExplicitPayload> Echo(ExplicitPayload value, CancellationToken cancellationToken);
 }
-""")),
+"""));
+        source = source.Replace(
+            "public interface IRpcCodec<T> : IRpcCodec { }",
+            """
+public interface IRpcCodec<T> : IRpcCodec
+    {
+        void Serialize(in T value, System.Buffers.IBufferWriter<byte> buffer);
+        T Deserialize(in System.Buffers.ReadOnlySequence<byte> buffer);
+    }
+""",
+            StringComparison.Ordinal);
+        source = AddAssemblyAttribute(
+            source,
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(ExplicitPayload), typeof(ExplicitPayloadCodec))]");
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
