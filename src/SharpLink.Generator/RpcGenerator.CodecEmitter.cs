@@ -98,8 +98,8 @@ public partial class RpcGenerator
     private static string? GetConcreteCodecType(GeneratedCodecModel codec)
         => codec.Kind switch
         {
-            GeneratedCodecKind.Custom => codec.CustomCodecType,
-            GeneratedCodecKind.Adapter => null,
+            GeneratedCodecKind.Custom when codec.CustomCodecSupportsConcreteDispatch => codec.CustomCodecType,
+            GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter => null,
             GeneratedCodecKind.Dto or
             GeneratedCodecKind.Union or
             GeneratedCodecKind.Array or
