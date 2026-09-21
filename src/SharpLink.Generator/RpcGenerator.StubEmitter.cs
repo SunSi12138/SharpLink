@@ -406,11 +406,7 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                    {
-                        sb.AppendLine("                    var result = pending.Result;");
-                        sb.AppendLine($"                    __ValidateResponse(result, {(method.ResponseNullable ? "true" : "false")});");
-                        sb.AppendLine($"                    {GetStubResponseCodecField(method)}.Serialize(result, output);");
-                    }
+                        AppendStubCompletedResponse(sb, method, "pending.Result");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
@@ -425,11 +421,7 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                    {
-                        sb.AppendLine("                    var result = pending.GetAwaiter().GetResult();");
-                        sb.AppendLine($"                    __ValidateResponse(result, {(method.ResponseNullable ? "true" : "false")});");
-                        sb.AppendLine($"                    {GetStubResponseCodecField(method)}.Serialize(result, output);");
-                    }
+                        AppendStubCompletedResponse(sb, method, "pending.GetAwaiter().GetResult()");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
@@ -444,6 +436,16 @@ public partial class RpcGenerator
                 sb.AppendLine("                break;");
             sb.AppendLine("            }");
         }
+    }
+
+    private static void AppendStubCompletedResponse(
+        StringBuilder sb,
+        RpcMethodModel method,
+        string resultExpression)
+    {
+        sb.AppendLine($"                    var result = {resultExpression};");
+        sb.AppendLine($"                    __ValidateResponse(result, {(method.ResponseNullable ? "true" : "false")});");
+        sb.AppendLine($"                    {GetStubResponseCodecField(method)}.Serialize(result, output);");
     }
 
     private static void AppendSizeFieldsByType(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
