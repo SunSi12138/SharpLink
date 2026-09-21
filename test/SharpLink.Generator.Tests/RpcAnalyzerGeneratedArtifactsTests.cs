@@ -194,7 +194,7 @@ public sealed class HelloService : IHelloService
         Ensure(proxy.Contains("InvokeServerStreamingAsync"), "ServerStreaming invoker");
         Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
         Ensure(allGenerated.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
-        Ensure(proxy.Contains("IRpcCodec<global::__IHelloService_SharpLinkRequest_"), "Generated request codec");
+        Ensure(proxy.Contains("private readonly global::SharpLink.Generated.__IHelloService_SharpLinkRequestCodec_"), "Generated request codec");
         Ensure(allGenerated.Contains("Span<byte> tmp_"), "Segmented fixed-width arguments must use stack scratch");
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
