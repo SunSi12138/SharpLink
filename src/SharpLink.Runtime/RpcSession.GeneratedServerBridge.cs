@@ -38,6 +38,10 @@ internal sealed partial class RpcSession
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(codec);
 
+        var exactSizeCodec = codec as IRpcSizedCodec<T>;
+        if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+            exactSizeCodec = null;
+
         var callContext = SharpLinkCallContext.Current;
         var deadline = callContext?.LocalRpcDeadline ?? default;
         var deadlineTimeProvider = callContext?.DeadlineTimeProvider;
@@ -87,6 +91,7 @@ internal sealed partial class RpcSession
                     streamId,
                     item,
                     codec,
+                    exactSizeCodec,
                     deadline,
                     deadlineTimeProvider,
                     lifetimeCancellation.Token);
@@ -227,19 +232,19 @@ internal sealed partial class RpcSession
         ushort streamId,
         T item,
         IRpcCodec<T> codec,
+        IRpcSizedCodec<T>? exactSizeCodec,
         RpcDeadline deadline,
         TimeProvider? deadlineTimeProvider,
         CancellationToken cancellationToken)
     {
-        if (codec is IRpcSizedCodec<T> sizedCodec &&
-            sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+        if (exactSizeCodec is not null &&
+            exactSizeCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {
             return SendStreamChunkKnownSizeAsync(
                 requestId,
                 streamId,
                 item,
-                sizedCodec,
+                exactSizeCodec,
                 knownEncodedBytes,
                 sizedSnapshot,
                 cancellationToken,
