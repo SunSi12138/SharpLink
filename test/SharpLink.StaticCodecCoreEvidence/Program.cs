@@ -18,6 +18,8 @@ namespace SharpLink.StaticCodecCoreEvidence;
 internal static partial class Program
 {
     private const int DefaultCallIterations = 512;
+    // Keep the same-source A/B transport under the dispatcher's bounded element queue so
+    // long SharedMemory streams exercise negotiated flow-credit backpressure instead of the safety cap.
     private const int EvidenceStreamWindowBytes = 128 * 1024;
     private const int EvidenceConnectionWindowBytes = 4 * 1024 * 1024;
     private static readonly int[] DefaultStreamLengths = [1, 8, 64, 1_000, 10_000];
